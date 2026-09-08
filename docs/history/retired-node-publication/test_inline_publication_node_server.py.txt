@@ -1,0 +1,1053 @@
+"""Focused Node/GCS composition tests for graph-associated INLINE results."""
+
+from __future__ import annotations
+
+import threading
+from types import SimpleNamespace
+
+import pytest
+
+from miniray import protocol
+from miniray.contained_cycle import ContainedReferenceGraphAuthority
+from miniray.contained_edges import ContainedReferenceEdge
+from miniray.ids import (
+    AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
+)
+from miniray.inline_contained_node import (
+    InlineChildEffectReply, InlineNodePublicationPhase,
+    InlinePublicationCompleteBoundary,
+    InlinePublicationNodeJournal, InlinePublicationNodeRuntime,
+)
+from miniray.inline_contained_publication import (
+    InlinePublicationEnvelope, InlinePublicationID,
+)
+from miniray.inline_recovery import (
+    InlinePublicationRecoveryAuthority, InlineRecoveryResolution,
+)
+from miniray.node import NodeServer, _LeaseRecord, _WorkerSlot
+from miniray.publication_owner_death import (
+    FinalizePublicationOwnerDeathEffect, InlinePublicationOwnerDeathKey,
+    PublicationRecoveryHistory,
+)
+from miniray.resources import (
+    AllocationToken, ResourceLedger, ResourceVector,
+)
+
+
+class _Harness:
+    def __init__(self, *, edge_count: int = 1) -> None:
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 31)
+        attempt = AttemptID(task, 0)
+        outer = ObjectID.for_task(task)
+        lease = LeaseID.random()
+        self.node_id = NodeID.random()
+        self.executor = WorkerID.random()
+        self.owner = WorkerID.random()
+        publication_id = InlinePublicationID(lease, task, attempt, outer)
+        edges = tuple(
+            ContainedReferenceEdge(
+                outer,
+                ObjectID.for_task(TaskID.derive(
+                    job, TaskID.for_driver(job), 40 + index
+                )),
+                self.executor, ("127.0.0.1", 33000 + index),
+                "inline-node:{}".format(index),
+            )
+            for index in range(edge_count)
+        )
+        self.envelope = InlinePublicationEnvelope.create(
+            publication_id, job, self.executor, self.owner, self.node_id,
+            b"inline-node-server", edges,
+        )
+        request = protocol.RequestWorkerLease(
+            lease, task, attempt, ResourceVector.of(CPU=1), NodeID.random(),
+            self.owner, target_node_id=self.node_id, return_ids=(outer,),
+        )
+        grant = protocol.GrantWorkerLease(
+            lease, task, attempt, self.node_id, self.executor,
+            ("127.0.0.1", 33100), AllocationToken.random(),
+        )
+        self.record = _LeaseRecord(
+            request, grant.allocation_token, grant,
+            state=protocol.LeaseExecutionState.RUNNING,
+        )
+        self.node = object.__new__(NodeServer)
+        self.node.node_id = self.node_id
+        self.node._node_pid = 4321
+        self.node._registration_epoch = 7
+        self.node._leases = {lease: self.record}
+        self.node._state_lock = threading.RLock()
+        self.node._ledger = ResourceLedger(ResourceVector.of(CPU=1))
+        self.node._ledger.allocate(request.resources, grant.allocation_token)
+        self.node._cluster_nodes = ()
+        self.node._worker_order = (self.executor,)
+        self.node._shutdown_request_id = None
+        self.node._inline_publication_journal = InlinePublicationNodeJournal()
+        self.node._stored_publication_journal = None
+        self.node._workers = {
+            self.executor: _WorkerSlot(
+                self.executor,
+                process=SimpleNamespace(is_alive=lambda: True),
+                active_lease_id=lease,
+            )
+        }
+        self.graph = ContainedReferenceGraphAuthority()
+        self.events: list[str] = []
+        self.pins = set()
+        self.commit_calls = 0
+        self.recovery = InlinePublicationRecoveryAuthority()
+        self.recovery_reports: list[object] = []
+        self.timeline: list[str] = []
+
+        def recovery_rpc(_handler, request):
+            self.recovery_reports.append(request)
+            if isinstance(request, protocol.ReportInlinePublicationIntent):
+                self.timeline.append("intent")
+                ack = self.recovery.report_intent(request.intent)
+            elif isinstance(
+                request, protocol.ReportInlinePublicationPrepared
+            ):
+                self.timeline.append("prepared")
+                ack = self.recovery.report_prepared(
+                    request.publication_id
+                )
+            elif isinstance(
+                request, protocol.ReportInlinePublicationTerminal
+            ):
+                self.timeline.append("terminal")
+                ack = self.recovery.report_terminal(request.terminal)
+            elif isinstance(
+                request, protocol.AcknowledgeInlinePublicationAborted
+            ):
+                self.timeline.append("aborted")
+                ack = self.recovery.acknowledge_aborted(
+                    request.publication_id, request.manifest_digest
+                )
+            else:
+                raise AssertionError(
+                    "Node sent a recovery transition it does not own"
+                )
+            return protocol.InlinePublicationRecoveryReply(
+                request, ack=ack
+            )
+
+        self.recovery_rpc = recovery_rpc
+        self.node._stored_gcs_rpc = recovery_rpc
+
+        def prepare_graph(request):
+            self.events.append("prepare-graph")
+            self.timeline.append("prepare-graph")
+            return protocol.ContainedGraphReply(
+                request, self.graph.prepare_manifest(request.manifest)
+            )
+
+        def reject_commit(_request):
+            self.commit_calls += 1
+            raise AssertionError("Node must not commit INLINE graph")
+
+        def abort_graph(request):
+            self.events.append("abort-graph")
+            self.timeline.append("abort-graph")
+            return protocol.ContainedGraphReply(
+                request, self.graph.abort_manifest(request.manifest)
+            )
+
+        def install(request):
+            self.events.append("install:{}".format(request.effect.index))
+            self.timeline.append("install:{}".format(request.effect.index))
+            changed = request.effect not in self.pins
+            self.pins.add(request.effect)
+            return InlineChildEffectReply(request, True, changed)
+
+        def release(request):
+            self.events.append("release:{}".format(request.effect.index))
+            self.timeline.append("release:{}".format(request.effect.index))
+            changed = request.effect in self.pins
+            self.pins.discard(request.effect)
+            return InlineChildEffectReply(request, True, changed)
+
+        self.node._inline_publications = InlinePublicationNodeRuntime(
+            self.node._inline_publication_journal,
+            prepare_graph=prepare_graph, commit_graph=reject_commit,
+            abort_graph=abort_graph, install_child=install,
+            release_child=release,
+        )
+
+    @property
+    def publication_id(self):
+        return self.envelope.publication_id
+
+    def open(self):
+        return self.node._handle_open_inline_contained_publication(
+            protocol.OpenInlineContainedPublication(self.envelope)
+        )
+
+    def prepare(self):
+        return self.node._handle_prepare_inline_contained_publication(
+            protocol.PrepareInlineContainedPublication(
+                self.publication_id, self.envelope.manifest.manifest_digest
+            )
+        )
+
+    def complete(self, status=protocol.TaskReplyStatus.SUCCEEDED):
+        return self.node._handle_complete_worker_lease(
+            self.completion_request(status)
+        )
+
+    def completion_request(self, status=protocol.TaskReplyStatus.SUCCEEDED):
+        return protocol.CompleteWorkerLease(
+            self.record.request.lease_id, self.record.request.task_id,
+            self.record.request.attempt_id, self.executor, status,
+        )
+
+    def outcome_request(self):
+        return protocol.GetWorkerLeaseOutcome(
+            self.record.request.lease_id, self.record.request.task_id,
+            self.record.request.attempt_id, self.executor, self.owner,
+            self.record.request.return_ids,
+        )
+
+    def lose_worker(self):
+        self.node._workers[self.executor].process = SimpleNamespace(
+            is_alive=lambda: False
+        )
+        with self.node._state_lock:
+            return self.node._reclaim_active_lease_after_worker_exit_locked(
+                self.executor
+            )
+
+
+@pytest.mark.unit
+def test_open_prepare_bind_order_and_authority_exclusion() -> None:
+    h = _Harness(edge_count=2)
+    opened = h.open()
+    assert opened.accepted and opened.changed
+    assert h.record.inline_publication_id == h.publication_id
+    assert h.record.stored_publication_id is None
+
+    prepared = h.prepare()
+    assert prepared.accepted and prepared.changed
+    assert h.events == ["prepare-graph", "install:0", "install:1"]
+    assert h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).pin_bitmap == (True, True)
+    assert h.timeline == [
+        "intent", "prepare-graph", "install:0", "install:1",
+        "prepared",
+    ]
+    recovery = h.recovery.snapshot(h.publication_id)
+    assert recovery.intent.manifest == h.envelope.manifest
+    assert not hasattr(recovery.intent, "envelope")
+    assert recovery.prepared
+
+
+@pytest.mark.unit
+def test_open_ack_loss_replays_exact_intent_before_any_effect() -> None:
+    h = _Harness()
+    calls = 0
+
+    def lose_first_reply(handler, request):
+        nonlocal calls
+        calls += 1
+        reply = h.recovery_rpc(handler, request)
+        if calls == 1:
+            raise TimeoutError("intent ACK lost after apply")
+        return reply
+
+    h.node._stored_gcs_rpc = lose_first_reply
+    with pytest.raises(TimeoutError, match="intent ACK lost"):
+        h.open()
+    assert not h.record.inline_publication_intent_acked
+    assert h.events == []
+
+    replay = h.open()
+
+    assert replay.accepted and not replay.changed
+    assert h.record.inline_publication_intent_acked
+    assert calls == 2
+    assert h.events == []
+
+
+@pytest.mark.unit
+def test_prepared_ack_loss_keeps_effects_and_exact_replay_only_reports() -> None:
+    h = _Harness(edge_count=2)
+    assert h.open().accepted
+    prepared_calls = 0
+
+    def lose_first_prepared_reply(handler, request):
+        nonlocal prepared_calls
+        reply = h.recovery_rpc(handler, request)
+        if isinstance(request, protocol.ReportInlinePublicationPrepared):
+            prepared_calls += 1
+            if prepared_calls == 1:
+                raise TimeoutError("PREPARED ACK lost after apply")
+        return reply
+
+    h.node._stored_gcs_rpc = lose_first_prepared_reply
+    with pytest.raises(TimeoutError, match="PREPARED ACK lost"):
+        h.prepare()
+    assert not h.record.inline_publication_prepared_acked
+    assert len(h.pins) == 2
+    assert "abort-graph" not in h.events
+    effects = tuple(h.events)
+
+    replay = h.prepare()
+
+    assert replay.accepted and not replay.changed
+    assert h.record.inline_publication_prepared_acked
+    assert tuple(h.events) == effects
+    assert prepared_calls == 2
+
+
+@pytest.mark.unit
+def test_success_complete_returns_journal_envelope_without_gcs_commit() -> None:
+    h = _Harness()
+    assert h.open().accepted and h.prepare().accepted
+
+    reply = h.complete()
+
+    assert reply.accepted and reply.released
+    assert reply.inline_publication == h.envelope
+    assert reply.stored_publication is None
+    assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.commit_calls == 0
+    assert h.graph.get_manifest(
+        h.publication_id.graph_transaction_id
+    ) == h.envelope.to_graph_manifest()
+    assert not h.record.inline_publication_terminal_acked
+    assert h.recovery.snapshot(h.publication_id).terminal is None
+
+
+@pytest.mark.unit
+def test_complete_replay_and_outcome_return_without_any_gcs_io() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    assert h.node._ledger.available == ResourceVector.empty()
+
+    def forbid_io(*_args, **_kwargs):
+        raise AssertionError(
+            "INLINE completion/outcome must not send or flush a GCS RPC"
+        )
+
+    h.node._stored_gcs_rpc = forbid_io
+    h.node._background_rpc = forbid_io
+    h.node._flush_pending_resource_report = forbid_io
+
+    completed = h.complete()
+    replay = h.complete()
+    outcome = h.node._handle_get_worker_lease_outcome(h.outcome_request())
+
+    assert completed.accepted and completed.released
+    assert replay.accepted and not replay.released
+    assert completed.inline_publication is h.envelope
+    assert replay.inline_publication is h.envelope
+    assert outcome.inline_publication is h.envelope
+    assert outcome.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.node._ledger.available == ResourceVector.of(CPU=1)
+    assert h.node._workers[h.executor].active_lease_id is None
+    assert h.node._resource_report_version == 1
+    assert h.record.completion == h.completion_request()
+    assert h.record.inline_publication_complete_inflight is None
+    assert not h.record.inline_publication_terminal_acked
+    assert not h.node._inline_publications_clean_locked()
+
+
+@pytest.mark.unit
+def test_complete_still_requires_the_exact_prepared_ack() -> None:
+    h = _Harness()
+    h.open()
+
+    def lose_prepared_reply(handler, request):
+        reply = h.recovery_rpc(handler, request)
+        if isinstance(request, protocol.ReportInlinePublicationPrepared):
+            raise TimeoutError("PREPARED ACK unavailable")
+        return reply
+
+    h.node._stored_gcs_rpc = lose_prepared_reply
+    with pytest.raises(TimeoutError, match="PREPARED ACK"):
+        h.prepare()
+    assert h.recovery.snapshot(h.publication_id).prepared
+    assert not h.record.inline_publication_prepared_acked
+
+    rejected = h.complete()
+
+    assert not rejected.accepted and not rejected.released
+    assert "PREPARED ACK" in rejected.error
+    assert h.record.state is protocol.LeaseExecutionState.RUNNING
+    assert h.node._ledger.available == ResourceVector.empty()
+    assert not h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).complete_crossed
+    assert h.record.inline_publication_complete_inflight is None
+
+    h.node._stored_gcs_rpc = h.recovery_rpc
+    assert h.prepare().accepted
+    assert h.complete().accepted
+
+
+@pytest.mark.unit
+def test_outcome_recovers_same_inline_envelope_without_descriptors() -> None:
+    h = _Harness()
+    h.open(); h.prepare(); h.complete()
+    query = protocol.GetWorkerLeaseOutcome(
+        h.record.request.lease_id, h.record.request.task_id,
+        h.record.request.attempt_id, h.executor, h.owner,
+        h.record.request.return_ids,
+    )
+
+    reply = h.node._handle_get_worker_lease_outcome(query)
+
+    assert reply.state is protocol.LeaseExecutionState.COMPLETED
+    assert reply.inline_publication == h.envelope
+    assert reply.descriptors == reply.orphan_descriptors == ()
+    assert h.commit_calls == 0
+
+
+@pytest.mark.unit
+def test_open_rejects_stored_bound_lease_without_journal_effect() -> None:
+    h = _Harness()
+    h.record.stored_publication_id = SimpleNamespace()
+
+    reply = h.open()
+
+    assert not reply.accepted
+    assert h.node._inline_publication_journal.publication_ids() == ()
+
+
+@pytest.mark.unit
+def test_prepare_failure_is_trusted_only_after_explicit_rollback() -> None:
+    h = _Harness(edge_count=2)
+    h.open()
+    calls = 0
+
+    def fail_second(request):
+        nonlocal calls
+        calls += 1
+        h.pins.add(request.effect)
+        if request.effect.index == 1:
+            raise ValueError("explicit pin rejection")
+        return InlineChildEffectReply(request, True, True)
+
+    h.node._inline_publications._install_child = fail_second
+    reply = h.prepare()
+
+    assert not reply.accepted
+    assert "explicit pin rejection" in (reply.error or "")
+    snapshot = h.node._inline_publication_journal.snapshot(h.publication_id)
+    assert snapshot.rollback_finished
+    assert not h.pins
+    assert h.events[-3:] == ["release:1", "release:0", "abort-graph"]
+    assert h.timeline[-4:] == [
+        "release:1", "release:0", "abort-graph", "aborted",
+    ]
+    assert h.record.inline_publication_aborted_acked
+    assert (
+        h.recovery.snapshot(h.publication_id).resolution
+        is InlineRecoveryResolution.ABORTED
+    )
+    failed = h.complete(protocol.TaskReplyStatus.SYSTEM_ERROR)
+    assert failed.accepted and failed.released
+    assert failed.inline_publication is None
+    assert h.commit_calls == 0
+
+
+@pytest.mark.unit
+def test_explicit_abort_ack_loss_replays_retirement_before_rejection() -> None:
+    h = _Harness()
+    assert h.open().accepted
+
+    def fail_install(request):
+        h.pins.add(request.effect)
+        raise ValueError("pin failed after possible apply")
+
+    h.node._inline_publications._install_child = fail_install
+    aborted_calls = 0
+
+    def lose_first_aborted_reply(handler, request):
+        nonlocal aborted_calls
+        reply = h.recovery_rpc(handler, request)
+        if isinstance(request, protocol.AcknowledgeInlinePublicationAborted):
+            aborted_calls += 1
+            if aborted_calls == 1:
+                raise TimeoutError("ABORTED ACK lost after apply")
+        return reply
+
+    h.node._stored_gcs_rpc = lose_first_aborted_reply
+
+    with pytest.raises(TimeoutError, match="ABORTED ACK lost"):
+        h.prepare()
+    assert h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).rollback_finished
+    assert not h.record.inline_publication_aborted_acked
+    assert not h.node._inline_publications_clean_locked()
+
+    replay = h.prepare()
+
+    assert not replay.accepted
+    assert h.record.inline_publication_aborted_acked
+    assert h.node._inline_publications_clean_locked()
+    assert aborted_calls == 2
+    assert h.events.count("abort-graph") == 1
+    assert not h.pins
+
+
+@pytest.mark.unit
+def test_worker_loss_rollback_waits_for_gcs_death_proof() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    h.record.state = protocol.LeaseExecutionState.WORKER_LOST
+    h.node._inline_publications._release_child = h.node._release_inline_child_pin
+    h.node._dead_worker_exitcodes = {h.executor: 23}
+    h.node._gcs_proves_worker_dead = lambda worker: False
+
+    assert not h.node._drive_terminal_inline_publications(h.executor)
+    assert not h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).rollback_finished
+
+    h.node._gcs_proves_worker_dead = lambda worker: worker == h.executor
+    assert h.node._drive_terminal_inline_publications(h.executor)
+    assert h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).rollback_finished
+    assert h.record.inline_publication_aborted_acked
+    assert (
+        h.recovery.snapshot(h.publication_id).resolution
+        is InlineRecoveryResolution.ABORTED
+    )
+    assert h.commit_calls == 0
+
+
+@pytest.mark.unit
+def test_worker_loss_resumes_an_ambiguous_explicit_abort() -> None:
+    h = _Harness(edge_count=2)
+    h.open(); h.prepare()
+    original_abort = h.node._inline_publications._abort_graph
+    calls = 0
+
+    def lose_first_abort(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            original_abort(request)
+            raise TimeoutError("ABORT ACK lost")
+        return original_abort(request)
+
+    h.node._inline_publications._abort_graph = lose_first_abort
+    with pytest.raises(TimeoutError, match="ABORT ACK lost"):
+        h.node._inline_publications.abort(
+            h.node._inline_binding_for_record(h.record, h.node_id),
+            h.publication_id,
+        )
+    snapshot = h.node._inline_publication_journal.snapshot(h.publication_id)
+    assert snapshot.explicit_abort_started and snapshot.rollback_started
+    assert not snapshot.rollback_finished
+
+    h.record.state = protocol.LeaseExecutionState.WORKER_LOST
+    assert h.node._drive_terminal_inline_publications(h.executor)
+    terminal = h.node._inline_publication_journal.snapshot(h.publication_id)
+    assert terminal.rollback_finished
+    assert terminal.worker_loss is None
+    assert calls == 2
+
+
+@pytest.mark.unit
+def test_shutdown_cleanliness_blocks_unresolved_inline_publication() -> None:
+    h = _Harness()
+    h.open()
+    assert not h.node._inline_publications_clean_locked()
+    h.record.state = protocol.LeaseExecutionState.WORKER_LOST
+    assert h.node._drive_terminal_inline_publications(h.executor)
+    assert h.node._inline_publications_clean_locked()
+
+
+@pytest.mark.unit
+def test_aborted_ack_loss_keeps_shutdown_dirty_until_exact_replay() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    h.record.state = protocol.LeaseExecutionState.WORKER_LOST
+    aborted_calls = 0
+
+    def lose_first_aborted_reply(handler, request):
+        nonlocal aborted_calls
+        reply = h.recovery_rpc(handler, request)
+        if isinstance(request, protocol.AcknowledgeInlinePublicationAborted):
+            aborted_calls += 1
+            if aborted_calls == 1:
+                raise TimeoutError("ABORTED ACK lost after apply")
+        return reply
+
+    h.node._stored_gcs_rpc = lose_first_aborted_reply
+
+    assert not h.node._drive_terminal_inline_publications(h.executor)
+    snapshot = h.node._inline_publication_journal.snapshot(h.publication_id)
+    assert snapshot.rollback_finished
+    assert not h.record.inline_publication_aborted_acked
+    assert not h.node._inline_publications_clean_locked()
+
+    assert h.node._drive_terminal_inline_publications(h.executor)
+    assert h.record.inline_publication_aborted_acked
+    assert h.node._inline_publications_clean_locked()
+    assert aborted_calls == 2
+
+
+@pytest.mark.unit
+def test_terminal_ack_loss_keeps_only_background_report_pending() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    terminal_calls = 0
+
+    def lose_first_terminal_reply(handler, request):
+        nonlocal terminal_calls
+        reply = h.recovery_rpc(handler, request)
+        if isinstance(request, protocol.ReportInlinePublicationTerminal):
+            terminal_calls += 1
+            if terminal_calls == 1:
+                raise TimeoutError("TERMINAL ACK lost after apply")
+        return reply
+
+    h.node._stored_gcs_rpc = lose_first_terminal_reply
+    completed = h.complete()
+    assert completed.accepted and completed.released
+    assert terminal_calls == 0
+    assert h.record.inline_publication_complete_inflight is None
+    assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.node._ledger.available == ResourceVector.of(CPU=1)
+    assert h.node._workers[h.executor].active_lease_id is None
+    assert not h.node._inline_publications_clean_locked()
+
+    assert not h.node._drive_terminal_inline_publications()
+    assert not h.record.inline_publication_terminal_acked
+    assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.record.inline_publication_envelope == h.envelope
+    assert not h.node._inline_publications_clean_locked()
+    replay = h.complete()
+    assert replay.accepted and not replay.released
+    assert replay.inline_publication == h.envelope
+    assert h.record.inline_publication_complete_inflight is None
+    assert terminal_calls == 1
+
+    assert h.node._drive_terminal_inline_publications()
+    assert h.record.inline_publication_terminal_acked
+    assert h.node._inline_publications_clean_locked()
+    assert terminal_calls == 2
+    assert h.commit_calls == 0
+
+
+@pytest.mark.unit
+def test_outcome_keeps_success_after_terminal_ack_loss_and_worker_loss(
+) -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    terminal_calls = 0
+
+    def lose_first_terminal_reply(handler, request):
+        nonlocal terminal_calls
+        reply = h.recovery_rpc(handler, request)
+        if isinstance(request, protocol.ReportInlinePublicationTerminal):
+            terminal_calls += 1
+            if terminal_calls == 1:
+                raise TimeoutError("TERMINAL ACK lost after apply")
+        return reply
+
+    h.node._stored_gcs_rpc = lose_first_terminal_reply
+    completed = h.complete()
+    assert completed.accepted and completed.released
+    assert not h.node._drive_terminal_inline_publications()
+    assert h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).complete_crossed
+    assert h.record.inline_publication_complete_inflight is None
+
+    # Physical executor loss cannot overwrite a locally completed result.
+    assert not h.lose_worker()
+    query = h.outcome_request()
+
+    outcome = h.node._handle_get_worker_lease_outcome(query)
+
+    assert outcome.state is protocol.LeaseExecutionState.COMPLETED
+    assert outcome.completion_status is protocol.TaskReplyStatus.SUCCEEDED
+    assert outcome.inline_publication == h.envelope
+    assert outcome.descriptors == outcome.orphan_descriptors == ()
+    assert not outcome.worker_alive
+    assert h.record.inline_publication_complete_inflight is None
+    assert not h.record.inline_publication_terminal_acked
+    assert terminal_calls == 1
+    assert h.commit_calls == 0
+
+
+@pytest.mark.unit
+def test_outcome_never_exposes_worker_lost_after_complete_boundary(
+) -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+
+    def unavailable_terminal(_handler, request):
+        if isinstance(request, protocol.ReportInlinePublicationTerminal):
+            raise TimeoutError("GCS terminal report unavailable")
+        return h.recovery_rpc(_handler, request)
+
+    h.node._stored_gcs_rpc = unavailable_terminal
+    complete = h.completion_request()
+    h.record.inline_publication_complete_inflight = complete
+    h.node._inline_publication_journal.record_complete(
+        InlinePublicationCompleteBoundary(
+            h.node._inline_binding_for_record(h.record, h.node_id),
+            h.publication_id,
+        )
+    )
+    assert h.lose_worker()
+    assert h.record.state is protocol.LeaseExecutionState.WORKER_LOST
+    query = h.outcome_request()
+
+    recovered = h.node._handle_get_worker_lease_outcome(query)
+
+    assert recovered.state is protocol.LeaseExecutionState.COMPLETED
+    assert recovered.inline_publication == h.envelope
+    assert recovered.completion_status is protocol.TaskReplyStatus.SUCCEEDED
+    assert h.record.inline_publication_complete_inflight is None
+    assert not h.record.inline_publication_terminal_acked
+    assert not h.node._drive_terminal_inline_publications()
+    assert not h.node._inline_publications_clean_locked()
+
+    h.node._stored_gcs_rpc = h.recovery_rpc
+    assert h.node._drive_terminal_inline_publications()
+    assert h.node._inline_publications_clean_locked()
+
+
+@pytest.mark.unit
+def test_worker_loss_after_complete_boundary_replays_terminal_without_commit() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    complete = protocol.CompleteWorkerLease(
+        h.record.request.lease_id, h.record.request.task_id,
+        h.record.request.attempt_id, h.executor,
+        protocol.TaskReplyStatus.SUCCEEDED,
+    )
+    binding = h.node._inline_binding_for_record(h.record, h.node_id)
+    h.record.inline_publication_complete_inflight = complete
+    h.node._inline_publication_journal.record_complete(
+        InlinePublicationCompleteBoundary(binding, h.publication_id)
+    )
+    assert h.lose_worker()
+
+    assert h.node._drive_terminal_inline_publications(h.executor)
+
+    assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.record.completion == complete
+    assert h.record.inline_publication_envelope == h.envelope
+    assert h.record.inline_publication_terminal_acked
+    assert h.commit_calls == 0
+
+
+@pytest.mark.unit
+def test_background_terminal_failure_releases_interrupted_local_completion() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    h.record.inline_publication_complete_inflight = h.completion_request()
+    h.node._inline_publication_journal.record_complete(
+        InlinePublicationCompleteBoundary(
+            h.node._inline_binding_for_record(h.record, h.node_id),
+            h.publication_id,
+        )
+    )
+    reports = []
+
+    def unavailable(_handler, request):
+        reports.append(request)
+        assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+        assert h.node._ledger.available == ResourceVector.of(CPU=1)
+        assert h.node._workers[h.executor].active_lease_id is None
+        assert h.record.inline_publication_envelope is h.envelope
+        raise TimeoutError("terminal metadata temporarily unavailable")
+
+    h.node._stored_gcs_rpc = unavailable
+
+    assert not h.node._drive_terminal_inline_publications()
+    assert len(reports) == 1
+    assert isinstance(reports[0], protocol.ReportInlinePublicationTerminal)
+    assert h.record.inline_publication_complete_inflight is None
+    assert h.record.completion == h.completion_request()
+    assert not h.record.inline_publication_terminal_acked
+    assert not h.node._inline_publications_clean_locked()
+    outcome = h.node._handle_get_worker_lease_outcome(h.outcome_request())
+    assert outcome.inline_publication is h.envelope
+    assert len(reports) == 1
+
+
+@pytest.mark.unit
+def test_terminal_callback_can_read_exact_local_complete_without_another_rpc() -> None:
+    """Pure reentrancy check; the separate smoke proves cross-thread progress."""
+
+    h = _Harness()
+    h.open(); h.prepare(); h.complete()
+    calls = []
+
+    def read_before_reply(handler, request):
+        calls.append(request)
+        assert isinstance(request, protocol.ReportInlinePublicationTerminal)
+        assert len(calls) == 1
+        replay = h.complete()
+        outcome = h.node._handle_get_worker_lease_outcome(h.outcome_request())
+        assert replay.accepted and not replay.released
+        assert replay.inline_publication is outcome.inline_publication
+        assert outcome.inline_publication is h.envelope
+        assert not h.record.inline_publication_terminal_acked
+        return h.recovery_rpc(handler, request)
+
+    h.node._stored_gcs_rpc = read_before_reply
+
+    assert h.node._drive_terminal_inline_publications()
+    assert len(calls) == 1
+    assert h.record.inline_publication_terminal_acked
+
+
+@pytest.mark.unit
+def test_owner_fence_during_terminal_rpc_defers_ack_to_owner_cleanup() -> None:
+    h = _Harness()
+    h.open(); h.prepare(); h.complete()
+    reports = []
+
+    def fence_after_apply(handler, request):
+        reports.append(request)
+        reply = h.recovery_rpc(handler, request)
+        h.node._owner_death_fences = {
+            h.owner: SimpleNamespace(detection_id="owner-exit-cut")
+        }
+        return reply
+
+    h.node._stored_gcs_rpc = fence_after_apply
+
+    assert not h.node._drive_terminal_inline_publications()
+    assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.record.inline_publication_envelope is h.envelope
+    assert not h.record.inline_publication_terminal_acked
+    assert not h.node._inline_publications_clean_locked()
+    assert not h.node._drive_terminal_inline_publications()
+    assert len(reports) == 1
+    assert not h.complete().accepted
+    assert not h.node._handle_get_worker_lease_outcome(
+        h.outcome_request()
+    ).found
+
+
+@pytest.mark.unit
+def test_owner_cleanup_during_terminal_rpc_cannot_resurrect_journal() -> None:
+    h = _Harness()
+    h.open(); h.prepare(); h.complete()
+    death = protocol.WorkerDeathRecord(
+        "owner-terminal-race",
+        protocol.WorkerIncarnation(NodeID.random(), 9101, 1, h.owner, 9102),
+        1, 23, protocol.WorkerDeathReason.PROCESS_EXIT,
+    )
+    effect = FinalizePublicationOwnerDeathEffect(
+        "finalize-owner-terminal-race",
+        InlinePublicationOwnerDeathKey(h.publication_id), death, h.node_id,
+        PublicationRecoveryHistory.COMMIT_UNKNOWN,
+    )
+    reports = []
+
+    def finalize_after_apply(handler, request):
+        reports.append(request)
+        reply = h.recovery_rpc(handler, request)
+        # The exact owner-death fence and cleanup barrier can overtake an
+        # already-applied GCS report whose acknowledgement is still in flight.
+        h.node._owner_death_fences = {h.owner: death}
+        finalized = h.node._handle_finalize_publication_owner_death(
+            protocol.FinalizePublicationOwnerDeath.from_effect(effect)
+        )
+        assert finalized.accepted
+        return reply
+
+    h.node._stored_gcs_rpc = finalize_after_apply
+
+    assert h.node._drive_terminal_inline_publications()
+    snapshot = h.node._inline_publication_journal.snapshot(h.publication_id)
+    assert snapshot.phase is InlineNodePublicationPhase.OWNER_DEATH_CLEANED
+    assert snapshot.owner_death_cleanup == effect
+    assert not h.record.inline_publication_terminal_acked
+    assert h.record.inline_publication_complete_inflight is None
+    assert h.node._inline_publications_clean_locked()
+    assert h.node._drive_terminal_inline_publications()
+    assert len(reports) == 1
+    assert not h.complete().accepted
+
+
+@pytest.mark.unit
+def test_complete_intent_alone_cannot_win_after_worker_loss() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    h.record.inline_publication_complete_inflight = h.completion_request()
+    assert h.lose_worker()
+
+    rejected = h.complete()
+
+    assert not rejected.accepted and not rejected.released
+    assert h.record.state is protocol.LeaseExecutionState.WORKER_LOST
+    assert not h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).complete_crossed
+    assert h.node._drive_terminal_inline_publications()
+    assert h.record.inline_publication_complete_inflight is None
+    assert h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).rollback_finished
+    assert h.node._inline_publications_clean_locked()
+    outcome = h.node._handle_get_worker_lease_outcome(h.outcome_request())
+    assert outcome.state is protocol.LeaseExecutionState.WORKER_LOST
+    assert outcome.inline_publication is None
+
+
+@pytest.mark.unit
+def test_complete_replay_recovers_local_fault_after_resource_release() -> None:
+    h = _Harness()
+    h.open(); h.prepare()
+    original_release = h.node._release_record_locked
+    release_calls = []
+
+    def fail_after_release(record, state):
+        released = original_release(record, state)
+        release_calls.append(released)
+        raise RuntimeError("interrupted after local lease release")
+
+    h.node._release_record_locked = fail_after_release
+    with pytest.raises(RuntimeError, match="after local lease release"):
+        h.complete()
+    assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.record.completion is None
+    assert h.record.inline_publication_complete_inflight == h.completion_request()
+    assert h.node._ledger.available == ResourceVector.of(CPU=1)
+    assert h.node._inline_publication_journal.snapshot(
+        h.publication_id
+    ).complete_crossed
+
+    h.node._release_record_locked = original_release
+    replay = h.complete()
+
+    assert replay.accepted and not replay.released
+    assert replay.inline_publication is h.envelope
+    assert release_calls == [True]
+    assert h.record.completion == h.completion_request()
+    assert h.record.inline_publication_complete_inflight is None
+    assert not h.record.inline_publication_terminal_acked
+
+
+@pytest.mark.unit
+def test_supervisor_flushes_completion_metadata_without_starting_threads() -> None:
+    h = _Harness()
+    h.open(); h.prepare(); h.complete()
+    waits = []
+
+    class OnePollStop:
+        stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def wait(self, timeout):
+            waits.append(timeout)
+            self.stopped = True
+
+    h.node._worker_supervisor_stop = OnePollStop()
+    h.node._flush_pending_worker_death_reports = lambda: None
+    h.node._registered_with_gcs = True
+    h.node._gcs_address = ("127.0.0.1", 33999)
+    resource_reports = []
+
+    def report_resource(_address, _handler, request):
+        resource_reports.append(request)
+        assert isinstance(request, protocol.UpdateNodeResources)
+        return protocol.UpdateNodeResourcesReply(
+            request.node_id, request.node_pid, request.registration_epoch,
+            request.report_seq, updated=True,
+        )
+
+    h.node._background_rpc = report_resource
+
+    h.node._worker_supervisor_loop()
+
+    assert len(waits) == 1
+    assert len(resource_reports) == 1
+    assert resource_reports[0].available_resources == ResourceVector.of(CPU=1)
+    assert h.node._resource_reported_version == h.node._resource_report_version
+    assert h.record.inline_publication_terminal_acked
+    assert h.node._inline_publications_clean_locked()
+
+
+@pytest.mark.loopback_smoke
+def test_pending_terminal_rpc_does_not_lock_out_complete_or_outcome() -> None:
+    """Real bounded concurrency gate; deliberately excluded from unit runs."""
+
+    h = _Harness()
+    h.open(); h.prepare()
+    complete = h.completion_request()
+    first = h.node._handle_complete_worker_lease(complete)
+    assert first.accepted and first.released
+    terminal_entered = threading.Event()
+    allow_terminal_ack = threading.Event()
+    original_rpc = h.recovery_rpc
+
+    def block_terminal(handler, request):
+        if isinstance(request, protocol.ReportInlinePublicationTerminal):
+            terminal_entered.set()
+            assert allow_terminal_ack.wait(1.0)
+        return original_rpc(handler, request)
+
+    h.node._stored_gcs_rpc = block_terminal
+    complete_replies = []
+    outcomes = []
+    driver_results = []
+    errors = []
+
+    def drive():
+        try:
+            driver_results.append(
+                h.node._drive_terminal_inline_publications(h.executor)
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def replay_and_query():
+        try:
+            complete_replies.append(
+                h.node._handle_complete_worker_lease(complete)
+            )
+            outcomes.append(h.node._handle_get_worker_lease_outcome(
+                h.outcome_request()
+            ))
+        except BaseException as exc:
+            errors.append(exc)
+
+    driver_thread = threading.Thread(target=drive, daemon=True)
+    read_thread = threading.Thread(target=replay_and_query, daemon=True)
+    driver_thread.start()
+    try:
+        assert terminal_entered.wait(1.0)
+        assert not h.lose_worker()
+        read_thread.start()
+        read_thread.join(0.25)
+        assert not read_thread.is_alive()
+        assert driver_thread.is_alive()
+        assert not h.record.inline_publication_terminal_acked
+    finally:
+        allow_terminal_ack.set()
+        driver_thread.join(1.0)
+        if read_thread.ident is not None:
+            read_thread.join(1.0)
+
+    assert not driver_thread.is_alive()
+    assert not read_thread.is_alive()
+    assert not errors
+    assert complete_replies[0].accepted
+    assert not complete_replies[0].released
+    assert complete_replies[0].inline_publication == h.envelope
+    assert outcomes[0].inline_publication == h.envelope
+    assert outcomes[0].state is protocol.LeaseExecutionState.COMPLETED
+    assert not outcomes[0].worker_alive
+    assert driver_results == [True]
+    assert h.record.state is protocol.LeaseExecutionState.COMPLETED
+    assert h.record.completion == complete
+    assert h.record.inline_publication_complete_inflight is None
+    assert h.commit_calls == 0

@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-ray"
+version = "0.1.0.dev0"
+description = "A pedagogical, Python-only implementation of Ray Core semantics"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+    "cloudpickle>=2.2",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4,<9",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["miniray*"]
+
+[tool.setuptools.package-data]
+miniray = ["golden_traces/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "-m",
+    "unit",
+]
+markers = [
+    "unit: pure, single-process tests that are safe for the default local run",
+    "loopback_smoke: bounded single-process thread/socket tests; run explicitly after review",
+    "multiprocess_smoke: bounded real-process tests; run one node id at a time after review",
+    "heavy: stress, benchmark, fuzz, scale, or otherwise unbounded tests; never run locally by default",
+]

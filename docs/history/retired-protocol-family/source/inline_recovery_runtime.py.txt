@@ -1,0 +1,826 @@
+"""Callback-injected, metadata-only Node-loss cleanup for INLINE results.
+
+GCS freezes :class:`~miniray.inline_recovery.InlinePublicationRecoveryWork`
+before this driver runs.  The driver persists one acknowledgement bit per
+manifest slot, releases every possible child hold in reverse order, cleans the
+exact graph manifest, and only then resolves the GCS recovery authority.
+
+An accepted release with ``released=False`` is an idempotent tombstone ACK.
+Alternatively a committed ``WorkerDeathRecord`` for the exact child owner is a
+terminal proof that no owner-side hold can survive.  Transport failures are
+never interpreted as death.  Proven pre-Complete work can be rolled back
+immediately.  Completion-unknown and post-Complete work require the owner's
+monotonic DROP decision; undecided or KEEP work can never enter this driver.
+
+For DROP, GCS chooses ABORT for an uncommitted graph or RELEASE for a committed
+container while holding its graph/decision composition lock.  That choice is
+retained before execution so a lost ACK replays the identical operation.
+Only manifests cross this boundary; neither effects nor receipts hold bytes.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+from enum import Enum
+from threading import RLock
+from typing import Callable, Optional, Tuple, Union
+
+from . import protocol
+from .contained_cycle import (
+    ContainedGraphManifestDisposition, ContainedGraphManifestReceipt,
+    ContainedGraphTransactionState,
+)
+from .contained_edges import ContainedReferenceEdge
+from .inline_recovery import (
+    InlinePublicationRecoveryAck, InlinePublicationRecoveryAuthority,
+    InlinePublicationRecoveryWork, InlineRecoveryAction,
+    InlineRecoveryDisposition, InlineRecoveryOwnerDecision,
+    InlineRecoveryResolution,
+    InlineRecoveryStage,
+)
+
+
+class InlineNodeLossRuntimeError(RuntimeError):
+    """Base class for INLINE Node-loss cleanup failures."""
+
+
+class InlineNodeLossRuntimeConflictError(InlineNodeLossRuntimeError):
+    """A stable work/effect identity was rebound on replay."""
+
+
+class InlineNodeLossRuntimeStateError(InlineNodeLossRuntimeError):
+    """The requested work cannot advance through this driver."""
+
+
+class InlineRecoveryHoldDisposition(str, Enum):
+    RELEASED = "RELEASED"
+    ALREADY_RELEASED = "ALREADY_RELEASED"
+    OWNER_DEAD = "OWNER_DEAD"
+
+
+@dataclass(frozen=True)
+class ReleaseInlineRecoveryHoldEffect:
+    """One reverse-order release-before-add operation bound to frozen work."""
+
+    work: InlinePublicationRecoveryWork
+    index: int
+    edge: ContainedReferenceEdge
+    request: protocol.ReleaseContainedReference
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.work, InlinePublicationRecoveryWork):
+            raise TypeError("work must be an InlinePublicationRecoveryWork")
+        if (
+            isinstance(self.index, bool)
+            or not isinstance(self.index, int)
+            or self.index < 0
+        ):
+            raise ValueError("index must be a non-negative integer")
+        if not isinstance(self.edge, ContainedReferenceEdge):
+            raise TypeError("edge must be a ContainedReferenceEdge")
+        if not isinstance(self.request, protocol.ReleaseContainedReference):
+            raise TypeError(
+                "request must be a ReleaseContainedReference"
+            )
+        edges = self.work.manifest.ordered_edges
+        if self.index >= len(edges) or edges[self.index] != self.edge:
+            raise InlineNodeLossRuntimeConflictError(
+                "release effect changed its exact manifest slot"
+            )
+        expected_hold = self.edge.incoming_hold(
+            self.work.manifest.outer_owner_worker_id
+        )
+        if (
+            self.request.object_id != self.edge.contained_object_id
+            or self.request.owner_worker_id
+            != self.edge.contained_owner_worker_id
+            or self.request.hold != expected_hold
+        ):
+            raise InlineNodeLossRuntimeConflictError(
+                "release request changed the exact child hold identity"
+            )
+
+
+@dataclass(frozen=True)
+class InlineRecoveryHoldReceipt:
+    """Terminal proof for one exact child-hold cleanup effect."""
+
+    effect: ReleaseInlineRecoveryHoldEffect
+    disposition: InlineRecoveryHoldDisposition
+    release_reply: Optional[protocol.ReleaseContainedReferenceReply] = None
+    owner_death: Optional[protocol.WorkerDeathRecord] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, ReleaseInlineRecoveryHoldEffect):
+            raise TypeError(
+                "effect must be a ReleaseInlineRecoveryHoldEffect"
+            )
+        if not isinstance(self.disposition, InlineRecoveryHoldDisposition):
+            raise TypeError("hold disposition is invalid")
+        if self.disposition is InlineRecoveryHoldDisposition.OWNER_DEAD:
+            if self.release_reply is not None:
+                raise ValueError(
+                    "OWNER_DEAD cannot also contain a release reply"
+                )
+            try:
+                supplied = self.owner_death
+                if not isinstance(supplied, protocol.WorkerDeathRecord):
+                    death = None
+                else:
+                    incarnation = protocol.WorkerIncarnation(
+                        supplied.node_id, supplied.node_pid,
+                        supplied.node_registration_epoch, supplied.worker_id,
+                        supplied.worker_pid,
+                    )
+                    death = protocol.WorkerDeathRecord(
+                        supplied.detection_id, incarnation,
+                        supplied.death_epoch, supplied.exit_code,
+                        supplied.reason,
+                    )
+            except (TypeError, ValueError, protocol.ProtocolError) as exc:
+                raise ValueError(
+                    "OWNER_DEAD requires a valid child-owner death proof"
+                ) from exc
+            if (
+                death is None
+                or death.worker_id
+                != self.effect.edge.contained_owner_worker_id
+                or death.reason not in (
+                    protocol.WorkerDeathReason.PROCESS_EXIT,
+                    protocol.WorkerDeathReason.NODE_EXIT,
+                )
+            ):
+                raise ValueError(
+                    "OWNER_DEAD requires the exact non-expected "
+                    "child-owner death proof"
+                )
+            object.__setattr__(self, "owner_death", death)
+            return
+        if self.owner_death is not None:
+            raise ValueError(
+                "a release ACK cannot also contain an owner death proof"
+            )
+        reply = self.release_reply
+        request = self.effect.request
+        if not isinstance(reply, protocol.ReleaseContainedReferenceReply):
+            raise TypeError(
+                "released hold receipt requires a release reply"
+            )
+        if (
+            reply.object_id != request.object_id
+            or reply.owner_worker_id != request.owner_worker_id
+            or reply.hold != request.hold
+            or type(reply.accepted) is not bool
+            or type(reply.released) is not bool
+            or not reply.accepted
+            or reply.error is not None
+        ):
+            raise InlineNodeLossRuntimeConflictError(
+                "release receipt did not acknowledge the exact child hold"
+            )
+        expected = (
+            InlineRecoveryHoldDisposition.RELEASED
+            if reply.released
+            else InlineRecoveryHoldDisposition.ALREADY_RELEASED
+        )
+        if self.disposition is not expected:
+            raise InlineNodeLossRuntimeConflictError(
+                "release disposition contradicts the exact owner reply"
+            )
+
+
+@dataclass(frozen=True)
+class AbortInlineRecoveryGraphEffect:
+    """Exact graph ABORT performed after every hold terminal receipt."""
+
+    work: InlinePublicationRecoveryWork
+    request: protocol.AbortContainedGraph
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.work, InlinePublicationRecoveryWork):
+            raise TypeError("work must be an InlinePublicationRecoveryWork")
+        if not isinstance(self.request, protocol.AbortContainedGraph):
+            raise TypeError("request must be an AbortContainedGraph")
+        if self.request.manifest != self.work.manifest.to_graph_manifest():
+            raise InlineNodeLossRuntimeConflictError(
+                "graph abort changed the exact frozen manifest"
+            )
+
+
+@dataclass(frozen=True)
+class ReleaseInlineRecoveryGraphEffect:
+    """Exact committed-container RELEASE after an owner DROP fence."""
+
+    work: InlinePublicationRecoveryWork
+    request: protocol.ReleaseContainedGraphContainer
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.work, InlinePublicationRecoveryWork):
+            raise TypeError("work must be an InlinePublicationRecoveryWork")
+        if self.work.action not in (
+            InlineRecoveryAction.COMPLETION_UNKNOWN,
+            InlineRecoveryAction.POSTCOMPLETE_RESOLVE,
+        ):
+            raise ValueError(
+                "graph release requires completion-unknown or post-Complete work"
+            )
+        if not isinstance(self.request, protocol.ReleaseContainedGraphContainer):
+            raise TypeError(
+                "request must be a ReleaseContainedGraphContainer"
+            )
+        if (
+            self.request.manifest != self.work.manifest.to_graph_manifest()
+            or self.request.container_object_id
+            != self.work.publication_id.outer_object_id
+        ):
+            raise InlineNodeLossRuntimeConflictError(
+                "graph release changed the exact frozen manifest or container"
+            )
+
+
+InlineRecoveryGraphEffect = Union[
+    AbortInlineRecoveryGraphEffect, ReleaseInlineRecoveryGraphEffect
+]
+InlineNodeLossEffect = Union[
+    ReleaseInlineRecoveryHoldEffect, InlineRecoveryGraphEffect
+]
+InlineNodeLossReceipt = Union[
+    InlineRecoveryHoldReceipt, protocol.ContainedGraphReply
+]
+ReleaseChild = Callable[
+    [ReleaseInlineRecoveryHoldEffect], InlineRecoveryHoldReceipt
+]
+AbortGraph = Callable[
+    [AbortInlineRecoveryGraphEffect], protocol.ContainedGraphReply
+]
+ReleaseGraph = Callable[
+    [ReleaseInlineRecoveryGraphEffect], protocol.ContainedGraphReply
+]
+ChooseGraphCleanup = Callable[
+    [InlinePublicationRecoveryWork], InlineRecoveryGraphEffect
+]
+
+
+@dataclass(frozen=True)
+class InlineNodeLossRuntimeSnapshot:
+    work: InlinePublicationRecoveryWork
+    release_bitmap: Tuple[bool, ...]
+    graph_aborted: bool
+    authority_acknowledged: bool
+    next_effect: Optional[InlineNodeLossEffect]
+    resolution_ack: Optional[InlinePublicationRecoveryAck]
+    graph_released: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.work, InlinePublicationRecoveryWork):
+            raise TypeError("work must be an InlinePublicationRecoveryWork")
+        bitmap = tuple(self.release_bitmap)
+        if (
+            len(bitmap) != len(self.work.manifest.ordered_edges)
+            or any(type(value) is not bool for value in bitmap)
+        ):
+            raise ValueError(
+                "release_bitmap must contain one bool per manifest edge"
+            )
+        if type(self.graph_aborted) is not bool:
+            raise TypeError("graph_aborted must be a bool")
+        if type(self.graph_released) is not bool:
+            raise TypeError("graph_released must be a bool")
+        if self.graph_aborted and self.graph_released:
+            raise ValueError("graph cleanup cannot be both ABORT and RELEASE")
+        if (
+            self.graph_released
+            and self.work.action is InlineRecoveryAction.PRECOMPLETE_ROLLBACK
+        ):
+            raise ValueError("pre-Complete graph cleanup must be ABORT")
+        if type(self.authority_acknowledged) is not bool:
+            raise TypeError("authority_acknowledged must be a bool")
+        if self.next_effect is not None and not isinstance(
+            self.next_effect,
+            (ReleaseInlineRecoveryHoldEffect, AbortInlineRecoveryGraphEffect,
+             ReleaseInlineRecoveryGraphEffect),
+        ):
+            raise TypeError("next_effect is invalid")
+        if self.resolution_ack is not None and not isinstance(
+            self.resolution_ack, InlinePublicationRecoveryAck
+        ):
+            raise TypeError("resolution_ack is invalid")
+        if self.authority_acknowledged != (self.resolution_ack is not None):
+            raise ValueError(
+                "authority ACK flag and receipt must agree"
+            )
+        if self.graph_cleaned and not all(bitmap):
+            raise ValueError(
+                "graph cannot be cleaned before all hold receipts"
+            )
+        if self.authority_acknowledged and not self.graph_cleaned:
+            raise ValueError(
+                "authority cannot resolve before graph cleanup"
+            )
+        object.__setattr__(self, "release_bitmap", bitmap)
+
+    @property
+    def complete(self) -> bool:
+        return self.authority_acknowledged
+
+    @property
+    def graph_cleaned(self) -> bool:
+        return self.graph_aborted or self.graph_released
+
+
+@dataclass
+class _Progress:
+    work: InlinePublicationRecoveryWork
+    release_bitmap: list[bool] = field(default_factory=list)
+    hold_receipts: list[Optional[InlineRecoveryHoldReceipt]] = field(
+        default_factory=list
+    )
+    graph_aborted: bool = False
+    graph_released: bool = False
+    graph_effect: Optional[InlineRecoveryGraphEffect] = None
+    graph_receipt: Optional[protocol.ContainedGraphReply] = None
+    authority_ack: Optional[InlinePublicationRecoveryAck] = None
+
+
+class InlineNodeLossRuntime:
+    """One replay-safe cleanup pipeline for rollback and DROP work.
+
+    The graph-choice and graph-mutation callbacks compose with the current
+    recovery authority under GCS's composition lock.  They must reject an
+    owner-death takeover and fence graph COMMIT after DROP.  Child RPCs never
+    hold that composition lock; this driver rechecks authority at each effect
+    boundary and retains exact receipts for idempotent retries.
+    """
+
+    def __init__(
+        self, authority: InlinePublicationRecoveryAuthority, *,
+        release_child: ReleaseChild, abort_graph: AbortGraph,
+        choose_graph_cleanup: Optional[ChooseGraphCleanup] = None,
+        release_graph: Optional[ReleaseGraph] = None,
+    ) -> None:
+        if not isinstance(authority, InlinePublicationRecoveryAuthority):
+            raise TypeError(
+                "authority must be an InlinePublicationRecoveryAuthority"
+            )
+        if not callable(release_child):
+            raise TypeError("release_child must be callable")
+        if not callable(abort_graph):
+            raise TypeError("abort_graph must be callable")
+        if choose_graph_cleanup is not None and not callable(choose_graph_cleanup):
+            raise TypeError("choose_graph_cleanup must be callable or None")
+        if release_graph is not None and not callable(release_graph):
+            raise TypeError("release_graph must be callable or None")
+        if (choose_graph_cleanup is None) != (release_graph is None):
+            raise ValueError(
+                "choose_graph_cleanup and release_graph must be supplied together"
+            )
+        self.authority = authority
+        self._release_child = release_child
+        self._abort_graph = abort_graph
+        self._choose_graph_cleanup = choose_graph_cleanup
+        self._release_graph = release_graph
+        self._progress: dict[object, _Progress] = {}
+        self._lock = RLock()
+
+    def drive(
+        self, work: InlinePublicationRecoveryWork,
+    ) -> InlineNodeLossRuntimeSnapshot:
+        """Run or resume every missing exact effect to terminal resolution."""
+
+        with self._lock:
+            progress = self._record(work)
+            while True:
+                effect = self._next_effect(progress)
+                if effect is None:
+                    break
+                if isinstance(effect, ReleaseInlineRecoveryHoldEffect):
+                    receipt = self._release_child(effect)
+                    self._acknowledge_hold(progress, effect, receipt)
+                elif isinstance(effect, AbortInlineRecoveryGraphEffect):
+                    receipt = self._abort_graph(effect)
+                    self._acknowledge_graph(progress, effect, receipt)
+                else:
+                    assert self._release_graph is not None
+                    receipt = self._release_graph(effect)
+                    self._acknowledge_graph(progress, effect, receipt)
+            if progress.authority_ack is None:
+                self._resolve_authority(progress)
+            return self._snapshot(progress)
+
+    def snapshot(
+        self, work: InlinePublicationRecoveryWork,
+    ) -> InlineNodeLossRuntimeSnapshot:
+        with self._lock:
+            return self._snapshot(self._record(work))
+
+    def next_effect(
+        self, work: InlinePublicationRecoveryWork,
+    ) -> Optional[InlineNodeLossEffect]:
+        with self._lock:
+            return self._next_effect(self._record(work))
+
+    def acknowledge(
+        self, effect: InlineNodeLossEffect, receipt: InlineNodeLossReceipt,
+    ) -> InlineNodeLossRuntimeSnapshot:
+        """Persist one externally executed exact effect acknowledgement."""
+
+        if not isinstance(
+            effect,
+            (ReleaseInlineRecoveryHoldEffect, AbortInlineRecoveryGraphEffect,
+             ReleaseInlineRecoveryGraphEffect),
+        ):
+            raise TypeError("effect is not an Inline Node-loss effect")
+        with self._lock:
+            progress = self._record(effect.work)
+            expected = self._next_effect(progress)
+            if expected != effect:
+                known = self._known_receipt(progress, effect)
+                if known is not None and known == receipt:
+                    return self._snapshot(progress)
+                raise InlineNodeLossRuntimeStateError(
+                    "acknowledgement is not for the next exact effect"
+                )
+            if isinstance(effect, ReleaseInlineRecoveryHoldEffect):
+                self._acknowledge_hold(progress, effect, receipt)
+            else:
+                self._acknowledge_graph(progress, effect, receipt)
+            return self._snapshot(progress)
+
+    def acknowledge_authority(
+        self, work: InlinePublicationRecoveryWork,
+    ) -> InlineNodeLossRuntimeSnapshot:
+        """Resolve GCS only after every child and graph effect is durable."""
+
+        with self._lock:
+            progress = self._record(work)
+            if (
+                not (progress.graph_aborted or progress.graph_released)
+                or not all(progress.release_bitmap)
+            ):
+                raise InlineNodeLossRuntimeStateError(
+                    "authority cannot resolve before all holds and graph cleanup"
+                )
+            if progress.authority_ack is None:
+                self._resolve_authority(progress)
+            return self._snapshot(progress)
+
+    def has_active_operations(self) -> bool:
+        with self._lock:
+            if any(
+                progress.authority_ack is None
+                and self.authority.snapshot(
+                    progress.work.publication_id
+                ).resolution is None
+                for progress in self._progress.values()
+            ):
+                return True
+            # A death may freeze work before the first progress RPC reaches
+            # this adapter.  Count that durable obligation as active too; an
+            # undecided/KEEP work belongs to its outer owner instead.
+            return any(
+                snapshot.frozen
+                and (
+                    snapshot.recovery_action
+                    is InlineRecoveryAction.PRECOMPLETE_ROLLBACK
+                    or snapshot.owner_decision
+                    is InlineRecoveryOwnerDecision.DROP
+                )
+                for snapshot in self.authority.unresolved_snapshots()
+            )
+
+    def has_active_obligations(self) -> bool:
+        """Compatibility spelling for shutdown barrier composition."""
+
+        return self.has_active_operations()
+
+    def _record(self, work: InlinePublicationRecoveryWork) -> _Progress:
+        if not isinstance(work, InlinePublicationRecoveryWork):
+            raise TypeError("work must be an InlinePublicationRecoveryWork")
+        if work.snapshot.resolution is not None:
+            raise InlineNodeLossRuntimeStateError(
+                "InlineNodeLossRuntime cannot execute already-resolved work"
+            )
+        try:
+            canonical = self.authority.work_for_node_death(
+                work.publication_id, work.death
+            )
+        except Exception as exc:
+            raise InlineNodeLossRuntimeConflictError(
+                "INLINE Node-loss work is not an exact frozen authority item"
+            ) from exc
+        if canonical != work:
+            raise InlineNodeLossRuntimeConflictError(
+                "INLINE Node-loss work is not an exact frozen authority item"
+            )
+        key = work.publication_id
+        previous = self._progress.get(key)
+        if previous is not None:
+            if previous.work != work:
+                raise InlineNodeLossRuntimeConflictError(
+                    "INLINE Node-loss work changed on replay"
+                )
+            self._require_current_authority(work, previous)
+            return previous
+        self._require_current_authority(work)
+        if (
+            work.action is not InlineRecoveryAction.PRECOMPLETE_ROLLBACK
+            and self._choose_graph_cleanup is None
+        ):
+            raise InlineNodeLossRuntimeStateError(
+                "DROP cleanup requires graph-choice and release callbacks"
+            )
+        edges = work.manifest.ordered_edges
+        progress = _Progress(
+            work, [False] * len(edges), [None] * len(edges)
+        )
+        self._progress[key] = progress
+        return progress
+
+    def _next_effect(
+        self, progress: _Progress,
+    ) -> Optional[InlineNodeLossEffect]:
+        self._require_current_authority(progress.work, progress)
+        if progress.authority_ack is not None:
+            return None
+        index = next((
+            index for index in reversed(range(len(progress.release_bitmap)))
+            if not progress.release_bitmap[index]
+        ), None)
+        if index is not None:
+            return self._hold_effect(progress.work, index)
+        if not (progress.graph_aborted or progress.graph_released):
+            if progress.graph_effect is None:
+                if progress.work.action is InlineRecoveryAction.PRECOMPLETE_ROLLBACK:
+                    effect = AbortInlineRecoveryGraphEffect(
+                        progress.work, protocol.AbortContainedGraph(
+                            progress.work.manifest.to_graph_manifest()
+                        ),
+                    )
+                else:
+                    assert self._choose_graph_cleanup is not None
+                    effect = self._choose_graph_cleanup(progress.work)
+                    if not isinstance(
+                        effect, (AbortInlineRecoveryGraphEffect,
+                                 ReleaseInlineRecoveryGraphEffect),
+                    ):
+                        raise InlineNodeLossRuntimeStateError(
+                            "graph choice returned an invalid effect type"
+                        )
+                    try:
+                        validated = replace(
+                            effect, request=replace(effect.request)
+                        )
+                    except (
+                        AttributeError, TypeError, ValueError, RuntimeError,
+                        protocol.ProtocolError,
+                    ) as exc:
+                        raise InlineNodeLossRuntimeConflictError(
+                            "graph choice returned a malformed exact effect"
+                        ) from exc
+                    if validated != effect or effect.work != progress.work:
+                        raise InlineNodeLossRuntimeConflictError(
+                            "graph choice changed the exact frozen work"
+                        )
+                    self._require_current_authority(progress.work, progress)
+                # The exact operation is retained before any destructive call.
+                # A retry never changes ABORT to RELEASE after a lost ACK.
+                progress.graph_effect = effect
+            return progress.graph_effect
+        return None
+
+    @staticmethod
+    def _hold_effect(
+        work: InlinePublicationRecoveryWork, index: int,
+    ) -> ReleaseInlineRecoveryHoldEffect:
+        edge = work.manifest.ordered_edges[index]
+        request = protocol.ReleaseContainedReference(
+            edge.contained_object_id, edge.contained_owner_worker_id,
+            edge.incoming_hold(
+                work.manifest.outer_owner_worker_id
+            ),
+        )
+        return ReleaseInlineRecoveryHoldEffect(work, index, edge, request)
+
+    def _acknowledge_hold(
+        self, progress: _Progress, effect: ReleaseInlineRecoveryHoldEffect,
+        receipt: object,
+    ) -> None:
+        if not isinstance(receipt, InlineRecoveryHoldReceipt):
+            raise InlineNodeLossRuntimeStateError(
+                "child release returned an invalid typed receipt"
+            )
+        try:
+            release_reply = receipt.release_reply
+            if isinstance(
+                release_reply, protocol.ReleaseContainedReferenceReply
+            ):
+                release_reply = replace(release_reply)
+            validated = InlineRecoveryHoldReceipt(
+                receipt.effect, receipt.disposition, release_reply,
+                receipt.owner_death,
+            )
+        except (
+            AttributeError, TypeError, ValueError, RuntimeError,
+            protocol.ProtocolError,
+        ) as exc:
+            raise InlineNodeLossRuntimeConflictError(
+                "child release returned a malformed exact receipt"
+            ) from exc
+        if validated != receipt:
+            raise InlineNodeLossRuntimeConflictError(
+                "child release receipt changed during validation"
+            )
+        if receipt.effect != effect:
+            raise InlineNodeLossRuntimeConflictError(
+                "child release receipt changed the exact effect"
+            )
+        expected = self._next_effect(progress)
+        if expected != effect:
+            raise InlineNodeLossRuntimeStateError(
+                "child receipt is not for the next reverse-order effect"
+            )
+        progress.release_bitmap[effect.index] = True
+        progress.hold_receipts[effect.index] = validated
+
+    def _acknowledge_graph(
+        self, progress: _Progress, effect: InlineRecoveryGraphEffect,
+        reply: object,
+    ) -> None:
+        operation = (
+            "abort" if isinstance(effect, AbortInlineRecoveryGraphEffect)
+            else "release"
+        )
+        if not isinstance(reply, protocol.ContainedGraphReply):
+            raise InlineNodeLossRuntimeStateError(
+                "graph {} returned an invalid reply type".format(operation)
+            )
+        try:
+            validated = replace(reply)
+        except (
+            AttributeError, TypeError, ValueError, RuntimeError,
+            protocol.ProtocolError,
+        ) as exc:
+            raise InlineNodeLossRuntimeConflictError(
+                "graph {} returned a malformed exact reply".format(operation)
+            ) from exc
+        if validated != reply:
+            raise InlineNodeLossRuntimeConflictError(
+                "graph {} reply changed during validation".format(operation)
+            )
+        if validated.request != effect.request:
+            raise InlineNodeLossRuntimeConflictError(
+                "graph {} reply changed the exact request".format(operation)
+            )
+        receipt = validated.receipt
+        aborting = isinstance(effect, AbortInlineRecoveryGraphEffect)
+        expected_state = (
+            ContainedGraphTransactionState.ABORTED if aborting
+            else ContainedGraphTransactionState.COMMITTED
+        )
+        expected_dispositions = (
+            (ContainedGraphManifestDisposition.APPLIED,
+             ContainedGraphManifestDisposition.ALREADY_ABORTED)
+            if aborting else
+            (ContainedGraphManifestDisposition.RELEASED,
+             ContainedGraphManifestDisposition.ALREADY_RELEASED)
+        )
+        expected_edges = () if aborting else effect.work.manifest.ordered_edges
+        if (
+            not isinstance(receipt, ContainedGraphManifestReceipt)
+            or receipt.manifest != effect.request.manifest
+            or receipt.state is not expected_state
+            or receipt.disposition not in expected_dispositions
+            or tuple(receipt.released_edges) != expected_edges
+            or validated.error_kind is not None
+            or validated.error is not None
+        ):
+            raise InlineNodeLossRuntimeConflictError(
+                "graph {} did not acknowledge the exact manifest".format(operation)
+            )
+        if not all(progress.release_bitmap):
+            raise InlineNodeLossRuntimeStateError(
+                "graph cannot clean up before every child hold is terminal"
+            )
+        if self._next_effect(progress) != effect:
+            raise InlineNodeLossRuntimeStateError(
+                "graph receipt is not for the next exact effect"
+            )
+        progress.graph_aborted = aborting
+        progress.graph_released = not aborting
+        progress.graph_receipt = validated
+
+    def _require_current_authority(
+        self, work: InlinePublicationRecoveryWork,
+        progress: Optional[_Progress] = None,
+    ) -> None:
+        """Fence each replay against owner KEEP/death and terminal takeover."""
+
+        snapshot = self.authority.snapshot(work.publication_id)
+        is_rollback = work.action is InlineRecoveryAction.PRECOMPLETE_ROLLBACK
+        decision = None if is_rollback else InlineRecoveryOwnerDecision.DROP
+        if not is_rollback and snapshot.owner_decision is not decision:
+            raise InlineNodeLossRuntimeStateError(
+                "completion-unknown or post-Complete cleanup requires owner DROP"
+            )
+        resolution = (
+            InlineRecoveryResolution.ROLLED_BACK if is_rollback
+            else InlineRecoveryResolution.LOST
+        )
+        expected = replace(work.snapshot, owner_decision=decision)
+        if snapshot.resolution is not None:
+            expected = replace(expected, resolution=resolution)
+            if snapshot != expected:
+                raise InlineNodeLossRuntimeStateError(
+                    "INLINE cleanup authority was superseded or otherwise resolved"
+                )
+            if (
+                progress is None
+                or not all(progress.release_bitmap)
+                or not (progress.graph_aborted or progress.graph_released)
+            ):
+                raise InlineNodeLossRuntimeStateError(
+                    "resolved INLINE cleanup lacks this runtime's exact receipts"
+                )
+        if snapshot != expected:
+            raise InlineNodeLossRuntimeConflictError(
+                "INLINE cleanup authority changed the exact frozen facts"
+            )
+
+    def _resolve_authority(self, progress: _Progress) -> None:
+        self._require_current_authority(progress.work, progress)
+        work = progress.work
+        acknowledgement = (
+            self.authority.acknowledge_rollback(work)
+            if work.action is InlineRecoveryAction.PRECOMPLETE_ROLLBACK
+            else self.authority.acknowledge_lost(work)
+        )
+        self._require_authority_ack(work, acknowledgement)
+        progress.authority_ack = acknowledgement
+
+    @staticmethod
+    def _require_authority_ack(
+        work: InlinePublicationRecoveryWork, acknowledgement: object,
+    ) -> None:
+        is_rollback = work.action is InlineRecoveryAction.PRECOMPLETE_ROLLBACK
+        expected_snapshot = replace(
+            work.snapshot,
+            resolution=(
+                InlineRecoveryResolution.ROLLED_BACK if is_rollback
+                else InlineRecoveryResolution.LOST
+            ),
+            owner_decision=(
+                None if is_rollback else InlineRecoveryOwnerDecision.DROP
+            ),
+        )
+        if (
+            not isinstance(acknowledgement, InlinePublicationRecoveryAck)
+            or acknowledgement.stage is not InlineRecoveryStage.RESOLVED
+            or acknowledgement.snapshot != expected_snapshot
+            or acknowledgement.disposition not in (
+                InlineRecoveryDisposition.APPLIED,
+                InlineRecoveryDisposition.ALREADY_RECORDED,
+            )
+        ):
+            raise InlineNodeLossRuntimeConflictError(
+                "authority did not acknowledge the exact {} work".format(
+                    "rollback" if is_rollback else "DROP cleanup"
+                )
+            )
+
+    @staticmethod
+    def _known_receipt(
+        progress: _Progress, effect: InlineNodeLossEffect,
+    ) -> Optional[InlineNodeLossReceipt]:
+        if isinstance(effect, ReleaseInlineRecoveryHoldEffect):
+            if not 0 <= effect.index < len(progress.hold_receipts):
+                return None
+            receipt = progress.hold_receipts[effect.index]
+            return (
+                receipt if receipt is not None and receipt.effect == effect
+                else None
+            )
+        return progress.graph_receipt if progress.graph_effect == effect else None
+
+    def _snapshot(self, progress: _Progress) -> InlineNodeLossRuntimeSnapshot:
+        return InlineNodeLossRuntimeSnapshot(
+            progress.work, tuple(progress.release_bitmap),
+            progress.graph_aborted, progress.authority_ack is not None,
+            self._next_effect(progress), progress.authority_ack,
+            progress.graph_released,
+        )
+
+
+__all__ = [
+    "AbortInlineRecoveryGraphEffect",
+    "InlineNodeLossEffect",
+    "InlineNodeLossRuntime",
+    "InlineNodeLossRuntimeConflictError",
+    "InlineNodeLossRuntimeError",
+    "InlineNodeLossRuntimeSnapshot",
+    "InlineNodeLossRuntimeStateError",
+    "InlineRecoveryHoldDisposition",
+    "InlineRecoveryHoldReceipt",
+    "InlineRecoveryGraphEffect",
+    "ReleaseInlineRecoveryGraphEffect",
+    "ReleaseInlineRecoveryHoldEffect",
+]

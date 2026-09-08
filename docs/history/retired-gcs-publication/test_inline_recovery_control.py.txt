@@ -1,0 +1,730 @@
+"""GCS composition contracts for contained INLINE Node-loss recovery."""
+
+from __future__ import annotations
+
+import pytest
+
+from miniray import control, protocol
+from miniray.contained_cycle import ContainedGraphTransactionState
+from miniray.contained_edges import ContainedReferenceEdge
+from miniray.control import StoredPublicationControlAdapter
+from miniray.ids import (
+    AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
+)
+from miniray.inline_contained_publication import (
+    InlinePublicationEnvelope, InlinePublicationID,
+)
+from miniray.inline_recovery import (
+    InlinePublicationIntent, InlinePublicationTerminal,
+    InlineRecoveryAction, InlineRecoveryOwnerDecision, InlineRecoveryResolution,
+)
+from miniray.inline_recovery_runtime import (
+    InlineRecoveryHoldDisposition, InlineRecoveryHoldReceipt,
+)
+from miniray.resources import ResourceVector
+
+
+pytestmark = pytest.mark.unit
+
+
+class _Server:
+    def __init__(self, handlers, **_configuration) -> None:
+        self.handlers = dict(handlers)
+        self.address = ("127.0.0.1", 39999)
+        self.is_running = False
+
+    def start(self):
+        self.is_running = True
+        return self.address
+
+    def stop(self):
+        self.is_running = False
+
+
+class _Fixture:
+    def __init__(
+        self, *, node: NodeID | None = None, node_pid: int = 48101,
+        registration_epoch: int = 7, edges: int = 2,
+    ) -> None:
+        self.job = JobID.random()
+        driver = TaskID.for_driver(self.job)
+        self.task = TaskID.derive(self.job, driver, 31)
+        self.attempt = AttemptID(self.task, 1)
+        self.outer = ObjectID.for_task(self.task)
+        self.executor = WorkerID.random()
+        self.owner = WorkerID.random()
+        self.node = node or NodeID.random()
+        self.publication_id = InlinePublicationID(
+            LeaseID.random(), self.task, self.attempt, self.outer
+        )
+        children = []
+        for ordinal in range(edges):
+            child = ObjectID.for_task(TaskID.derive(
+                self.job, driver, 80 + ordinal
+            ))
+            children.append(ContainedReferenceEdge(
+                self.outer, child, self.executor,
+                ("127.0.0.1", 39010 + ordinal),
+                "inline-control:{}".format(ordinal),
+            ))
+        self.envelope = InlinePublicationEnvelope.create(
+            self.publication_id, self.job, self.executor, self.owner,
+            self.node, b"small durable INLINE envelope", tuple(children),
+        )
+        self.intent = InlinePublicationIntent(
+            self.envelope.manifest, node_pid, registration_epoch
+        )
+        self.terminal = InlinePublicationTerminal(
+            self.publication_id, protocol.TaskReplyStatus.SUCCEEDED
+        )
+        self.death = protocol.NodeDeathRecord(
+            "inline-control-death", self.node, node_pid,
+            registration_epoch, 11, -9,
+            protocol.NodeDeathReason.PROCESS_EXIT,
+            "publishing Node exited",
+        )
+
+    def report_prepared(
+        self, adapter: StoredPublicationControlAdapter,
+        *, terminal: bool = False, prepared_report: bool = True,
+    ) -> None:
+        assert adapter.report_inline_recovery(
+            protocol.ReportInlinePublicationIntent(self.intent)
+        ).ack is not None
+        prepared = adapter.mutate_graph(protocol.PrepareContainedGraph(
+            self.envelope.to_graph_manifest()
+        ))
+        assert prepared.accepted
+        if prepared_report:
+            assert adapter.report_inline_recovery(
+                protocol.ReportInlinePublicationPrepared(self.publication_id)
+            ).ack is not None
+        if terminal:
+            assert adapter.report_inline_recovery(
+                protocol.ReportInlinePublicationTerminal(self.terminal)
+            ).ack is not None
+
+
+def _successful_release(effect):
+    request = effect.request
+    reply = protocol.ReleaseContainedReferenceReply(
+        request.object_id, request.owner_worker_id, request.hold,
+        True, True,
+    )
+    return InlineRecoveryHoldReceipt(
+        effect, InlineRecoveryHoldDisposition.RELEASED,
+        release_reply=reply,
+    )
+
+
+def test_precomplete_progress_releases_reverse_then_aborts_and_resolves() -> None:
+    effects = []
+
+    def release(effect):
+        effects.append(effect)
+        return _successful_release(effect)
+
+    adapter = StoredPublicationControlAdapter(resolve_inline_hold=release)
+    fixture = _Fixture()
+    fixture.report_prepared(adapter, prepared_report=False)
+    work = adapter.inline_recovery.freeze_node_death(fixture.death)[0]
+    assert work.action is InlineRecoveryAction.PRECOMPLETE_ROLLBACK
+
+    pull = protocol.GetInlineNodeLoss(
+        fixture.publication_id, fixture.owner, fixture.death
+    )
+    assert adapter.get_inline_node_loss(pull).disposition is (
+        protocol.InlineNodeLossDisposition.PENDING
+    )
+    late_commit = adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    ))
+    assert not late_commit.accepted
+    assert late_commit.error_kind is (
+        protocol.StoredPublicationRPCErrorKind.INVALID_STATE
+    )
+
+    progressed = adapter.progress_inline_node_loss(
+        protocol.ProgressInlineNodeLoss(
+            fixture.publication_id, fixture.death
+        )
+    )
+
+    assert progressed.ack is not None
+    assert progressed.ack.snapshot.resolution is (
+        InlineRecoveryResolution.ROLLED_BACK
+    )
+    assert [effect.edge for effect in effects] == list(reversed(
+        fixture.envelope.ordered_edges
+    ))
+    graph = adapter.graph.snapshot().manifests[0]
+    assert graph.state is ContainedGraphTransactionState.ABORTED
+    resolved = adapter.get_inline_node_loss(pull)
+    assert resolved.disposition is protocol.InlineNodeLossDisposition.RESOLVED
+    assert resolved.snapshot.resolution is InlineRecoveryResolution.ROLLED_BACK
+    assert not adapter.has_active_operations()
+
+
+def test_untrusted_child_reply_keeps_precomplete_work_pending() -> None:
+    fixture = _Fixture(edges=1)
+
+    def malformed(_effect):
+        return object()
+
+    adapter = StoredPublicationControlAdapter(resolve_inline_hold=malformed)
+    fixture.report_prepared(adapter, prepared_report=False)
+    work = adapter.inline_recovery.freeze_node_death(fixture.death)[0]
+    before = adapter.inline_node_loss.snapshot(work)
+
+    failed = adapter.progress_inline_node_loss(
+        protocol.ProgressInlineNodeLoss(
+            fixture.publication_id, fixture.death
+        )
+    )
+
+    assert failed.ack is None
+    assert adapter.inline_node_loss.snapshot(work) == before
+    assert adapter.graph.snapshot().manifests[0].state is (
+        ContainedGraphTransactionState.PREPARED
+    )
+
+
+def test_postcomplete_work_is_owner_only_and_rolls_forward_exact_graph() -> None:
+    adapter = StoredPublicationControlAdapter(
+        resolve_inline_hold=_successful_release
+    )
+    fixture = _Fixture()
+    fixture.report_prepared(adapter, terminal=True)
+    work = adapter.inline_recovery.freeze_node_death(fixture.death)[0]
+    assert work.action is InlineRecoveryAction.POSTCOMPLETE_RESOLVE
+
+    wrong = adapter.get_inline_node_loss(protocol.GetInlineNodeLoss(
+        fixture.publication_id, WorkerID.random(), fixture.death
+    ))
+    assert wrong.disposition is protocol.InlineNodeLossDisposition.REJECTED
+    exact_request = protocol.GetInlineNodeLoss(
+        fixture.publication_id, fixture.owner, fixture.death
+    )
+    exact = adapter.get_inline_node_loss(exact_request)
+    assert exact.disposition is protocol.InlineNodeLossDisposition.WORK
+    assert exact.work == work
+
+    cannot_internalize = adapter.progress_inline_node_loss(
+        protocol.ProgressInlineNodeLoss(
+            fixture.publication_id, fixture.death
+        )
+    )
+    assert cannot_internalize.ack is None
+    stale_abort = adapter.mutate_graph(protocol.AbortContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    ))
+    assert not stale_abort.accepted
+    undecided_commit = adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    ))
+    assert not undecided_commit.accepted
+    assert adapter.decide_inline_node_loss(protocol.DecideInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryOwnerDecision.KEEP
+    )).ack is not None
+    committed = adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    ))
+    assert committed.accepted
+
+    ack_request = protocol.AcknowledgeInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryResolution.ADOPTED
+    )
+    acknowledged = adapter.acknowledge_inline_node_loss(ack_request)
+    assert acknowledged.ack is not None
+    assert acknowledged.ack.snapshot.resolution is (
+        InlineRecoveryResolution.ADOPTED
+    )
+    replay = adapter.acknowledge_inline_node_loss(ack_request)
+    assert replay.ack is not None
+    assert adapter.get_inline_node_loss(exact_request).disposition is (
+        protocol.InlineNodeLossDisposition.RESOLVED
+    )
+
+    released = adapter.mutate_graph(
+        protocol.ReleaseContainedGraphContainer(
+            fixture.envelope.to_graph_manifest(), fixture.outer
+        )
+    )
+    assert released.accepted
+    assert not adapter.has_active_operations()
+
+
+def test_frozen_terminal_retirement_requires_graph_release_and_replays() -> None:
+    adapter = StoredPublicationControlAdapter(
+        resolve_inline_hold=_successful_release
+    )
+    fixture = _Fixture(edges=1)
+    fixture.report_prepared(adapter, terminal=True)
+    work = adapter.inline_recovery.freeze_node_death(fixture.death)[0]
+    assert adapter.decide_inline_node_loss(protocol.DecideInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryOwnerDecision.KEEP
+    )).ack is not None
+    committed = adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    ))
+    assert committed.accepted
+    request = protocol.AcknowledgeInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryResolution.RETIRED
+    )
+
+    rejected = adapter.acknowledge_inline_node_loss(request)
+    assert rejected.ack is None
+    assert rejected.error_kind is (
+        protocol.StoredPublicationRPCErrorKind.INVALID_STATE
+    )
+    assert adapter.inline_recovery.snapshot(
+        fixture.publication_id
+    ).resolution is None
+
+    released = adapter.mutate_graph(protocol.ReleaseContainedGraphContainer(
+        fixture.envelope.to_graph_manifest(), fixture.outer
+    ))
+    assert released.accepted
+    first = adapter.acknowledge_inline_node_loss(request)
+    replay = adapter.acknowledge_inline_node_loss(request)
+
+    assert first.ack.snapshot.resolution is InlineRecoveryResolution.RETIRED
+    assert replay.ack.snapshot == first.ack.snapshot
+    pull = adapter.get_inline_node_loss(protocol.GetInlineNodeLoss(
+        fixture.publication_id, fixture.owner, fixture.death
+    ))
+    assert pull.disposition is protocol.InlineNodeLossDisposition.RESOLVED
+    assert pull.snapshot.resolution is InlineRecoveryResolution.RETIRED
+    assert not adapter.has_active_operations()
+
+
+def test_normal_reports_and_abort_adopt_acks_replay_exactly() -> None:
+    aborted = _Fixture(edges=1)
+    abort_adapter = StoredPublicationControlAdapter(
+        resolve_inline_hold=_successful_release
+    )
+    abort_adapter.report_inline_recovery(
+        protocol.ReportInlinePublicationIntent(aborted.intent)
+    )
+    abort_adapter.mutate_graph(protocol.PrepareContainedGraph(
+        aborted.envelope.to_graph_manifest()
+    ))
+    abort_adapter.mutate_graph(protocol.AbortContainedGraph(
+        aborted.envelope.to_graph_manifest()
+    ))
+    abort_request = protocol.AcknowledgeInlinePublicationAborted(
+        aborted.publication_id,
+        aborted.envelope.manifest.manifest_digest,
+    )
+    abort_ack = abort_adapter.report_inline_recovery(abort_request)
+    abort_replay = abort_adapter.report_inline_recovery(abort_request)
+    assert abort_ack.ack.snapshot.resolution is InlineRecoveryResolution.ABORTED
+    assert abort_replay.ack.snapshot == abort_ack.ack.snapshot
+    assert not abort_adapter.has_active_operations()
+
+    adopted = _Fixture(edges=1)
+    adopt_adapter = StoredPublicationControlAdapter(
+        resolve_inline_hold=_successful_release
+    )
+    adopted.report_prepared(adopt_adapter, terminal=True)
+    assert adopt_adapter.mutate_graph(protocol.CommitContainedGraph(
+        adopted.envelope.to_graph_manifest()
+    )).accepted
+    adopt_request = protocol.AcknowledgeInlinePublicationAdopted(
+        adopted.publication_id,
+        adopted.envelope.manifest.manifest_digest, adopted.owner,
+    )
+    adopt_ack = adopt_adapter.report_inline_recovery(adopt_request)
+    adopt_replay = adopt_adapter.report_inline_recovery(adopt_request)
+    assert adopt_ack.ack.snapshot.resolution is InlineRecoveryResolution.ADOPTED
+    assert adopt_replay.ack.snapshot == adopt_ack.ack.snapshot
+    assert adopt_adapter.mutate_graph(
+        protocol.ReleaseContainedGraphContainer(
+            adopted.envelope.to_graph_manifest(), adopted.outer
+        )
+    ).accepted
+    assert not adopt_adapter.has_active_operations()
+
+
+def test_death_after_normal_adoption_ack_returns_resolved_owner_snapshot() -> None:
+    adapter = StoredPublicationControlAdapter(
+        resolve_inline_hold=_successful_release
+    )
+    fixture = _Fixture(edges=1)
+    fixture.report_prepared(adapter, terminal=True)
+    assert adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    )).accepted
+    normal_ack = adapter.report_inline_recovery(
+        protocol.AcknowledgeInlinePublicationAdopted(
+            fixture.publication_id,
+            fixture.envelope.manifest.manifest_digest, fixture.owner,
+        )
+    )
+    assert normal_ack.ack.snapshot.resolution is (
+        InlineRecoveryResolution.ADOPTED
+    )
+
+    workset = adapter.inline_recovery.freeze_node_death(fixture.death)
+    assert len(workset) == 1
+    request = protocol.GetInlineNodeLoss(
+        fixture.publication_id, fixture.owner, fixture.death
+    )
+    resolved = adapter.get_inline_node_loss(request)
+
+    assert resolved.disposition is protocol.InlineNodeLossDisposition.RESOLVED
+    assert resolved.snapshot.frozen_death == fixture.death
+    assert resolved.snapshot.resolution is InlineRecoveryResolution.ADOPTED
+
+
+def test_death_after_normal_abort_ack_returns_resolved_tombstone() -> None:
+    adapter = StoredPublicationControlAdapter(
+        resolve_inline_hold=_successful_release
+    )
+    fixture = _Fixture(edges=1)
+    assert adapter.report_inline_recovery(
+        protocol.ReportInlinePublicationIntent(fixture.intent)
+    ).ack is not None
+    assert adapter.mutate_graph(protocol.PrepareContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    )).accepted
+    assert adapter.mutate_graph(protocol.AbortContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    )).accepted
+    abort_request = protocol.AcknowledgeInlinePublicationAborted(
+        fixture.publication_id,
+        fixture.envelope.manifest.manifest_digest,
+    )
+    applied = adapter.report_inline_recovery(abort_request)
+    assert applied.ack.snapshot.resolution is InlineRecoveryResolution.ABORTED
+
+    workset = adapter.inline_recovery.freeze_node_death(fixture.death)
+    assert len(workset) == 1
+    request = protocol.GetInlineNodeLoss(
+        fixture.publication_id, fixture.owner, fixture.death
+    )
+    resolved = adapter.get_inline_node_loss(request)
+
+    assert resolved.disposition is protocol.InlineNodeLossDisposition.RESOLVED
+    assert resolved.snapshot.frozen_death == fixture.death
+    assert resolved.snapshot.resolution is InlineRecoveryResolution.ABORTED
+    # A lost normal abort ACK remains exactly replayable after death; it does
+    # not start another child release/graph rollback.
+    replay = adapter.report_inline_recovery(abort_request)
+    assert replay.ack.snapshot == resolved.snapshot
+    progress = adapter.progress_inline_node_loss(
+        protocol.ProgressInlineNodeLoss(
+            fixture.publication_id, fixture.death
+        )
+    )
+    assert progress.ack is None
+    assert progress.error_kind is (
+        protocol.StoredPublicationRPCErrorKind.INVALID_STATE
+    )
+    assert not adapter.inline_node_loss.has_active_operations()
+    assert not adapter.has_active_operations()
+
+
+def test_normal_terminal_retirement_report_is_exact() -> None:
+    adapter = StoredPublicationControlAdapter(
+        resolve_inline_hold=_successful_release
+    )
+    fixture = _Fixture(edges=1)
+    fixture.report_prepared(adapter, terminal=True)
+    assert adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    )).accepted
+    assert adapter.mutate_graph(protocol.ReleaseContainedGraphContainer(
+        fixture.envelope.to_graph_manifest(), fixture.outer
+    )).accepted
+    request = protocol.AcknowledgeInlinePublicationRetired(
+        fixture.publication_id,
+        fixture.envelope.manifest.manifest_digest, fixture.owner,
+    )
+
+    reply = adapter.report_inline_recovery(request)
+    replay = adapter.report_inline_recovery(request)
+
+    assert reply.ack.snapshot.resolution is InlineRecoveryResolution.RETIRED
+    assert replay.ack.snapshot == reply.ack.snapshot
+    assert not adapter.has_active_operations()
+
+
+def test_gcs_inline_resolver_accepts_only_committed_child_owner_death(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    attempts = []
+
+    def unreachable(address, handler, request):
+        attempts.append((address, handler, request))
+        raise ConnectionError("child owner is unreachable")
+
+    service = control.GCSLite(stored_hold_rpc=unreachable)
+    node = NodeID.random()
+    registration = service.register_node(protocol.RegisterNode(
+        node, 48101, ("127.0.0.1", 39001),
+        ResourceVector({"CPU": 1}),
+    ))
+    fixture = _Fixture(
+        node=node, node_pid=registration.node_pid,
+        registration_epoch=registration.registration_epoch, edges=1,
+    )
+    incarnation = protocol.WorkerIncarnation(
+        node, registration.node_pid, registration.registration_epoch,
+        fixture.executor, 48102,
+    )
+    assert service.register_worker_incarnation(
+        protocol.RegisterWorkerIncarnation(incarnation)
+    ).accepted
+    fixture.report_prepared(service.stored_publications, prepared_report=False)
+    death = service.report_node_death(protocol.ReportNodeDeath(
+        fixture.death.detection_id, node, registration.node_pid,
+        registration.registration_epoch, -9,
+        protocol.NodeDeathReason.PROCESS_EXIT,
+        "publishing Node exited",
+    )).death
+    assert death is not None
+    worker = service.get_worker_state(
+        protocol.GetWorkerState(fixture.executor)
+    )
+    assert worker.state is protocol.WorkerMembershipState.DEAD
+    assert worker.death.reason is protocol.WorkerDeathReason.NODE_EXIT
+
+    progress = service.progress_inline_node_loss(
+        protocol.ProgressInlineNodeLoss(fixture.publication_id, death)
+    )
+
+    assert progress.ack is not None
+    assert progress.ack.snapshot.resolution is (
+        InlineRecoveryResolution.ROLLED_BACK
+    )
+    assert len(attempts) == 1
+    assert attempts[0][1] == control.RELEASE_CONTAINED_REFERENCE_HANDLER
+    service.stop()
+
+
+def test_gcs_death_exposes_prior_normal_abort_as_resolved(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    service = control.GCSLite()
+    node = NodeID.random()
+    registration = service.register_node(protocol.RegisterNode(
+        node, 48101, ("127.0.0.1", 39001),
+        ResourceVector({"CPU": 1}),
+    ))
+    fixture = _Fixture(
+        node=node, node_pid=registration.node_pid,
+        registration_epoch=registration.registration_epoch, edges=1,
+    )
+    assert service.report_inline_publication_recovery(
+        protocol.ReportInlinePublicationIntent(fixture.intent)
+    ).ack is not None
+    graph = fixture.envelope.to_graph_manifest()
+    assert service.prepare_contained_graph(
+        protocol.PrepareContainedGraph(graph)
+    ).accepted
+    assert service.abort_contained_graph(
+        protocol.AbortContainedGraph(graph)
+    ).accepted
+    abort = protocol.AcknowledgeInlinePublicationAborted(
+        fixture.publication_id, graph.manifest_digest
+    )
+    assert service.report_inline_publication_recovery(abort).ack is not None
+
+    death = service.report_node_death(protocol.ReportNodeDeath(
+        fixture.death.detection_id, node, registration.node_pid,
+        registration.registration_epoch, -9,
+        protocol.NodeDeathReason.PROCESS_EXIT,
+        "publishing Node exited",
+    )).death
+    assert death is not None
+    request = protocol.GetInlineNodeLoss(
+        fixture.publication_id, fixture.owner, death
+    )
+
+    first = service.get_inline_node_loss(request)
+    replay = service.get_inline_node_loss(request)
+    assert first == replay
+    assert first.disposition is protocol.InlineNodeLossDisposition.RESOLVED
+    assert first.snapshot.resolution is InlineRecoveryResolution.ABORTED
+    assert service.report_inline_publication_recovery(abort).ack.snapshot == (
+        first.snapshot
+    )
+    assert service.shutdown(
+        protocol.Shutdown("aborted-death-shutdown", "test")
+    ).clean
+    service.stop()
+
+
+def test_gcs_death_composes_inline_freeze_handlers_and_shutdown_barrier(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+
+    def hold_rpc(_address, handler, request):
+        assert handler == control.RELEASE_CONTAINED_REFERENCE_HANDLER
+        return protocol.ReleaseContainedReferenceReply(
+            request.object_id, request.owner_worker_id, request.hold,
+            True, False,
+        )
+
+    service = control.GCSLite(stored_hold_rpc=hold_rpc)
+    expected_handlers = {
+        control.GET_INLINE_NODE_LOSS_HANDLER,
+        control.DECIDE_INLINE_NODE_LOSS_HANDLER,
+        control.PROGRESS_INLINE_NODE_LOSS_HANDLER,
+        control.ACKNOWLEDGE_INLINE_NODE_LOSS_HANDLER,
+    }
+    assert expected_handlers <= set(service.handlers)
+
+    node = NodeID.random()
+    registration = service.register_node(protocol.RegisterNode(
+        node, 48101, ("127.0.0.1", 39001),
+        ResourceVector({"CPU": 1}),
+    ))
+    fixture = _Fixture(
+        node=node, node_pid=registration.node_pid,
+        registration_epoch=registration.registration_epoch,
+    )
+    fixture.report_prepared(service.stored_publications, prepared_report=False)
+    death_request = protocol.ReportNodeDeath(
+        fixture.death.detection_id, node, registration.node_pid,
+        registration.registration_epoch, -9,
+        protocol.NodeDeathReason.PROCESS_EXIT,
+        "publishing Node exited",
+    )
+
+    first = service.report_node_death(death_request)
+    replay = service.report_node_death(death_request)
+    assert first.disposition is protocol.NodeDeathDisposition.APPLIED
+    assert replay.disposition is protocol.NodeDeathDisposition.ALREADY_DEAD
+    assert replay.death == first.death
+    snapshot = service.stored_publications.inline_recovery.snapshot(
+        fixture.publication_id
+    )
+    assert snapshot.frozen_death == first.death
+
+    shutdown = protocol.Shutdown("inline-control-shutdown", "test")
+    assert not service.shutdown(shutdown).clean
+    progress = service.handle(protocol.ProgressInlineNodeLoss(
+        fixture.publication_id, first.death
+    ))
+    assert progress.ack is not None
+    assert service.shutdown(shutdown).clean
+    service.stop()
+
+
+@pytest.mark.parametrize("terminal", (False, True))
+@pytest.mark.parametrize("graph_committed", (False, True))
+def test_drop_cleans_unknown_or_completed_result_without_recovering_bytes(
+    terminal: bool, graph_committed: bool,
+) -> None:
+    effects = []
+
+    def release(effect):
+        effects.append(effect)
+        return _successful_release(effect)
+
+    adapter = StoredPublicationControlAdapter(resolve_inline_hold=release)
+    fixture = _Fixture()
+    fixture.report_prepared(adapter, terminal=terminal)
+    graph = fixture.envelope.to_graph_manifest()
+    if graph_committed:
+        assert adapter.mutate_graph(protocol.CommitContainedGraph(graph)).accepted
+    work = adapter.inline_recovery.freeze_node_death(fixture.death)[0]
+    assert work.action is (
+        InlineRecoveryAction.POSTCOMPLETE_RESOLVE
+        if terminal else InlineRecoveryAction.COMPLETION_UNKNOWN
+    )
+    assert not hasattr(work, "envelope")
+    progress = protocol.ProgressInlineNodeLoss(fixture.publication_id, fixture.death)
+    assert adapter.progress_inline_node_loss(progress).ack is None
+    assert effects == []
+
+    choose = protocol.DecideInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryOwnerDecision.DROP
+    )
+    decision = adapter.decide_inline_node_loss(choose)
+    assert decision.ack is not None
+    assert decision.ack.snapshot.owner_decision is InlineRecoveryOwnerDecision.DROP
+    # This delayed normal COMMIT may have been sent before Node death.
+    assert not adapter.mutate_graph(protocol.CommitContainedGraph(graph)).accepted
+    assert adapter.decide_inline_node_loss(protocol.DecideInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryOwnerDecision.KEEP
+    )).ack is None
+
+    completed = adapter.progress_inline_node_loss(progress)
+    assert completed.ack is not None
+    assert completed.ack.snapshot.resolution is InlineRecoveryResolution.LOST
+    assert completed.ack.snapshot.terminal == work.snapshot.terminal
+    assert [effect.index for effect in effects] == [1, 0]
+    snapshot = adapter.graph.snapshot().manifests[0]
+    assert snapshot.state is (
+        ContainedGraphTransactionState.COMMITTED
+        if graph_committed else ContainedGraphTransactionState.ABORTED
+    )
+    if graph_committed:
+        assert fixture.outer in snapshot.released_container_ids
+        assert not snapshot.active_edges
+    replay = adapter.progress_inline_node_loss(progress)
+    assert replay.ack is not None
+    assert replay.ack.snapshot == completed.ack.snapshot
+    assert [effect.index for effect in effects] == [1, 0]
+    assert not adapter.has_active_operations()
+
+
+def test_unknown_keep_uses_only_owner_witness_and_no_node_terminal() -> None:
+    adapter = StoredPublicationControlAdapter(resolve_inline_hold=_successful_release)
+    fixture = _Fixture()
+    fixture.report_prepared(adapter)
+    work = adapter.inline_recovery.freeze_node_death(fixture.death)[0]
+    choose = protocol.DecideInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryOwnerDecision.KEEP
+    )
+    ack = adapter.decide_inline_node_loss(choose).ack
+    assert ack is not None
+    assert ack.snapshot.terminal is None
+    assert adapter.decide_inline_node_loss(choose).ack.snapshot == ack.snapshot
+    assert adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    )).accepted
+    adopted = adapter.acknowledge_inline_node_loss(protocol.AcknowledgeInlineNodeLoss(
+        work, fixture.owner, InlineRecoveryResolution.ADOPTED
+    ))
+    assert adopted.ack is not None
+    assert adopted.ack.snapshot.terminal is None
+    assert adopted.ack.snapshot.resolution is InlineRecoveryResolution.ADOPTED
+    assert not hasattr(adopted.ack.snapshot, "envelope")
+    assert adapter.progress_inline_node_loss(protocol.ProgressInlineNodeLoss(
+        fixture.publication_id, fixture.death
+    )).ack is None
+
+
+def test_live_adoption_ack_can_outrun_node_terminal_outbox() -> None:
+    adapter = StoredPublicationControlAdapter(resolve_inline_hold=_successful_release)
+    fixture = _Fixture()
+    fixture.report_prepared(adapter)
+    adoption = protocol.AcknowledgeInlinePublicationAdopted(
+        fixture.publication_id, fixture.envelope.manifest.manifest_digest,
+        fixture.owner,
+    )
+    assert adapter.report_inline_recovery(adoption).ack is None
+    assert adapter.mutate_graph(protocol.CommitContainedGraph(
+        fixture.envelope.to_graph_manifest()
+    )).accepted
+    first = adapter.report_inline_recovery(adoption)
+    assert first.ack is not None
+    assert first.ack.snapshot.terminal == fixture.terminal
+    late_node_report = adapter.report_inline_recovery(
+        protocol.ReportInlinePublicationTerminal(fixture.terminal)
+    )
+    assert late_node_report.ack is not None
+    assert late_node_report.ack.snapshot == first.ack.snapshot
+    # Collection may race the final ACK replay; a committed graph tombstone
+    # remains enough to acknowledge the already-completed owner handoff.
+    assert adapter.mutate_graph(protocol.ReleaseContainedGraphContainer(
+        fixture.envelope.to_graph_manifest(), fixture.outer
+    )).accepted
+    assert adapter.report_inline_recovery(adoption).ack.snapshot == first.ack.snapshot

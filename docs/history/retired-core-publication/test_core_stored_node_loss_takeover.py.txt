@@ -1,0 +1,704 @@
+"""Focused Core composition for GCS stored publishing-Node takeover."""
+
+from __future__ import annotations
+
+import hashlib
+import queue
+import threading
+from dataclasses import replace
+
+import pytest
+
+from miniray import protocol
+import miniray.core as core_module
+from miniray.core import (
+    CoreWorker, _DelayedReadyTask, _ObjectWaiter, _PendingTask,
+    _ProtocolUnresolved, _PushRequestState, _StoredAdoptionObligation,
+    _StoredNodeLossObligation,
+)
+from miniray.contained_cycle import (
+    ContainedGraphManifestDisposition, ContainedGraphManifestReceipt,
+    ContainedGraphTransactionState,
+)
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.ownership import ObjectOwnerTable, ObjectState
+from miniray.recovery import RecoveryManager, TaskState
+from miniray.resources import ResourceVector
+from miniray.resources import AllocationToken
+from miniray.stored_node_loss import (
+    AbortStoredGraphEffect, NodeIncarnationWitness,
+    ProveStoredReplicaGoneEffect, ReleaseStoredHoldEffect,
+    RetireStoredOwnerEffect, StoredHoldResolutionDisposition,
+    StoredHoldResolutionReceipt, StoredNodeLossGraphState,
+    StoredNodeLossGraphWitness, StoredNodeLossMode,
+    StoredNodeLossRecoveryCoordinator,
+    StoredNodeLossRequest, StoredOwnerRetirementDisposition,
+    StoredReplicaResolutionDisposition, StoredReplicaResolutionReceipt,
+)
+from miniray.stored_publication import (
+    OwnedContainedSource, PreparedContainedTransfer, StoredPublicationHeader,
+    StoredPublicationID, StoredPublicationIntent,
+    StoredPublicationLeaseTerminal, StoredPublicationManifest,
+    StoredPublicationRecoveryRecord,
+)
+from miniray.transport import TransportTimeout
+
+
+pytestmark = pytest.mark.unit
+
+
+def _core(*, max_retries=1):
+    core = object.__new__(CoreWorker)
+    core.job_id = JobID.random()
+    core.driver_task_id = TaskID.for_driver(core.job_id)
+    core.worker_id = WorkerID.random()
+    core.node_id = NodeID.random()
+    core.node_address = ("127.0.0.1", 32001)
+    core.gcs_address = ("127.0.0.1", 32002)
+    core._owner_table = ObjectOwnerTable()
+    core._recovery = RecoveryManager()
+    core._objects = {}
+    core._stored_descriptors = {}
+    core._state_lock = threading.RLock()
+    core._completion = threading.Condition(core._state_lock)
+    core._submissions = queue.Queue()
+    core._ready_tasks = queue.Queue()
+    core._protocol_unresolved = {}
+    core._node_death_attempts = {}
+    core._dead_nodes = {}
+    core._object_gc_obligations = {}
+    core._inline_gc_obligations = core._object_gc_obligations
+    core._stored_publication_adoptions = {}
+    core._stored_publication_adoption_routes = {}
+    core._stored_node_loss_drivers = {}
+    core._stored_node_loss_objects = {}
+    core._owner_protocol_open = True
+    core._accepting = True
+    core._finishing_tasks = set()
+    core._active_task_finishes = set()
+    core._foreign_guard_release_retries = {}
+    core._finished_tasks = set()
+
+    task = TaskID.derive(core.job_id, core.driver_task_id, 1)
+    attempt = AttemptID(task, 0)
+    outer = ObjectID.for_task(task)
+    spec = protocol.TaskSpec(
+        core.job_id, task, attempt,
+        protocol.FunctionKey(core.job_id, __name__, "producer", "v1"),
+        (), 1, ResourceVector(), core.worker_id, max_retries=max_retries,
+    )
+    pending = _PendingTask(outer, spec)
+    core.owner_table.register_task_outputs(spec)
+    core._recovery.register_task(spec, max_retries=max_retries)
+    core._objects[outer] = _ObjectWaiter(threading.Event())
+    node = NodeID.random()
+    death = protocol.NodeDeathRecord(
+        "stored-takeover-death", node, 4444, 3, 5, -9,
+        protocol.NodeDeathReason.PROCESS_EXIT, "publishing node exited",
+    )
+    publication = StoredPublicationID(
+        LeaseID.random(), task, attempt, outer
+    )
+    return core, pending, publication, death
+
+
+def test_absent_candidate_is_the_only_takeover_state_that_starts_generic_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    calls = []
+
+    def rpc(_address, _handler, request):
+        return protocol.GetStoredNodeLossReply(
+            request, protocol.StoredNodeLossDisposition.ABSENT
+        )
+
+    monkeypatch.setattr(core, "_rpc", rpc)
+    monkeypatch.setattr(
+        core, "_retry_system_failure",
+        lambda candidate, _error: calls.append(candidate) or False,
+    )
+    obligation = _StoredNodeLossObligation(publication, death)
+    core._mark_protocol_unresolved(
+        pending, "stored_node_loss", obligation,
+        target_node_id=death.node_id, stored_candidate=publication,
+    )
+
+    assert not core._drive_stored_node_loss(pending, obligation)
+    assert calls == [pending]
+    assert pending.task_id not in core._protocol_unresolved
+
+
+def test_pending_takeover_preserves_exact_shutdown_obligation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    monkeypatch.setattr(
+        core, "_rpc",
+        lambda _address, _handler, request: protocol.GetStoredNodeLossReply(
+            request, protocol.StoredNodeLossDisposition.PENDING
+        ),
+    )
+    obligation = _StoredNodeLossObligation(publication, death)
+    core._mark_protocol_unresolved(
+        pending, "stored_node_loss", obligation,
+        target_node_id=death.node_id, stored_candidate=publication,
+    )
+
+    assert not core._drive_stored_node_loss(pending, obligation)
+    unresolved = core._protocol_unresolved[pending.task_id]
+    assert isinstance(unresolved.obligation, _StoredNodeLossObligation)
+    assert unresolved.obligation.publication_id == publication
+    assert not core.can_finalize_shutdown(require_distributed_clean=False)
+
+
+def test_committed_node_death_replaces_candidate_without_clearing_it() -> None:
+    core, pending, publication, death = _core()
+    core._dead_nodes[death.node_id] = death
+    core._protocol_unresolved[pending.task_id] = _ProtocolUnresolved(
+        "push_send", pending, None, death.node_id, publication
+    )
+
+    terminal = core._consume_node_death_at_lane(pending, death.node_id)
+
+    assert terminal is False
+    unresolved = core._protocol_unresolved[pending.task_id]
+    assert isinstance(unresolved.obligation, _StoredNodeLossObligation)
+    assert unresolved.stored_candidate == publication
+    queued = core._ready_tasks.get_nowait()
+    assert queued.stored_node_loss == unresolved.obligation
+
+
+def test_dead_adoption_converts_to_takeover_instead_of_replaying_dead_node() -> None:
+    core, pending, publication, death = _core()
+    core._dead_nodes[death.node_id] = death
+    envelope = type("Envelope", (), {"publication_id": publication})()
+    adoption = _StoredAdoptionObligation(envelope, None, death.node_id)
+
+    assert not core._drive_stored_publication_adoption(pending, adoption)
+
+    unresolved = core._protocol_unresolved[pending.task_id]
+    assert isinstance(unresolved.obligation, _StoredNodeLossObligation)
+    assert unresolved.obligation.known_completed
+    queued = core._submissions.get_nowait()
+    assert isinstance(queued, _DelayedReadyTask)
+    assert queued.ready.stored_node_loss == unresolved.obligation
+
+
+def test_active_owner_retirement_blocks_finalize_without_protocol_table() -> None:
+    # The owner query is a second shutdown fence if a Core bookkeeping failure
+    # accidentally loses its `_ProtocolUnresolved` wrapper.
+    core, _pending, _publication, _death = _core()
+    core._accepting = False
+    core._owner_protocol_open = True
+    core._inflight_submissions = 0
+    core._inflight_puts = 0
+    core._inflight_borrow_ops = 0
+    core._inflight_pg_control_ops = 0
+    core._actor_control_ops = 0
+    core._export_pin_release_obligations = {}
+    core._orphan_contained_edges = set()
+    core._orphan_foreign_guard_releases = {}
+    core._attempt_borrow_releases = {}
+    core._borrowed_release_obligations = {}
+    core._foreign_lineage_collection_receipts = {}
+    core._foreign_lineage_prepared_collection_receipts = {}
+    core._actor_call_threads = set()
+    core._active_task_finishes = set()
+    core._finishing_tasks = set()
+    core._protocol_unresolved = {}
+    core.owner_table.has_active_stored_retirements = lambda: True
+
+    assert not core.can_finalize_shutdown(require_distributed_clean=False)
+
+
+def test_core_takeover_object_gate_blocks_gc_and_reconstruction_before_owner_cas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    core.owner_table._entries[pending.object_id].state = ObjectState.LOST
+    core._stored_node_loss_drivers[publication] = _StoredNodeLossObligation(
+        publication, death, True
+    )
+    core._stored_node_loss_objects[pending.object_id] = publication
+    before = core._recovery.task_record(pending.task_id).retries_started
+    called = []
+    monkeypatch.setattr(
+        core.owner_table, "begin_collection",
+        lambda *_args, **_kwargs: called.append(True),
+    )
+
+    assert core._start_or_join_reconstruction(
+        pending.object_id, core._objects[pending.object_id]
+    ) is None
+    core._reference_released(pending.object_id)
+
+    assert not called
+    assert core._recovery.task_record(pending.task_id).retries_started == before
+
+
+def test_candidate_survives_explicit_phase_overwrite_after_prior_clear() -> None:
+    core, pending, publication, death = _core()
+    core._protocol_unresolved.clear()
+
+    core._mark_protocol_unresolved(
+        pending, "lease_granted", target_node_id=death.node_id,
+        stored_candidate=publication,
+    )
+    core._mark_protocol_unresolved(
+        pending, "push_send", target_node_id=death.node_id,
+        stored_candidate=publication,
+    )
+
+    unresolved = core._protocol_unresolved[pending.task_id]
+    assert unresolved.stored_candidate == publication
+    assert unresolved.inline_candidate is not None
+    assert unresolved.inline_candidate.lease_id == publication.lease_id
+    assert unresolved.inline_candidate.task_id == publication.task_id
+    assert unresolved.inline_candidate.attempt_id == publication.attempt_id
+    assert (
+        unresolved.inline_candidate.outer_object_id
+        == publication.outer_object_id
+    )
+    core._dead_nodes[death.node_id] = death
+    assert core._consume_node_death_at_lane(pending, death.node_id) is False
+    takeover = core._protocol_unresolved[pending.task_id]
+    assert isinstance(takeover.obligation, core_module._InlineNodeLossObligation)
+    assert takeover.stored_candidate == publication
+    assert takeover.inline_candidate == unresolved.inline_candidate
+
+
+def test_push_replay_rederives_candidate_after_protocol_table_was_cleared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    worker = WorkerID.random()
+    grant = protocol.GrantWorkerLease(
+        publication.lease_id, pending.task_id, pending.spec.attempt_id,
+        death.node_id, worker, ("127.0.0.1", 32003),
+        AllocationToken("stored-candidate"),
+    )
+    push = protocol.PushTask(publication.lease_id, worker, pending.spec)
+    state = _PushRequestState(
+        push, grant, ("127.0.0.1", 32004), grant.worker_address, round=1
+    )
+    monkeypatch.setattr(core, "_push_task_rpc", lambda *_args: (_ for _ in ()).throw(
+        TransportTimeout("ambiguous")
+    ))
+    monkeypatch.setattr(
+        core, "_rpc", lambda *_args: (_ for _ in ()).throw(
+            TransportTimeout("outcome ambiguous")
+        ),
+    )
+    core._protocol_unresolved.clear()
+
+    assert not core._replay_push(pending, state)
+
+    assert core._protocol_unresolved[pending.task_id].stored_candidate == publication
+
+
+@pytest.mark.parametrize("disposition", (
+    protocol.StoredNodeLossDisposition.ABSENT,
+    protocol.StoredNodeLossDisposition.PENDING,
+))
+def test_owner_only_absent_or_pending_never_clears_driver_or_retries(
+    monkeypatch: pytest.MonkeyPatch, disposition,
+) -> None:
+    core, pending, publication, death = _core()
+    obligation = _StoredNodeLossObligation(publication, death, True)
+    core._stored_node_loss_drivers[publication] = obligation
+    core._stored_node_loss_objects[pending.object_id] = publication
+    retries = []
+    monkeypatch.setattr(
+        core, "_retry_system_failure",
+        lambda *_args: retries.append(True) or False,
+    )
+    monkeypatch.setattr(
+        core, "_rpc",
+        lambda _address, _handler, request: protocol.GetStoredNodeLossReply(
+            request, disposition
+        ),
+    )
+
+    assert not core._drive_stored_node_loss(pending, obligation)
+
+    assert not retries
+    assert publication in core._stored_node_loss_drivers
+    assert pending.object_id in core._stored_node_loss_objects
+    assert pending.task_id not in core._protocol_unresolved
+
+
+def test_known_completed_non_owner_absent_never_starts_generic_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    obligation = _StoredNodeLossObligation(
+        publication, death, known_completed=True
+    )
+    core._mark_protocol_unresolved(
+        pending, "stored_node_loss", obligation,
+        target_node_id=death.node_id, stored_candidate=publication,
+    )
+    retries = []
+    monkeypatch.setattr(
+        core, "_retry_system_failure",
+        lambda *_args: retries.append(True) or False,
+    )
+    monkeypatch.setattr(
+        core, "_rpc",
+        lambda _address, _handler, request: protocol.GetStoredNodeLossReply(
+            request, protocol.StoredNodeLossDisposition.ABSENT
+        ),
+    )
+
+    assert not core._drive_stored_node_loss(pending, obligation)
+    assert retries == []
+    unresolved = core._protocol_unresolved[pending.task_id]
+    assert unresolved.obligation.known_completed
+
+
+def test_known_completed_non_owner_rejects_precomplete_resolution_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    obligation = _StoredNodeLossObligation(
+        publication, death, known_completed=True
+    )
+    core._mark_protocol_unresolved(
+        pending, "stored_node_loss", obligation,
+        target_node_id=death.node_id, stored_candidate=publication,
+    )
+    Resolution = type("Resolution", (), {})
+    resolution = Resolution()
+    resolution.request = type("Request", (), {
+        "mode": StoredNodeLossMode.PRECOMPLETE_ROLLBACK
+    })()
+    Reply = type("Reply", (), {})
+    reply = Reply()
+    reply.request = protocol.GetStoredNodeLoss(
+        publication, core.worker_id, death
+    )
+    reply.snapshot = object()
+    reply.resolution = resolution
+    reply.disposition = protocol.StoredNodeLossDisposition.RESOLVED
+    retries = []
+    monkeypatch.setattr(core, "_rpc", lambda *_args: reply)
+    monkeypatch.setattr(
+        core, "_validate_stored_node_loss_snapshot", lambda *_args: True
+    )
+    monkeypatch.setattr(
+        core, "_validate_stored_node_loss_resolution", lambda *_args: True
+    )
+    monkeypatch.setattr(
+        core, "_retry_system_failure",
+        lambda *_args: retries.append(True) or False,
+    )
+    monkeypatch.setattr(protocol, "GetStoredNodeLossReply", Reply)
+    monkeypatch.setattr(core_module, "StoredNodeLossResolution", Resolution)
+
+    assert not core._drive_stored_node_loss(pending, obligation)
+    assert retries == []
+    unresolved = core._protocol_unresolved[pending.task_id]
+    assert unresolved.obligation.known_completed
+
+
+def test_owner_only_precomplete_resolution_never_retries_or_clears_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    obligation = _StoredNodeLossObligation(publication, death, True)
+    core._stored_node_loss_drivers[publication] = obligation
+    core._stored_node_loss_objects[pending.object_id] = publication
+    request = type("Request", (), {
+        "mode": StoredNodeLossMode.PRECOMPLETE_ROLLBACK
+    })()
+    Resolution = type("Resolution", (), {})
+    resolution = Resolution()
+    resolution.request = request
+    Reply = type("Reply", (), {})
+    reply = Reply()
+    reply.request = protocol.GetStoredNodeLoss(
+        publication, core.worker_id, death
+    )
+    reply.resolution = resolution
+    reply.snapshot = object()
+    reply.disposition = protocol.StoredNodeLossDisposition.RESOLVED
+    retries = []
+    monkeypatch.setattr(core, "_rpc", lambda *_args: reply)
+    monkeypatch.setattr(
+        core, "_validate_stored_node_loss_snapshot", lambda *_args: True
+    )
+    monkeypatch.setattr(
+        core, "_validate_stored_node_loss_resolution", lambda *_args: True
+    )
+    monkeypatch.setattr(
+        core, "_retry_system_failure",
+        lambda *_args: retries.append(True) or False,
+    )
+    # Use a protocol-shaped wrapper while preserving the intentionally
+    # contradictory pre-Complete resolution selected above.
+    monkeypatch.setattr(protocol, "GetStoredNodeLossReply", Reply)
+    monkeypatch.setattr(core_module, "StoredNodeLossResolution", Resolution)
+
+    assert not core._drive_stored_node_loss(pending, obligation)
+    assert not retries
+    assert publication in core._stored_node_loss_drivers
+    assert pending.task_id not in core._protocol_unresolved
+
+
+def test_synthetic_driver_scan_includes_lost_and_collecting_without_task_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Exercise the scan shape directly: both sets are canonicalized before a
+    # publication-keyed owner driver is installed.
+    core, pending, publication, death = _core()
+    core._dead_nodes = {}
+    core._membership_epoch = 0
+    core._placement_group_states = {}
+    core._placement_group_manifests = {}
+    core._gc_obligations = lambda: {}
+    core._stored_publication_adoptions = {}
+    core._stored_publication_adoption_routes = {}
+    core._stored_node_loss_drivers = {}
+    core._stored_node_loss_objects = {}
+    owner = core.owner_table._entries[pending.object_id]
+    owner.state = ObjectState.LOST
+    owner.location_attempts[death.node_id] = pending.spec.attempt_id
+    # Minimal graph-associated marker sufficient for the handler's scan.
+    marker = type("Marker", (), {})()
+    marker.publication_id = publication
+    marker.execution = pending.execution
+    marker.envelope = type("Envelope", (), {
+        "header": type("Header", (), {"node_id": death.node_id})()
+    })()
+    owner.stored_publication = marker
+    removal = type("Removal", (), {
+        "lost": (pending.object_id,),
+        "collecting": (pending.object_id,),
+        "surviving": (),
+    })()
+    monkeypatch.setattr(
+        core.owner_table, "remove_node_locations", lambda _node: removal
+    )
+
+    core.handle_node_death(death, death.death_epoch, True)
+
+    assert tuple(core._stored_node_loss_drivers) == (publication,)
+    assert core._stored_node_loss_objects[pending.object_id] == publication
+    assert pending.task_id not in core._protocol_unresolved
+
+
+def test_fenced_newer_attempt_still_finishes_old_lane_once() -> None:
+    core, pending, publication, death = _core(max_retries=1)
+    dependency_task = TaskID.derive(
+        core.job_id, core.driver_task_id, 2
+    )
+    dependency = ObjectID.for_task(dependency_task)
+    dependency_attempt = AttemptID(dependency_task, 0)
+    core.owner_table.register(
+        dependency, current_attempt=dependency_attempt
+    )
+    hold = protocol.TaskReferenceHold(
+        protocol.TaskReferenceHoldKind.SUBMITTED, core.worker_id,
+        pending.task_id, pending.spec.attempt_id,
+    )
+    core.owner_table.add_submitted_reference(dependency, hold)
+    old_pending = replace(
+        pending, protected_dependencies=(dependency,), dependency_hold=hold
+    )
+    core._accepted_task_count = 1
+
+    child_task = TaskID.derive(core.job_id, core.driver_task_id, 3)
+    child = ObjectID.for_task(child_task)
+    executor = WorkerID.random()
+    transfer = PreparedContainedTransfer(
+        child, executor, ("127.0.0.1", 32005),
+        OwnedContainedSource(executor),
+        ContainedReferenceHold(pending.object_id, executor, "pin"),
+        ContainedReferenceHold(pending.object_id, core.worker_id, "pin"),
+    )
+    payload = b"fenced stored takeover"
+    checksum = hashlib.sha256(payload).hexdigest()
+    manifest = StoredPublicationManifest(
+        publication, (transfer,), len(payload), checksum,
+        hashlib.sha256(b"fenced manifest").hexdigest(),
+    )
+    header = StoredPublicationHeader(
+        publication, core.job_id, executor, core.worker_id, death.node_id
+    )
+    descriptor = protocol.ResultDescriptor(
+        pending.object_id, protocol.ResultStorage.OBJECT_STORE, len(payload),
+        core.worker_id, death.node_id, checksum,
+    )
+    intent = StoredPublicationIntent(
+        header, manifest, death.node_pid, death.registration_epoch
+    )
+    recovery = StoredPublicationRecoveryRecord(
+        manifest, descriptor, (True,),
+        StoredPublicationLeaseTerminal(
+            publication, protocol.TaskReplyStatus.SUCCEEDED
+        ),
+        intent,
+    )
+    request = StoredNodeLossRequest(
+        death, NodeIncarnationWitness.from_intent(intent), recovery,
+        StoredNodeLossGraphWitness(
+            manifest.graph_manifest(core.worker_id),
+            StoredNodeLossGraphState.PREPARED,
+        ),
+    )
+    saga = StoredNodeLossRecoveryCoordinator()
+    saga.begin(request)
+    effect = saga.next_effect(publication)
+    assert isinstance(effect, RetireStoredOwnerEffect)
+    owner_effect = effect
+
+    next_attempt = pending.spec.attempt_id.next()
+    assert core.owner_table.advance_task_outputs(
+        pending.execution, next_attempt
+    )
+    retirement = core.owner_table.retire_stored_owner(effect)
+    assert retirement.disposition is StoredOwnerRetirementDisposition.FENCED
+    saga.acknowledge(effect, retirement)
+    while (effect := saga.next_effect(publication)) is not None:
+        if isinstance(effect, AbortStoredGraphEffect):
+            receipt = ContainedGraphManifestReceipt(
+                effect.manifest, ContainedGraphTransactionState.ABORTED,
+                ContainedGraphManifestDisposition.APPLIED,
+            )
+        elif isinstance(effect, ReleaseStoredHoldEffect):
+            receipt = StoredHoldResolutionReceipt(
+                effect, StoredHoldResolutionDisposition.RELEASED
+            )
+        else:
+            assert isinstance(effect, ProveStoredReplicaGoneEffect)
+            receipt = StoredReplicaResolutionReceipt(
+                effect,
+                StoredReplicaResolutionDisposition.DEAD_NODE_REPLICA_GONE,
+            )
+        saga.acknowledge(effect, receipt)
+    resolution = saga.resolution(publication)
+    assert resolution is not None
+    obligation = _StoredNodeLossObligation(
+        publication, death, True, owner_effect,
+        retirement, resolution
+    )
+    new_publication = StoredPublicationID(
+        LeaseID.random(), pending.task_id, next_attempt, pending.object_id
+    )
+    core._stored_node_loss_objects[pending.object_id] = new_publication
+    core._mark_protocol_unresolved(
+        old_pending, "stored_node_loss", obligation,
+        target_node_id=death.node_id, stored_candidate=publication,
+    )
+
+    assert core._complete_stored_node_loss(
+        old_pending, obligation, resolution
+    )
+    assert core._finish_pending_task(old_pending)
+    assert core._accepted_task_count == 0
+    assert hold not in core.owner_table.snapshot(dependency).submitted_tokens
+    current = core.owner_table.snapshot(pending.object_id)
+    assert current.current_attempt == next_attempt
+    assert current.state is ObjectState.PENDING
+    assert core._stored_node_loss_objects[pending.object_id] == new_publication
+
+    assert core._finish_pending_task(old_pending)
+    assert core._accepted_task_count == 0
+    current = core.owner_table.snapshot(pending.object_id)
+    assert current.current_attempt == next_attempt
+    assert current.state is ObjectState.PENDING
+    assert core._stored_node_loss_objects[pending.object_id] == new_publication
+
+
+def test_owner_retirement_post_commit_exception_replays_exact_tombstone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    core, pending, publication, death = _core()
+    executor = WorkerID.random()
+    payload = b"owner retirement replay"
+    checksum = hashlib.sha256(payload).hexdigest()
+    manifest = StoredPublicationManifest(
+        publication, (), len(payload), checksum,
+        hashlib.sha256(b"owner retirement manifest").hexdigest(),
+    )
+    header = StoredPublicationHeader(
+        publication, core.job_id, executor, core.worker_id, death.node_id
+    )
+    descriptor = protocol.ResultDescriptor(
+        pending.object_id, protocol.ResultStorage.OBJECT_STORE, len(payload),
+        core.worker_id, death.node_id, checksum,
+    )
+    intent = StoredPublicationIntent(
+        header, manifest, death.node_pid, death.registration_epoch
+    )
+    request = StoredNodeLossRequest(
+        death, NodeIncarnationWitness.from_intent(intent),
+        StoredPublicationRecoveryRecord(
+            manifest, descriptor, (),
+            StoredPublicationLeaseTerminal(
+                publication, protocol.TaskReplyStatus.SUCCEEDED
+            ),
+            intent,
+        ),
+        StoredNodeLossGraphWitness(
+            manifest.graph_manifest(core.worker_id),
+            StoredNodeLossGraphState.PREPARED,
+        ),
+    )
+    saga = StoredNodeLossRecoveryCoordinator()
+    owner_snapshot = saga.begin(request)
+    owner_effect = owner_snapshot.next_effect
+    assert isinstance(owner_effect, RetireStoredOwnerEffect)
+    pull = protocol.GetStoredNodeLoss(
+        publication, core.worker_id, death
+    )
+    reply = protocol.GetStoredNodeLossReply(
+        pull, protocol.StoredNodeLossDisposition.OWNER_EFFECT,
+        snapshot=owner_snapshot, owner_effect=owner_effect,
+    )
+    acknowledgements = []
+
+    def rpc(_address, handler, wire):
+        if handler == "get_stored_node_loss":
+            assert wire == pull
+            return reply
+        assert handler == "acknowledge_stored_owner_retirement"
+        acknowledgements.append(wire)
+        acknowledged = saga.acknowledge(wire.effect, wire.receipt)
+        return protocol.AcknowledgeStoredOwnerRetirementReply(
+            wire, snapshot=acknowledged
+        )
+
+    monkeypatch.setattr(core, "_rpc", rpc)
+    real_retire = core.owner_table.retire_stored_owner
+    calls = 0
+
+    def commit_then_raise(effect):
+        nonlocal calls
+        calls += 1
+        receipt = real_retire(effect)
+        if calls == 1:
+            raise RuntimeError("injected post-commit owner failure")
+        return receipt
+
+    monkeypatch.setattr(
+        core.owner_table, "retire_stored_owner", commit_then_raise
+    )
+    obligation = _StoredNodeLossObligation(publication, death, True)
+    core._stored_node_loss_drivers[publication] = obligation
+    core._stored_node_loss_objects[pending.object_id] = publication
+
+    assert not core._drive_stored_node_loss(pending, obligation)
+    first_scheduled = core._submissions.get_nowait()
+    assert first_scheduled.event.obligation.owner_effect is None
+    assert acknowledgements == []
+    first_receipt = real_retire(owner_effect)
+
+    assert not core._drive_stored_node_loss(
+        pending, first_scheduled.event.obligation
+    )
+    assert calls == 2
+    assert len(acknowledgements) == 1
+    assert acknowledgements[0].receipt == first_receipt

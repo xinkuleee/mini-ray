@@ -1,0 +1,413 @@
+{
+  "schema": "miniray.trace-contract/v1",
+  "name": "ordinary_task_success",
+  "title": "ordinary task: direct submission, mini-specific GCS publication, owner readiness and custody retirement",
+  "participants": {
+    "gcs": "GCS-lite",
+    "core_worker": "Owner CoreWorker",
+    "node": "NodeServer",
+    "worker": "Execution Worker"
+  },
+  "input_bindings": ["task_id"],
+  "events": [
+    {
+      "key": "node_registered",
+      "component": "gcs",
+      "event": "node_registered"
+    },
+    {
+      "key": "node_ready",
+      "component": "node",
+      "event": "process_ready"
+    },
+    {
+      "key": "worker_ready",
+      "component": "worker",
+      "event": "process_ready"
+    },
+    {
+      "key": "submitted",
+      "component": "core_worker",
+      "event": "task_submitted",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "object_id": "$object_id",
+        "task_id": "$task_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "dependencies_ready",
+      "component": "core_worker",
+      "event": "dependency_ready",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "dependency_count": "0",
+        "task_id": "$task_id"
+      },
+      "max_count": 1,
+      "show_fields": ["dependency_count"]
+    },
+    {
+      "key": "lease_requested",
+      "component": "core_worker",
+      "event": "lease_requested",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "task_id": "$task_id"
+      }
+    },
+    {
+      "key": "lease_granted",
+      "component": "core_worker",
+      "event": "lease_granted",
+      "fields": {
+        "lease_id": "$lease_id",
+        "node_id": "$node_id",
+        "task_id": "$task_id",
+        "worker_id": "$worker_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "pushed",
+      "component": "core_worker",
+      "event": "task_pushed",
+      "fields": {
+        "task_id": "$task_id",
+        "worker_id": "$worker_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "worker_started",
+      "component": "worker",
+      "event": "task_started",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "task_id": "$task_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "worker_succeeded",
+      "component": "worker",
+      "event": "task_succeeded",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "task_id": "$task_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "owner_ready",
+      "component": "core_worker",
+      "event": "output_owner_ready",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "return_count": "1"
+      },
+      "max_count": 1,
+      "show_fields": ["return_count"]
+    },
+    {
+      "key": "node_complete",
+      "component": "node",
+      "event": "output_lease_completed",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "status": "SUCCEEDED",
+        "state": "COMPLETED",
+        "released": "true"
+      },
+      "show_fields": ["status", "released"]
+    },
+    {
+      "key": "intent_ack",
+      "component": "node",
+      "event": "output_publication_ack",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "stage": "INTENT",
+        "accepted": "true"
+      },
+      "show_fields": ["stage", "accepted"]
+    },
+    {
+      "key": "arm_ack",
+      "component": "node",
+      "event": "output_publication_ack",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "stage": "ARM_COMPLETE",
+        "accepted": "true"
+      },
+      "show_fields": ["stage", "accepted"]
+    },
+    {
+      "key": "core_terminal_ack",
+      "component": "core_worker",
+      "event": "output_publication_ack",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "stage": "TERMINAL",
+        "accepted": "true"
+      },
+      "show_fields": ["stage", "accepted"]
+    },
+    {
+      "key": "core_adopted_ack",
+      "component": "core_worker",
+      "event": "output_publication_ack",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "stage": "ADOPTED",
+        "accepted": "true"
+      },
+      "show_fields": ["stage", "accepted"]
+    },
+    {
+      "key": "payload_retired",
+      "component": "core_worker",
+      "event": "output_payload_retired",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest"
+      }
+    },
+    {
+      "key": "task_finished",
+      "component": "core_worker",
+      "event": "task_finished",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "object_id": "$object_id",
+        "status": "SUCCEEDED",
+        "task_id": "$task_id"
+      },
+      "max_count": 1,
+      "show_fields": ["status"]
+    },
+    {
+      "key": "object_ready",
+      "component": "core_worker",
+      "event": "object_ready",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "object_id": "$object_id",
+        "return_index": "0",
+        "storage": "INLINE",
+        "task_id": "$task_id"
+      },
+      "max_count": 1,
+      "show_fields": ["storage"]
+    }
+  ],
+  "rpcs": [
+    {
+      "key": "lease_rpc",
+      "client": "core_worker",
+      "server": "node",
+      "handler": "request_worker_lease",
+      "after_event": "lease_requested",
+      "before_event": "lease_granted",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "push_rpc",
+      "client": "core_worker",
+      "server": "worker",
+      "handler": "push_task",
+      "after_event": "pushed",
+      "before_event": "owner_ready",
+      "server_event": "worker_succeeded",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "start_rpc",
+      "client": "worker",
+      "server": "node",
+      "client_component": "transport",
+      "handler": "start_worker_lease",
+      "after_event": "worker_started",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "prepare_rpc",
+      "client": "worker",
+      "server": "node",
+      "client_component": "transport",
+      "handler": "prepare_output_publication",
+      "after_event": "worker_started",
+      "before_event": "worker_succeeded",
+      "server_event": "arm_ack",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "intent_rpc",
+      "client": "node",
+      "server": "gcs",
+      "handler": "report_output_publication",
+      "reply_event": "intent_ack",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "arm_rpc",
+      "client": "node",
+      "server": "gcs",
+      "handler": "report_output_publication",
+      "reply_event": "arm_ack",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "complete_rpc",
+      "client": "worker",
+      "server": "node",
+      "client_component": "transport",
+      "handler": "complete_worker_lease",
+      "after_event": "worker_started",
+      "before_event": "worker_succeeded",
+      "server_event": "node_complete",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "terminal_rpc",
+      "client": "core_worker",
+      "server": "gcs",
+      "handler": "report_output_publication",
+      "after_event": "pushed",
+      "before_event": "owner_ready",
+      "reply_event": "core_terminal_ack",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "adopted_rpc",
+      "client": "core_worker",
+      "server": "gcs",
+      "handler": "report_output_publication",
+      "after_event": "owner_ready",
+      "before_event": "task_finished",
+      "reply_event": "core_adopted_ack",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "retire_rpc",
+      "client": "core_worker",
+      "server": "node",
+      "handler": "ack_output_publication_adopted",
+      "after_event": "owner_ready",
+      "before_event": "task_finished",
+      "reply_event": "payload_retired",
+      "round_trip": true,
+      "reply_ok": "true"
+    }
+  ],
+  "orders": [
+    {"before": "submitted", "after": "dependencies_ready"},
+    {"before": "dependencies_ready", "after": "lease_requested"},
+    {"before": "lease_requested", "after": "lease_rpc.request_sent"},
+    {"before": "lease_rpc.reply_received", "after": "lease_granted"},
+    {"before": "lease_granted", "after": "pushed"},
+    {"before": "pushed", "after": "push_rpc.request_sent"},
+    {"before": "push_rpc.request_received", "after": "worker_started"},
+    {"before": "worker_started", "after": "start_rpc.request_sent"},
+    {"before": "start_rpc.reply_received", "after": "prepare_rpc.request_sent"},
+    {"before": "prepare_rpc.request_received", "after": "intent_rpc.request_sent"},
+    {"before": "intent_rpc.reply_received", "after": "intent_ack"},
+    {"before": "intent_ack", "after": "arm_rpc.request_sent"},
+    {"before": "arm_rpc.reply_received", "after": "arm_ack"},
+    {"before": "arm_ack", "after": "prepare_rpc.reply_sent"},
+    {"before": "prepare_rpc.reply_received", "after": "complete_rpc.request_sent"},
+    {"before": "complete_rpc.request_received", "after": "node_complete"},
+    {"before": "node_complete", "after": "complete_rpc.reply_sent"},
+    {"before": "complete_rpc.reply_received", "after": "worker_succeeded"},
+    {"before": "worker_succeeded", "after": "push_rpc.reply_sent"},
+    {"before": "push_rpc.reply_received", "after": "terminal_rpc.request_sent"},
+    {"before": "terminal_rpc.reply_received", "after": "core_terminal_ack"},
+    {"before": "core_terminal_ack", "after": "owner_ready"},
+    {"before": "owner_ready", "after": "adopted_rpc.request_sent"},
+    {"before": "adopted_rpc.reply_received", "after": "core_adopted_ack"},
+    {"before": "core_adopted_ack", "after": "retire_rpc.request_sent"},
+    {"before": "retire_rpc.reply_received", "after": "payload_retired"},
+    {"before": "payload_retired", "after": "task_finished"},
+    {"before": "task_finished", "after": "object_ready"}
+  ],
+  "forbidden": [
+    {
+      "component": "gcs",
+      "event_prefixes": ["task_", "lease_"]
+    },
+    {
+      "component": "core_worker",
+      "event": "task_failed",
+      "fields": {"task_id": "$task_id"}
+    },
+    {
+      "component": "core_worker",
+      "event": "task_retried",
+      "fields": {"task_id": "$task_id"}
+    }
+  ],
+  "render_order": [
+    "submitted",
+    "dependencies_ready",
+    "lease_rpc.request_sent",
+    "lease_rpc.reply_received",
+    "lease_granted",
+    "push_rpc.request_sent",
+    "worker_started",
+    "start_rpc.request_sent",
+    "start_rpc.reply_received",
+    "prepare_rpc.request_sent",
+    "intent_rpc.request_sent",
+    "intent_rpc.reply_received",
+    "arm_rpc.request_sent",
+    "arm_rpc.reply_received",
+    "prepare_rpc.reply_received",
+    "complete_rpc.request_sent",
+    "node_complete",
+    "complete_rpc.reply_received",
+    "worker_succeeded",
+    "push_rpc.reply_received",
+    "terminal_rpc.request_sent",
+    "terminal_rpc.reply_received",
+    "owner_ready",
+    "adopted_rpc.request_sent",
+    "adopted_rpc.reply_received",
+    "retire_rpc.request_sent",
+    "retire_rpc.reply_received",
+    "payload_retired",
+    "task_finished",
+    "object_ready"
+  ]
+}

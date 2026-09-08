@@ -1,0 +1,767 @@
+"""Pure outer-owner composition for a completed stored publication.
+
+The publishing Worker and Node make bytes, contained pins, and the prepared
+GCS graph durable.  This module owns the other side of that hand-off: the
+logical outer owner claims the immutable envelope, makes the graph and owner
+metadata authoritative, and only then wakes readers.
+
+No RPC or CoreWorker dependency lives here.  Every effect is injected and
+must return an exact, replayable receipt.  The deliberately narrow
+``commit_owner`` callback is the missing owner-table transaction boundary: a
+runtime implementation must publish the stored descriptor *and* install all
+outgoing contained edges under one owner lock.
+
+Collection is the reverse barrier.  Every child-owner release must acknowledge
+its complete hold identity before the GCS graph manifest may be retired.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from enum import Enum
+from threading import RLock
+from typing import Callable, Hashable, Optional, Protocol
+
+from . import protocol
+from .contained_cycle import (
+    ContainedGraphManifestDisposition, ContainedGraphManifestReceipt,
+    ContainedGraphTransactionState,
+)
+from .ids import ObjectID, WorkerID
+from .stored_publication import (
+    StoredPublicationAdoption, StoredPublicationClaim,
+    StoredPublicationEnvelope, StoredPublicationID,
+)
+from .task_outputs import TaskExecutionKey
+
+
+class StoredPublicationOwnerError(RuntimeError):
+    """Base class for outer-owner adoption failures."""
+
+
+class StoredPublicationOwnerConflictError(StoredPublicationOwnerError):
+    """A stable publication/effect identity was rebound."""
+
+
+class StoredPublicationOwnerStateError(StoredPublicationOwnerError):
+    """An effect reply or requested transition is not authoritative."""
+
+
+class StoredPublicationOwnerDiedError(StoredPublicationOwnerError):
+    """The exact logical owner incarnation has a committed death proof."""
+
+
+class StoredOwnerEffectDisposition(str, Enum):
+    APPLIED = "APPLIED"
+    ALREADY_APPLIED = "ALREADY_APPLIED"
+
+
+class StoredOwnerOutcome(str, Enum):
+    READY = "READY"
+    OWNER_DIED = "OWNER_DIED"
+
+
+@dataclass(frozen=True)
+class StoredPublicationClaimRequest:
+    """Exact Node claim plus the immutable envelope it claims."""
+
+    execution: TaskExecutionKey
+    envelope: StoredPublicationEnvelope
+    claim: StoredPublicationClaim
+
+    def __post_init__(self) -> None:
+        _validate_execution_envelope(self.execution, self.envelope)
+        if not isinstance(self.claim, StoredPublicationClaim):
+            raise TypeError("claim must be a StoredPublicationClaim")
+        if (
+            self.claim.publication_id != self.envelope.publication_id
+            or self.claim.claimant_worker_id
+            != self.envelope.header.outer_owner_worker_id
+            or self.claim.manifest_digest != self.envelope.manifest_digest
+        ):
+            raise ValueError("claim does not match the completed envelope")
+
+
+@dataclass(frozen=True)
+class StoredPublicationClaimReceipt:
+    request: StoredPublicationClaimRequest
+    disposition: StoredOwnerEffectDisposition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, StoredPublicationClaimRequest):
+            raise TypeError("claim receipt requires its exact request")
+        if not isinstance(self.disposition, StoredOwnerEffectDisposition):
+            raise TypeError("claim receipt disposition is invalid")
+
+
+@dataclass(frozen=True)
+class StoredPublicationPromotionReplay:
+    """Ask the Node to replay/fence every final-pin promotion ACK."""
+
+    claim_request: StoredPublicationClaimRequest
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.claim_request, StoredPublicationClaimRequest):
+            raise TypeError("promotion replay requires a claim request")
+
+
+@dataclass(frozen=True)
+class StoredPublicationPromotionReceipt:
+    request: StoredPublicationPromotionReplay
+    disposition: StoredOwnerEffectDisposition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, StoredPublicationPromotionReplay):
+            raise TypeError("promotion receipt requires its exact request")
+        if not isinstance(self.disposition, StoredOwnerEffectDisposition):
+            raise TypeError("promotion receipt disposition is invalid")
+
+
+@dataclass(frozen=True)
+class StoredOwnerCommitRequest:
+    """Atomic owner result+edge transaction requested by adoption."""
+
+    claim_request: StoredPublicationClaimRequest
+    adoption: StoredPublicationAdoption
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.claim_request, StoredPublicationClaimRequest):
+            raise TypeError("owner commit requires a claim request")
+        if not isinstance(self.adoption, StoredPublicationAdoption):
+            raise TypeError("owner commit requires an adoption identity")
+        if self.adoption.claim != self.claim_request.claim:
+            raise ValueError("owner commit adoption does not match its claim")
+
+    @property
+    def envelope(self) -> StoredPublicationEnvelope:
+        return self.claim_request.envelope
+
+    @property
+    def execution(self) -> TaskExecutionKey:
+        return self.claim_request.execution
+
+
+@dataclass(frozen=True)
+class StoredOwnerCommitReceipt:
+    request: StoredOwnerCommitRequest
+    disposition: StoredOwnerEffectDisposition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, StoredOwnerCommitRequest):
+            raise TypeError("owner commit receipt requires its exact request")
+        if not isinstance(self.disposition, StoredOwnerEffectDisposition):
+            raise TypeError("owner commit receipt disposition is invalid")
+
+
+@dataclass(frozen=True)
+class StoredOwnerWakeRequest:
+    """Idempotent notification identity, never an authority mutation."""
+
+    adoption: StoredPublicationAdoption
+    outcome: StoredOwnerOutcome
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.adoption, StoredPublicationAdoption):
+            raise TypeError("wake requires an adoption identity")
+        if not isinstance(self.outcome, StoredOwnerOutcome):
+            raise TypeError("wake outcome is invalid")
+
+
+@dataclass(frozen=True)
+class StoredOwnerWakeReceipt:
+    request: StoredOwnerWakeRequest
+    disposition: StoredOwnerEffectDisposition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, StoredOwnerWakeRequest):
+            raise TypeError("wake receipt requires its exact request")
+        if not isinstance(self.disposition, StoredOwnerEffectDisposition):
+            raise TypeError("wake receipt disposition is invalid")
+
+
+@dataclass(frozen=True)
+class StoredOwnerDeathCommitRequest:
+    """Terminal fence used when the immutable outer owner has died."""
+
+    claim_request: StoredPublicationClaimRequest
+    adoption: StoredPublicationAdoption
+    cleanup_id: str
+    death_proof: Hashable
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.claim_request, StoredPublicationClaimRequest):
+            raise TypeError("owner-death commit requires a claim request")
+        if not isinstance(self.adoption, StoredPublicationAdoption):
+            raise TypeError("owner-death commit requires an adoption identity")
+        if self.adoption.claim != self.claim_request.claim:
+            raise ValueError("owner-death adoption does not match its claim")
+        if not isinstance(self.cleanup_id, str) or not self.cleanup_id:
+            raise ValueError("cleanup_id must be a non-empty string")
+        _require_hashable(self.death_proof, "death_proof")
+
+
+@dataclass(frozen=True)
+class StoredOwnerDeathCommitReceipt:
+    request: StoredOwnerDeathCommitRequest
+    disposition: StoredOwnerEffectDisposition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, StoredOwnerDeathCommitRequest):
+            raise TypeError("owner-death receipt requires its exact request")
+        if not isinstance(self.disposition, StoredOwnerEffectDisposition):
+            raise TypeError("owner-death receipt disposition is invalid")
+
+
+@dataclass(frozen=True)
+class StoredPublicationCollectionRequest:
+    """Exact reverse-lifetime transaction for one adopted outer object."""
+
+    envelope: StoredPublicationEnvelope
+    collection_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.envelope, StoredPublicationEnvelope):
+            raise TypeError("collection requires a stored envelope")
+        if not isinstance(self.collection_id, str) or not self.collection_id:
+            raise ValueError("collection_id must be a non-empty string")
+
+    @property
+    def object_id(self) -> ObjectID:
+        return self.envelope.publication_id.outer_object_id
+
+
+@dataclass(frozen=True)
+class StoredPublicationCollectionReceipt:
+    request: StoredPublicationCollectionRequest
+    disposition: StoredOwnerEffectDisposition
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, StoredPublicationCollectionRequest):
+            raise TypeError("collection receipt requires its exact request")
+        if not isinstance(self.disposition, StoredOwnerEffectDisposition):
+            raise TypeError("collection receipt disposition is invalid")
+
+
+class AtomicStoredOwnerAuthority(Protocol):
+    """The owner-table API intentionally required by the composition.
+
+    ``commit`` must validate and install the descriptor plus every edge from
+    ``request.envelope.edges`` under one owner lock, or install nothing.
+    """
+
+    def commit(self, request: StoredOwnerCommitRequest) -> StoredOwnerCommitReceipt:
+        ...
+
+
+ClaimPublication = Callable[
+    [StoredPublicationClaimRequest], StoredPublicationClaimReceipt
+]
+ReplayPromotions = Callable[
+    [StoredPublicationPromotionReplay], StoredPublicationPromotionReceipt
+]
+CommitGraph = Callable[
+    [protocol.CommitStoredPublicationGraph], protocol.StoredPublicationGraphReply
+]
+CommitOwner = Callable[[StoredOwnerCommitRequest], StoredOwnerCommitReceipt]
+WakeOwner = Callable[[StoredOwnerWakeRequest], StoredOwnerWakeReceipt]
+AckAdopted = Callable[
+    [StoredPublicationAdoption], StoredPublicationAdoption
+]
+OwnerDeathLookup = Callable[[WorkerID], object | None]
+CommitOwnerDeath = Callable[
+    [StoredOwnerDeathCommitRequest], StoredOwnerDeathCommitReceipt
+]
+ReleaseChild = Callable[
+    [protocol.ReleaseContainedReference], protocol.ReleaseContainedReferenceReply
+]
+ReleaseGraph = Callable[
+    [object, ObjectID], ContainedGraphManifestReceipt
+]
+CompleteCollection = Callable[
+    [StoredPublicationCollectionRequest], StoredPublicationCollectionReceipt
+]
+
+
+@dataclass(frozen=True)
+class StoredPublicationOwnerSnapshot:
+    claim_request: StoredPublicationClaimRequest
+    adoption: StoredPublicationAdoption
+    claim_acked: bool
+    promotions_acked: bool
+    graph_committed: bool
+    owner_committed: bool
+    ready_woken: bool
+    adopted_acked: bool
+    owner_death_committed: bool
+    owner_death_woken: bool
+
+
+@dataclass
+class _AdoptionRecord:
+    claim_request: StoredPublicationClaimRequest
+    adoption: StoredPublicationAdoption
+    claim_acked: bool = False
+    promotions_acked: bool = False
+    graph_committed: bool = False
+    owner_committed: bool = False
+    ready_woken: bool = False
+    adopted_acked: bool = False
+    owner_death_request: Optional[StoredOwnerDeathCommitRequest] = None
+    owner_death_committed: bool = False
+    owner_death_woken: bool = False
+
+
+@dataclass
+class _CollectionRecord:
+    request: StoredPublicationCollectionRequest
+    released_indexes: set[int] = field(default_factory=set)
+    graph_released: bool = False
+    owner_completed: bool = False
+
+
+class StoredPublicationCollectionAdapter:
+    """Release pins, then graph, then owner collection by exact identity."""
+
+    def __init__(
+        self, *, release_child: ReleaseChild, release_graph: ReleaseGraph,
+        complete_owner: CompleteCollection,
+    ) -> None:
+        for callback, name in (
+            (release_child, "release_child"),
+            (release_graph, "release_graph"),
+            (complete_owner, "complete_owner"),
+        ):
+            if not callable(callback):
+                raise TypeError(f"{name} must be callable")
+        self._release_child = release_child
+        self._release_graph = release_graph
+        self._complete_owner = complete_owner
+        self._records: dict[StoredPublicationID, _CollectionRecord] = {}
+        self._lock = RLock()
+
+    def collect(
+        self, request: StoredPublicationCollectionRequest,
+    ) -> StoredPublicationCollectionReceipt:
+        if not isinstance(request, StoredPublicationCollectionRequest):
+            raise TypeError("collect requires StoredPublicationCollectionRequest")
+        publication_id = request.envelope.publication_id
+        with self._lock:
+            record = self._records.get(publication_id)
+            if record is None:
+                record = _CollectionRecord(request)
+                self._records[publication_id] = record
+            elif record.request != request:
+                raise StoredPublicationOwnerConflictError(
+                    "publication collection identity changed"
+                )
+
+            owner = request.envelope.header.outer_owner_worker_id
+            for index, edge in enumerate(request.envelope.edges):
+                if index in record.released_indexes:
+                    continue
+                release = protocol.ReleaseContainedReference(
+                    edge.contained_object_id, edge.contained_owner_worker_id,
+                    edge.incoming_hold(owner),
+                )
+                reply = self._release_child(release)
+                if (
+                    not isinstance(reply, protocol.ReleaseContainedReferenceReply)
+                    or reply.object_id != release.object_id
+                    or reply.owner_worker_id != release.owner_worker_id
+                    or reply.hold != release.hold
+                    or not reply.accepted
+                ):
+                    raise StoredPublicationOwnerStateError(
+                        "child release did not acknowledge its exact hold"
+                    )
+                record.released_indexes.add(index)
+
+            # The graph represents real final holds.  Retiring it before every
+            # child ACK would make cycle/GC authority disagree with reality.
+            if not record.graph_released:
+                manifest = request.envelope.graph_manifest
+                receipt = self._release_graph(manifest, request.object_id)
+                if (
+                    not isinstance(receipt, ContainedGraphManifestReceipt)
+                    or receipt.manifest != manifest
+                    or receipt.state is not ContainedGraphTransactionState.COMMITTED
+                    or receipt.disposition not in (
+                        ContainedGraphManifestDisposition.RELEASED,
+                        ContainedGraphManifestDisposition.ALREADY_RELEASED,
+                    )
+                ):
+                    raise StoredPublicationOwnerStateError(
+                        "graph release did not acknowledge the exact manifest"
+                    )
+                record.graph_released = True
+
+            if not record.owner_completed:
+                receipt = self._complete_owner(request)
+                if (
+                    not isinstance(receipt, StoredPublicationCollectionReceipt)
+                    or receipt.request != request
+                ):
+                    raise StoredPublicationOwnerStateError(
+                        "owner collection did not echo its exact request"
+                    )
+                record.owner_completed = True
+                return receipt
+            return StoredPublicationCollectionReceipt(
+                request, StoredOwnerEffectDisposition.ALREADY_APPLIED
+            )
+
+
+class StoredPublicationOwnerAdapter:
+    """Replay-safe completed-publication adoption at one logical owner."""
+
+    def __init__(
+        self, owner_worker_id: WorkerID, *,
+        claim_publication: ClaimPublication,
+        replay_promotions: ReplayPromotions,
+        commit_graph: CommitGraph,
+        commit_owner: CommitOwner,
+        wake_owner: WakeOwner,
+        ack_adopted: AckAdopted,
+        owner_death_lookup: Optional[OwnerDeathLookup] = None,
+        commit_owner_death: Optional[CommitOwnerDeath] = None,
+        collection: Optional[StoredPublicationCollectionAdapter] = None,
+    ) -> None:
+        if not isinstance(owner_worker_id, WorkerID):
+            raise TypeError("owner_worker_id must be a WorkerID")
+        callbacks = (
+            (claim_publication, "claim_publication"),
+            (replay_promotions, "replay_promotions"),
+            (commit_graph, "commit_graph"),
+            (commit_owner, "commit_owner"),
+            (wake_owner, "wake_owner"),
+            (ack_adopted, "ack_adopted"),
+        )
+        for callback, name in callbacks:
+            if not callable(callback):
+                raise TypeError(f"{name} must be callable")
+        if owner_death_lookup is not None and not callable(owner_death_lookup):
+            raise TypeError("owner_death_lookup must be callable")
+        if commit_owner_death is not None and not callable(commit_owner_death):
+            raise TypeError("commit_owner_death must be callable")
+        if collection is not None and not isinstance(
+            collection, StoredPublicationCollectionAdapter
+        ):
+            raise TypeError("collection must be a collection adapter")
+        self.owner_worker_id = owner_worker_id
+        self._claim_publication = claim_publication
+        self._replay_promotions = replay_promotions
+        self._commit_graph = commit_graph
+        self._commit_owner = commit_owner
+        self._wake_owner = wake_owner
+        self._ack_adopted = ack_adopted
+        self._owner_death_lookup = owner_death_lookup or (lambda _owner: None)
+        self._commit_owner_death = commit_owner_death
+        self._collection = collection
+        self._records: dict[StoredPublicationID, _AdoptionRecord] = {}
+        self._lock = RLock()
+
+    def adopt(
+        self, execution: TaskExecutionKey, envelope: StoredPublicationEnvelope,
+    ) -> StoredPublicationAdoption:
+        """Claim -> promote fence -> graph -> owner -> wake -> Node ACK."""
+
+        with self._lock:
+            record = self._record(execution, envelope)
+            if record.owner_death_request is not None:
+                raise StoredPublicationOwnerDiedError(
+                    "owner-death cleanup already owns this publication"
+                )
+            self._require_owner_alive()
+            self._drive_shared_prefix(record)
+            self._require_owner_alive()
+
+            if not record.owner_committed:
+                request = StoredOwnerCommitRequest(
+                    record.claim_request, record.adoption
+                )
+                receipt = self._commit_owner(request)
+                if (
+                    not isinstance(receipt, StoredOwnerCommitReceipt)
+                    or receipt.request != request
+                ):
+                    raise StoredPublicationOwnerStateError(
+                        "owner commit did not echo the exact publication"
+                    )
+                record.owner_committed = True
+
+            # A committed death between owner publication and notification
+            # takes the terminal cleanup path; it never emits a READY wake.
+            self._require_owner_alive()
+            if not record.ready_woken:
+                wake = StoredOwnerWakeRequest(
+                    record.adoption, StoredOwnerOutcome.READY
+                )
+                receipt = self._wake_owner(wake)
+                if (
+                    not isinstance(receipt, StoredOwnerWakeReceipt)
+                    or receipt.request != wake
+                ):
+                    raise StoredPublicationOwnerStateError(
+                        "ready wake did not echo its exact identity"
+                    )
+                record.ready_woken = True
+            self._ack(record)
+            return record.adoption
+
+    def cleanup_owner_death(
+        self, execution: TaskExecutionKey, envelope: StoredPublicationEnvelope,
+    ) -> StoredPublicationAdoption:
+        """Fence a dead owner, release pins/graph, notify, then ACK Node.
+
+        Another WorkerID is never allowed to take the claim.  A fresh adapter
+        for the same stable owner identity derives the same claim and cleanup
+        IDs and can therefore replay an interrupted cleanup.
+        """
+
+        with self._lock:
+            proof = self._owner_death_lookup(self.owner_worker_id)
+            if proof is None:
+                raise StoredPublicationOwnerStateError(
+                    "owner-death cleanup requires a committed death proof"
+                )
+            if self._commit_owner_death is None or self._collection is None:
+                raise StoredPublicationOwnerStateError(
+                    "owner-death cleanup callbacks are not configured"
+                )
+            record = self._record(execution, envelope)
+            self._drive_shared_prefix(record, allow_dead=True)
+            request = StoredOwnerDeathCommitRequest(
+                record.claim_request, record.adoption,
+                _stable_id(b"owner-death", envelope.publication_id,
+                           self.owner_worker_id),
+                proof,
+            )
+            if record.owner_death_request is not None and (
+                record.owner_death_request != request
+            ):
+                raise StoredPublicationOwnerConflictError(
+                    "owner-death cleanup proof or identity changed"
+                )
+            record.owner_death_request = request
+            if not record.owner_death_committed:
+                receipt = self._commit_owner_death(request)
+                if (
+                    not isinstance(receipt, StoredOwnerDeathCommitReceipt)
+                    or receipt.request != request
+                ):
+                    raise StoredPublicationOwnerStateError(
+                        "owner-death commit did not echo its exact identity"
+                    )
+                record.owner_death_committed = True
+
+            collection = StoredPublicationCollectionRequest(
+                envelope, request.cleanup_id
+            )
+            self._collection.collect(collection)
+            if not record.owner_death_woken:
+                wake = StoredOwnerWakeRequest(
+                    record.adoption, StoredOwnerOutcome.OWNER_DIED
+                )
+                receipt = self._wake_owner(wake)
+                if (
+                    not isinstance(receipt, StoredOwnerWakeReceipt)
+                    or receipt.request != wake
+                ):
+                    raise StoredPublicationOwnerStateError(
+                        "owner-death wake did not echo its exact identity"
+                    )
+                record.owner_death_woken = True
+            self._ack(record)
+            return record.adoption
+
+    def snapshot(
+        self, publication_id: StoredPublicationID,
+    ) -> StoredPublicationOwnerSnapshot:
+        if not isinstance(publication_id, StoredPublicationID):
+            raise TypeError("publication_id must be a StoredPublicationID")
+        with self._lock:
+            try:
+                record = self._records[publication_id]
+            except KeyError as exc:
+                raise StoredPublicationOwnerStateError(
+                    "publication has not entered owner adoption"
+                ) from exc
+            return StoredPublicationOwnerSnapshot(
+                record.claim_request, record.adoption, record.claim_acked,
+                record.promotions_acked, record.graph_committed,
+                record.owner_committed, record.ready_woken,
+                record.adopted_acked, record.owner_death_committed,
+                record.owner_death_woken,
+            )
+
+    def _record(
+        self, execution: TaskExecutionKey, envelope: StoredPublicationEnvelope,
+    ) -> _AdoptionRecord:
+        _validate_execution_envelope(execution, envelope)
+        if envelope.header.outer_owner_worker_id != self.owner_worker_id:
+            raise StoredPublicationOwnerConflictError(
+                "envelope belongs to another logical outer owner"
+            )
+        claim = StoredPublicationClaim(
+            envelope.publication_id,
+            _stable_id(b"claim", envelope.publication_id, self.owner_worker_id),
+            self.owner_worker_id, envelope.manifest_digest,
+        )
+        claim_request = StoredPublicationClaimRequest(execution, envelope, claim)
+        adoption = StoredPublicationAdoption(
+            claim, _stable_id(
+                b"owner-commit", envelope.publication_id,
+                self.owner_worker_id,
+            )
+        )
+        previous = self._records.get(envelope.publication_id)
+        if previous is not None:
+            if (
+                previous.claim_request != claim_request
+                or previous.adoption != adoption
+            ):
+                raise StoredPublicationOwnerConflictError(
+                    "publication adoption identity changed"
+                )
+            return previous
+        record = _AdoptionRecord(claim_request, adoption)
+        self._records[envelope.publication_id] = record
+        return record
+
+    def _drive_shared_prefix(
+        self, record: _AdoptionRecord, *, allow_dead: bool = False,
+    ) -> None:
+        if not allow_dead:
+            self._require_owner_alive()
+        if not record.claim_acked:
+            receipt = self._claim_publication(record.claim_request)
+            if (
+                not isinstance(receipt, StoredPublicationClaimReceipt)
+                or receipt.request != record.claim_request
+            ):
+                raise StoredPublicationOwnerStateError(
+                    "Node claim did not echo the exact envelope and claim"
+                )
+            record.claim_acked = True
+        if not allow_dead:
+            self._require_owner_alive()
+        if not record.promotions_acked:
+            request = StoredPublicationPromotionReplay(record.claim_request)
+            receipt = self._replay_promotions(request)
+            if (
+                not isinstance(receipt, StoredPublicationPromotionReceipt)
+                or receipt.request != request
+            ):
+                raise StoredPublicationOwnerStateError(
+                    "promotion replay did not echo the exact publication"
+                )
+            record.promotions_acked = True
+        if not allow_dead:
+            self._require_owner_alive()
+        if not record.graph_committed:
+            request = protocol.CommitStoredPublicationGraph(
+                record.claim_request.envelope.graph_manifest
+            )
+            reply = self._commit_graph(request)
+            if (
+                not isinstance(reply, protocol.StoredPublicationGraphReply)
+                or reply.request != request
+                or reply.receipt is None
+                or reply.receipt.manifest != request.manifest
+                or reply.receipt.state
+                is not ContainedGraphTransactionState.COMMITTED
+                or reply.receipt.disposition not in (
+                    ContainedGraphManifestDisposition.APPLIED,
+                    ContainedGraphManifestDisposition.ALREADY_COMMITTED,
+                )
+            ):
+                raise StoredPublicationOwnerStateError(
+                    "GCS did not commit the exact prepared graph manifest"
+                )
+            record.graph_committed = True
+
+    def _ack(self, record: _AdoptionRecord) -> None:
+        if record.adopted_acked:
+            return
+        acknowledgement = self._ack_adopted(record.adoption)
+        if acknowledgement != record.adoption:
+            raise StoredPublicationOwnerStateError(
+                "Node adoption ACK changed claim or owner commit identity"
+            )
+        record.adopted_acked = True
+
+    def _require_owner_alive(self) -> None:
+        if self._owner_death_lookup(self.owner_worker_id) is not None:
+            raise StoredPublicationOwnerDiedError(
+                "logical outer owner has a committed death proof"
+            )
+
+
+def _validate_execution_envelope(
+    execution: TaskExecutionKey, envelope: StoredPublicationEnvelope,
+) -> None:
+    if not isinstance(execution, TaskExecutionKey):
+        raise TypeError("execution must be a TaskExecutionKey")
+    if not isinstance(envelope, StoredPublicationEnvelope):
+        raise TypeError("envelope must be a StoredPublicationEnvelope")
+    publication_id = envelope.publication_id
+    if execution.num_returns != 1:
+        raise ValueError("stored owner adoption currently requires one return")
+    if (
+        execution.task_id != publication_id.task_id
+        or execution.attempt_id != publication_id.attempt_id
+        or execution.output_ids != (publication_id.outer_object_id,)
+        or envelope.descriptor.object_id != execution.output_ids[0]
+    ):
+        raise ValueError(
+            "execution task, attempt, or descriptor differs from envelope"
+        )
+
+
+def _stable_id(
+    domain: bytes, publication_id: StoredPublicationID, owner: WorkerID,
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"miniray-stored-owner-v1\0")
+    digest.update(domain)
+    digest.update(bytes(publication_id.lease_id))
+    digest.update(bytes(publication_id.task_id))
+    digest.update(publication_id.attempt_id.attempt_number.to_bytes(8, "big"))
+    digest.update(bytes(publication_id.outer_object_id.task_id))
+    digest.update(publication_id.outer_object_id.return_index.to_bytes(8, "big"))
+    digest.update(bytes(owner))
+    return "stored-owner:" + digest.hexdigest()
+
+
+def _require_hashable(value: object, label: str) -> None:
+    try:
+        hash(value)
+    except TypeError as exc:
+        raise TypeError(f"{label} must be hashable") from exc
+
+
+__all__ = [
+    "AtomicStoredOwnerAuthority",
+    "StoredOwnerCommitReceipt",
+    "StoredOwnerCommitRequest",
+    "StoredOwnerDeathCommitReceipt",
+    "StoredOwnerDeathCommitRequest",
+    "StoredOwnerEffectDisposition",
+    "StoredOwnerOutcome",
+    "StoredOwnerWakeReceipt",
+    "StoredOwnerWakeRequest",
+    "StoredPublicationClaimReceipt",
+    "StoredPublicationClaimRequest",
+    "StoredPublicationCollectionAdapter",
+    "StoredPublicationCollectionReceipt",
+    "StoredPublicationCollectionRequest",
+    "StoredPublicationOwnerAdapter",
+    "StoredPublicationOwnerConflictError",
+    "StoredPublicationOwnerDiedError",
+    "StoredPublicationOwnerError",
+    "StoredPublicationOwnerSnapshot",
+    "StoredPublicationOwnerStateError",
+    "StoredPublicationPromotionReceipt",
+    "StoredPublicationPromotionReplay",
+]

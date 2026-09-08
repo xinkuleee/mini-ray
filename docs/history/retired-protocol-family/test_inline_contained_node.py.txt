@@ -1,0 +1,459 @@
+"""Node intent, Complete, and Worker-loss semantics for INLINE publication."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from miniray import protocol
+from miniray.contained_cycle import ContainedReferenceGraphAuthority
+from miniray.contained_edges import (
+    ContainedReferenceEdge, ContainedReferenceHold,
+)
+from miniray.ids import (
+    AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
+)
+from miniray.inline_contained_node import (
+    InlineChildEffectReply, InlineChildEffectRequest,
+    InlineExecutionBinding,
+    InlineNodePublicationPhase,
+    InlinePublicationNodeConflictError,
+    InlinePublicationNodeJournal,
+    InlinePublicationNodeRuntime,
+    InlineWorkerLossAction,
+)
+from miniray.inline_contained_publication import (
+    InlinePublicationEnvelope, InlinePublicationState,
+    InlinePublicationStateError,
+)
+from miniray.stored_publication import (
+    BorrowedContainedSource, PreparedContainedTransfer,
+)
+
+
+pytestmark = pytest.mark.unit
+
+
+class _Fixture:
+    def __init__(self, edge_count: int = 3) -> None:
+        self.job = JobID.random()
+        self.task = TaskID.derive(
+            self.job, TaskID.for_driver(self.job), 1
+        )
+        self.attempt = AttemptID(self.task, 0)
+        self.lease = LeaseID.random()
+        self.executor = WorkerID.random()
+        self.owner = WorkerID.random()
+        self.node = NodeID.random()
+        self.outer = ObjectID.for_task(self.task)
+        from miniray.inline_contained_publication import InlinePublicationID
+
+        self.publication = InlinePublicationID(
+            self.lease, self.task, self.attempt, self.outer
+        )
+        self.edges = tuple(self._edge(index) for index in range(edge_count))
+        self.envelope = InlinePublicationEnvelope.create(
+            self.publication, self.job, self.executor, self.owner, self.node,
+            b"inline publication bytes", self.edges,
+        )
+        self.binding = InlineExecutionBinding(
+            self.lease, self.task, self.attempt, self.executor, self.node
+        )
+
+    def _edge(self, index: int) -> ContainedReferenceEdge:
+        child_task = TaskID.derive(
+            self.job, TaskID.for_driver(self.job), index + 20
+        )
+        return ContainedReferenceEdge(
+            self.outer, ObjectID.for_task(child_task), self.executor,
+            ("127.0.0.1", 31000 + index),
+            "inline-node-pin:{}".format(index),
+        )
+
+
+class _Effects:
+    def __init__(self) -> None:
+        self.graph = ContainedReferenceGraphAuthority()
+        self.pins = set()
+        self.events = []
+        self.fail_prepare_after_apply = 0
+        self.fail_commit_after_apply = 0
+        self.fail_install_after_apply = set()
+        self.fail_release_after_apply = set()
+
+    def prepare_graph(self, request):
+        self.events.append("graph-prepare")
+        receipt = self.graph.prepare_manifest(request.manifest)
+        if self.fail_prepare_after_apply:
+            self.fail_prepare_after_apply -= 1
+            raise TimeoutError("graph PREPARE reply lost")
+        return protocol.ContainedGraphReply(request, receipt)
+
+    def commit_graph(self, request):
+        self.events.append("graph-commit")
+        receipt = self.graph.commit_manifest(request.manifest)
+        if self.fail_commit_after_apply:
+            self.fail_commit_after_apply -= 1
+            raise TimeoutError("graph COMMIT reply lost")
+        return protocol.ContainedGraphReply(request, receipt)
+
+    def abort_graph(self, request):
+        self.events.append("graph-abort")
+        return protocol.ContainedGraphReply(
+            request, self.graph.abort_manifest(request.manifest)
+        )
+
+    def install_child(self, request):
+        effect = request.effect
+        self.events.append("pin:{}".format(effect.index))
+        changed = effect not in self.pins
+        self.pins.add(effect)
+        if effect.index in self.fail_install_after_apply:
+            self.fail_install_after_apply.remove(effect.index)
+            raise TimeoutError("child pin reply lost")
+        return InlineChildEffectReply(request, True, changed)
+
+    def release_child(self, request):
+        effect = request.effect
+        self.events.append("release:{}".format(effect.index))
+        changed = effect in self.pins
+        self.pins.discard(effect)
+        if effect.index in self.fail_release_after_apply:
+            self.fail_release_after_apply.remove(effect.index)
+            raise TimeoutError("child release reply lost")
+        return InlineChildEffectReply(request, True, changed)
+
+    def runtime(self, journal=None):
+        return InlinePublicationNodeRuntime(
+            journal or InlinePublicationNodeJournal(),
+            prepare_graph=self.prepare_graph,
+            commit_graph=self.commit_graph,
+            abort_graph=self.abort_graph,
+            install_child=self.install_child,
+            release_child=self.release_child,
+        )
+
+
+def test_journal_binds_envelope_to_exact_execution_before_effects() -> None:
+    fixture = _Fixture(1)
+    journal = InlinePublicationNodeJournal()
+
+    assert journal.open(fixture.binding, fixture.envelope)
+    assert not journal.open(fixture.binding, fixture.envelope)
+    assert journal.snapshot(
+        fixture.publication
+    ).phase is InlineNodePublicationPhase.INTENT
+
+    wrong_executor = replace(
+        fixture.binding, executor_worker_id=WorkerID.random()
+    )
+    with pytest.raises(InlinePublicationNodeConflictError, match="executor"):
+        journal.open(wrong_executor, fixture.envelope)
+
+    conflict = InlinePublicationEnvelope.create(
+        fixture.publication, fixture.job, fixture.executor, fixture.owner,
+        fixture.node, b"different inline bytes", fixture.edges,
+    )
+    before = journal.snapshot(fixture.publication)
+    with pytest.raises(
+        InlinePublicationNodeConflictError, match="another Node intent"
+    ):
+        journal.open(fixture.binding, conflict)
+    assert journal.snapshot(fixture.publication) == before
+
+
+def test_borrowed_inline_source_is_journaled_replayed_and_rolled_back_exactly(
+) -> None:
+    fixture = _Fixture(1)
+    foreign_owner = WorkerID.random()
+    edge = replace(
+        fixture.edges[0], contained_owner_worker_id=foreign_owner,
+        contained_owner_address=("127.0.0.1", 31990),
+    )
+    source = protocol.TaskHoldSource(protocol.TaskReferenceHold(
+        protocol.TaskReferenceHoldKind.RETAINED, fixture.executor,
+        fixture.task, fixture.attempt,
+    ))
+    transfer = PreparedContainedTransfer(
+        edge.contained_object_id, foreign_owner, edge.contained_owner_address,
+        BorrowedContainedSource(
+            fixture.executor, "borrowed-inline-token", source
+        ),
+        ContainedReferenceHold(
+            fixture.outer, fixture.executor, edge.transfer_token
+        ),
+        ContainedReferenceHold(
+            fixture.outer, fixture.owner, edge.transfer_token
+        ),
+    )
+    envelope = InlinePublicationEnvelope.create(
+        fixture.publication, fixture.job, fixture.executor, fixture.owner,
+        fixture.node, b"borrowed inline publication", (edge,), (transfer,),
+    )
+    effects = _Effects()
+    effects.fail_install_after_apply.add(0)
+    runtime = effects.runtime()
+
+    with pytest.raises(TimeoutError, match="pin reply lost"):
+        runtime.prepare(fixture.binding, envelope)
+    assert runtime.journal.snapshot(
+        fixture.publication
+    ).envelope.manifest.transfers == (transfer,)
+
+    prepared = runtime.prepare(fixture.binding, envelope)
+    assert prepared.pin_bitmap == (True,)
+    assert effects.events == ["graph-prepare", "pin:0", "pin:0"]
+    assert envelope.edge_effect(0).transfer.source == transfer.source
+
+    outcome = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert outcome.action is InlineWorkerLossAction.ROLLBACK
+    assert effects.events[-2:] == ["release:0", "graph-abort"]
+
+
+def test_prepare_replays_only_ambiguous_child_effect() -> None:
+    fixture = _Fixture(3)
+    effects = _Effects()
+    effects.fail_install_after_apply.add(1)
+    runtime = effects.runtime()
+
+    with pytest.raises(TimeoutError, match="pin reply lost"):
+        runtime.prepare(fixture.binding, fixture.envelope)
+
+    snapshot = runtime.journal.snapshot(fixture.publication)
+    assert snapshot.phase is InlineNodePublicationPhase.PREPARED
+    assert snapshot.graph_prepare_intent
+    assert snapshot.graph_prepared
+    assert snapshot.pin_intent_bitmap == (True, True, False)
+    assert snapshot.pin_bitmap == (True, False, False)
+    assert effects.events == [
+        "graph-prepare", "pin:0", "pin:1"
+    ]
+
+    final = runtime.prepare(fixture.binding, fixture.envelope)
+    assert final.phase is InlineNodePublicationPhase.PINS_INSTALLED
+    assert final.pin_bitmap == (True, True, True)
+    assert effects.events == [
+        "graph-prepare", "pin:0", "pin:1", "pin:1", "pin:2"
+    ]
+    assert effects.pins == {
+        fixture.envelope.edge_effect(index) for index in range(3)
+    }
+    child_request = InlineChildEffectRequest(
+        fixture.envelope.edge_effect(0), fixture.owner
+    )
+    assert child_request.hold.container_object_id == fixture.outer
+    assert child_request.hold.container_owner_worker_id == fixture.owner
+    assert child_request.hold.transfer_token == fixture.edges[0].transfer_token
+
+
+def test_worker_loss_after_ambiguous_prepare_aborts_without_child_effects() -> None:
+    fixture = _Fixture(2)
+    effects = _Effects()
+    effects.fail_prepare_after_apply = 1
+    runtime = effects.runtime()
+
+    with pytest.raises(TimeoutError, match="PREPARE reply lost"):
+        runtime.prepare(fixture.binding, fixture.envelope)
+
+    snapshot = runtime.journal.snapshot(fixture.publication)
+    assert snapshot.graph_prepare_intent
+    assert not snapshot.graph_prepared
+    outcome = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert outcome.action is InlineWorkerLossAction.ROLLBACK
+    assert outcome.envelope is None
+    assert outcome.changed
+    assert effects.events == ["graph-prepare", "graph-abort"]
+    assert runtime.journal.snapshot(
+        fixture.publication
+    ).phase is InlineNodePublicationPhase.ROLLED_BACK
+
+    replay = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert replay.action is InlineWorkerLossAction.ROLLBACK
+    assert not replay.changed
+    assert effects.events == ["graph-prepare", "graph-abort"]
+
+
+def test_precomplete_worker_loss_releases_every_slot_in_reverse_order() -> None:
+    fixture = _Fixture(3)
+    effects = _Effects()
+    effects.fail_install_after_apply.add(1)
+    effects.fail_release_after_apply.add(2)
+    runtime = effects.runtime()
+
+    with pytest.raises(TimeoutError, match="pin reply lost"):
+        runtime.prepare(fixture.binding, fixture.envelope)
+    with pytest.raises(TimeoutError, match="release reply lost"):
+        runtime.recover_worker_loss(fixture.binding, fixture.publication)
+
+    snapshot = runtime.journal.snapshot(fixture.publication)
+    assert snapshot.phase is InlineNodePublicationPhase.ROLLING_BACK
+    assert snapshot.reducer_snapshot is not None
+    assert snapshot.reducer_snapshot.state is InlinePublicationState.ABORTING
+    # Slot 2 was never installed, but its pre-effect intent makes a no-op
+    # release mandatory; the lost ACK is therefore replayed exactly.
+    outcome = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert outcome.action is InlineWorkerLossAction.ROLLBACK
+    assert outcome.changed
+    assert effects.events[-5:] == [
+        "release:2", "release:2", "release:1",
+        "release:0", "graph-abort",
+    ]
+    assert not effects.pins
+    assert runtime.journal.snapshot(
+        fixture.publication
+    ).phase is InlineNodePublicationPhase.ROLLED_BACK
+
+
+def test_complete_is_boundary_before_ambiguous_commit_and_loss_adopts() -> None:
+    fixture = _Fixture(2)
+    effects = _Effects()
+    effects.fail_commit_after_apply = 1
+    runtime = effects.runtime()
+    runtime.prepare(fixture.binding, fixture.envelope)
+
+    with pytest.raises(TimeoutError, match="COMMIT reply lost"):
+        runtime.complete(fixture.binding, fixture.publication)
+
+    snapshot = runtime.journal.snapshot(fixture.publication)
+    assert snapshot.complete_crossed
+    assert snapshot.phase is InlineNodePublicationPhase.COMPLETE_RECORDED
+    assert snapshot.reducer_snapshot is not None
+    assert snapshot.reducer_snapshot.state is InlinePublicationState.COMMITTING
+    with pytest.raises(InlinePublicationStateError, match="graph COMMIT"):
+        runtime.journal.terminal_envelope(
+            fixture.binding, fixture.publication
+        )
+
+    outcome = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert outcome.action is InlineWorkerLossAction.ADOPT
+    assert outcome.envelope == fixture.envelope
+    assert outcome.changed
+    assert runtime.journal.snapshot(
+        fixture.publication
+    ).phase is InlineNodePublicationPhase.ADOPTED
+    assert effects.events.count("graph-commit") == 2
+    assert runtime.journal.terminal_envelope(
+        fixture.binding, fixture.publication
+    ) == fixture.envelope
+    assert "graph-abort" not in effects.events
+    assert not any(
+        event.startswith("release:") for event in effects.events
+    )
+
+    replay = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert replay.action is InlineWorkerLossAction.ADOPT
+    assert not replay.changed
+    assert effects.events.count("graph-commit") == 2
+
+
+def test_worker_loss_winning_before_complete_permanently_fences_success() -> None:
+    fixture = _Fixture(1)
+    effects = _Effects()
+    runtime = effects.runtime()
+    runtime.prepare(fixture.binding, fixture.envelope)
+
+    outcome = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert outcome.action is InlineWorkerLossAction.ROLLBACK
+    with pytest.raises(InlinePublicationStateError, match="Worker loss won"):
+        runtime.complete(fixture.binding, fixture.publication)
+    assert runtime.journal.snapshot(
+        fixture.publication
+    ).phase is InlineNodePublicationPhase.ROLLED_BACK
+
+
+def test_loss_and_complete_recover_envelope_from_node_intent_only() -> None:
+    fixture = _Fixture(1)
+    effects = _Effects()
+    runtime = effects.runtime()
+    runtime.prepare(fixture.binding, fixture.envelope)
+
+    # Neither Complete nor loss accepts bytes from its caller.  Complete uses
+    # only the identity to find the pre-effect Node journal entry.
+    assert runtime.complete(
+        fixture.binding, fixture.publication
+    ) == fixture.envelope
+    assert runtime.journal.require_complete_boundary(
+        fixture.binding, fixture.publication
+    ).publication_id == fixture.publication
+
+    outcome = runtime.recover_worker_loss(
+        fixture.binding, fixture.publication
+    )
+    assert outcome.action is InlineWorkerLossAction.ADOPT
+    assert outcome.envelope is fixture.envelope
+
+    other_task = TaskID.random()
+    wrong_publication = replace(
+        fixture.publication,
+        task_id=other_task,
+        attempt_id=AttemptID(other_task, 0),
+        outer_object_id=ObjectID.for_task(other_task),
+    )
+    with pytest.raises(
+        InlinePublicationNodeConflictError, match="lease, task, and attempt"
+    ):
+        runtime.recover_worker_loss(fixture.binding, wrong_publication)
+
+
+def test_wrong_child_ack_is_rejected_and_intent_remains_replayable() -> None:
+    fixture = _Fixture(2)
+    effects = _Effects()
+
+    def wrong_install(request):
+        return InlineChildEffectReply(
+            InlineChildEffectRequest(
+                fixture.envelope.edge_effect(1), fixture.owner
+            ),
+            True, False,
+        )
+
+    runtime = InlinePublicationNodeRuntime(
+        InlinePublicationNodeJournal(),
+        prepare_graph=effects.prepare_graph,
+        commit_graph=effects.commit_graph,
+        abort_graph=effects.abort_graph,
+        install_child=wrong_install,
+        release_child=effects.release_child,
+    )
+    with pytest.raises(
+        InlinePublicationNodeConflictError, match="exact child request"
+    ):
+        runtime.prepare(fixture.binding, fixture.envelope)
+
+    snapshot = runtime.journal.snapshot(fixture.publication)
+    assert snapshot.pin_intent_bitmap == (True, False)
+    assert snapshot.pin_bitmap == (False, False)
+
+
+def test_explicit_abort_compensates_without_worker_loss_fact() -> None:
+    fixture = _Fixture(3)
+    effects = _Effects()
+    runtime = effects.runtime()
+    runtime.prepare(fixture.binding, fixture.envelope)
+
+    terminal = runtime.abort(fixture.binding, fixture.publication)
+
+    assert terminal.phase is InlineNodePublicationPhase.ROLLED_BACK
+    assert terminal.worker_loss is None
+    assert effects.events[-4:] == [
+        "release:2", "release:1", "release:0", "graph-abort",
+    ]
+    assert not effects.pins
+    assert runtime.abort(fixture.binding, fixture.publication) == terminal
+    with pytest.raises(InlinePublicationStateError, match="cannot complete"):
+        runtime.complete(fixture.binding, fixture.publication)

@@ -1,0 +1,954 @@
+"""Pure Node composition for crash-replayable stored publication."""
+
+from __future__ import annotations
+
+import hashlib
+
+import pytest
+
+from miniray import protocol
+from miniray.contained_cycle import ContainedReferenceGraphAuthority
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.ownership import ObjectOwnerTable
+from miniray.stored_publication import (
+    BorrowedContainedSource, OwnedContainedSource, PreparedContainedTransfer,
+    StoredPublicationAdoption, StoredPublicationClaim,
+    StoredPublicationHeader,
+    StoredPublicationID, StoredPublicationJournal,
+    StoredPublicationLeaseTerminal, StoredPublicationManifest,
+    StoredPublicationRecoveryAuthority, StoredPublicationState,
+    StoredPublicationRecoveryDisposition,
+    StoredPublicationStateError,
+)
+from miniray.stored_publication_node import (
+    StoredPublicationNodeAdapter, StoredPublicationRemoteError,
+)
+from miniray.stored_publication_owner import (
+    StoredOwnerEffectDisposition, StoredPublicationClaimRequest,
+    StoredPublicationPromotionReplay,
+)
+from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+
+
+pytestmark = pytest.mark.unit
+
+
+class _Fixture:
+    def __init__(self, count: int = 1) -> None:
+        self.job = JobID.random()
+        self.task = TaskID.derive(self.job, TaskID.for_driver(self.job), 0)
+        self.attempt = AttemptID(self.task, 0)
+        self.lease = LeaseID.random()
+        self.outer = ObjectID.for_task(self.task)
+        self.executor = WorkerID.random()
+        self.owner = WorkerID.random()
+        self.node = NodeID.random()
+        self.publication = StoredPublicationID(
+            self.lease, self.task, self.attempt, self.outer
+        )
+        self.header = StoredPublicationHeader(
+            self.publication, self.job, self.executor, self.owner, self.node
+        )
+        self.child_tables: list[ObjectOwnerTable] = []
+        transfers = []
+        for index in range(count):
+            child_task = TaskID.derive(
+                self.job, TaskID.for_driver(self.job), index + 10
+            )
+            child = ObjectID.for_task(child_task)
+            # A directly owned source belongs to the serializing executor; its
+            # owner endpoint is therefore that Worker incarnation.
+            child_owner = self.executor
+            table = ObjectOwnerTable()
+            table.register(child, current_attempt=AttemptID(child_task, 0))
+            self.child_tables.append(table)
+            transfers.append(PreparedContainedTransfer(
+                child, child_owner, ("127.0.0.1", 32100 + index),
+                OwnedContainedSource(child_owner),
+                ContainedReferenceHold(self.outer, self.executor, f"pin-{index}"),
+                ContainedReferenceHold(self.outer, self.owner, f"pin-{index}"),
+            ))
+        self.transfers = tuple(transfers)
+        self.payload = b"stored-node-composition"
+        checksum = hashlib.sha256(self.payload).hexdigest()
+        manifest_hash = hashlib.sha256(b"manifest" + self.payload).hexdigest()
+        self.manifest = StoredPublicationManifest(
+            self.publication, self.transfers, len(self.payload), checksum,
+            manifest_hash,
+        )
+        self.descriptor = protocol.ResultDescriptor(
+            self.outer, protocol.ResultStorage.OBJECT_STORE, len(self.payload),
+            self.owner, self.node, checksum,
+        )
+        self.terminal = StoredPublicationLeaseTerminal(
+            self.publication, protocol.TaskReplyStatus.SUCCEEDED
+        )
+
+    def request(self) -> protocol.GetWorkerLeaseOutcome:
+        return protocol.GetWorkerLeaseOutcome(
+            self.lease, self.task, self.attempt, self.executor, self.owner,
+            (self.outer,),
+        )
+
+
+class _Effects:
+    def __init__(self, fixture: _Fixture) -> None:
+        self.fixture = fixture
+        self.graph = ContainedReferenceGraphAuthority()
+        self.recovery = StoredPublicationRecoveryAuthority()
+        self.events: list[str] = []
+        self.compensation_failures = 0
+
+    def prepare_child(self, request):
+        self.events.append("prepare-child")
+        assert isinstance(request, protocol.PrepareStoredContainedPin)
+        transfer = request.transfer
+        index = self.fixture.transfers.index(transfer)
+        disposition = self.fixture.child_tables[index].prepare_stored_contained_reference(
+            transfer, authority_worker_id=transfer.contained_owner_worker_id
+        )
+        return protocol.StoredContainedPinReply(request, disposition)
+
+    def prepare_graph(self, request):
+        self.events.append("prepare-graph")
+        assert isinstance(request, protocol.PrepareStoredPublicationGraph)
+        return protocol.StoredPublicationGraphReply(
+            request, self.graph.prepare_manifest(request.manifest)
+        )
+
+    def seal(self, publication_id, descriptor, payload):
+        self.events.append("seal")
+        assert publication_id == self.fixture.publication
+        assert payload == self.fixture.payload
+        return descriptor
+
+    def promote_child(self, request):
+        self.events.append("promote-child")
+        assert isinstance(request, protocol.PromoteStoredContainedPin)
+        transfer = request.transfer
+        index = self.fixture.transfers.index(transfer)
+        disposition = self.fixture.child_tables[index].promote_stored_contained_reference(
+            transfer, authority_worker_id=transfer.contained_owner_worker_id
+        )
+        return protocol.StoredContainedPinReply(request, disposition)
+
+    def report_intent(self, request):
+        self.events.append("report-intent")
+        return protocol.StoredPublicationRecoveryReply(
+            request, self.recovery.report_intent(request.intent)
+        )
+
+    def report_sealed(self, request):
+        return protocol.StoredPublicationRecoveryReply(
+            request, self.recovery.report_replica_sealed(
+                request.publication_id, request.descriptor
+            )
+        )
+
+    def report_promotions(self, request):
+        return protocol.StoredPublicationRecoveryReply(
+            request, self.recovery.report_promotions(
+                request.publication_id, request.promoted_bitmap
+            )
+        )
+
+    def report_complete(self, request):
+        return protocol.StoredPublicationRecoveryReply(
+            request, self.recovery.report_lease_terminal(
+                request.publication_id, request.terminal
+            )
+        )
+
+    def get_recovery(self, request):
+        try:
+            record = self.recovery.snapshot(request.publication_id)
+        except Exception:
+            return protocol.GetStoredPublicationRecoveryReply(
+                request, protocol.StoredPublicationQueryDisposition.NOT_FOUND
+            )
+        return protocol.GetStoredPublicationRecoveryReply(
+            request, protocol.StoredPublicationQueryDisposition.FOUND, record
+        )
+
+    def compensate(self, obligation):
+        self.events.append("compensate-{}".format(obligation.kind.value))
+        if self.compensation_failures:
+            self.compensation_failures -= 1
+            raise TimeoutError("compensation ACK lost")
+        return obligation
+
+    def abort_graph(self, request):
+        self.events.append("compensate-GRAPH_MANIFEST")
+        if self.compensation_failures:
+            self.compensation_failures -= 1
+            raise TimeoutError("compensation ACK lost")
+        return protocol.StoredPublicationGraphReply(
+            request, self.graph.abort_manifest(request.manifest)
+        )
+
+    def drop_replica(self, request):
+        self.events.append("compensate-SEALED_REPLICA")
+        if self.compensation_failures:
+            self.compensation_failures -= 1
+            raise TimeoutError("compensation ACK lost")
+        return protocol.DropObjectReplicaReply(
+            request.object_id, request.producer_attempt_id,
+            request.owner_worker_id, request.node_id, request.checksum,
+            protocol.DropObjectReplicaStatus.DROPPED,
+        )
+
+    def release_child(self, request):
+        snapshot = None
+        for index, transfer in enumerate(self.fixture.transfers):
+            if (
+                transfer.contained_object_id == request.object_id
+                and transfer.contained_owner_worker_id == request.owner_worker_id
+            ):
+                snapshot = self.fixture.child_tables[index]
+                break
+        assert snapshot is not None
+        kind = (
+            "FINAL_HOLD"
+            if request.hold.container_owner_worker_id == self.fixture.owner
+            else "PROVISIONAL_HOLD"
+        )
+        self.events.append("compensate-{}".format(kind))
+        if self.compensation_failures:
+            self.compensation_failures -= 1
+            raise TimeoutError("compensation ACK lost")
+        released = snapshot.release_contained_reference(
+            request.object_id, request.hold
+        )
+        return protocol.ReleaseContainedReferenceReply(
+            request.object_id, request.owner_worker_id, request.hold,
+            True, released,
+        )
+
+    def adapter(
+        self, *, after_intent_ack=None, after_promotions_ack=None,
+    ) -> StoredPublicationNodeAdapter:
+        return StoredPublicationNodeAdapter(
+            StoredPublicationJournal(), prepare_child=self.prepare_child,
+            prepare_graph=self.prepare_graph, seal_replica=self.seal,
+            promote_child=self.promote_child,
+            report_intent=self.report_intent,
+            report_sealed=self.report_sealed,
+            report_promotions=self.report_promotions,
+            report_complete=self.report_complete,
+            get_recovery=self.get_recovery, abort_graph=self.abort_graph,
+            drop_replica=self.drop_replica, release_child=self.release_child,
+            after_intent_ack=after_intent_ack,
+            after_promotions_ack=after_promotions_ack,
+        )
+
+
+def _drive_ready(adapter: StoredPublicationNodeAdapter, fixture: _Fixture) -> None:
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    for index, transfer in enumerate(fixture.transfers):
+        adapter.prepare_pin(fixture.publication, index, transfer)
+    adapter.freeze(fixture.publication, fixture.manifest)
+    adapter.prepare_graph(fixture.publication)
+    adapter.seal(
+        fixture.publication, fixture.descriptor, fixture.payload
+    )
+    for index, transfer in enumerate(fixture.transfers):
+        adapter.promote_pin(fixture.publication, index, transfer)
+
+
+def _make_borrowed_fixture() -> _Fixture:
+    fixture = _Fixture(1)
+    child_owner = WorkerID.random()
+    child = fixture.transfers[0].contained_object_id
+    source_hold = ContainedReferenceHold(
+        ObjectID.for_task(TaskID.random()), WorkerID.random(),
+        "borrowed-upstream-hold",
+    )
+    source = protocol.ContainedTransferSource(source_hold)
+    transfer = PreparedContainedTransfer(
+        child, child_owner, ("127.0.0.1", 32150),
+        BorrowedContainedSource(
+            fixture.executor, "borrowed-stored-token", source
+        ),
+        ContainedReferenceHold(
+            fixture.outer, fixture.executor, "borrowed-stored-pin"
+        ),
+        ContainedReferenceHold(
+            fixture.outer, fixture.owner, "borrowed-stored-pin"
+        ),
+    )
+    table = ObjectOwnerTable()
+    table.register(child, current_attempt=AttemptID(child.task_id, 0))
+    table.add_contained_reference(child, source_hold)
+    table.acquire_exported_reference(
+        child, source, (fixture.executor, "borrowed-stored-token")
+    )
+    fixture.child_tables = [table]
+    fixture.transfers = (transfer,)
+    fixture.manifest = StoredPublicationManifest(
+        fixture.publication, fixture.transfers, len(fixture.payload),
+        fixture.descriptor.checksum,
+        hashlib.sha256(b"borrowed-manifest" + fixture.payload).hexdigest(),
+    )
+    return fixture
+
+
+def _claim_request(
+    fixture: _Fixture, envelope,
+) -> StoredPublicationClaimRequest:
+    execution = TaskExecutionKey(
+        TaskOutputManifest(fixture.task, (fixture.outer,)), fixture.attempt
+    )
+    claim = StoredPublicationClaim(
+        fixture.publication, "claim:node-adoption", fixture.owner,
+        fixture.manifest.manifest_digest,
+    )
+    return StoredPublicationClaimRequest(execution, envelope, claim)
+
+
+def test_happy_path_persists_every_intent_before_effect_and_complete() -> None:
+    fixture = _Fixture(2)
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+
+    def assert_prepare_after_intent(request):
+        transfer = request.transfer
+        index = fixture.transfers.index(transfer)
+        snapshot = adapter.journal.snapshot(fixture.publication)
+        assert snapshot.intent_written[index]
+        assert snapshot.intent_reported
+        assert snapshot.publication_intent is not None
+        assert effects.events[0] == "report-intent"
+        return effects.prepare_child(request)
+
+    def assert_graph_after_intent(request):
+        graph = request.manifest
+        snapshot = adapter.journal.snapshot(fixture.publication)
+        assert snapshot.graph_manifest == graph and not snapshot.graph_prepared
+        return effects.prepare_graph(request)
+
+    def assert_seal_after_intent(publication_id, descriptor, payload):
+        assert publication_id == fixture.publication
+        assert payload == fixture.payload
+        snapshot = adapter.journal.snapshot(fixture.publication)
+        assert snapshot.replica_descriptor == descriptor
+        assert not snapshot.replica_sealed
+        return effects.seal(publication_id, descriptor, payload)
+
+    def assert_promote_after_intent(request):
+        transfer = request.transfer
+        index = fixture.transfers.index(transfer)
+        snapshot = adapter.journal.snapshot(fixture.publication)
+        assert snapshot.promotion_intent_bitmap[index]
+        assert not snapshot.promoted_bitmap[index]
+        return effects.promote_child(request)
+
+    adapter._prepare_child_rpc = assert_prepare_after_intent
+    adapter._prepare_graph_rpc = assert_graph_after_intent
+    adapter._seal_replica = assert_seal_after_intent
+    adapter._promote_child_rpc = assert_promote_after_intent
+    for index, transfer in enumerate(fixture.transfers):
+        adapter.prepare_pin(fixture.publication, index, transfer)
+    adapter.freeze(fixture.publication, fixture.manifest)
+    adapter.prepare_graph(fixture.publication)
+    adapter.seal(
+        fixture.publication, fixture.descriptor, fixture.payload
+    )
+    for index, transfer in enumerate(fixture.transfers):
+        adapter.promote_pin(fixture.publication, index, transfer)
+    envelope = adapter.complete(fixture.publication, fixture.terminal)
+
+    assert envelope is not None and envelope.descriptor == fixture.descriptor
+    snapshot = adapter.journal.snapshot(fixture.publication)
+    assert snapshot.state is StoredPublicationState.COMPLETED_UNCLAIMED
+    assert effects.recovery.snapshot(fixture.publication).lease_terminal == (
+        fixture.terminal
+    )
+    outcome = adapter.outcome(fixture.request())
+    assert outcome.state is protocol.LeaseExecutionState.COMPLETED
+    assert len(outcome.descriptors) == 1 and not outcome.orphan_descriptors
+    assert outcome.stored_publication == envelope
+
+
+@pytest.mark.parametrize(
+    "report_applied", [False, True], ids=["report-before-effect", "report-ack-lost"]
+)
+def test_success_complete_replays_exact_terminal_after_report_failure(
+    report_applied: bool,
+) -> None:
+    fixture = _Fixture(2)
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+    source_snapshots = tuple(
+        table.snapshot(transfer.contained_object_id)
+        for table, transfer in zip(fixture.child_tables, fixture.transfers)
+    )
+    requests = []
+    acknowledgements = []
+
+    def report(request):
+        requests.append(request)
+        if len(requests) == 1 and not report_applied:
+            raise TimeoutError("terminal report failed before the GCS effect")
+        acknowledgement = effects.report_complete(request)
+        acknowledgements.append(acknowledgement)
+        if len(requests) == 1:
+            raise TimeoutError("terminal report applied but its ACK was lost")
+        return acknowledgement
+
+    adapter._report_complete_rpc = report
+    with pytest.raises(TimeoutError, match="terminal report"):
+        adapter.complete(fixture.publication, fixture.terminal)
+    local = adapter.journal.snapshot(fixture.publication)
+    assert local.state is StoredPublicationState.COMPLETED_UNCLAIMED
+    assert local.lease_terminal == fixture.terminal
+    assert not local.ready_to_complete
+    assert effects.recovery.snapshot(fixture.publication).lease_terminal == (
+        fixture.terminal if report_applied else None
+    )
+
+    # Successful local Complete is already no-rollback even when GCS has not
+    # received it. A changed failed terminal cannot consume child custody.
+    failed = StoredPublicationLeaseTerminal(
+        fixture.publication, protocol.TaskReplyStatus.SYSTEM_ERROR
+    )
+    with pytest.raises(StoredPublicationStateError, match="never rolled back"):
+        adapter.complete(fixture.publication, failed)
+    assert len(requests) == 1
+    assert adapter.journal.snapshot(fixture.publication).rollback_reason is None
+    assert adapter.journal.snapshot(fixture.publication).lease_terminal == fixture.terminal
+
+    events_before_replay = tuple(effects.events)
+    envelope = adapter.complete(fixture.publication, fixture.terminal)
+    assert envelope is not None
+    assert envelope.publication_id == fixture.publication
+    assert envelope.descriptor == fixture.descriptor
+    assert envelope.header == fixture.header
+    assert requests[0] == requests[1]
+    assert effects.recovery.snapshot(fixture.publication).lease_terminal == fixture.terminal
+    assert acknowledgements[-1].ack.disposition is (
+        StoredPublicationRecoveryDisposition.ALREADY_RECORDED
+        if report_applied else StoredPublicationRecoveryDisposition.APPLIED
+    )
+    assert tuple(effects.events) == events_before_replay + ("report-intent",)
+    assert adapter.journal.snapshot(fixture.publication) == local
+    assert tuple(
+        table.snapshot(transfer.contained_object_id)
+        for table, transfer in zip(fixture.child_tables, fixture.transfers)
+    ) == source_snapshots
+
+    # A third exact replay after GCS success remains idempotent; none of
+    # prepare/seal/promote or user-result generation needs to run again.
+    assert adapter.complete(fixture.publication, fixture.terminal) == envelope
+    assert requests == [requests[0]] * 3
+    assert acknowledgements[-1].ack.disposition is StoredPublicationRecoveryDisposition.ALREADY_RECORDED
+    assert not any(event.startswith("compensate-") for event in effects.events)
+
+
+def test_gcs_intent_ack_failure_fences_every_child_effect() -> None:
+    fixture = _Fixture(2)
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    child_calls = []
+
+    def reject_intent(request):
+        return protocol.StoredPublicationRecoveryReply(
+            request,
+            error_kind=protocol.StoredPublicationRPCErrorKind.UNAVAILABLE,
+            error="intent authority unavailable",
+        )
+
+    adapter._report_intent_rpc = reject_intent
+    adapter._prepare_child_rpc = lambda request: child_calls.append(request)
+    with pytest.raises(StoredPublicationRemoteError, match="unavailable"):
+        adapter.open(
+            fixture.header, fixture.manifest, node_pid=1001,
+            registration_epoch=1,
+        )
+
+    snapshot = adapter.journal.snapshot(fixture.publication)
+    assert snapshot.publication_intent is not None
+    assert snapshot.transfers == fixture.transfers
+    assert not snapshot.intent_reported
+    with pytest.raises(StoredPublicationStateError, match="not acknowledged"):
+        adapter.prepare_pin(
+            fixture.publication, 0, fixture.transfers[0]
+        )
+    assert child_calls == []
+
+
+def test_semantic_gate_runs_after_exact_intent_ack_and_before_child_rpc() -> None:
+    fixture = _Fixture(1)
+    effects = _Effects(fixture)
+    observed = []
+    adapter = None
+
+    def after_intent_ack(intent):
+        assert adapter is not None
+        snapshot = adapter.journal.snapshot(fixture.publication)
+        adapter.journal.require_intent_reported(
+            fixture.publication, intent
+        )
+        assert snapshot.publication_intent == intent
+        assert snapshot.intent_reported
+        assert snapshot.prepared_bitmap == (False,)
+        assert effects.events == ["report-intent"]
+        observed.append(intent)
+
+    adapter = effects.adapter(after_intent_ack=after_intent_ack)
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    assert len(observed) == 1
+    assert "prepare-child" not in effects.events
+
+    adapter.prepare_pin(
+        fixture.publication, 0, fixture.transfers[0]
+    )
+    assert effects.events == ["report-intent", "prepare-child"]
+
+
+def test_semantic_gate_runs_once_after_full_promotions_ack_before_complete(
+) -> None:
+    fixture = _Fixture(2)
+    effects = _Effects(fixture)
+    observed = []
+    adapter = None
+
+    def after_promotions_ack(intent, record):
+        assert adapter is not None
+        local = adapter.journal.snapshot(fixture.publication)
+        assert intent == local.publication_intent
+        assert local.ready_to_complete
+        assert local.promoted_bitmap == (True, True)
+        assert record.promoted_bitmap == (True, True)
+        assert record.sealed_descriptor == fixture.descriptor
+        assert record.lease_terminal is None
+        observed.append((intent, record))
+
+    adapter = effects.adapter(
+        after_promotions_ack=after_promotions_ack
+    )
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    for index, transfer in enumerate(fixture.transfers):
+        adapter.prepare_pin(fixture.publication, index, transfer)
+    adapter.freeze(fixture.publication, fixture.manifest)
+    adapter.prepare_graph(fixture.publication)
+    adapter.seal(
+        fixture.publication, fixture.descriptor, fixture.payload
+    )
+
+    adapter.promote_pin(
+        fixture.publication, 0, fixture.transfers[0]
+    )
+    assert observed == []
+    adapter.promote_pin(
+        fixture.publication, 1, fixture.transfers[1]
+    )
+    assert len(observed) == 1
+    assert adapter.journal.snapshot(fixture.publication).lease_terminal is None
+
+    # Exact replay may revisit the adapter callback, while the Node-level gate
+    # supplies the once-only blocking semantics.  The evidence remains exactly
+    # the same and no Complete fact can appear here.
+    adapter.promote_pin(
+        fixture.publication, 1, fixture.transfers[1]
+    )
+    assert len(observed) == 2
+    assert observed[1] == observed[0]
+
+
+def test_promotions_gate_does_not_run_when_gcs_rejects_full_bitmap() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    observed = []
+    adapter = effects.adapter(
+        after_promotions_ack=lambda *values: observed.append(values)
+    )
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    adapter.prepare_pin(
+        fixture.publication, 0, fixture.transfers[0]
+    )
+    adapter.freeze(fixture.publication, fixture.manifest)
+    adapter.prepare_graph(fixture.publication)
+    adapter.seal(
+        fixture.publication, fixture.descriptor, fixture.payload
+    )
+
+    def reject_promotions(request):
+        return protocol.StoredPublicationRecoveryReply(
+            request, error_kind=(
+                protocol.StoredPublicationRPCErrorKind.UNAVAILABLE
+            ),
+            error="promotion authority unavailable",
+        )
+
+    adapter._report_promotions_rpc = reject_promotions
+    with pytest.raises(StoredPublicationRemoteError, match="unavailable"):
+        adapter.promote_pin(
+            fixture.publication, 0, fixture.transfers[0]
+        )
+    assert observed == []
+
+
+def test_claim_promotion_replay_and_adoption_use_one_journal_authority() -> None:
+    fixture = _Fixture(2)
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+    envelope = adapter.complete(fixture.publication, fixture.terminal)
+    assert envelope is not None
+    claim_request = _claim_request(fixture, envelope)
+
+    first_claim = adapter.claim(claim_request)
+    replay_claim = adapter.claim(claim_request)
+    promotion_request = StoredPublicationPromotionReplay(claim_request)
+    first_promotions = adapter.replay_promotions(promotion_request)
+    replay_promotions = adapter.replay_promotions(promotion_request)
+    adoption = StoredPublicationAdoption(
+        claim_request.claim, "owner-commit:node-adoption"
+    )
+    assert adapter.acknowledge_adopted(adoption)
+    assert not adapter.acknowledge_adopted(adoption)
+
+    assert first_claim.disposition is StoredOwnerEffectDisposition.APPLIED
+    assert replay_claim.disposition is (
+        StoredOwnerEffectDisposition.ALREADY_APPLIED
+    )
+    # Complete already fenced every promotion; the hand-off replay is exact
+    # but does not invent a second state transition.
+    assert first_promotions.disposition is (
+        StoredOwnerEffectDisposition.ALREADY_APPLIED
+    )
+    assert replay_promotions.disposition is (
+        StoredOwnerEffectDisposition.ALREADY_APPLIED
+    )
+    snapshot = adapter.journal.snapshot(fixture.publication)
+    assert snapshot.claim == claim_request.claim
+    assert snapshot.adoption == adoption
+    assert snapshot.state is StoredPublicationState.ADOPTED
+
+
+def test_promotion_response_loss_replays_same_final_hold_identity() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+    envelope = adapter.complete(fixture.publication, fixture.terminal)
+    assert envelope is not None
+    claim_request = _claim_request(fixture, envelope)
+    adapter.claim(claim_request)
+    request = StoredPublicationPromotionReplay(claim_request)
+    calls = []
+
+    def lose_first_reply(pin_request):
+        calls.append(pin_request)
+        reply = effects.promote_child(pin_request)
+        if len(calls) == 1:
+            raise TimeoutError("promotion reply lost")
+        return reply
+
+    adapter._promote_child_rpc = lose_first_reply
+    with pytest.raises(TimeoutError, match="reply lost"):
+        adapter.replay_promotions(request)
+    receipt = adapter.replay_promotions(request)
+
+    assert calls[0] == calls[1]
+    assert receipt.request == request
+    assert adapter.journal.snapshot(fixture.publication).state is (
+        StoredPublicationState.ADOPTING
+    )
+
+
+def test_sealed_precomplete_and_failure_terminal_are_orphan_not_recoverable() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    adapter.prepare_pin(fixture.publication, 0, fixture.transfers[0])
+    adapter.freeze(fixture.publication, fixture.manifest)
+    adapter.prepare_graph(fixture.publication)
+    adapter.seal(
+        fixture.publication, fixture.descriptor, fixture.payload
+    )
+
+    before = adapter.outcome(fixture.request())
+    assert before.state is protocol.LeaseExecutionState.WORKER_LOST
+    assert not before.descriptors and len(before.orphan_descriptors) == 1
+
+    failure = StoredPublicationLeaseTerminal(
+        fixture.publication, protocol.TaskReplyStatus.SYSTEM_ERROR
+    )
+    assert adapter.complete(fixture.publication, failure) is None
+    failed = adapter.outcome(fixture.request())
+    assert failed.state is protocol.LeaseExecutionState.COMPLETED
+    assert failed.completion_status is protocol.TaskReplyStatus.SYSTEM_ERROR
+    assert not failed.descriptors and len(failed.orphan_descriptors) == 1
+
+
+def test_precomplete_rollback_retries_exact_obligation_and_shutdown_converges() -> None:
+    fixture = _Fixture(2)
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+    effects.compensation_failures = 1
+
+    with pytest.raises(TimeoutError, match="ACK lost"):
+        adapter.rollback_precomplete(fixture.publication, "executor exited")
+    pending = adapter.journal.snapshot(fixture.publication).pending_compensations
+    assert pending
+    frozen = pending[0]
+
+    assert adapter.shutdown("node drain")
+    snapshot = adapter.journal.snapshot(fixture.publication)
+    assert snapshot.state is StoredPublicationState.ROLLED_BACK
+    attempts = [
+        event for event in effects.events
+        if event == "compensate-{}".format(frozen.kind.value)
+    ]
+    assert len(attempts) == 2
+    outcome = adapter.outcome(fixture.request())
+    assert not outcome.descriptors and not outcome.orphan_descriptors
+
+
+def test_borrowed_stored_prepare_promote_and_lost_ack_rollback_are_exact() -> None:
+    fixture = _make_borrowed_fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+
+    transfer = fixture.transfers[0]
+    snapshot = fixture.child_tables[0].snapshot(
+        transfer.contained_object_id
+    )
+    assert transfer.final_hold in snapshot.contained_holds
+    assert transfer.provisional_hold not in snapshot.contained_holds
+
+    effects.compensation_failures = 1
+    with pytest.raises(TimeoutError, match="ACK lost"):
+        adapter.rollback_precomplete(
+            fixture.publication, "borrowed executor exited"
+        )
+    frozen = adapter.journal.snapshot(
+        fixture.publication
+    ).pending_compensations[0]
+    assert adapter.shutdown("borrowed executor exited")
+    terminal = adapter.journal.snapshot(fixture.publication)
+    assert terminal.state is StoredPublicationState.ROLLED_BACK
+    attempts = [
+        event for event in effects.events
+        if event == "compensate-{}".format(frozen.kind.value)
+    ]
+    assert len(attempts) == 2
+    final_snapshot = fixture.child_tables[0].snapshot(
+        transfer.contained_object_id
+    )
+    assert transfer.final_hold not in final_snapshot.contained_holds
+    assert transfer.provisional_hold not in final_snapshot.contained_holds
+
+
+def test_shutdown_retains_successful_complete_for_owner_claim() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+    adapter.complete(fixture.publication, fixture.terminal)
+
+    assert adapter.shutdown()
+    assert adapter.journal.snapshot(fixture.publication).state is (
+        StoredPublicationState.COMPLETED_UNCLAIMED
+    )
+    assert not any(name.startswith("compensate") for name in effects.events)
+
+
+def test_exact_replay_skips_completed_effects_and_reuses_authority_state() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+    before = tuple(effects.events)
+
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    adapter.prepare_pin(fixture.publication, 0, fixture.transfers[0])
+    adapter.freeze(fixture.publication, fixture.manifest)
+    adapter.prepare_graph(fixture.publication)
+    adapter.seal(
+        fixture.publication, fixture.descriptor, fixture.payload
+    )
+    adapter.promote_pin(fixture.publication, 0, fixture.transfers[0])
+
+    assert tuple(effects.events) == before
+
+
+def test_outcome_uses_gcs_complete_record_after_local_complete_ack_was_lost() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    _drive_ready(adapter, fixture)
+    # GCS observed the complete report, but the publishing Node did not append
+    # its local LEASE_COMPLETED event before process loss/restart.
+    effects.recovery.report_lease_terminal(
+        fixture.publication, fixture.terminal
+    )
+    assert adapter.journal.snapshot(fixture.publication).lease_terminal is None
+
+    outcome = adapter.outcome(fixture.request())
+
+    assert outcome.state is protocol.LeaseExecutionState.COMPLETED
+    assert outcome.completion_status is protocol.TaskReplyStatus.SUCCEEDED
+    assert len(outcome.descriptors) == 1
+    assert not outcome.orphan_descriptors
+    assert outcome.stored_publication is not None
+    assert outcome.stored_publication.publication_id == fixture.publication
+    assert outcome.stored_publication.manifest_digest == (
+        fixture.manifest.manifest_digest
+    )
+
+
+def test_outcome_recovers_gcs_seal_when_local_seal_ack_event_was_lost() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    adapter.prepare_pin(fixture.publication, 0, fixture.transfers[0])
+    adapter.freeze(fixture.publication, fixture.manifest)
+    adapter.prepare_graph(fixture.publication)
+    # The local seal intent is durable, while every remote fact reached GCS.
+    # Recovery must not require the lost local seal-ACK event as a second truth.
+    adapter.journal.begin_replica_seal(
+        fixture.publication, fixture.descriptor
+    )
+    effects.recovery.report_replica_sealed(
+        fixture.publication, fixture.descriptor
+    )
+    effects.recovery.report_promotions(fixture.publication, (True,))
+    effects.recovery.report_lease_terminal(
+        fixture.publication, fixture.terminal
+    )
+    assert not adapter.journal.snapshot(fixture.publication).replica_sealed
+
+    outcome = adapter.outcome(fixture.request())
+
+    assert outcome.state is protocol.LeaseExecutionState.COMPLETED
+    assert len(outcome.descriptors) == 1
+    assert not outcome.orphan_descriptors
+    assert outcome.stored_publication is not None
+    assert outcome.stored_publication.descriptor == fixture.descriptor
+
+
+def test_typed_rejection_preserves_intent_and_exposes_stable_error_kind() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+
+    def reject(request):
+        return protocol.StoredContainedPinReply(
+            request, error_kind=protocol.StoredPublicationRPCErrorKind.CONFLICT,
+            error="source capability changed",
+        )
+
+    adapter._prepare_child_rpc = reject
+    with pytest.raises(StoredPublicationRemoteError) as caught:
+        adapter.prepare_pin(fixture.publication, 0, fixture.transfers[0])
+
+    assert caught.value.error_kind is protocol.StoredPublicationRPCErrorKind.CONFLICT
+    snapshot = adapter.journal.snapshot(fixture.publication)
+    assert snapshot.intent_written == (True,)
+    assert snapshot.prepared_bitmap == (False,)
+
+
+def test_malformed_exact_echo_never_advances_graph_ack() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    adapter.prepare_pin(fixture.publication, 0, fixture.transfers[0])
+    adapter.freeze(fixture.publication, fixture.manifest)
+
+    def wrong_echo(request):
+        changed = protocol.PrepareStoredPublicationGraph(
+            fixture.manifest.graph_manifest(WorkerID.random())
+        )
+        # object.__new__ simulates bytes decoded into a type-correct but
+        # non-echoing peer reply; the adapter must independently fence it.
+        reply = object.__new__(protocol.StoredPublicationGraphReply)
+        object.__setattr__(reply, "request", changed)
+        object.__setattr__(reply, "receipt", None)
+        object.__setattr__(
+            reply, "error_kind",
+            protocol.StoredPublicationRPCErrorKind.UNAVAILABLE,
+        )
+        object.__setattr__(reply, "error", "wrong request")
+        return reply
+
+    adapter._prepare_graph_rpc = wrong_echo
+    with pytest.raises(StoredPublicationStateError, match="request identity"):
+        adapter.prepare_graph(fixture.publication)
+    snapshot = adapter.journal.snapshot(fixture.publication)
+    assert snapshot.graph_manifest is not None
+    assert not snapshot.graph_prepared
+
+
+def test_lost_ack_keeps_same_pin_intent_for_exact_retry() -> None:
+    fixture = _Fixture()
+    effects = _Effects(fixture)
+    adapter = effects.adapter()
+    adapter.open(
+        fixture.header, fixture.manifest, node_pid=1001,
+        registration_epoch=1,
+    )
+    calls = []
+
+    def lost_then_replay(request):
+        calls.append(request)
+        reply = effects.prepare_child(request)
+        if len(calls) == 1:
+            raise TimeoutError("prepared but ACK lost")
+        return reply
+
+    adapter._prepare_child_rpc = lost_then_replay
+    with pytest.raises(TimeoutError, match="ACK lost"):
+        adapter.prepare_pin(fixture.publication, 0, fixture.transfers[0])
+    snapshot = adapter.journal.snapshot(fixture.publication)
+    assert snapshot.intent_written == (True,)
+    assert snapshot.prepared_bitmap == (False,)
+
+    assert adapter.prepare_pin(
+        fixture.publication, 0, fixture.transfers[0]
+    )
+    assert calls[0] == calls[1]
+    assert adapter.journal.snapshot(
+        fixture.publication
+    ).prepared_bitmap == (True,)

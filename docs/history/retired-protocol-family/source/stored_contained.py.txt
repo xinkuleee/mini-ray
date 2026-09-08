@@ -1,0 +1,564 @@
+"""Pure transaction model for ObjectRefs inside one stored result.
+
+Serialization discovers nested references before the outer bytes can be
+sealed.  Each discovered reference first obtains a durable contained pin.
+Only after discovery is closed may the caller seal the outer replica, and only
+after that seal may it commit the outer-to-contained edge manifest.
+
+This module deliberately performs no RPC, object-store I/O, or owner-table
+mutation.  Injected callbacks make the three authority boundaries explicit and
+let focused tests prove rollback ordering and lost-ack retention independently
+of the runtime transport.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, Optional, Tuple, Union
+
+from .contained_edges import ContainedReferenceEdge
+from .ids import AttemptID, NodeID, ObjectID, WorkerID
+from .transport import Address
+
+
+class StoredContainedTransactionError(RuntimeError):
+    """A prepare, seal, or edge-commit operation did not acknowledge."""
+
+
+class StoredContainedStateError(StoredContainedTransactionError):
+    """The caller attempted a transaction phase out of order."""
+
+
+def _validate_address(value: object) -> Address:
+    if (
+        not isinstance(value, tuple)
+        or len(value) != 2
+        or not isinstance(value[0], str)
+        or not value[0]
+        or isinstance(value[1], bool)
+        or not isinstance(value[1], int)
+        or not 1 <= value[1] <= 65535
+    ):
+        raise ValueError("owner_address must be a bound (host, port) tuple")
+    return value[0], value[1]
+
+
+@dataclass(frozen=True, order=True)
+class ContainedReferenceIdentity:
+    """Source capability from which one durable transfer pin is derived.
+
+    Local and foreign references use this same shape.  ``borrower_token`` is
+    absent for a directly owned local reference and carries the already-live
+    borrower capability for a foreign reference.  The transaction itself does
+    not branch on that distinction; the injected prepare callback owns it.
+    """
+
+    object_id: ObjectID
+    owner_worker_id: WorkerID
+    owner_address: Address
+    borrower_token: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.object_id, ObjectID):
+            raise TypeError("object_id must be an ObjectID")
+        if not isinstance(self.owner_worker_id, WorkerID):
+            raise TypeError("owner_worker_id must be a WorkerID")
+        object.__setattr__(
+            self, "owner_address", _validate_address(self.owner_address)
+        )
+        if self.borrower_token is not None and (
+            not isinstance(self.borrower_token, str) or not self.borrower_token
+        ):
+            raise ValueError(
+                "borrower_token must be a non-empty string or None"
+            )
+
+
+@dataclass(frozen=True, order=True)
+class ContainedPinIdentity:
+    """Exact durable pin identity embedded in serialized outer bytes."""
+
+    object_id: ObjectID
+    owner_worker_id: WorkerID
+    owner_address: Address
+    transfer_token: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.object_id, ObjectID):
+            raise TypeError("object_id must be an ObjectID")
+        if not isinstance(self.owner_worker_id, WorkerID):
+            raise TypeError("owner_worker_id must be a WorkerID")
+        object.__setattr__(
+            self, "owner_address", _validate_address(self.owner_address)
+        )
+        if not isinstance(self.transfer_token, str) or not self.transfer_token:
+            raise ValueError("transfer_token must be a non-empty string")
+
+    @property
+    def exported_reference(self) -> tuple[ObjectID, WorkerID, Address, str]:
+        """Arguments consumed by ``restore_exported_reference``."""
+
+        return (
+            self.object_id,
+            self.owner_worker_id,
+            self.owner_address,
+            self.transfer_token,
+        )
+
+    def edge_for(self, outer_object_id: ObjectID) -> ContainedReferenceEdge:
+        return ContainedReferenceEdge(
+            outer_object_id, self.object_id, self.owner_worker_id,
+            self.owner_address, self.transfer_token,
+        )
+
+
+@dataclass(frozen=True)
+class PrepareContainedPin:
+    source: ContainedReferenceIdentity
+    pin: ContainedPinIdentity
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, ContainedReferenceIdentity):
+            raise TypeError("source must be a ContainedReferenceIdentity")
+        if not isinstance(self.pin, ContainedPinIdentity):
+            raise TypeError("pin must be a ContainedPinIdentity")
+        if (
+            self.source.object_id,
+            self.source.owner_worker_id,
+            self.source.owner_address,
+        ) != (
+            self.pin.object_id,
+            self.pin.owner_worker_id,
+            self.pin.owner_address,
+        ):
+            raise ValueError("prepared pin must retain its source owner identity")
+
+
+@dataclass(frozen=True)
+class PrepareContainedPinReply:
+    request: PrepareContainedPin
+    prepared: bool
+    error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, PrepareContainedPin):
+            raise TypeError("request must be a PrepareContainedPin")
+        if not isinstance(self.prepared, bool):
+            raise TypeError("prepared must be a bool")
+        if self.prepared and self.error is not None:
+            raise ValueError("a prepared pin reply cannot contain an error")
+        if not self.prepared and (
+            not isinstance(self.error, str) or not self.error
+        ):
+            raise ValueError("a rejected pin reply requires an error")
+
+
+@dataclass(frozen=True, order=True)
+class StoredOuterIdentity:
+    """Stable logical identity shared by seal and edge commit."""
+
+    object_id: ObjectID
+    attempt_id: AttemptID
+    owner_worker_id: WorkerID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.object_id, ObjectID):
+            raise TypeError("object_id must be an ObjectID")
+        if not isinstance(self.attempt_id, AttemptID):
+            raise TypeError("attempt_id must be an AttemptID")
+        if self.attempt_id.task_id != self.object_id.task_id:
+            raise ValueError("attempt_id must produce outer object_id")
+        if not isinstance(self.owner_worker_id, WorkerID):
+            raise TypeError("owner_worker_id must be a WorkerID")
+
+
+@dataclass(frozen=True, order=True)
+class StoredReplicaIdentity:
+    """Complete physical identity required for exact seal rollback."""
+
+    outer: StoredOuterIdentity
+    node_id: NodeID
+    size_bytes: int
+    checksum: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.outer, StoredOuterIdentity):
+            raise TypeError("outer must be a StoredOuterIdentity")
+        if not isinstance(self.node_id, NodeID):
+            raise TypeError("node_id must be a NodeID")
+        if (
+            isinstance(self.size_bytes, bool)
+            or not isinstance(self.size_bytes, int)
+            or self.size_bytes < 0
+        ):
+            raise ValueError("size_bytes must be a non-negative integer")
+        if not isinstance(self.checksum, str) or len(self.checksum) != 64:
+            raise ValueError("checksum must be a SHA-256 hex digest")
+        try:
+            int(self.checksum, 16)
+        except ValueError as exc:
+            raise ValueError("checksum must be a SHA-256 hex digest") from exc
+
+
+@dataclass(frozen=True)
+class SealStoredOuterReply:
+    replica: StoredReplicaIdentity
+    sealed: bool
+    error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.replica, StoredReplicaIdentity):
+            raise TypeError("replica must be a StoredReplicaIdentity")
+        if not isinstance(self.sealed, bool):
+            raise TypeError("sealed must be a bool")
+        if self.sealed and self.error is not None:
+            raise ValueError("a sealed reply cannot contain an error")
+        if not self.sealed and (
+            not isinstance(self.error, str) or not self.error
+        ):
+            raise ValueError("a rejected seal reply requires an error")
+
+
+@dataclass(frozen=True)
+class StoredEdgeManifest:
+    outer: StoredOuterIdentity
+    edges: Tuple[ContainedReferenceEdge, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.outer, StoredOuterIdentity):
+            raise TypeError("outer must be a StoredOuterIdentity")
+        edges = tuple(self.edges)
+        object.__setattr__(self, "edges", edges)
+        if any(not isinstance(edge, ContainedReferenceEdge) for edge in edges):
+            raise TypeError("edges must contain ContainedReferenceEdge values")
+        if any(edge.container_object_id != self.outer.object_id for edge in edges):
+            raise ValueError("every edge must name the stored outer ObjectID")
+        if len(edges) != len(set(edges)):
+            raise ValueError("stored contained edges must be unique")
+
+
+@dataclass(frozen=True)
+class CommitStoredEdgesReply:
+    manifest: StoredEdgeManifest
+    committed: bool
+    error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.manifest, StoredEdgeManifest):
+            raise TypeError("manifest must be a StoredEdgeManifest")
+        if not isinstance(self.committed, bool):
+            raise TypeError("committed must be a bool")
+        if self.committed and self.error is not None:
+            raise ValueError("a committed reply cannot contain an error")
+        if not self.committed and (
+            not isinstance(self.error, str) or not self.error
+        ):
+            raise ValueError("a rejected edge reply requires an error")
+
+
+class RollbackKind(str, Enum):
+    CONTAINED_PIN = "CONTAINED_PIN"
+    SEALED_OUTER = "SEALED_OUTER"
+    EDGE_MANIFEST = "EDGE_MANIFEST"
+
+
+RollbackIdentity = Union[
+    ContainedPinIdentity, StoredReplicaIdentity, StoredEdgeManifest
+]
+
+
+@dataclass(frozen=True)
+class RollbackObligation:
+    """One exact compensating action, persisted before its forward call."""
+
+    kind: RollbackKind
+    identity: RollbackIdentity
+
+    def __post_init__(self) -> None:
+        expected = {
+            RollbackKind.CONTAINED_PIN: ContainedPinIdentity,
+            RollbackKind.SEALED_OUTER: StoredReplicaIdentity,
+            RollbackKind.EDGE_MANIFEST: StoredEdgeManifest,
+        }[self.kind]
+        if not isinstance(self.identity, expected):
+            raise TypeError(
+                "rollback identity does not match {}".format(self.kind.value)
+            )
+
+
+@dataclass(frozen=True)
+class RollbackReply:
+    obligation: RollbackObligation
+    acknowledged: bool
+    error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.obligation, RollbackObligation):
+            raise TypeError("obligation must be a RollbackObligation")
+        if not isinstance(self.acknowledged, bool):
+            raise TypeError("acknowledged must be a bool")
+        if self.acknowledged and self.error is not None:
+            raise ValueError("an acknowledged rollback cannot contain an error")
+        if not self.acknowledged and (
+            not isinstance(self.error, str) or not self.error
+        ):
+            raise ValueError("an unacknowledged rollback requires an error")
+
+
+class StoredContainedState(str, Enum):
+    PREPARING_PINS = "PREPARING_PINS"
+    PINS_PREPARED = "PINS_PREPARED"
+    SEALED = "SEALED"
+    COMMITTED = "COMMITTED"
+    ROLLING_BACK = "ROLLING_BACK"
+    ROLLBACK_PENDING = "ROLLBACK_PENDING"
+    ROLLED_BACK = "ROLLED_BACK"
+
+
+PreparePinCallback = Callable[[PrepareContainedPin], PrepareContainedPinReply]
+SealCallback = Callable[[StoredReplicaIdentity], SealStoredOuterReply]
+CommitEdgesCallback = Callable[[StoredEdgeManifest], CommitStoredEdgesReply]
+RollbackCallback = Callable[[RollbackObligation], RollbackReply]
+TokenFactory = Callable[[], str]
+
+
+class StoredContainedTransaction:
+    """Order and compensate stored-outer contained-reference effects."""
+
+    def __init__(
+        self,
+        outer: StoredOuterIdentity,
+        *,
+        prepare_pin: PreparePinCallback,
+        seal_outer: SealCallback,
+        commit_edges: CommitEdgesCallback,
+        rollback: RollbackCallback,
+        token_factory: Optional[TokenFactory] = None,
+    ) -> None:
+        if not isinstance(outer, StoredOuterIdentity):
+            raise TypeError("outer must be a StoredOuterIdentity")
+        for callback, name in (
+            (prepare_pin, "prepare_pin"),
+            (seal_outer, "seal_outer"),
+            (commit_edges, "commit_edges"),
+            (rollback, "rollback"),
+        ):
+            if not callable(callback):
+                raise TypeError("{} must be callable".format(name))
+        self.outer = outer
+        self._prepare_pin = prepare_pin
+        self._seal_outer = seal_outer
+        self._commit_edges = commit_edges
+        self._rollback = rollback
+        self._token_factory = token_factory or (
+            lambda: "transfer:{}".format(uuid.uuid4().hex)
+        )
+        self._state = StoredContainedState.PREPARING_PINS
+        self._prepared: list[ContainedPinIdentity] = []
+        # Forward order; rollback always consumes from the end.
+        self._rollback_ledger: list[RollbackObligation] = []
+        self._replica: Optional[StoredReplicaIdentity] = None
+        self._manifest: Optional[StoredEdgeManifest] = None
+
+    @property
+    def state(self) -> StoredContainedState:
+        return self._state
+
+    @property
+    def prepared_pins(self) -> Tuple[ContainedPinIdentity, ...]:
+        return tuple(self._prepared)
+
+    @property
+    def pending_rollback(self) -> Tuple[RollbackObligation, ...]:
+        """Outstanding actions in their required retry order."""
+
+        return tuple(reversed(self._rollback_ledger))
+
+    @property
+    def manifest(self) -> Optional[StoredEdgeManifest]:
+        return self._manifest
+
+    def prepare_reference(
+        self, source: ContainedReferenceIdentity
+    ) -> ContainedPinIdentity:
+        """Install one pin while serialization discovers references."""
+
+        self._require_state(StoredContainedState.PREPARING_PINS)
+        if not isinstance(source, ContainedReferenceIdentity):
+            raise TypeError("source must be a ContainedReferenceIdentity")
+        token = self._token_factory()
+        if not isinstance(token, str) or not token:
+            raise ValueError("token_factory must return a non-empty string")
+        pin = ContainedPinIdentity(
+            source.object_id, source.owner_worker_id, source.owner_address, token
+        )
+        request = PrepareContainedPin(source, pin)
+        obligation = RollbackObligation(RollbackKind.CONTAINED_PIN, pin)
+        # Persist before delivery: a thrown callback may mean its ACK, not its
+        # mutation, was lost.  Release-before-prepare must remain possible.
+        self._rollback_ledger.append(obligation)
+        try:
+            reply = self._prepare_pin(request)
+        except BaseException as exc:
+            self._fail("contained pin prepare did not acknowledge", exc)
+        if (
+            not isinstance(reply, PrepareContainedPinReply)
+            or reply.request != request
+            or not reply.prepared
+        ):
+            detail = getattr(reply, "error", None)
+            self._fail(detail or "contained pin prepare was rejected")
+        self._prepared.append(pin)
+        return pin
+
+    def finish_pin_preparation(self) -> Tuple[ContainedPinIdentity, ...]:
+        """Close discovery; no seal is legal before this barrier."""
+
+        self._require_state(StoredContainedState.PREPARING_PINS)
+        self._state = StoredContainedState.PINS_PREPARED
+        return self.prepared_pins
+
+    def seal(self, replica: StoredReplicaIdentity) -> StoredReplicaIdentity:
+        """Seal only after every nested reference has a durable pin."""
+
+        self._require_state(StoredContainedState.PINS_PREPARED)
+        if not isinstance(replica, StoredReplicaIdentity):
+            raise TypeError("replica must be a StoredReplicaIdentity")
+        if replica.outer != self.outer:
+            raise ValueError("replica belongs to another stored outer")
+        obligation = RollbackObligation(RollbackKind.SEALED_OUTER, replica)
+        self._rollback_ledger.append(obligation)
+        try:
+            reply = self._seal_outer(replica)
+        except BaseException as exc:
+            self._fail("stored outer seal did not acknowledge", exc)
+        if (
+            not isinstance(reply, SealStoredOuterReply)
+            or reply.replica != replica
+            or not reply.sealed
+        ):
+            detail = getattr(reply, "error", None)
+            self._fail(detail or "stored outer seal was rejected")
+        self._replica = replica
+        self._state = StoredContainedState.SEALED
+        return replica
+
+    def commit_edge_manifest(self) -> StoredEdgeManifest:
+        """Commit outer ownership only after the exact replica is sealed."""
+
+        self._require_state(StoredContainedState.SEALED)
+        manifest = StoredEdgeManifest(
+            self.outer,
+            tuple(pin.edge_for(self.outer.object_id) for pin in self._prepared),
+        )
+        obligation = RollbackObligation(
+            RollbackKind.EDGE_MANIFEST, manifest
+        )
+        self._rollback_ledger.append(obligation)
+        try:
+            reply = self._commit_edges(manifest)
+        except BaseException as exc:
+            self._fail("stored edge commit did not acknowledge", exc)
+        if (
+            not isinstance(reply, CommitStoredEdgesReply)
+            or reply.manifest != manifest
+            or not reply.committed
+        ):
+            detail = getattr(reply, "error", None)
+            self._fail(detail or "stored edge commit was rejected")
+        self._manifest = manifest
+        self._rollback_ledger.clear()
+        self._state = StoredContainedState.COMMITTED
+        return manifest
+
+    def rollback(self) -> bool:
+        """Drive exact reverse compensation; never forget an unacked step."""
+
+        if self._state is StoredContainedState.COMMITTED:
+            raise StoredContainedStateError(
+                "a committed edge manifest owns the pins"
+            )
+        if self._state is StoredContainedState.ROLLED_BACK:
+            return True
+        self._state = StoredContainedState.ROLLING_BACK
+        return self._drive_rollback()
+
+    def retry_rollback(self) -> bool:
+        if self._state not in (
+            StoredContainedState.ROLLING_BACK,
+            StoredContainedState.ROLLBACK_PENDING,
+        ):
+            raise StoredContainedStateError(
+                "rollback retry requires an unresolved rollback"
+            )
+        self._state = StoredContainedState.ROLLING_BACK
+        return self._drive_rollback()
+
+    def _drive_rollback(self) -> bool:
+        while self._rollback_ledger:
+            obligation = self._rollback_ledger[-1]
+            try:
+                reply = self._rollback(obligation)
+            except BaseException:
+                self._state = StoredContainedState.ROLLBACK_PENDING
+                return False
+            if (
+                not isinstance(reply, RollbackReply)
+                or reply.obligation != obligation
+                or not reply.acknowledged
+            ):
+                self._state = StoredContainedState.ROLLBACK_PENDING
+                return False
+            self._rollback_ledger.pop()
+        self._state = StoredContainedState.ROLLED_BACK
+        return True
+
+    def _fail(
+        self, message: str, cause: Optional[BaseException] = None
+    ) -> None:
+        self._state = StoredContainedState.ROLLING_BACK
+        self._drive_rollback()
+        error = StoredContainedTransactionError(message)
+        if cause is None:
+            raise error
+        raise error from cause
+
+    def _require_state(self, expected: StoredContainedState) -> None:
+        if self._state is not expected:
+            raise StoredContainedStateError(
+                "operation requires {}, current state is {}".format(
+                    expected.value, self._state.value
+                )
+            )
+
+    def __enter__(self) -> "StoredContainedTransaction":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if self._state not in (
+            StoredContainedState.COMMITTED,
+            StoredContainedState.ROLLED_BACK,
+        ):
+            self.rollback()
+
+
+__all__ = [
+    "CommitStoredEdgesReply",
+    "ContainedPinIdentity",
+    "ContainedReferenceIdentity",
+    "PrepareContainedPin",
+    "PrepareContainedPinReply",
+    "RollbackKind",
+    "RollbackObligation",
+    "RollbackReply",
+    "SealStoredOuterReply",
+    "StoredContainedState",
+    "StoredContainedStateError",
+    "StoredContainedTransaction",
+    "StoredContainedTransactionError",
+    "StoredEdgeManifest",
+    "StoredOuterIdentity",
+    "StoredReplicaIdentity",
+]

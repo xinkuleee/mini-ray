@@ -1,0 +1,49 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Coverage and test output
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+junit.xml
+
+# Local mini-ray runtime state
+.miniray/
+artifacts/local/
+traces/local/
+*.pid
+*.sock
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# Local credentials (never part of a source snapshot)
+.env
+.env.*
+!.env.example
+*.pem
+*.key

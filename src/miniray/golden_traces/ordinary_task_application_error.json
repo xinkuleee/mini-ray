@@ -1,0 +1,194 @@
+{
+  "schema": "miniray.trace-contract/v1",
+  "name": "ordinary_task_application_error",
+  "title": "application error: successful transport, terminal user failure",
+  "participants": {
+    "core_worker": "Owner CoreWorker",
+    "node": "NodeServer",
+    "worker": "Execution Worker"
+  },
+  "input_bindings": ["task_id"],
+  "events": [
+    {
+      "key": "submitted",
+      "component": "core_worker",
+      "event": "task_submitted",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "object_id": "$object_id",
+        "task_id": "$task_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "dependencies_ready",
+      "component": "core_worker",
+      "event": "dependency_ready",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "dependency_count": "0",
+        "task_id": "$task_id"
+      },
+      "max_count": 1,
+      "show_fields": ["dependency_count"]
+    },
+    {
+      "key": "lease_requested",
+      "component": "core_worker",
+      "event": "lease_requested",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "task_id": "$task_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "lease_granted",
+      "component": "core_worker",
+      "event": "lease_granted",
+      "fields": {
+        "lease_id": "$lease_id",
+        "task_id": "$task_id",
+        "worker_id": "$worker_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "pushed",
+      "component": "core_worker",
+      "event": "task_pushed",
+      "fields": {
+        "task_id": "$task_id",
+        "worker_id": "$worker_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "worker_started",
+      "component": "worker",
+      "event": "task_started",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "task_id": "$task_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "worker_failed_application",
+      "component": "worker",
+      "event": "task_application_failed",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "task_id": "$task_id"
+      },
+      "max_count": 1
+    },
+    {
+      "key": "task_failed",
+      "component": "core_worker",
+      "event": "task_failed",
+      "fields": {
+        "attempt_id": "$attempt_id",
+        "failure_kind": "APPLICATION",
+        "object_id": "$object_id",
+        "status": "APPLICATION_ERROR",
+        "task_id": "$task_id"
+      },
+      "max_count": 1,
+      "show_fields": ["status", "failure_kind"]
+    }
+  ],
+  "rpcs": [
+    {
+      "key": "lease_rpc",
+      "client": "core_worker",
+      "server": "node",
+      "handler": "request_worker_lease",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "push_rpc",
+      "client": "core_worker",
+      "server": "worker",
+      "handler": "push_task",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "start_rpc",
+      "client": "worker",
+      "server": "node",
+      "client_component": "transport",
+      "handler": "start_worker_lease",
+      "after_event": "worker_started",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "complete_rpc",
+      "client": "worker",
+      "server": "node",
+      "client_component": "transport",
+      "handler": "complete_worker_lease",
+      "after_event": "worker_started",
+      "before_event": "worker_failed_application",
+      "round_trip": true,
+      "reply_ok": "true"
+    }
+  ],
+  "orders": [
+    {"before": "submitted", "after": "dependencies_ready"},
+    {"before": "dependencies_ready", "after": "lease_requested"},
+    {"before": "lease_requested", "after": "lease_rpc.request_sent"},
+    {"before": "lease_rpc.reply_received", "after": "lease_granted"},
+    {"before": "lease_granted", "after": "pushed"},
+    {"before": "pushed", "after": "push_rpc.request_sent"},
+    {"before": "push_rpc.request_received", "after": "worker_started"},
+    {"before": "worker_started", "after": "start_rpc.request_sent"},
+    {"before": "start_rpc.reply_received", "after": "complete_rpc.request_sent"},
+    {"before": "complete_rpc.reply_received", "after": "worker_failed_application"},
+    {"before": "worker_failed_application", "after": "push_rpc.reply_sent"},
+    {"before": "push_rpc.reply_received", "after": "task_failed"}
+  ],
+  "forbidden": [
+    {
+      "component": "core_worker",
+      "event": "task_retried",
+      "fields": {"task_id": "$task_id"}
+    },
+    {
+      "component": "core_worker",
+      "event": "task_system_failed",
+      "fields": {"task_id": "$task_id"}
+    },
+    {
+      "component": "core_worker",
+      "event": "task_finished",
+      "fields": {"task_id": "$task_id"}
+    },
+    {
+      "component": "core_worker",
+      "event": "object_ready",
+      "fields": {"task_id": "$task_id"}
+    },
+    {
+      "component": "worker",
+      "event": "task_system_failed",
+      "fields": {"task_id": "$task_id"}
+    }
+  ],
+  "render_order": [
+    "submitted",
+    "dependencies_ready",
+    "lease_rpc",
+    "lease_granted",
+    "push_rpc",
+    "worker_started",
+    "start_rpc",
+    "complete_rpc",
+    "worker_failed_application",
+    "task_failed"
+  ]
+}

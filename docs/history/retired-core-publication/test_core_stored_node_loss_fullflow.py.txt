@@ -1,0 +1,351 @@
+"""Core-to-GCS full flow for takeover of a completed stored result."""
+
+from __future__ import annotations
+
+import hashlib
+import queue
+import threading
+
+import pytest
+
+from miniray import control, protocol
+from miniray.contained_cycle import ContainedGraphTransactionState
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.core import (
+    CoreWorker, _ObjectWaiter, _PendingTask, _StoredNodeLossObligation,
+)
+from miniray.ids import (
+    AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
+)
+from miniray.ownership import (
+    ObjectOwnerTable, ObjectState, StoredOwnerPublicationPlan,
+)
+from miniray.recovery import RecoveryManager, TaskState
+from miniray.resources import ResourceVector
+from miniray.stored_node_loss import (
+    StoredNodeLossPhase, StoredOwnerRetirementDisposition,
+)
+from miniray.stored_publication import (
+    OwnedContainedSource, PreparedContainedTransfer,
+    StoredPublicationAdoption, StoredPublicationClaim,
+    StoredPublicationEnvelope, StoredPublicationHeader, StoredPublicationID,
+    StoredPublicationIntent, StoredPublicationLeaseTerminal,
+    StoredPublicationManifest,
+)
+
+
+pytestmark = pytest.mark.unit
+
+
+class _Server:
+    """No-socket server used to expose GCSLite's real handler table."""
+
+    def __init__(self, handlers, **_configuration) -> None:
+        self.handlers = dict(handlers)
+        self.address = ("127.0.0.1", 32990)
+        self.is_running = False
+
+    def start(self):
+        self.is_running = True
+        return self.address
+
+    def stop(self):
+        self.is_running = False
+
+
+def _core() -> CoreWorker:
+    core = object.__new__(CoreWorker)
+    core.job_id = JobID.random()
+    core.driver_task_id = TaskID.for_driver(core.job_id)
+    core.worker_id = WorkerID.random()
+    core.node_id = NodeID.random()
+    core.node_address = ("127.0.0.1", 32991)
+    core.gcs_address = ("127.0.0.1", 32990)
+    core._owner_table = ObjectOwnerTable()
+    core._recovery = RecoveryManager()
+    core._objects = {}
+    core._stored_descriptors = {}
+    core._state_lock = threading.RLock()
+    core._completion = threading.Condition(core._state_lock)
+    core._submissions = queue.Queue()
+    core._ready_tasks = queue.Queue()
+    core._protocol_unresolved = {}
+    core._node_death_attempts = {}
+    core._dead_nodes = {}
+    core._object_gc_obligations = {}
+    core._inline_gc_obligations = core._object_gc_obligations
+    core._stored_publication_adoptions = {}
+    core._stored_publication_adoption_routes = {}
+    core._stored_node_loss_drivers = {}
+    core._stored_node_loss_objects = {}
+    core._finished_tasks = set()
+    core._finishing_tasks = set()
+    core._active_task_finishes = set()
+    core._foreign_guard_release_retries = {}
+    return core
+
+
+class _Flow:
+    def __init__(self, core: CoreWorker, registration) -> None:
+        task = TaskID.derive(core.job_id, core.driver_task_id, 41)
+        attempt = AttemptID(task, 0)
+        outer = ObjectID.for_task(task)
+        self.spec = protocol.TaskSpec(
+            core.job_id, task, attempt,
+            protocol.FunctionKey(core.job_id, __name__, "producer", "v1"),
+            (), 1, ResourceVector(), core.worker_id, max_retries=1,
+        )
+        self.pending = _PendingTask(outer, self.spec)
+        core.owner_table.register_task_outputs(self.spec)
+        core._recovery.register_task(self.spec, max_retries=1)
+        core._objects[outer] = _ObjectWaiter(threading.Event())
+
+        self.publication = StoredPublicationID(
+            LeaseID.random(), task, attempt, outer
+        )
+        self.executor = WorkerID.random()
+        self.child_owner = WorkerID.random()
+        self.child = ObjectID.for_task(
+            TaskID.derive(core.job_id, core.driver_task_id, 42)
+        )
+        self.final_hold = ContainedReferenceHold(
+            outer, core.worker_id, "fullflow-pin"
+        )
+        transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("127.0.0.1", 32992),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(
+                outer, self.executor, "fullflow-pin"
+            ),
+            self.final_hold,
+        )
+        payload = b"stored node-loss full flow"
+        checksum = hashlib.sha256(payload).hexdigest()
+        self.manifest = StoredPublicationManifest(
+            self.publication, (transfer,), len(payload), checksum,
+            hashlib.sha256(b"stored node-loss full-flow manifest").hexdigest(),
+        )
+        self.header = StoredPublicationHeader(
+            self.publication, core.job_id, self.executor, core.worker_id,
+            registration.node_id,
+        )
+        self.intent = StoredPublicationIntent(
+            self.header, self.manifest, registration.node_pid,
+            registration.registration_epoch,
+        )
+        self.descriptor = protocol.ResultDescriptor(
+            outer, protocol.ResultStorage.OBJECT_STORE, len(payload),
+            core.worker_id, registration.node_id, checksum,
+        )
+        self.graph = self.manifest.graph_manifest(core.worker_id)
+        self.envelope = StoredPublicationEnvelope(
+            self.publication, self.manifest.manifest_digest, self.descriptor,
+            self.graph, self.header,
+        )
+
+    def report_completed(self, service: control.GCSLite) -> None:
+        handlers = service.handlers
+        assert handlers["report_stored_publication_intent"](
+            protocol.ReportStoredPublicationIntent(self.intent)
+        ).accepted
+        assert handlers["prepare_stored_publication_graph"](
+            protocol.PrepareStoredPublicationGraph(self.graph)
+        ).accepted
+        assert handlers["report_stored_publication_replica_sealed"](
+            protocol.ReportStoredPublicationReplicaSealed(
+                self.publication, self.descriptor
+            )
+        ).accepted
+        assert handlers["report_stored_publication_promotions"](
+            protocol.ReportStoredPublicationPromotions(
+                self.publication, (True,)
+            )
+        ).accepted
+        assert handlers["report_stored_publication_lease_terminal"](
+            protocol.ReportStoredPublicationLeaseTerminal(
+                self.publication, StoredPublicationLeaseTerminal(
+                    self.publication, protocol.TaskReplyStatus.SUCCEEDED
+                )
+            )
+        ).accepted
+
+    def install_adopted_owner(self, core: CoreWorker) -> None:
+        claim = StoredPublicationClaim(
+            self.publication, "claim:fullflow", core.worker_id,
+            self.manifest.manifest_digest,
+        )
+        adoption = StoredPublicationAdoption(claim, "commit:fullflow")
+        receipt = core.owner_table.commit_stored_owner_publication(
+            StoredOwnerPublicationPlan(
+                self.pending.execution, self.envelope, adoption
+            )
+        )
+        assert receipt.committed
+        core._stored_descriptors[self.pending.object_id] = self.descriptor
+        core._recovery.record_task_success(
+            self.pending.task_id, self.pending.spec.attempt_id
+        )
+        core._objects[self.pending.object_id].event.set()
+
+
+def _next_obligation(
+    core: CoreWorker, flow: _Flow, *, owner_only: bool,
+) -> _StoredNodeLossObligation:
+    if owner_only:
+        return core._stored_node_loss_drivers[flow.publication]
+    unresolved = core._protocol_unresolved[flow.pending.task_key]
+    assert isinstance(unresolved.obligation, _StoredNodeLossObligation)
+    return unresolved.obligation
+
+
+@pytest.mark.parametrize("owner_start", ("pending", "adopted"))
+def test_core_drives_real_gcs_stored_takeover_to_exact_lost_terminal(
+    monkeypatch: pytest.MonkeyPatch, owner_start: str,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    releases = []
+
+    def release_hold(_address, handler, request):
+        assert handler == "release_contained_reference"
+        releases.append(request)
+        return protocol.ReleaseContainedReferenceReply(
+            request.object_id, request.owner_worker_id, request.hold, True, True
+        )
+
+    service = control.GCSLite(stored_hold_rpc=release_hold)
+    core = _core()
+    core.gcs_address = service.address
+    registration = service.register_node(protocol.RegisterNode(
+        NodeID.random(), 43141, ("127.0.0.1", 32993),
+        ResourceVector({"CPU": 1}),
+    ))
+    flow = _Flow(core, registration)
+    flow.report_completed(service)
+    adopted = owner_start == "adopted"
+    if adopted:
+        flow.install_adopted_owner(core)
+        assert service.handlers["commit_stored_publication_graph"](
+            protocol.CommitStoredPublicationGraph(flow.graph)
+        ).accepted
+
+    death_reply = service.report_node_death(protocol.ReportNodeDeath(
+        "stored-fullflow-death", registration.node_id, registration.node_pid,
+        registration.registration_epoch, -9,
+        protocol.NodeDeathReason.PROCESS_EXIT, "publishing Node exited",
+    ))
+    death = death_reply.death
+    assert death is not None
+    core._dead_nodes[death.node_id] = death
+
+    routes = []
+
+    def in_process_rpc(address, handler, request):
+        assert address == service.address
+        assert handler in {
+            "get_stored_node_loss",
+            "acknowledge_stored_owner_retirement",
+            "progress_stored_node_loss",
+        }
+        routes.append(handler)
+        return service.handlers[handler](request)
+
+    monkeypatch.setattr(core, "_rpc", in_process_rpc)
+    monkeypatch.setattr(
+        core, "_retry_system_failure",
+        lambda *_args: pytest.fail("completed publication must not retry"),
+    )
+    obligation = _StoredNodeLossObligation(
+        flow.publication, death, known_completed=True
+    )
+    if adopted:
+        core._stored_node_loss_drivers[flow.publication] = obligation
+        core._stored_node_loss_objects[flow.pending.object_id] = (
+            flow.publication
+        )
+    else:
+        core._mark_protocol_unresolved(
+            flow.pending, "stored_node_loss", obligation,
+            target_node_id=death.node_id, stored_candidate=flow.publication,
+        )
+
+    phases = [service.stored_publications.node_loss.snapshot(
+        flow.publication
+    ).phase]
+    for _ in range(10):
+        current = _next_obligation(
+            core, flow, owner_only=adopted
+        )
+        terminal = core._drive_stored_node_loss(flow.pending, current)
+        phases.append(service.stored_publications.node_loss.snapshot(
+            flow.publication
+        ).phase)
+        if terminal:
+            break
+    else:
+        pytest.fail("stored Node-loss takeover did not converge")
+
+    assert phases[0] is StoredNodeLossPhase.OWNER_RETIREMENT
+    assert phases[-1] is StoredNodeLossPhase.RESOLVED
+    assert routes.count("acknowledge_stored_owner_retirement") == 1
+    assert routes.count("progress_stored_node_loss") == 3
+    assert releases == [protocol.ReleaseContainedReference(
+        flow.child, flow.child_owner, flow.final_hold
+    )]
+
+    owner = core.owner_table.snapshot(flow.pending.object_id)
+    assert owner.state is ObjectState.LOST
+    assert owner.state is not ObjectState.READY_STORED
+    assert not owner.locations
+    assert owner.canonical_stored_result == flow.descriptor
+    assert owner.stored_publication is None
+    assert not owner.outgoing_contained_edges
+    assert owner.stored_retirement_id is None
+    assert not core.owner_table.has_active_stored_retirements()
+    assert core._recovery.task_record(flow.pending.task_id).state is (
+        TaskState.SUCCEEDED
+    )
+    assert flow.pending.object_id not in core._stored_descriptors
+    assert flow.publication not in core._stored_node_loss_drivers
+    assert flow.pending.object_id not in core._stored_node_loss_objects
+    assert flow.pending.task_key not in core._protocol_unresolved
+
+    completion = core.owner_table.stored_owner_retirement_completion(
+        flow.publication
+    )
+    assert completion is not None and completion.metadata_cleared
+    expected_retirement = (
+        StoredOwnerRetirementDisposition.READY_STORED_MARKED_LOST
+        if adopted else
+        StoredOwnerRetirementDisposition.PENDING_MARKED_LOST
+    )
+    assert completion.retirement.disposition is expected_retirement
+    terminal = service.handlers["get_stored_node_loss"](
+        protocol.GetStoredNodeLoss(flow.publication, core.worker_id, death)
+    )
+    assert terminal.disposition is protocol.StoredNodeLossDisposition.RESOLVED
+    assert terminal.resolution == completion.resolution
+    assert not service.stored_publications.node_loss.has_active_operations()
+
+    graph = next(
+        item for item in service.stored_publications.graph.snapshot().manifests
+        if item.manifest == flow.graph
+    )
+    if adopted:
+        assert graph.state is ContainedGraphTransactionState.COMMITTED
+        assert graph.active_edges == ()
+        assert graph.released_container_ids == (flow.pending.object_id,)
+    else:
+        assert graph.state is ContainedGraphTransactionState.ABORTED
+        assert graph.active_edges == ()
+
+    recovery = service.handlers["get_stored_publication_recovery"](
+        protocol.GetStoredPublicationRecovery(flow.publication)
+    )
+    assert recovery.disposition is (
+        protocol.StoredPublicationQueryDisposition.FOUND
+    )
+    assert recovery.record is not None
+    assert recovery.record.lease_terminal is not None
+    assert recovery.record.lease_terminal.status is (
+        protocol.TaskReplyStatus.SUCCEEDED
+    )

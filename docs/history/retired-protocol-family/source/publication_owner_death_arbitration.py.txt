@@ -1,0 +1,546 @@
+"""Pure authority arbitration once a publication's outer owner dies.
+
+The publication protocols have three possible writers: the normal publication
+path, publishing-Node-loss recovery, and logical-owner-death cleanup.  They may
+share effects (notably graph cleanup), but they must never execute them as
+independent sagas after owner death is committed.
+
+This registry is the deliberately small dominance layer between those state
+machines.  ``freeze`` is the linearization point.  Afterwards normal work and
+Node-loss RPCs are ``SUPERSEDED`` while only one exact owner-death request may
+be claimed.  If Node-loss was already active, its identity is joined into the
+freeze; completed receipts can be imported and that saga must receive an exact
+terminal tombstone before owner cleanup resolves.  The registry performs no
+effects and therefore cannot double-send one.
+
+Resolved entries are retained as tombstones.  Lost replies consequently replay
+the same freeze, claim, imported receipt, Node-loss terminal, or owner cleanup
+resolution instead of reopening an older authority.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Hashable
+from dataclasses import dataclass, replace
+from enum import Enum
+from threading import RLock
+from typing import Optional, Tuple
+
+from . import protocol
+from .publication_owner_death import (
+    InlinePublicationOwnerDeathKey, InlinePublicationOwnerDeathRequest,
+    PublicationOwnerDeathKey, PublicationOwnerDeathRequest,
+    PublicationOwnerDeathResolution, StoredPublicationOwnerDeathKey,
+    StoredPublicationOwnerDeathRequest,
+)
+
+
+class PublicationOwnerDeathArbitrationError(RuntimeError):
+    """Base class for publication-authority arbitration failures."""
+
+
+class PublicationOwnerDeathArbitrationConflictError(
+    PublicationOwnerDeathArbitrationError
+):
+    """An immutable death, claimant, receipt, or terminal was rebound."""
+
+
+class PublicationOwnerDeathArbitrationStateError(
+    PublicationOwnerDeathArbitrationError
+):
+    """An operation contradicts the monotonic arbitration state."""
+
+
+class UnknownPublicationOwnerDeathArbitrationError(
+    PublicationOwnerDeathArbitrationStateError, LookupError
+):
+    """The publication has no owner-death arbitration record."""
+
+
+class PublicationArbitrationOperation(str, Enum):
+    """The three writers whose authority must be mutually exclusive."""
+
+    NORMAL_FORWARD = "NORMAL_FORWARD"
+    NODE_LOSS = "NODE_LOSS"
+    OWNER_DEATH = "OWNER_DEATH"
+
+
+class PublicationArbitrationDecision(str, Enum):
+    """Decision returned at an RPC boundary before it performs an effect."""
+
+    ALLOWED = "ALLOWED"
+    SUPERSEDED = "SUPERSEDED"
+    OWNER_ONLY = "OWNER_ONLY"
+
+
+class PublicationOwnerDeathArbitrationPhase(str, Enum):
+    FROZEN = "FROZEN"
+    CLAIMED = "CLAIMED"
+    RESOLVED = "RESOLVED"
+
+
+class PublicationNodeLossSupersessionState(str, Enum):
+    JOINED_SUPERSEDED = "JOINED_SUPERSEDED"
+    TERMINALIZED = "TERMINALIZED"
+
+
+@dataclass(frozen=True)
+class ImportedPublicationNodeLossReceipt:
+    """One exact already-completed Node-loss effect reusable by cleanup."""
+
+    effect: Hashable
+    receipt: Hashable
+
+    def __post_init__(self) -> None:
+        _stable_identity(self.effect, "effect")
+        _stable_identity(self.receipt, "receipt")
+
+
+@dataclass(frozen=True)
+class SupersededPublicationNodeLoss:
+    """The Node-loss saga joined at the owner-death linearization point."""
+
+    identity: Hashable
+    imported_receipts: Tuple[ImportedPublicationNodeLossReceipt, ...] = ()
+    terminal_receipt: Optional[Hashable] = None
+
+    def __post_init__(self) -> None:
+        _stable_identity(self.identity, "node_loss_identity")
+        receipts = tuple(self.imported_receipts)
+        if any(
+            not isinstance(value, ImportedPublicationNodeLossReceipt)
+            for value in receipts
+        ):
+            raise TypeError(
+                "imported_receipts must contain "
+                "ImportedPublicationNodeLossReceipt values"
+            )
+        effects: list[Hashable] = []
+        for value in receipts:
+            if value.effect in effects:
+                raise ValueError(
+                    "imported Node-loss effects must be unique"
+                )
+            effects.append(value.effect)
+        if self.terminal_receipt is not None:
+            _stable_identity(
+                self.terminal_receipt, "node_loss_terminal_receipt"
+            )
+        object.__setattr__(self, "imported_receipts", receipts)
+
+    @property
+    def state(self) -> PublicationNodeLossSupersessionState:
+        return (
+            PublicationNodeLossSupersessionState.TERMINALIZED
+            if self.terminal_receipt is not None
+            else PublicationNodeLossSupersessionState.JOINED_SUPERSEDED
+        )
+
+
+@dataclass(frozen=True)
+class PublicationOwnerDeathArbitrationSnapshot:
+    """Immutable authority tombstone for one typed publication key."""
+
+    key: PublicationOwnerDeathKey
+    owner_death: protocol.WorkerDeathRecord
+    node_loss: Optional[SupersededPublicationNodeLoss] = None
+    owner_cleanup_request: Optional[PublicationOwnerDeathRequest] = None
+    resolution: Optional[PublicationOwnerDeathResolution] = None
+
+    def __post_init__(self) -> None:
+        _validate_key(self.key)
+        _validate_owner_death(self.owner_death)
+        if self.node_loss is not None and not isinstance(
+            self.node_loss, SupersededPublicationNodeLoss
+        ):
+            raise TypeError(
+                "node_loss must be a SupersededPublicationNodeLoss or None"
+            )
+        request = self.owner_cleanup_request
+        if request is not None:
+            _validate_request(request)
+            if request.key != self.key:
+                raise PublicationOwnerDeathArbitrationConflictError(
+                    "owner cleanup request belongs to another publication"
+                )
+            if request.owner_death != self.owner_death:
+                raise PublicationOwnerDeathArbitrationConflictError(
+                    "owner cleanup request changed the frozen death proof"
+                )
+        if self.resolution is not None:
+            if not isinstance(
+                self.resolution, PublicationOwnerDeathResolution
+            ):
+                raise TypeError(
+                    "resolution must be a PublicationOwnerDeathResolution "
+                    "or None"
+                )
+            if request is None or self.resolution.request != request:
+                raise PublicationOwnerDeathArbitrationConflictError(
+                    "resolution does not match the exact cleanup claim"
+                )
+            if (
+                self.node_loss is not None
+                and self.node_loss.terminal_receipt is None
+            ):
+                raise PublicationOwnerDeathArbitrationStateError(
+                    "joined Node-loss must be terminalized before resolution"
+                )
+
+    @property
+    def phase(self) -> PublicationOwnerDeathArbitrationPhase:
+        if self.resolution is not None:
+            return PublicationOwnerDeathArbitrationPhase.RESOLVED
+        if self.owner_cleanup_request is not None:
+            return PublicationOwnerDeathArbitrationPhase.CLAIMED
+        return PublicationOwnerDeathArbitrationPhase.FROZEN
+
+    @property
+    def joined_node_loss_identity(self) -> Optional[Hashable]:
+        return None if self.node_loss is None else self.node_loss.identity
+
+
+class PublicationOwnerDeathArbitrator:
+    """Thread-safe, side-effect-free owner-death dominance registry."""
+
+    def __init__(self) -> None:
+        self._records: dict[
+            PublicationOwnerDeathKey,
+            PublicationOwnerDeathArbitrationSnapshot,
+        ] = {}
+        self._admission_closed = False
+        self._lock = RLock()
+
+    def freeze(
+        self, key: PublicationOwnerDeathKey,
+        death: protocol.WorkerDeathRecord,
+        node_loss_identity: Optional[Hashable] = None,
+    ) -> PublicationOwnerDeathArbitrationSnapshot:
+        """Give owner-death cleanup permanent dominance for ``key``.
+
+        ``node_loss_identity`` must be captured under the caller's composition
+        lock.  Supplying it records that an already-active Node-loss saga was
+        joined and superseded; omitting it states that no such saga existed at
+        the freeze point.
+        """
+
+        _validate_key(key)
+        checked_death = _validate_owner_death(death)
+        if node_loss_identity is not None:
+            _stable_identity(node_loss_identity, "node_loss_identity")
+        with self._lock:
+            previous = self._records.get(key)
+            if previous is not None:
+                if previous.owner_death != checked_death:
+                    raise PublicationOwnerDeathArbitrationConflictError(
+                        "publication owner-death proof changed on replay"
+                    )
+                if (
+                    previous.joined_node_loss_identity
+                    != node_loss_identity
+                ):
+                    raise PublicationOwnerDeathArbitrationConflictError(
+                        "Node-loss join identity changed on freeze replay"
+                    )
+                return previous
+            if self._admission_closed:
+                raise PublicationOwnerDeathArbitrationStateError(
+                    "publication owner-death arbitration admission is closed"
+                )
+            joined = (
+                None
+                if node_loss_identity is None
+                else SupersededPublicationNodeLoss(node_loss_identity)
+            )
+            snapshot = PublicationOwnerDeathArbitrationSnapshot(
+                key, checked_death, joined
+            )
+            self._records[key] = snapshot
+            return snapshot
+
+    def decision(
+        self, key: PublicationOwnerDeathKey,
+        operation: PublicationArbitrationOperation,
+    ) -> PublicationArbitrationDecision:
+        """Return authority without mutating or implicitly admitting work."""
+
+        _validate_key(key)
+        if not isinstance(operation, PublicationArbitrationOperation):
+            raise TypeError(
+                "operation must be a PublicationArbitrationOperation"
+            )
+        with self._lock:
+            frozen = key in self._records
+        if not frozen:
+            return PublicationArbitrationDecision.ALLOWED
+        if operation is PublicationArbitrationOperation.OWNER_DEATH:
+            return PublicationArbitrationDecision.OWNER_ONLY
+        return PublicationArbitrationDecision.SUPERSEDED
+
+    def claim_owner_cleanup(
+        self, key: PublicationOwnerDeathKey,
+        request: PublicationOwnerDeathRequest,
+    ) -> PublicationOwnerDeathArbitrationSnapshot:
+        """Bind the dominant authority to one exact cleanup request."""
+
+        _validate_key(key)
+        _validate_request(request)
+        if request.key != key:
+            raise PublicationOwnerDeathArbitrationConflictError(
+                "owner cleanup request belongs to another publication"
+            )
+        with self._lock:
+            snapshot = self._record(key)
+            if request.owner_death != snapshot.owner_death:
+                raise PublicationOwnerDeathArbitrationConflictError(
+                    "owner cleanup request changed the frozen death proof"
+                )
+            previous = snapshot.owner_cleanup_request
+            if previous is not None:
+                if previous != request:
+                    raise PublicationOwnerDeathArbitrationConflictError(
+                        "publication owner cleanup claimant changed on replay"
+                    )
+                return snapshot
+            snapshot = replace(snapshot, owner_cleanup_request=request)
+            self._records[key] = snapshot
+            return snapshot
+
+    def import_node_loss_receipt(
+        self, key: PublicationOwnerDeathKey,
+        node_loss_identity: Hashable, effect: Hashable, receipt: Hashable,
+    ) -> PublicationOwnerDeathArbitrationSnapshot:
+        """Import an exact completed effect; this method performs no effect."""
+
+        _validate_key(key)
+        _stable_identity(node_loss_identity, "node_loss_identity")
+        imported = ImportedPublicationNodeLossReceipt(effect, receipt)
+        with self._lock:
+            snapshot = self._record(key)
+            node_loss = self._exact_node_loss(
+                snapshot, node_loss_identity
+            )
+            for previous in node_loss.imported_receipts:
+                if previous.effect != imported.effect:
+                    continue
+                if previous != imported:
+                    raise PublicationOwnerDeathArbitrationConflictError(
+                        "Node-loss effect receipt changed on replay"
+                    )
+                return snapshot
+            if snapshot.resolution is not None:
+                raise PublicationOwnerDeathArbitrationStateError(
+                    "resolved arbitration tombstone rejects new receipts"
+                )
+            node_loss = replace(
+                node_loss,
+                imported_receipts=(
+                    *node_loss.imported_receipts, imported,
+                ),
+            )
+            snapshot = replace(snapshot, node_loss=node_loss)
+            self._records[key] = snapshot
+            return snapshot
+
+    def terminalize_node_loss(
+        self, key: PublicationOwnerDeathKey,
+        node_loss_identity: Hashable, terminal_receipt: Hashable,
+    ) -> PublicationOwnerDeathArbitrationSnapshot:
+        """Record the exact SUPERSEDED tombstone written to Node-loss."""
+
+        _validate_key(key)
+        _stable_identity(node_loss_identity, "node_loss_identity")
+        _stable_identity(terminal_receipt, "terminal_receipt")
+        with self._lock:
+            snapshot = self._record(key)
+            node_loss = self._exact_node_loss(
+                snapshot, node_loss_identity
+            )
+            previous = node_loss.terminal_receipt
+            if previous is not None:
+                if previous != terminal_receipt:
+                    raise PublicationOwnerDeathArbitrationConflictError(
+                        "Node-loss terminal receipt changed on replay"
+                    )
+                return snapshot
+            if snapshot.resolution is not None:
+                raise PublicationOwnerDeathArbitrationStateError(
+                    "resolved arbitration tombstone rejects a new terminal"
+                )
+            node_loss = replace(
+                node_loss, terminal_receipt=terminal_receipt
+            )
+            snapshot = replace(snapshot, node_loss=node_loss)
+            self._records[key] = snapshot
+            return snapshot
+
+    def resolve(
+        self, key: PublicationOwnerDeathKey,
+        resolution: PublicationOwnerDeathResolution,
+    ) -> PublicationOwnerDeathArbitrationSnapshot:
+        """Install the dominant cleanup terminal and retain its tombstone."""
+
+        _validate_key(key)
+        if not isinstance(resolution, PublicationOwnerDeathResolution):
+            raise TypeError(
+                "resolution must be a PublicationOwnerDeathResolution"
+            )
+        if resolution.key != key:
+            raise PublicationOwnerDeathArbitrationConflictError(
+                "owner cleanup resolution belongs to another publication"
+            )
+        with self._lock:
+            snapshot = self._record(key)
+            previous = snapshot.resolution
+            if previous is not None:
+                if previous != resolution:
+                    raise PublicationOwnerDeathArbitrationConflictError(
+                        "owner cleanup resolution changed on replay"
+                    )
+                return snapshot
+            if snapshot.owner_cleanup_request != resolution.request:
+                raise PublicationOwnerDeathArbitrationConflictError(
+                    "resolution does not match the exact cleanup claim"
+                )
+            if resolution.request.owner_death != snapshot.owner_death:
+                raise PublicationOwnerDeathArbitrationConflictError(
+                    "resolution changed the frozen owner-death proof"
+                )
+            if (
+                snapshot.node_loss is not None
+                and snapshot.node_loss.terminal_receipt is None
+            ):
+                raise PublicationOwnerDeathArbitrationStateError(
+                    "joined Node-loss must be terminalized before resolution"
+                )
+            snapshot = replace(snapshot, resolution=resolution)
+            self._records[key] = snapshot
+            return snapshot
+
+    def snapshot(
+        self, key: PublicationOwnerDeathKey,
+    ) -> PublicationOwnerDeathArbitrationSnapshot:
+        _validate_key(key)
+        with self._lock:
+            return self._record(key)
+
+    def publication_keys(self) -> Tuple[PublicationOwnerDeathKey, ...]:
+        with self._lock:
+            return tuple(sorted(
+                self._records,
+                key=lambda key: (key.tier.value, key.publication_id),
+            ))
+
+    def close_admission(self) -> bool:
+        """Fence unseen owner deaths while preserving every exact replay."""
+
+        with self._lock:
+            changed = not self._admission_closed
+            self._admission_closed = True
+            return changed
+
+    @property
+    def admission_closed(self) -> bool:
+        with self._lock:
+            return self._admission_closed
+
+    def has_active_operations(self) -> bool:
+        with self._lock:
+            return any(
+                snapshot.resolution is None
+                for snapshot in self._records.values()
+            )
+
+    def has_active_obligations(self) -> bool:
+        return self.has_active_operations()
+
+    def _record(
+        self, key: PublicationOwnerDeathKey,
+    ) -> PublicationOwnerDeathArbitrationSnapshot:
+        try:
+            return self._records[key]
+        except KeyError as exc:
+            raise UnknownPublicationOwnerDeathArbitrationError(
+                "publication is not owner-death frozen"
+            ) from exc
+
+    @staticmethod
+    def _exact_node_loss(
+        snapshot: PublicationOwnerDeathArbitrationSnapshot,
+        identity: Hashable,
+    ) -> SupersededPublicationNodeLoss:
+        node_loss = snapshot.node_loss
+        if node_loss is None:
+            raise PublicationOwnerDeathArbitrationStateError(
+                "no Node-loss saga was active at owner-death freeze"
+            )
+        if node_loss.identity != identity:
+            raise PublicationOwnerDeathArbitrationConflictError(
+                "Node-loss identity does not match the joined saga"
+            )
+        return node_loss
+
+
+def _stable_identity(value: object, label: str) -> Hashable:
+    if value is None or not isinstance(value, Hashable):
+        raise TypeError("{} must be a non-None hashable value".format(label))
+    try:
+        hash(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            "{} must be a stable hashable value".format(label)
+        ) from exc
+    return value
+
+
+def _validate_key(key: object) -> PublicationOwnerDeathKey:
+    if not isinstance(
+        key,
+        (InlinePublicationOwnerDeathKey, StoredPublicationOwnerDeathKey),
+    ):
+        raise TypeError(
+            "key must be an INLINE or STORED owner-death key"
+        )
+    return key
+
+
+def _validate_request(request: object) -> PublicationOwnerDeathRequest:
+    if not isinstance(
+        request,
+        (
+            InlinePublicationOwnerDeathRequest,
+            StoredPublicationOwnerDeathRequest,
+        ),
+    ):
+        raise TypeError(
+            "request must be an INLINE or STORED owner-death request"
+        )
+    return request
+
+
+def _validate_owner_death(
+    death: object,
+) -> protocol.WorkerDeathRecord:
+    if not isinstance(death, protocol.WorkerDeathRecord):
+        raise TypeError("death must be a WorkerDeathRecord")
+    if death.reason is protocol.WorkerDeathReason.EXPECTED:
+        raise PublicationOwnerDeathArbitrationStateError(
+            "EXPECTED Worker exit is not an owner-death proof"
+        )
+    return death
+
+
+__all__ = [
+    "ImportedPublicationNodeLossReceipt",
+    "PublicationArbitrationDecision",
+    "PublicationArbitrationOperation",
+    "PublicationNodeLossSupersessionState",
+    "PublicationOwnerDeathArbitrationConflictError",
+    "PublicationOwnerDeathArbitrationError",
+    "PublicationOwnerDeathArbitrationPhase",
+    "PublicationOwnerDeathArbitrationSnapshot",
+    "PublicationOwnerDeathArbitrationStateError",
+    "PublicationOwnerDeathArbitrator",
+    "SupersededPublicationNodeLoss",
+    "UnknownPublicationOwnerDeathArbitrationError",
+]

@@ -1,0 +1,608 @@
+"""Pure publication cleanup after the logical outer owner dies."""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import fields, is_dataclass, replace
+
+import pytest
+
+from miniray import protocol
+from miniray.contained_cycle import (
+    ContainedGraphManifest, ContainedGraphManifestDisposition,
+    ContainedGraphManifestReceipt, ContainedGraphTransactionState,
+)
+from miniray.contained_edges import (
+    ContainedReferenceEdge, ContainedReferenceHold,
+)
+from miniray.ids import (
+    AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
+)
+from miniray.inline_contained_publication import (
+    InlinePublicationEnvelope, InlinePublicationID,
+)
+from miniray.publication_owner_death import (
+    AbortPublicationGraphEffect, DropPublicationReplicaEffect,
+    FencePublicationOwnerDeathEffect, InlinePublicationOwnerDeathKey,
+    InlinePublicationOwnerDeathRequest, PublicationHoldDisposition,
+    FinalizePublicationOwnerDeathEffect,
+    PublicationHoldReceipt, PublicationNodeFenceDisposition,
+    PublicationNodeFenceReceipt, PublicationOwnerDeathConflictError,
+    PublicationOwnerDeathCoordinator, PublicationOwnerDeathGraphState,
+    PublicationOwnerDeathGraphWitness, PublicationOwnerDeathPhase,
+    PublicationOwnerDeathStateError, PublicationOwnerDeathTerminal,
+    PublicationRecoveryHistory, PublicationReplicaDisposition,
+    PublicationReplicaFenceStatus, PublicationReplicaReceipt,
+    PublicationPublisherFinalizeDisposition,
+    PublicationPublisherFinalizeReceipt, ReleasePublicationGraphEffect,
+    ReleasePublicationHoldEffect, StoredPublicationOwnerDeathKey,
+    StoredPublicationOwnerDeathRequest, UnknownPublicationOwnerDeathError,
+)
+from miniray.stored_publication import (
+    OwnedContainedSource, PreparedContainedTransfer,
+    StoredPublicationEnvelope, StoredPublicationHeader, StoredPublicationID,
+    StoredPublicationIntent, StoredPublicationLeaseTerminal,
+    StoredPublicationManifest, StoredPublicationRecoveryRecord,
+)
+
+
+pytestmark = pytest.mark.unit
+
+
+class _Fixture:
+    def __init__(self) -> None:
+        self.job = JobID(bytes.fromhex("11" * 16))
+        driver = TaskID.for_driver(self.job)
+        self.task = TaskID.derive(self.job, driver, 1)
+        self.attempt = AttemptID(self.task, 0)
+        self.outer = ObjectID.for_task(self.task)
+        self.child = ObjectID.for_task(
+            TaskID.derive(self.job, driver, 2)
+        )
+        self.lease = LeaseID(bytes.fromhex("22" * 16))
+        self.executor = WorkerID(bytes.fromhex("33" * 16))
+        self.owner = WorkerID(bytes.fromhex("44" * 16))
+        self.publisher = NodeID(bytes.fromhex("55" * 16))
+        self.replica_node = NodeID(bytes.fromhex("66" * 16))
+        self.edge = ContainedReferenceEdge(
+            self.outer, self.child, self.executor,
+            ("127.0.0.1", 24001), "owner-death-child",
+        )
+        self.death = protocol.WorkerDeathRecord(
+            "outer-owner-death",
+            protocol.WorkerIncarnation(
+                NodeID(bytes.fromhex("77" * 16)), 1100, 4,
+                self.owner, 2200,
+            ),
+            9, -9, protocol.WorkerDeathReason.PROCESS_EXIT,
+        )
+        self.inline_id = InlinePublicationID(
+            self.lease, self.task, self.attempt, self.outer
+        )
+        self.inline = InlinePublicationEnvelope.create(
+            self.inline_id, self.job, self.executor, self.owner,
+            self.publisher, b"inline outer", (self.edge,),
+        )
+        self.stored_id = StoredPublicationID(
+            self.lease, self.task, self.attempt, self.outer
+        )
+        payload = b"stored outer"
+        checksum = hashlib.sha256(payload).hexdigest()
+        manifest_digest = hashlib.sha256(b"stored manifest").hexdigest()
+        header = StoredPublicationHeader(
+            self.stored_id, self.job, self.executor, self.owner,
+            self.publisher,
+        )
+        descriptor = protocol.ResultDescriptor(
+            self.outer, protocol.ResultStorage.OBJECT_STORE, len(payload),
+            self.owner, self.publisher, checksum,
+        )
+        transfer = PreparedContainedTransfer(
+            self.child, self.executor, ("127.0.0.1", 24001),
+            OwnedContainedSource(self.executor),
+            ContainedReferenceHold(
+                self.outer, self.executor, self.edge.transfer_token
+            ),
+            ContainedReferenceHold(
+                self.outer, self.owner, self.edge.transfer_token
+            ),
+        )
+        manifest = StoredPublicationManifest(
+            self.stored_id, (transfer,), len(payload), checksum,
+            manifest_digest,
+        )
+        graph = manifest.graph_manifest(self.owner)
+        self.stored = StoredPublicationEnvelope(
+            self.stored_id, manifest_digest, descriptor, graph, header
+        )
+        self.recovery = StoredPublicationRecoveryRecord(
+            manifest, descriptor, (True,),
+            StoredPublicationLeaseTerminal(
+                self.stored_id, protocol.TaskReplyStatus.SUCCEEDED
+            ),
+            StoredPublicationIntent(header, manifest, 3100, 8),
+        )
+        self.replicas = tuple(sorted((
+            protocol.ObjectStoreDescriptor(
+                self.outer, self.owner, self.attempt, self.publisher,
+                len(payload), checksum,
+            ),
+            protocol.ObjectStoreDescriptor(
+                self.outer, self.owner, self.attempt, self.replica_node,
+                len(payload), checksum,
+            ),
+        ), key=lambda value: bytes(value.node_id)))
+
+    def inline_request(
+        self, state: PublicationOwnerDeathGraphState, *,
+        history: PublicationRecoveryHistory = (
+            PublicationRecoveryHistory.COMMIT_UNKNOWN
+        ),
+        released: bool = False,
+    ) -> InlinePublicationOwnerDeathRequest:
+        graph = self.inline.to_graph_manifest()
+        witness = PublicationOwnerDeathGraphWitness(
+            graph, state,
+            graph.ordered_edges
+            if state is PublicationOwnerDeathGraphState.COMMITTED
+            and not released else (),
+            (self.outer,) if released else (),
+        )
+        return InlinePublicationOwnerDeathRequest(
+            InlinePublicationOwnerDeathKey(self.inline_id), self.inline.manifest,
+            self.death, history, witness,
+        )
+
+    def stored_request(
+        self, state: PublicationOwnerDeathGraphState, *,
+        history: PublicationRecoveryHistory = (
+            PublicationRecoveryHistory.COMMIT_UNKNOWN
+        ),
+        released: bool = False,
+    ) -> StoredPublicationOwnerDeathRequest:
+        graph = self.stored.graph_manifest
+        witness = PublicationOwnerDeathGraphWitness(
+            graph, state,
+            graph.ordered_edges
+            if state is PublicationOwnerDeathGraphState.COMMITTED
+            and not released else (),
+            (self.outer,) if released else (),
+        )
+        return StoredPublicationOwnerDeathRequest.for_envelope(
+            self.stored, self.death, history, witness,
+            recovery=self.recovery, replicas=self.replicas,
+        )
+
+
+def _receipt(effect: object) -> object:
+    if isinstance(effect, FencePublicationOwnerDeathEffect):
+        return PublicationNodeFenceReceipt(
+            effect, PublicationNodeFenceDisposition.FENCED,
+            (PublicationReplicaFenceStatus.PRESENT,)
+            * len(effect.expected_replicas),
+        )
+    if isinstance(effect, ReleasePublicationHoldEffect):
+        return PublicationHoldReceipt(
+            effect, PublicationHoldDisposition.RELEASED
+        )
+    if isinstance(effect, AbortPublicationGraphEffect):
+        return ContainedGraphManifestReceipt(
+            effect.manifest, ContainedGraphTransactionState.ABORTED,
+            ContainedGraphManifestDisposition.APPLIED,
+        )
+    if isinstance(effect, ReleasePublicationGraphEffect):
+        return ContainedGraphManifestReceipt(
+            effect.manifest, ContainedGraphTransactionState.COMMITTED,
+            ContainedGraphManifestDisposition.RELEASED,
+            effect.manifest.ordered_edges,
+        )
+    if isinstance(effect, DropPublicationReplicaEffect):
+        return PublicationReplicaReceipt(
+            effect, PublicationReplicaDisposition.DROPPED
+        )
+    if isinstance(effect, FinalizePublicationOwnerDeathEffect):
+        return PublicationPublisherFinalizeReceipt(
+            effect, PublicationPublisherFinalizeDisposition.FINALIZED
+        )
+    raise AssertionError(type(effect).__name__)
+
+
+def _drive(
+    coordinator: PublicationOwnerDeathCoordinator, key: object,
+) -> tuple[object, ...]:
+    effects = []
+    while True:
+        effect = coordinator.next_effect(key)  # type: ignore[arg-type]
+        if effect is None:
+            return tuple(effects)
+        effects.append(effect)
+        coordinator.acknowledge(effect, _receipt(effect))  # type: ignore[arg-type]
+
+
+def test_inline_owner_death_request_contains_metadata_not_result_bytes() -> None:
+    fixture = _Fixture()
+    request = fixture.inline_request(PublicationOwnerDeathGraphState.PREPARED)
+
+    def check_metadata(value: object) -> None:
+        # Opaque protocol identities encode their 128-bit key as bytes.  They
+        # are metadata atoms, not a path through which an INLINE payload may
+        # enter the GCS cleanup record.
+        if isinstance(value, (JobID, TaskID, WorkerID, NodeID, LeaseID)):
+            assert len(bytes(value)) == 16
+            return
+        assert not isinstance(value, (
+            bytes, bytearray, memoryview, protocol.ResultDescriptor,
+            InlinePublicationEnvelope,
+        ))
+        if is_dataclass(value) and not isinstance(value, type):
+            for item in fields(value):
+                check_metadata(getattr(value, item.name))
+        elif isinstance(value, (tuple, list)):
+            for item in value:
+                check_metadata(item)
+
+    check_metadata(request)
+    assert request.manifest == fixture.inline.manifest
+    assert request.owner_worker_id == fixture.owner
+    assert request.publishing_node_id == fixture.publisher
+    assert request.graph.manifest == request.manifest.to_graph_manifest()
+    assert not hasattr(request, "envelope")
+    with pytest.raises(TypeError, match="InlinePublicationManifest"):
+        replace(request, manifest=fixture.inline)
+
+
+def test_inline_prepared_keeps_tier_specific_holds_then_abort_order() -> None:
+    fixture = _Fixture()
+    request = fixture.inline_request(
+        PublicationOwnerDeathGraphState.PREPARED
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+
+    started = coordinator.begin(request)
+    effects = _drive(coordinator, request.key)
+
+    assert started.phase is PublicationOwnerDeathPhase.NODE_FENCE
+    assert tuple(type(effect) for effect in effects) == (
+        FencePublicationOwnerDeathEffect,
+        ReleasePublicationHoldEffect,
+        AbortPublicationGraphEffect,
+        FinalizePublicationOwnerDeathEffect,
+    )
+    fence = effects[0]
+    assert isinstance(fence, FencePublicationOwnerDeathEffect)
+    assert fence.node_id == fixture.publisher
+    assert fence.expected_replicas == ()
+
+
+def test_stored_prepared_fences_all_replica_nodes_then_aborts_before_holds() -> None:
+    fixture = _Fixture()
+    request = fixture.stored_request(
+        PublicationOwnerDeathGraphState.PREPARED
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+
+    coordinator.begin(request)
+    effects = _drive(coordinator, request.key)
+    kinds = tuple(type(effect) for effect in effects)
+
+    assert kinds == (
+        FencePublicationOwnerDeathEffect,
+        FencePublicationOwnerDeathEffect,
+        AbortPublicationGraphEffect,
+        ReleasePublicationHoldEffect,
+        DropPublicationReplicaEffect,
+        DropPublicationReplicaEffect,
+        FinalizePublicationOwnerDeathEffect,
+    )
+    fences = effects[:2]
+    assert fences[0].node_id == fixture.publisher  # type: ignore[union-attr]
+    assert {
+        fence.node_id for fence in fences  # type: ignore[union-attr]
+    } == {fixture.publisher, fixture.replica_node}
+    assert all(
+        tuple(replica.node_id for replica in fence.expected_replicas)
+        == (fence.node_id,)
+        for fence in fences  # type: ignore[union-attr]
+    )
+
+
+@pytest.mark.parametrize("tier", ("inline", "stored"))
+def test_committed_graph_releases_holds_before_graph_and_stored_replicas(
+    tier: str,
+) -> None:
+    fixture = _Fixture()
+    request = (
+        fixture.inline_request(PublicationOwnerDeathGraphState.COMMITTED)
+        if tier == "inline"
+        else fixture.stored_request(PublicationOwnerDeathGraphState.COMMITTED)
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+    coordinator.begin(request)
+    effects = _drive(coordinator, request.key)
+
+    hold_index = next(
+        index for index, effect in enumerate(effects)
+        if isinstance(effect, ReleasePublicationHoldEffect)
+    )
+    graph_index = next(
+        index for index, effect in enumerate(effects)
+        if isinstance(effect, ReleasePublicationGraphEffect)
+    )
+    assert hold_index < graph_index
+    if tier == "inline":
+        assert not any(
+            isinstance(effect, DropPublicationReplicaEffect)
+            for effect in effects
+        )
+    else:
+        assert all(
+            graph_index < index
+            for index, effect in enumerate(effects)
+            if isinstance(effect, DropPublicationReplicaEffect)
+        )
+    assert isinstance(effects[-1], FinalizePublicationOwnerDeathEffect)
+
+
+def test_adopted_history_is_preserved_by_independent_lifetime_terminal() -> None:
+    fixture = _Fixture()
+    request = fixture.stored_request(
+        PublicationOwnerDeathGraphState.COMMITTED,
+        history=PublicationRecoveryHistory.ADOPTED,
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+    coordinator.begin(request)
+
+    _drive(coordinator, request.key)
+
+    resolution = coordinator.resolution(request.key)
+    assert resolution is not None
+    assert resolution.terminal is (
+        PublicationOwnerDeathTerminal.OWNER_DEATH_CLEANED
+    )
+    assert resolution.publication_history is PublicationRecoveryHistory.ADOPTED
+    assert resolution.request == request
+    assert coordinator.snapshot(request.key).phase is (
+        PublicationOwnerDeathPhase.RESOLVED
+    )
+    assert not coordinator.has_active_operations()
+
+
+def test_exact_receipt_replay_and_strict_effect_order() -> None:
+    fixture = _Fixture()
+    request = fixture.inline_request(
+        PublicationOwnerDeathGraphState.PREPARED
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+    coordinator.begin(request)
+    first = coordinator.next_effect(request.key)
+    assert isinstance(first, FencePublicationOwnerDeathEffect)
+    later = ReleasePublicationHoldEffect(
+        request.key, 0, fixture.edge,
+        fixture.edge.incoming_hold(fixture.owner),
+    )
+    with pytest.raises(PublicationOwnerDeathStateError, match="next exact"):
+        coordinator.acknowledge(later, _receipt(later))
+
+    receipt = PublicationNodeFenceReceipt(
+        first, PublicationNodeFenceDisposition.FENCED
+    )
+    snapshot = coordinator.acknowledge(first, receipt)
+    assert coordinator.acknowledge(first, receipt) == snapshot
+    with pytest.raises(
+        PublicationOwnerDeathConflictError, match="changed on replay"
+    ):
+        coordinator.acknowledge(
+            first, PublicationNodeFenceReceipt(
+                first, PublicationNodeFenceDisposition.ALREADY_FENCED
+            ),
+        )
+
+
+def test_same_typed_key_rejects_changed_death_graph_or_history() -> None:
+    fixture = _Fixture()
+    request = fixture.inline_request(
+        PublicationOwnerDeathGraphState.COMMITTED
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+    coordinator.begin(request)
+
+    with pytest.raises(
+        PublicationOwnerDeathConflictError, match="evidence changed"
+    ):
+        coordinator.begin(replace(
+            request, publication_history=PublicationRecoveryHistory.ADOPTED
+        ))
+    with pytest.raises(
+        PublicationOwnerDeathConflictError, match="death proof"
+    ):
+        replace(
+            request, owner_death=replace(
+                fixture.death, incarnation=replace(
+                    fixture.death.incarnation, worker_id=WorkerID.random()
+                ),
+            ),
+        )
+
+
+def test_adopted_requires_committed_graph_and_replicas_are_exact() -> None:
+    fixture = _Fixture()
+    with pytest.raises(
+        PublicationOwnerDeathStateError, match="ADOPTED history"
+    ):
+        fixture.inline_request(
+            PublicationOwnerDeathGraphState.PREPARED,
+            history=PublicationRecoveryHistory.ADOPTED,
+        )
+
+    source = fixture.replicas[0]
+    wrong = replace(source, checksum="ab" * 32)
+    with pytest.raises(
+        PublicationOwnerDeathConflictError, match="replica does not match"
+    ):
+        StoredPublicationOwnerDeathRequest.for_envelope(
+            fixture.stored, fixture.death,
+            PublicationRecoveryHistory.COMMIT_UNKNOWN,
+            PublicationOwnerDeathGraphWitness(
+                fixture.stored.graph_manifest,
+                PublicationOwnerDeathGraphState.PREPARED,
+            ),
+            recovery=fixture.recovery, replicas=(wrong,),
+        )
+
+
+def test_released_graph_witness_skips_holds_and_graph_but_drops_replicas() -> None:
+    fixture = _Fixture()
+    request = fixture.stored_request(
+        PublicationOwnerDeathGraphState.COMMITTED, released=True,
+        history=PublicationRecoveryHistory.ADOPTED,
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+    coordinator.begin(request)
+
+    effects = _drive(coordinator, request.key)
+
+    assert not any(
+        isinstance(
+            effect,
+            (ReleasePublicationHoldEffect, ReleasePublicationGraphEffect),
+        )
+        for effect in effects
+    )
+    assert sum(
+        isinstance(effect, DropPublicationReplicaEffect)
+        for effect in effects
+    ) == 2
+    assert isinstance(effects[-1], FinalizePublicationOwnerDeathEffect)
+
+
+def test_shutdown_gate_and_terminal_replay_survive_closed_admission() -> None:
+    fixture = _Fixture()
+    request = fixture.inline_request(
+        PublicationOwnerDeathGraphState.ABORTED,
+        history=PublicationRecoveryHistory.NOT_COMMITTED,
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+    original = coordinator.begin(request)
+    assert coordinator.has_active_obligations()
+    assert coordinator.begin(request) == original
+    _drive(coordinator, request.key)
+    terminal = coordinator.begin(request)
+    assert terminal.phase is PublicationOwnerDeathPhase.RESOLVED
+
+    coordinator.close_admission()
+    assert coordinator.begin(request) == terminal
+    unseen = fixture.stored_request(
+        PublicationOwnerDeathGraphState.PREPARED
+    )
+    with pytest.raises(
+        PublicationOwnerDeathStateError, match="admission is closed"
+    ):
+        coordinator.begin(unseen)
+    with pytest.raises(UnknownPublicationOwnerDeathError):
+        coordinator.snapshot(unseen.key)
+
+
+def test_stored_preterminal_recovery_needs_no_envelope_or_replica() -> None:
+    fixture = _Fixture()
+    recovery = replace(
+        fixture.recovery, sealed_descriptor=None,
+        promoted_bitmap=(False,), lease_terminal=None,
+    )
+    graph = recovery.manifest.graph_manifest(fixture.owner)
+    request = StoredPublicationOwnerDeathRequest.from_recovery(
+        recovery, fixture.death, PublicationRecoveryHistory.NOT_COMMITTED,
+        PublicationOwnerDeathGraphWitness(
+            graph, PublicationOwnerDeathGraphState.PREPARED
+        ),
+        fence_node_ids=(fixture.publisher, fixture.replica_node),
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+
+    coordinator.begin(request)
+    effects = _drive(coordinator, request.key)
+
+    assert request.envelope is None
+    assert request.replicas == ()
+    assert tuple(effect.node_id for effect in effects[:2]) == (
+        fixture.publisher, fixture.replica_node,
+    )
+    assert isinstance(effects[2], AbortPublicationGraphEffect)
+    holds = tuple(
+        effect for effect in effects
+        if isinstance(effect, ReleasePublicationHoldEffect)
+    )
+    assert len(holds) == 2
+    assert {hold.hold.container_owner_worker_id for hold in holds} == {
+        fixture.owner, fixture.executor,
+    }
+    assert not any(
+        isinstance(effect, DropPublicationReplicaEffect)
+        for effect in effects
+    )
+    assert isinstance(effects[-1], FinalizePublicationOwnerDeathEffect)
+
+
+def test_absent_fence_observation_is_exact_replica_discharge() -> None:
+    fixture = _Fixture()
+    request = fixture.stored_request(
+        PublicationOwnerDeathGraphState.COMMITTED,
+        history=PublicationRecoveryHistory.ADOPTED,
+    )
+    coordinator = PublicationOwnerDeathCoordinator()
+    coordinator.begin(request)
+
+    absent_node = fixture.replica_node
+    while True:
+        effect = coordinator.next_effect(request.key)
+        assert effect is not None
+        if isinstance(effect, FencePublicationOwnerDeathEffect):
+            status = (
+                PublicationReplicaFenceStatus.ABSENT
+                if effect.node_id == absent_node
+                else PublicationReplicaFenceStatus.PRESENT
+            )
+            coordinator.acknowledge(
+                effect, PublicationNodeFenceReceipt(
+                    effect, PublicationNodeFenceDisposition.FENCED,
+                    (status,) * len(effect.expected_replicas),
+                ),
+            )
+            continue
+        coordinator.acknowledge(effect, _receipt(effect))
+        if isinstance(effect, ReleasePublicationGraphEffect):
+            break
+
+    first_drop = coordinator.next_effect(request.key)
+    assert isinstance(first_drop, DropPublicationReplicaEffect)
+    if first_drop.descriptor.node_id == absent_node:
+        with pytest.raises(
+            PublicationOwnerDeathStateError, match="ABSENT_AT_FENCE"
+        ):
+            coordinator.acknowledge(
+                first_drop, PublicationReplicaReceipt(
+                    first_drop, PublicationReplicaDisposition.DROPPED
+                ),
+            )
+        coordinator.acknowledge(
+            first_drop, PublicationReplicaReceipt(
+                first_drop, PublicationReplicaDisposition.ABSENT_AT_FENCE
+            ),
+        )
+    else:
+        coordinator.acknowledge(first_drop, _receipt(first_drop))
+        absent_drop = coordinator.next_effect(request.key)
+        assert isinstance(absent_drop, DropPublicationReplicaEffect)
+        assert absent_drop.descriptor.node_id == absent_node
+        coordinator.acknowledge(
+            absent_drop, PublicationReplicaReceipt(
+                absent_drop, PublicationReplicaDisposition.ABSENT_AT_FENCE
+            ),
+        )
+
+    final = coordinator.next_effect(request.key)
+    if isinstance(final, DropPublicationReplicaEffect):
+        coordinator.acknowledge(final, _receipt(final))
+        final = coordinator.next_effect(request.key)
+    assert isinstance(final, FinalizePublicationOwnerDeathEffect)
+    coordinator.acknowledge(final, _receipt(final))
+    assert coordinator.resolution(request.key) is not None

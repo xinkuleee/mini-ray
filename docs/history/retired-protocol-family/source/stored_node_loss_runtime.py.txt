@@ -1,0 +1,545 @@
+"""GCS runtime composition for stored publications on publishing-Node loss.
+
+The pure reducer in :mod:`miniray.stored_node_loss` deliberately performs no
+I/O.  This adapter supplies the missing control-plane boundary:
+
+* a committed ``PROCESS_EXIT`` freezes the exact intent-backed recovery set;
+* one diagnostic graph snapshot is converted into an exact witness per item;
+* every witness is admitted to the replay-safe takeover saga; and
+* callers pull/acknowledge one effect at a time, so reporting Node death never
+  waits for an owner or child-owner RPC.
+
+Graph mutations and recovery reports are serialized with this adapter by
+``StoredPublicationControlAdapter``.  Effects themselves are driven outside
+that composition lock.  The optional hold resolver is consequently an
+explicit progress hook, not work hidden inside the Node-death handler.
+"""
+
+from __future__ import annotations
+
+from threading import Lock, RLock
+from typing import Callable, Optional, Tuple
+
+from . import protocol
+from .contained_cycle import (
+    ContainedGraphManifestDisposition, ContainedGraphManifestReceipt,
+    ContainedGraphManifestSnapshot, ContainedGraphTransactionState,
+    ContainedReferenceGraphAuthority,
+)
+from .stored_node_loss import (
+    AbortStoredGraphEffect, ProveStoredReplicaGoneEffect,
+    ReleaseStoredGraphEffect, ReleaseStoredHoldEffect,
+    RetireStoredOwnerEffect, StoredHoldResolutionReceipt,
+    StoredNodeLossConflictError, StoredNodeLossEffect,
+    StoredNodeLossEffectReceipt, StoredNodeLossGraphState,
+    StoredNodeLossGraphWitness, StoredNodeLossRecoveryCoordinator,
+    StoredNodeLossRequest, StoredNodeLossSnapshot, StoredNodeLossStateError,
+    StoredReplicaResolutionDisposition, StoredReplicaResolutionReceipt,
+    StoredOwnerRetirementReceipt,
+    StoredNodeLossResolution,
+)
+from .stored_publication import (
+    StoredPublicationID, StoredPublicationNodeIncarnation,
+    StoredPublicationRecoveryAuthority, StoredPublicationRecoveryRecord,
+)
+
+
+ResolveStoredHold = Callable[
+    [ReleaseStoredHoldEffect], StoredHoldResolutionReceipt
+]
+
+
+class StoredNodeLossRuntime:
+    """Compose durable recovery, graph evidence, and the pure takeover saga.
+
+    ``begin_node_death`` has no remote effect.  It is safe to invoke from the
+    GCS membership handler for both the first death commit and an exact replay.
+    ``drive_non_owner`` is separate and advances at most one obligation.
+    """
+
+    def __init__(
+        self,
+        graph: ContainedReferenceGraphAuthority,
+        recovery: StoredPublicationRecoveryAuthority,
+        *,
+        coordinator: Optional[StoredNodeLossRecoveryCoordinator] = None,
+        resolve_hold: Optional[ResolveStoredHold] = None,
+        composition_lock: Optional[RLock] = None,
+    ) -> None:
+        if not isinstance(graph, ContainedReferenceGraphAuthority):
+            raise TypeError(
+                "graph must be a ContainedReferenceGraphAuthority"
+            )
+        if not isinstance(recovery, StoredPublicationRecoveryAuthority):
+            raise TypeError(
+                "recovery must be a StoredPublicationRecoveryAuthority"
+            )
+        if coordinator is not None and not isinstance(
+            coordinator, StoredNodeLossRecoveryCoordinator
+        ):
+            raise TypeError(
+                "coordinator must be a StoredNodeLossRecoveryCoordinator"
+            )
+        if resolve_hold is not None and not callable(resolve_hold):
+            raise TypeError("resolve_hold must be callable or None")
+        self.graph = graph
+        self.recovery = recovery
+        self.coordinator = (
+            coordinator
+            if coordinator is not None
+            else StoredNodeLossRecoveryCoordinator()
+        )
+        self._resolve_hold = resolve_hold
+        # This is the same lock used by the outer GCS adapter for ordinary
+        # graph/recovery RPCs.  It linearizes death freeze + witness capture
+        # against a late PREPARE/COMMIT without coupling the pure authorities.
+        self._composition_lock = (
+            composition_lock if composition_lock is not None else RLock()
+        )
+        self._deaths: dict[
+            StoredPublicationNodeIncarnation, protocol.NodeDeathRecord
+        ] = {}
+        self._death_publications: dict[
+            StoredPublicationNodeIncarnation, Tuple[StoredPublicationID, ...]
+        ] = {}
+        # Installed immediately after the recovery workset freezes, before any
+        # request validation or saga admission that can raise.  Thus a malformed
+        # witness cannot reopen a window for a late external graph mutation.
+        self._frozen_publications: set[StoredPublicationID] = set()
+        self._incomplete_deaths: set[StoredPublicationNodeIncarnation] = set()
+        self._drive_locks: dict[StoredPublicationID, Lock] = {}
+        self._effect_receipts: dict[
+            StoredNodeLossEffect, StoredNodeLossEffectReceipt
+        ] = {}
+        self._lock = RLock()
+
+    def begin_node_death(
+        self, death: protocol.NodeDeathRecord,
+    ) -> Tuple[StoredNodeLossSnapshot, ...]:
+        """Freeze and admit every publication for one physical Node death.
+
+        Request construction is completed for the entire frozen workset before
+        the first saga is admitted.  Invalid graph/recovery evidence therefore
+        cannot leave a silently truncated takeover set.
+        """
+
+        if not isinstance(death, protocol.NodeDeathRecord):
+            raise TypeError("death must be a NodeDeathRecord")
+        if death.reason is not protocol.NodeDeathReason.PROCESS_EXIT:
+            raise StoredNodeLossStateError(
+                "stored Node-loss takeover requires PROCESS_EXIT proof"
+            )
+        incarnation = StoredPublicationNodeIncarnation.from_death(death)
+        with self._composition_lock:
+            with self._lock:
+                previous = self._deaths.get(incarnation)
+                if previous is not None:
+                    if previous != death:
+                        raise StoredNodeLossConflictError(
+                            "publishing Node death proof changed on replay"
+                        )
+                    return self._snapshots_locked(incarnation)
+                self._incomplete_deaths.add(incarnation)
+                records = self.recovery.freeze_node_death(death)
+                self._frozen_publications.update(
+                    record.publication_id for record in records
+                )
+                graph_snapshot = self.graph.snapshot()
+                requests = tuple(
+                    StoredNodeLossRequest.from_intent(
+                        death, record,
+                        self._graph_witness(
+                            record, graph_snapshot.manifests,
+                            graph_snapshot.transactions,
+                        ),
+                    )
+                    for record in records
+                )
+                snapshots = tuple(
+                    self.coordinator.begin(request) for request in requests
+                )
+                self._deaths[incarnation] = death
+                self._death_publications[incarnation] = tuple(
+                    snapshot.request.publication_id for snapshot in snapshots
+                )
+                for publication_id in self._death_publications[incarnation]:
+                    self._drive_locks.setdefault(publication_id, Lock())
+                self._incomplete_deaths.discard(incarnation)
+                return snapshots
+
+    def snapshots_for_death(
+        self, death: protocol.NodeDeathRecord,
+    ) -> Tuple[StoredNodeLossSnapshot, ...]:
+        """Return current saga state for one exact frozen death proof."""
+
+        if not isinstance(death, protocol.NodeDeathRecord):
+            raise TypeError("death must be a NodeDeathRecord")
+        incarnation = StoredPublicationNodeIncarnation.from_death(death)
+        with self._lock:
+            previous = self._deaths.get(incarnation)
+            if previous is None:
+                raise StoredNodeLossStateError(
+                    "publishing Node death has not begun takeover"
+                )
+            if previous != death:
+                raise StoredNodeLossConflictError(
+                    "publishing Node death proof changed on query"
+                )
+            return self._snapshots_locked(incarnation)
+
+    def exact_death_contains(
+        self, death: protocol.NodeDeathRecord,
+        publication_id: StoredPublicationID,
+    ) -> bool:
+        """Query one frozen death workset without weakening conflicts.
+
+        ``False`` is authoritative ABSENT only after the exact physical death
+        has completed admission.  Unknown, conflicting, or partially-admitted
+        deaths raise so a caller cannot turn uncertainty into a generic retry.
+        """
+
+        if not isinstance(death, protocol.NodeDeathRecord):
+            raise TypeError("death must be a NodeDeathRecord")
+        if not isinstance(publication_id, StoredPublicationID):
+            raise TypeError("publication_id must be a StoredPublicationID")
+        incarnation = StoredPublicationNodeIncarnation.from_death(death)
+        with self._lock:
+            previous = self._deaths.get(incarnation)
+            if previous is None:
+                if incarnation in self._incomplete_deaths:
+                    raise StoredNodeLossStateError(
+                        "publishing Node death takeover is incomplete"
+                    )
+                raise StoredNodeLossStateError(
+                    "publishing Node death has not begun takeover"
+                )
+            if previous != death:
+                raise StoredNodeLossConflictError(
+                    "publishing Node death proof changed on query"
+                )
+            return publication_id in self._death_publications[incarnation]
+
+    def snapshot(
+        self, publication_id: StoredPublicationID,
+    ) -> StoredNodeLossSnapshot:
+        return self.coordinator.snapshot(publication_id)
+
+    def supersede_owner_death(
+        self, publication_id: StoredPublicationID,
+        death: protocol.WorkerDeathRecord,
+    ) -> StoredNodeLossResolution:
+        """Stop an active Node-loss saga at the owner-death switch."""
+
+        return self.coordinator.supersede(publication_id, death)
+
+    def next_effect(
+        self, publication_id: StoredPublicationID,
+    ) -> Optional[StoredNodeLossEffect]:
+        """Pull the next exact obligation without performing it."""
+
+        return self.coordinator.next_effect(publication_id)
+
+    def pull_owner_effect(
+        self, publication_id: StoredPublicationID, owner_worker_id: object,
+        node_death: protocol.NodeDeathRecord,
+    ) -> tuple[StoredNodeLossSnapshot, Optional[RetireStoredOwnerEffect]]:
+        """Return only this logical owner's exact retirement obligation.
+
+        A non-owner effect is intentionally represented by ``None``.  The
+        caller must use the separate bounded progress operation; child/graph
+        work is never laundered through the owner endpoint.
+        """
+
+        snapshot = self.coordinator.snapshot(publication_id)
+        self._validate_owner_access(snapshot, owner_worker_id, node_death)
+        effect = snapshot.next_effect
+        return (
+            snapshot, effect if isinstance(effect, RetireStoredOwnerEffect)
+            else None,
+        )
+
+    def acknowledge_owner_effect(
+        self, owner_worker_id: object, node_death: protocol.NodeDeathRecord,
+        receipt: StoredOwnerRetirementReceipt,
+    ) -> StoredNodeLossSnapshot:
+        """Acknowledge only an exact owner retirement receipt."""
+
+        if not isinstance(receipt, StoredOwnerRetirementReceipt):
+            raise TypeError(
+                "receipt must be a StoredOwnerRetirementReceipt"
+            )
+        snapshot = self.coordinator.snapshot(receipt.effect.publication_id)
+        self._validate_owner_access(snapshot, owner_worker_id, node_death)
+        snapshot = self.coordinator.acknowledge(receipt.effect, receipt)
+        self._remember_receipt(receipt.effect, receipt)
+        return snapshot
+
+    def acknowledge(
+        self, effect: StoredNodeLossEffect,
+        receipt: StoredNodeLossEffectReceipt,
+    ) -> StoredNodeLossSnapshot:
+        """Commit one exact external or local effect receipt."""
+
+        snapshot = self.coordinator.acknowledge(effect, receipt)
+        self._remember_receipt(effect, receipt)
+        return snapshot
+
+    def is_publication_frozen(
+        self, publication_id: StoredPublicationID,
+    ) -> bool:
+        """Whether Node-loss owns all further publication transitions."""
+
+        if not isinstance(publication_id, StoredPublicationID):
+            raise TypeError("publication_id must be a StoredPublicationID")
+        with self._lock:
+            return publication_id in self._frozen_publications
+
+    def terminal_graph_replay_allowed(self, request: object) -> bool:
+        """Allow only a saga-acknowledged exact ABORT/RELEASE replay.
+
+        A frozen publication has exactly one cleanup authority.  An old Node or
+        normal-owner collection may nevertheless have lost the reply to the
+        same graph operation.  Once takeover has recorded the exact terminal
+        receipt, forwarding that same request to the graph authority is safe
+        and yields ``ALREADY_ABORTED``/``ALREADY_RELEASED``.
+        """
+
+        if not isinstance(
+            request,
+            (protocol.AbortStoredPublicationGraph,
+             protocol.ReleaseStoredPublicationGraphContainer),
+        ):
+            return False
+        publication_id = request.manifest.publication_id
+        if not isinstance(publication_id, StoredPublicationID):
+            return False
+        with self._lock:
+            if publication_id not in self._frozen_publications:
+                return False
+        snapshot = self.coordinator.snapshot(publication_id)
+        if snapshot.request.graph.manifest != request.manifest:
+            raise StoredNodeLossConflictError(
+                "terminal graph replay changed the frozen manifest"
+            )
+        if isinstance(request, protocol.AbortStoredPublicationGraph):
+            effect: StoredNodeLossEffect = AbortStoredGraphEffect(
+                publication_id, request.manifest
+            )
+            expected_state = ContainedGraphTransactionState.ABORTED
+            dispositions = (
+                ContainedGraphManifestDisposition.APPLIED,
+                ContainedGraphManifestDisposition.ALREADY_ABORTED,
+            )
+            expected_edges = ()
+        else:
+            effect = ReleaseStoredGraphEffect(
+                publication_id, request.manifest,
+                request.container_object_id,
+            )
+            expected_state = ContainedGraphTransactionState.COMMITTED
+            dispositions = (
+                ContainedGraphManifestDisposition.RELEASED,
+                ContainedGraphManifestDisposition.ALREADY_RELEASED,
+            )
+            expected_edges = tuple(
+                edge for edge in request.manifest.ordered_edges
+                if edge.container_object_id == request.container_object_id
+            )
+        if effect not in snapshot.acknowledged_effects:
+            return False
+        receipt = self._effect_receipt(snapshot, effect)
+        return bool(
+            isinstance(receipt, ContainedGraphManifestReceipt)
+            and receipt.manifest == request.manifest
+            and receipt.state is expected_state
+            and receipt.disposition in dispositions
+            and receipt.released_edges == expected_edges
+        )
+
+    def drive_non_owner(
+        self, publication_id: StoredPublicationID,
+    ) -> StoredNodeLossSnapshot:
+        """Advance at most one GCS/child effect, never an owner retirement.
+
+        The per-publication driver lock avoids two local progress callers
+        observing different first-time/replay dispositions for the same effect.
+        It is intentionally distinct from the GCS composition lock: an injected
+        child resolver may perform RPC without blocking graph/recovery queries.
+        """
+
+        if not isinstance(publication_id, StoredPublicationID):
+            raise TypeError("publication_id must be a StoredPublicationID")
+        with self._lock:
+            try:
+                drive_lock = self._drive_locks[publication_id]
+            except KeyError as exc:
+                raise StoredNodeLossStateError(
+                    "stored Node-loss recovery has not begun"
+                ) from exc
+        with drive_lock:
+            effect = self.coordinator.next_effect(publication_id)
+            if effect is None or isinstance(effect, RetireStoredOwnerEffect):
+                return self.coordinator.snapshot(publication_id)
+            receipt = self._perform_non_owner(effect)
+            if receipt is None:
+                return self.coordinator.snapshot(publication_id)
+            snapshot = self.coordinator.acknowledge(effect, receipt)
+            self._remember_receipt(effect, receipt)
+            return snapshot
+
+    def progress_for_owner(
+        self, publication_id: StoredPublicationID, owner_worker_id: object,
+        node_death: protocol.NodeDeathRecord,
+    ) -> StoredNodeLossSnapshot:
+        """Authorize and advance at most one non-owner saga obligation."""
+
+        snapshot = self.coordinator.snapshot(publication_id)
+        self._validate_owner_access(snapshot, owner_worker_id, node_death)
+        return self.drive_non_owner(publication_id)
+
+    def close_admission(self) -> None:
+        """Compatibility no-op: proven death cleanup is never admission.
+
+        Shutdown fences new publication intents and graph prepares in the outer
+        adapter.  A ``PROCESS_EXIT`` committed before or after that fence is an
+        authoritative cleanup fact, so its workset must always be able to begin
+        or finish an interrupted multi-record admission.
+        """
+
+    def has_active_operations(self) -> bool:
+        with self._lock:
+            incomplete = bool(self._incomplete_deaths)
+        return incomplete or self.coordinator.has_active_operations()
+
+    def _perform_non_owner(
+        self, effect: StoredNodeLossEffect,
+    ) -> Optional[StoredNodeLossEffectReceipt]:
+        if isinstance(effect, AbortStoredGraphEffect):
+            with self._composition_lock:
+                return self.graph.abort_manifest(effect.manifest)
+        if isinstance(effect, ReleaseStoredGraphEffect):
+            with self._composition_lock:
+                return self.graph.release_manifest_container(
+                    effect.manifest, effect.container_object_id
+                )
+        if isinstance(effect, ReleaseStoredHoldEffect):
+            resolver = self._resolve_hold
+            return None if resolver is None else resolver(effect)
+        if isinstance(effect, ProveStoredReplicaGoneEffect):
+            return StoredReplicaResolutionReceipt(
+                effect,
+                (StoredReplicaResolutionDisposition.NO_REPLICA_REPORTED
+                 if effect.descriptor is None else
+                 StoredReplicaResolutionDisposition.DEAD_NODE_REPLICA_GONE),
+            )
+        if isinstance(effect, RetireStoredOwnerEffect):
+            return None
+        raise TypeError("effect is not a stored Node-loss effect")
+
+    def _snapshots_locked(
+        self, incarnation: StoredPublicationNodeIncarnation,
+    ) -> Tuple[StoredNodeLossSnapshot, ...]:
+        return tuple(
+            self.coordinator.snapshot(publication_id)
+            for publication_id in self._death_publications[incarnation]
+        )
+
+    def _remember_receipt(
+        self, effect: StoredNodeLossEffect,
+        receipt: StoredNodeLossEffectReceipt,
+    ) -> None:
+        with self._lock:
+            previous = self._effect_receipts.get(effect)
+            if previous is not None and previous != receipt:
+                raise StoredNodeLossConflictError(
+                    "stored Node-loss effect receipt changed on replay"
+                )
+            self._effect_receipts[effect] = receipt
+
+    def _effect_receipt(
+        self, snapshot: StoredNodeLossSnapshot, effect: StoredNodeLossEffect,
+    ) -> Optional[StoredNodeLossEffectReceipt]:
+        with self._lock:
+            receipt = self._effect_receipts.get(effect)
+        if receipt is not None:
+            return receipt
+        resolution = snapshot.resolution
+        if resolution is None:
+            return None
+        for resolved_effect, resolved_receipt in resolution.effect_receipts:
+            if resolved_effect == effect:
+                return resolved_receipt
+        return None
+
+    @staticmethod
+    def _validate_owner_access(
+        snapshot: StoredNodeLossSnapshot, owner_worker_id: object,
+        node_death: protocol.NodeDeathRecord,
+    ) -> None:
+        if owner_worker_id != snapshot.request.header.outer_owner_worker_id:
+            raise StoredNodeLossStateError(
+                "stored Node-loss request targets another outer owner"
+            )
+        if not isinstance(node_death, protocol.NodeDeathRecord):
+            raise TypeError("node_death must be a NodeDeathRecord")
+        if node_death != snapshot.request.node_death:
+            raise StoredNodeLossConflictError(
+                "stored Node-loss request changed its exact Node death proof"
+            )
+
+    @staticmethod
+    def _graph_witness(
+        record: StoredPublicationRecoveryRecord,
+        manifests: Tuple[ContainedGraphManifestSnapshot, ...],
+        transactions: Tuple[
+            Tuple[str, ContainedGraphTransactionState], ...
+        ],
+    ) -> StoredNodeLossGraphWitness:
+        intent = record.intent
+        if intent is None:
+            raise StoredNodeLossStateError(
+                "Node-loss runtime requires intent-backed recovery"
+            )
+        expected = record.manifest.graph_manifest(
+            intent.header.outer_owner_worker_id
+        )
+        matches = tuple(
+            snapshot for snapshot in manifests
+            if snapshot.manifest.transaction_id == expected.transaction_id
+        )
+        if not matches:
+            if any(
+                transaction_id == expected.transaction_id
+                for transaction_id, _state in transactions
+            ):
+                raise StoredNodeLossConflictError(
+                    "stored graph identity aliases a non-manifest transaction"
+                )
+            return StoredNodeLossGraphWitness(
+                expected, StoredNodeLossGraphState.NOT_FOUND
+            )
+        if len(matches) != 1:
+            raise AssertionError("graph snapshot contains duplicate manifests")
+        snapshot = matches[0]
+        if snapshot.manifest != expected:
+            raise StoredNodeLossConflictError(
+                "stored graph witness changed the frozen manifest"
+            )
+        state = {
+            ContainedGraphTransactionState.PREPARED:
+                StoredNodeLossGraphState.PREPARED,
+            ContainedGraphTransactionState.COMMITTED:
+                StoredNodeLossGraphState.COMMITTED,
+            ContainedGraphTransactionState.ABORTED:
+                StoredNodeLossGraphState.ABORTED,
+        }[snapshot.state]
+        return StoredNodeLossGraphWitness(
+            expected, state, snapshot.active_edges,
+            snapshot.released_container_ids,
+        )
+
+
+__all__ = [
+    "ResolveStoredHold",
+    "StoredNodeLossRuntime",
+]

@@ -1,0 +1,1491 @@
+"""Pure coordinator for publication cleanup after the outer owner dies.
+
+Publication recovery and owner lifetime are two different state machines.  In
+particular, an ``ADOPTED`` publication does not become "unadopted" when its
+owner dies: adoption remains immutable history while this reducer drives the
+independent lifetime terminal.  ``PublicationOwnerDeathResolution`` retains
+both facts.
+
+The reducer performs no RPC.  It returns one immutable effect at a time and
+accepts only an exact typed receipt for that effect.  Lost responses therefore
+replay the same operation, never infer success from a later phase.  The first
+phase fences publication activity at every relevant Node.  Cleanup then keeps
+the two real publication protocols visible instead of hiding them behind a
+false common order:
+
+* INLINE NOT_FOUND/PREPARED: holds, then graph ABORT;
+* STORED NOT_FOUND/PREPARED: graph ABORT, then holds;
+* either COMMITTED tier: holds, then graph RELEASE;
+* STORED only: drop every frozen physical replica last.
+
+The final resolution is itself the durable registry tombstone, so this pure
+slice does not invent a second "finalize publisher" RPC.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from enum import Enum
+from threading import RLock
+from typing import Optional, Tuple, Union
+
+from . import protocol
+from .contained_cycle import (
+    ContainedGraphManifest, ContainedGraphManifestDisposition,
+    ContainedGraphManifestReceipt, ContainedGraphTransactionState,
+)
+from .contained_edges import (
+    ContainedReferenceEdge, ContainedReferenceHold,
+)
+from .ids import NodeID, ObjectID, WorkerID
+from .inline_contained_publication import (
+    InlinePublicationID, InlinePublicationManifest,
+)
+from .stored_publication import (
+    StoredPublicationEnvelope, StoredPublicationID,
+    StoredPublicationRecoveryRecord,
+)
+
+
+class PublicationOwnerDeathError(RuntimeError):
+    """Base class for outer-owner-death cleanup failures."""
+
+
+class PublicationOwnerDeathConflictError(PublicationOwnerDeathError):
+    """A stable publication, effect, or receipt identity was rebound."""
+
+
+class PublicationOwnerDeathStateError(PublicationOwnerDeathError):
+    """An input or acknowledgement contradicts the frozen saga."""
+
+
+class UnknownPublicationOwnerDeathError(
+    PublicationOwnerDeathStateError, LookupError
+):
+    """No owner-death cleanup record exists for the requested key."""
+
+
+class PublicationTier(str, Enum):
+    INLINE = "INLINE"
+    STORED = "STORED"
+
+
+class PublicationRecoveryHistory(str, Enum):
+    """Frozen publication fact, independent of the owner's lifetime."""
+
+    NOT_COMMITTED = "NOT_COMMITTED"
+    COMMIT_UNKNOWN = "COMMIT_UNKNOWN"
+    ADOPTED = "ADOPTED"
+
+
+class PublicationOwnerDeathGraphState(str, Enum):
+    NOT_FOUND = "NOT_FOUND"
+    PREPARED = "PREPARED"
+    COMMITTED = "COMMITTED"
+    ABORTED = "ABORTED"
+
+
+class PublicationOwnerDeathPhase(str, Enum):
+    NODE_FENCE = "NODE_FENCE"
+    GRAPH_ABORT = "GRAPH_ABORT"
+    HOLDS = "HOLDS"
+    GRAPH_RELEASE = "GRAPH_RELEASE"
+    REPLICAS = "REPLICAS"
+    PUBLISHER_FINALIZE = "PUBLISHER_FINALIZE"
+    RESOLVED = "RESOLVED"
+
+
+class PublicationOwnerDeathTerminal(str, Enum):
+    OWNER_DEATH_CLEANED = "OWNER_DEATH_CLEANED"
+
+
+class PublicationNodeFenceDisposition(str, Enum):
+    FENCED = "FENCED"
+    ALREADY_FENCED = "ALREADY_FENCED"
+    NODE_DEAD = "NODE_DEAD"
+    CONFLICT = "CONFLICT"
+
+
+class PublicationReplicaFenceStatus(str, Enum):
+    PRESENT = "PRESENT"
+    ABSENT = "ABSENT"
+    PINNED = "PINNED"
+    CONFLICT = "CONFLICT"
+
+
+class PublicationHoldDisposition(str, Enum):
+    RELEASED = "RELEASED"
+    ALREADY_RELEASED = "ALREADY_RELEASED"
+    OWNER_DEAD = "OWNER_DEAD"
+
+
+class PublicationReplicaDisposition(str, Enum):
+    DROPPED = "DROPPED"
+    ALREADY_DROPPED = "ALREADY_DROPPED"
+    ABSENT_AT_FENCE = "ABSENT_AT_FENCE"
+    NODE_DEAD = "NODE_DEAD"
+
+
+class PublicationPublisherFinalizeDisposition(str, Enum):
+    FINALIZED = "FINALIZED"
+    ALREADY_FINALIZED = "ALREADY_FINALIZED"
+    NODE_DEAD = "NODE_DEAD"
+
+
+@dataclass(frozen=True, order=True)
+class InlinePublicationOwnerDeathKey:
+    publication_id: InlinePublicationID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.publication_id, InlinePublicationID):
+            raise TypeError(
+                "publication_id must be an InlinePublicationID"
+            )
+
+    @property
+    def tier(self) -> PublicationTier:
+        return PublicationTier.INLINE
+
+
+@dataclass(frozen=True, order=True)
+class StoredPublicationOwnerDeathKey:
+    publication_id: StoredPublicationID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.publication_id, StoredPublicationID):
+            raise TypeError(
+                "publication_id must be a StoredPublicationID"
+            )
+
+    @property
+    def tier(self) -> PublicationTier:
+        return PublicationTier.STORED
+
+
+PublicationOwnerDeathKey = Union[
+    InlinePublicationOwnerDeathKey, StoredPublicationOwnerDeathKey,
+]
+
+
+@dataclass(frozen=True)
+class PublicationOwnerDeathGraphWitness:
+    """Exact graph state frozen after the owner-death barrier.
+
+    For COMMITTED state, ``active_edges`` must be the complete manifest minus
+    containers already carrying a release tombstone.  Thus a reconstructed
+    coordinator can distinguish a live graph from cleanup whose RELEASE reply
+    was lost.
+    """
+
+    manifest: ContainedGraphManifest
+    state: PublicationOwnerDeathGraphState
+    active_edges: Tuple[ContainedReferenceEdge, ...] = ()
+    released_container_ids: Tuple[ObjectID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.manifest, ContainedGraphManifest):
+            raise TypeError("manifest must be a ContainedGraphManifest")
+        if not isinstance(self.state, PublicationOwnerDeathGraphState):
+            raise TypeError(
+                "state must be a PublicationOwnerDeathGraphState"
+            )
+        active = tuple(self.active_edges)
+        released = tuple(self.released_container_ids)
+        if any(not isinstance(edge, ContainedReferenceEdge) for edge in active):
+            raise TypeError(
+                "active_edges must contain ContainedReferenceEdge values"
+            )
+        if len(active) != len(set(active)):
+            raise ValueError("active_edges must be unique")
+        edge_set = set(active)
+        if active != tuple(
+            edge for edge in self.manifest.ordered_edges if edge in edge_set
+        ):
+            raise ValueError(
+                "active_edges must be an ordered subset of the manifest"
+            )
+        if any(not isinstance(value, ObjectID) for value in released):
+            raise TypeError(
+                "released_container_ids must contain ObjectID values"
+            )
+        if len(released) != len(set(released)):
+            raise ValueError("released_container_ids must be unique")
+        containers = {
+            edge.container_object_id
+            for edge in self.manifest.ordered_edges
+        }
+        if not set(released).issubset(containers):
+            raise ValueError(
+                "released_container_ids must belong to the graph manifest"
+            )
+        if self.state is PublicationOwnerDeathGraphState.COMMITTED:
+            released_set = set(released)
+            expected = tuple(
+                edge for edge in self.manifest.ordered_edges
+                if edge.container_object_id not in released_set
+            )
+            if active != expected:
+                raise ValueError(
+                    "committed active_edges must exactly exclude released "
+                    "manifest containers"
+                )
+        elif active or released:
+            raise ValueError(
+                "only a committed graph may have active or released edges"
+            )
+        object.__setattr__(self, "active_edges", active)
+        object.__setattr__(
+            self, "released_container_ids", tuple(sorted(released))
+        )
+
+    def container_released(self, object_id: ObjectID) -> bool:
+        if not isinstance(object_id, ObjectID):
+            raise TypeError("object_id must be an ObjectID")
+        return object_id in self.released_container_ids
+
+
+@dataclass(frozen=True)
+class InlinePublicationOwnerDeathRequest:
+    """Cleanup identity only; GCS must never retain the INLINE payload."""
+
+    key: InlinePublicationOwnerDeathKey
+    manifest: InlinePublicationManifest
+    owner_death: protocol.WorkerDeathRecord
+    publication_history: PublicationRecoveryHistory
+    graph: PublicationOwnerDeathGraphWitness
+    fence_node_ids: Tuple[NodeID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, InlinePublicationOwnerDeathKey):
+            raise TypeError("key must be an InlinePublicationOwnerDeathKey")
+        if not isinstance(self.manifest, InlinePublicationManifest):
+            raise TypeError("manifest must be an InlinePublicationManifest")
+        _validate_common_request(
+            self.key, self.manifest.publication_id,
+            self.manifest.outer_owner_worker_id,
+            self.manifest.publishing_node_id, self.owner_death,
+            self.publication_history, self.graph,
+            self.manifest.to_graph_manifest(),
+        )
+        object.__setattr__(
+            self, "fence_node_ids",
+            _validate_fence_nodes(
+                self.fence_node_ids, self.publishing_node_id, ()
+            ),
+        )
+
+    @property
+    def publication_id(self) -> InlinePublicationID:
+        return self.key.publication_id
+
+    @property
+    def owner_worker_id(self) -> WorkerID:
+        return self.manifest.outer_owner_worker_id
+
+    @property
+    def publishing_node_id(self) -> NodeID:
+        return self.manifest.publishing_node_id
+
+    @property
+    def replicas(self) -> Tuple[protocol.ObjectStoreDescriptor, ...]:
+        return ()
+
+
+@dataclass(frozen=True)
+class StoredPublicationOwnerDeathRequest:
+    key: StoredPublicationOwnerDeathKey
+    recovery: StoredPublicationRecoveryRecord
+    owner_death: protocol.WorkerDeathRecord
+    publication_history: PublicationRecoveryHistory
+    graph: PublicationOwnerDeathGraphWitness
+    replicas: Tuple[protocol.ObjectStoreDescriptor, ...] = ()
+    fence_node_ids: Tuple[NodeID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, StoredPublicationOwnerDeathKey):
+            raise TypeError("key must be a StoredPublicationOwnerDeathKey")
+        if not isinstance(self.recovery, StoredPublicationRecoveryRecord):
+            raise TypeError(
+                "recovery must be a StoredPublicationRecoveryRecord"
+            )
+        intent = self.recovery.intent
+        if intent is None:
+            raise PublicationOwnerDeathStateError(
+                "STORED owner-death cleanup requires intent-backed recovery"
+            )
+        expected_graph = self.recovery.manifest.graph_manifest(
+            intent.header.outer_owner_worker_id
+        )
+        _validate_common_request(
+            self.key, self.recovery.publication_id,
+            intent.header.outer_owner_worker_id,
+            intent.header.node_id, self.owner_death,
+            self.publication_history, self.graph,
+            expected_graph,
+        )
+        terminal = self.recovery.lease_terminal
+        successful = bool(
+            terminal is not None
+            and terminal.status is protocol.TaskReplyStatus.SUCCEEDED
+        )
+        if successful and (
+            self.recovery.sealed_descriptor is None
+            or not all(self.recovery.promoted_bitmap)
+        ):
+            raise PublicationOwnerDeathStateError(
+                "successful STORED recovery requires sealed bytes and "
+                "every promotion"
+            )
+        if (
+            not successful
+            and self.graph.state
+            is PublicationOwnerDeathGraphState.COMMITTED
+        ):
+            raise PublicationOwnerDeathStateError(
+                "preterminal STORED publication cannot own a committed graph"
+            )
+        if (
+            self.publication_history in (
+                PublicationRecoveryHistory.COMMIT_UNKNOWN,
+                PublicationRecoveryHistory.ADOPTED,
+            )
+            and not successful
+        ):
+            raise PublicationOwnerDeathStateError(
+                "owner commit history requires successful STORED Complete"
+            )
+        supplied_replicas = tuple(self.replicas)
+        if any(
+            not isinstance(value, protocol.ObjectStoreDescriptor)
+            for value in supplied_replicas
+        ):
+            raise TypeError(
+                "replicas must contain ObjectStoreDescriptor values"
+            )
+        publication_id = self.publication_id
+        descriptor = self.recovery.sealed_descriptor
+        for replica in supplied_replicas:
+            if (
+                replica.object_id != publication_id.outer_object_id
+                or replica.owner_worker_id != self.owner_worker_id
+                or replica.producer_attempt_id != publication_id.attempt_id
+                or (
+                    descriptor is not None
+                    and (
+                        replica.size_bytes != descriptor.size_bytes
+                        or replica.checksum != descriptor.checksum
+                    )
+                )
+            ):
+                raise PublicationOwnerDeathConflictError(
+                    "replica does not match the frozen STORED publication"
+                )
+        if descriptor is None and supplied_replicas:
+            raise PublicationOwnerDeathStateError(
+                "replica identities require a sealed STORED descriptor"
+            )
+        supplied_nodes = tuple(
+            value.node_id for value in supplied_replicas
+        )
+        fence_nodes = _validate_fence_nodes(
+            self.fence_node_ids, self.publishing_node_id, supplied_nodes,
+        )
+        candidates: Tuple[protocol.ObjectStoreDescriptor, ...] = ()
+        if descriptor is not None:
+            candidates = tuple(
+                protocol.ObjectStoreDescriptor(
+                    descriptor.object_id, descriptor.owner_worker_id,
+                    publication_id.attempt_id, node_id,
+                    descriptor.size_bytes, descriptor.checksum,
+                )
+                for node_id in fence_nodes
+            )
+        canonical = tuple(
+            sorted(candidates, key=lambda value: bytes(value.node_id))
+        )
+        if len({value.node_id for value in canonical}) != len(canonical):
+            raise ValueError("replicas must name unique Nodes")
+        object.__setattr__(self, "replicas", canonical)
+        object.__setattr__(self, "fence_node_ids", fence_nodes)
+
+    @classmethod
+    def for_envelope(
+        cls, envelope: StoredPublicationEnvelope,
+        owner_death: protocol.WorkerDeathRecord,
+        publication_history: PublicationRecoveryHistory,
+        graph: PublicationOwnerDeathGraphWitness,
+        *,
+        recovery: StoredPublicationRecoveryRecord,
+        replicas: Optional[
+            Tuple[protocol.ObjectStoreDescriptor, ...]
+        ] = None,
+        fence_node_ids: Tuple[NodeID, ...] = (),
+    ) -> "StoredPublicationOwnerDeathRequest":
+        """Validate a completed envelope against its durable recovery."""
+
+        if not isinstance(envelope, StoredPublicationEnvelope):
+            raise TypeError("envelope must be a StoredPublicationEnvelope")
+        request = cls(
+            StoredPublicationOwnerDeathKey(envelope.publication_id),
+            recovery, owner_death, publication_history, graph,
+            () if replicas is None else tuple(replicas), fence_node_ids,
+        )
+        if request.envelope != envelope:
+            raise PublicationOwnerDeathConflictError(
+                "envelope does not match durable STORED recovery"
+            )
+        return request
+
+    @classmethod
+    def from_recovery(
+        cls, recovery: StoredPublicationRecoveryRecord,
+        owner_death: protocol.WorkerDeathRecord,
+        publication_history: PublicationRecoveryHistory,
+        graph: PublicationOwnerDeathGraphWitness,
+        *,
+        fence_node_ids: Tuple[NodeID, ...] = (),
+        replicas: Tuple[protocol.ObjectStoreDescriptor, ...] = (),
+    ) -> "StoredPublicationOwnerDeathRequest":
+        """Freeze an intent-backed record, including preterminal state."""
+
+        if not isinstance(recovery, StoredPublicationRecoveryRecord):
+            raise TypeError(
+                "recovery must be a StoredPublicationRecoveryRecord"
+            )
+        return cls(
+            StoredPublicationOwnerDeathKey(recovery.publication_id),
+            recovery, owner_death, publication_history, graph,
+            tuple(replicas), tuple(fence_node_ids),
+        )
+
+    @property
+    def publication_id(self) -> StoredPublicationID:
+        return self.key.publication_id
+
+    @property
+    def owner_worker_id(self) -> WorkerID:
+        intent = self.recovery.intent
+        assert intent is not None
+        return intent.header.outer_owner_worker_id
+
+    @property
+    def publishing_node_id(self) -> NodeID:
+        intent = self.recovery.intent
+        assert intent is not None
+        return intent.header.node_id
+
+    @property
+    def envelope(self) -> Optional[StoredPublicationEnvelope]:
+        terminal = self.recovery.lease_terminal
+        descriptor = self.recovery.sealed_descriptor
+        if (
+            terminal is None
+            or terminal.status is not protocol.TaskReplyStatus.SUCCEEDED
+            or descriptor is None
+        ):
+            return None
+        intent = self.recovery.intent
+        assert intent is not None
+        return StoredPublicationEnvelope(
+            self.publication_id, self.recovery.manifest.manifest_digest,
+            descriptor, self.graph.manifest, intent.header,
+        )
+
+
+PublicationOwnerDeathRequest = Union[
+    InlinePublicationOwnerDeathRequest, StoredPublicationOwnerDeathRequest,
+]
+
+
+@dataclass(frozen=True)
+class FencePublicationOwnerDeathEffect:
+    request_id: str
+    key: PublicationOwnerDeathKey
+    owner_death: protocol.WorkerDeathRecord
+    node_id: NodeID
+    expected_replicas: Tuple[protocol.ObjectStoreDescriptor, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_non_empty(self.request_id, "request_id")
+        _validate_key(self.key)
+        if not isinstance(self.owner_death, protocol.WorkerDeathRecord):
+            raise TypeError("owner_death must be a WorkerDeathRecord")
+        if not isinstance(self.node_id, NodeID):
+            raise TypeError("node_id must be a NodeID")
+        replicas = tuple(self.expected_replicas)
+        if any(
+            not isinstance(value, protocol.ObjectStoreDescriptor)
+            for value in replicas
+        ):
+            raise TypeError(
+                "expected_replicas must contain ObjectStoreDescriptor values"
+            )
+        if any(value.node_id != self.node_id for value in replicas):
+            raise ValueError(
+                "every expected replica must live on the fenced Node"
+            )
+        if any(
+            value.owner_worker_id != self.owner_death.worker_id
+            for value in replicas
+        ):
+            raise ValueError(
+                "every expected replica must belong to the dead owner"
+            )
+        object.__setattr__(self, "expected_replicas", replicas)
+
+    @property
+    def publication_id(self) -> Union[
+        InlinePublicationID, StoredPublicationID
+    ]:
+        return self.key.publication_id
+
+
+@dataclass(frozen=True)
+class PublicationNodeFenceReceipt:
+    effect: FencePublicationOwnerDeathEffect
+    disposition: PublicationNodeFenceDisposition
+    replica_statuses: Tuple[PublicationReplicaFenceStatus, ...] = ()
+    node_death: Optional[protocol.NodeDeathRecord] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, FencePublicationOwnerDeathEffect):
+            raise TypeError("effect must be a FencePublicationOwnerDeathEffect")
+        if not isinstance(self.disposition, PublicationNodeFenceDisposition):
+            raise TypeError("node fence disposition is invalid")
+        statuses = tuple(self.replica_statuses)
+        if any(
+            not isinstance(value, PublicationReplicaFenceStatus)
+            for value in statuses
+        ):
+            raise TypeError(
+                "replica_statuses must contain PublicationReplicaFenceStatus"
+            )
+        if (
+            self.disposition is PublicationNodeFenceDisposition.NODE_DEAD
+            and statuses
+        ):
+            raise ValueError(
+                "a dead Node cannot report replica observations"
+            )
+        if (
+            self.disposition is not PublicationNodeFenceDisposition.NODE_DEAD
+            and len(statuses) != len(self.effect.expected_replicas)
+        ):
+            raise ValueError(
+                "replica_statuses must align with expected_replicas"
+            )
+        object.__setattr__(self, "replica_statuses", statuses)
+        if self.disposition is PublicationNodeFenceDisposition.CONFLICT:
+            if not any(
+                value is PublicationReplicaFenceStatus.CONFLICT
+                for value in statuses
+            ):
+                raise ValueError(
+                    "a conflicting Node fence requires replica conflict"
+                )
+        elif any(
+            value is PublicationReplicaFenceStatus.CONFLICT
+            for value in statuses
+        ):
+            raise ValueError(
+                "replica conflict requires a conflicting Node fence"
+            )
+        if self.disposition is PublicationNodeFenceDisposition.NODE_DEAD:
+            if (
+                not isinstance(self.node_death, protocol.NodeDeathRecord)
+                or self.node_death.node_id != self.effect.node_id
+            ):
+                raise ValueError(
+                    "NODE_DEAD requires an exact target-Node death proof"
+                )
+        elif self.node_death is not None:
+            raise ValueError(
+                "a live-Node fence receipt cannot carry Node death proof"
+            )
+
+
+@dataclass(frozen=True)
+class ReleasePublicationHoldEffect:
+    key: PublicationOwnerDeathKey
+    ordinal: int
+    edge: ContainedReferenceEdge
+    hold: ContainedReferenceHold
+
+    def __post_init__(self) -> None:
+        _validate_key(self.key)
+        _require_non_negative_int(self.ordinal, "ordinal")
+        if not isinstance(self.edge, ContainedReferenceEdge):
+            raise TypeError("edge must be a ContainedReferenceEdge")
+        if not isinstance(self.hold, ContainedReferenceHold):
+            raise TypeError("hold must be a ContainedReferenceHold")
+        if (
+            self.edge.container_object_id
+            != self.key.publication_id.outer_object_id
+            or self.hold.container_object_id
+            != self.key.publication_id.outer_object_id
+            or self.hold.transfer_token != self.edge.transfer_token
+        ):
+            raise ValueError("hold does not match its publication edge")
+
+    @property
+    def publication_id(self) -> Union[
+        InlinePublicationID, StoredPublicationID
+    ]:
+        return self.key.publication_id
+
+
+@dataclass(frozen=True)
+class PublicationHoldReceipt:
+    effect: ReleasePublicationHoldEffect
+    disposition: PublicationHoldDisposition
+    contained_owner_death: Optional[protocol.WorkerDeathRecord] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, ReleasePublicationHoldEffect):
+            raise TypeError("effect must be a ReleasePublicationHoldEffect")
+        if not isinstance(self.disposition, PublicationHoldDisposition):
+            raise TypeError("hold disposition is invalid")
+        if self.disposition is PublicationHoldDisposition.OWNER_DEAD:
+            if (
+                not isinstance(
+                    self.contained_owner_death, protocol.WorkerDeathRecord
+                )
+                or self.contained_owner_death.worker_id
+                != self.effect.edge.contained_owner_worker_id
+            ):
+                raise ValueError(
+                    "OWNER_DEAD requires the exact contained-owner proof"
+                )
+        elif self.contained_owner_death is not None:
+            raise ValueError(
+                "a released hold cannot carry contained-owner death proof"
+            )
+
+
+@dataclass(frozen=True)
+class AbortPublicationGraphEffect:
+    key: PublicationOwnerDeathKey
+    manifest: ContainedGraphManifest
+
+    def __post_init__(self) -> None:
+        _validate_effect_graph(self.key, self.manifest)
+
+    @property
+    def publication_id(self) -> Union[
+        InlinePublicationID, StoredPublicationID
+    ]:
+        return self.key.publication_id
+
+
+@dataclass(frozen=True)
+class ReleasePublicationGraphEffect:
+    key: PublicationOwnerDeathKey
+    manifest: ContainedGraphManifest
+    container_object_id: ObjectID
+
+    def __post_init__(self) -> None:
+        _validate_effect_graph(self.key, self.manifest)
+        if self.container_object_id != self.key.publication_id.outer_object_id:
+            raise ValueError("graph release targets another outer object")
+        if any(
+            edge.container_object_id != self.container_object_id
+            for edge in self.manifest.ordered_edges
+        ):
+            raise ValueError(
+                "graph release container must own every manifest edge"
+            )
+
+    @property
+    def publication_id(self) -> Union[
+        InlinePublicationID, StoredPublicationID
+    ]:
+        return self.key.publication_id
+
+
+@dataclass(frozen=True)
+class DropPublicationReplicaEffect:
+    key: StoredPublicationOwnerDeathKey
+    descriptor: protocol.ObjectStoreDescriptor
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, StoredPublicationOwnerDeathKey):
+            raise TypeError("key must be a StoredPublicationOwnerDeathKey")
+        if not isinstance(self.descriptor, protocol.ObjectStoreDescriptor):
+            raise TypeError("descriptor must be an ObjectStoreDescriptor")
+        publication_id = self.key.publication_id
+        if (
+            self.descriptor.object_id != publication_id.outer_object_id
+            or self.descriptor.producer_attempt_id
+            != publication_id.attempt_id
+        ):
+            raise ValueError("replica belongs to another publication")
+
+    @property
+    def publication_id(self) -> StoredPublicationID:
+        return self.key.publication_id
+
+
+@dataclass(frozen=True)
+class PublicationReplicaReceipt:
+    effect: DropPublicationReplicaEffect
+    disposition: PublicationReplicaDisposition
+    node_death: Optional[protocol.NodeDeathRecord] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, DropPublicationReplicaEffect):
+            raise TypeError("effect must be a DropPublicationReplicaEffect")
+        if not isinstance(self.disposition, PublicationReplicaDisposition):
+            raise TypeError("replica disposition is invalid")
+        if self.disposition is PublicationReplicaDisposition.NODE_DEAD:
+            if (
+                not isinstance(self.node_death, protocol.NodeDeathRecord)
+                or self.node_death.node_id != self.effect.descriptor.node_id
+            ):
+                raise ValueError(
+                    "NODE_DEAD requires the exact replica-Node death proof"
+                )
+        elif self.node_death is not None:
+            raise ValueError(
+                "a dropped replica receipt cannot carry Node death proof"
+            )
+
+
+@dataclass(frozen=True)
+class FinalizePublicationOwnerDeathEffect:
+    """Final Node journal/tombstone barrier after external cleanup."""
+
+    request_id: str
+    key: PublicationOwnerDeathKey
+    owner_death: protocol.WorkerDeathRecord
+    publishing_node_id: NodeID
+    publication_history: PublicationRecoveryHistory
+
+    def __post_init__(self) -> None:
+        _validate_non_empty(self.request_id, "request_id")
+        _validate_key(self.key)
+        if not isinstance(self.owner_death, protocol.WorkerDeathRecord):
+            raise TypeError("owner_death must be a WorkerDeathRecord")
+        if not isinstance(self.publishing_node_id, NodeID):
+            raise TypeError("publishing_node_id must be a NodeID")
+        if not isinstance(
+            self.publication_history, PublicationRecoveryHistory
+        ):
+            raise TypeError(
+                "publication_history must be a PublicationRecoveryHistory"
+            )
+
+    @property
+    def publication_id(self) -> Union[
+        InlinePublicationID, StoredPublicationID
+    ]:
+        return self.key.publication_id
+
+
+@dataclass(frozen=True)
+class PublicationPublisherFinalizeReceipt:
+    effect: FinalizePublicationOwnerDeathEffect
+    disposition: PublicationPublisherFinalizeDisposition
+    node_death: Optional[protocol.NodeDeathRecord] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.effect, FinalizePublicationOwnerDeathEffect
+        ):
+            raise TypeError(
+                "effect must be a FinalizePublicationOwnerDeathEffect"
+            )
+        if not isinstance(
+            self.disposition, PublicationPublisherFinalizeDisposition
+        ):
+            raise TypeError("publisher finalize disposition is invalid")
+        if self.disposition is (
+            PublicationPublisherFinalizeDisposition.NODE_DEAD
+        ):
+            if (
+                not isinstance(self.node_death, protocol.NodeDeathRecord)
+                or self.node_death.node_id
+                != self.effect.publishing_node_id
+            ):
+                raise ValueError(
+                    "NODE_DEAD requires the exact publishing-Node proof"
+                )
+        elif self.node_death is not None:
+            raise ValueError(
+                "a live publisher finalize receipt cannot carry death proof"
+            )
+
+
+PublicationOwnerDeathEffect = Union[
+    FencePublicationOwnerDeathEffect, ReleasePublicationHoldEffect,
+    AbortPublicationGraphEffect, ReleasePublicationGraphEffect,
+    DropPublicationReplicaEffect, FinalizePublicationOwnerDeathEffect,
+]
+
+PublicationOwnerDeathEffectReceipt = Union[
+    PublicationNodeFenceReceipt, PublicationHoldReceipt,
+    ContainedGraphManifestReceipt, PublicationReplicaReceipt,
+    PublicationPublisherFinalizeReceipt,
+]
+
+
+@dataclass(frozen=True)
+class PublicationOwnerDeathResolution:
+    """Permanent owner-lifetime terminal retaining publication history."""
+
+    request: PublicationOwnerDeathRequest
+    terminal: PublicationOwnerDeathTerminal
+    effect_receipts: Tuple[
+        Tuple[
+            PublicationOwnerDeathEffect,
+            PublicationOwnerDeathEffectReceipt,
+        ], ...
+    ]
+
+    def __post_init__(self) -> None:
+        _validate_request(self.request)
+        if self.terminal is not (
+            PublicationOwnerDeathTerminal.OWNER_DEATH_CLEANED
+        ):
+            raise ValueError("owner-death resolution has an invalid terminal")
+        pairs = tuple(self.effect_receipts)
+        if any(
+            not isinstance(pair, tuple) or len(pair) != 2
+            for pair in pairs
+        ):
+            raise TypeError(
+                "effect_receipts must contain effect/receipt pairs"
+            )
+        object.__setattr__(self, "effect_receipts", pairs)
+
+    @property
+    def key(self) -> PublicationOwnerDeathKey:
+        return self.request.key
+
+    @property
+    def publication_history(self) -> PublicationRecoveryHistory:
+        return self.request.publication_history
+
+
+@dataclass(frozen=True)
+class PublicationOwnerDeathSnapshot:
+    request: PublicationOwnerDeathRequest
+    publication_history: PublicationRecoveryHistory
+    phase: PublicationOwnerDeathPhase
+    next_effect: Optional[PublicationOwnerDeathEffect]
+    acknowledged_effects: Tuple[PublicationOwnerDeathEffect, ...]
+    resolution: Optional[PublicationOwnerDeathResolution]
+
+
+@dataclass
+class _OwnerDeathRecord:
+    request: PublicationOwnerDeathRequest
+    effects: Tuple[PublicationOwnerDeathEffect, ...]
+    receipts: dict[
+        PublicationOwnerDeathEffect, PublicationOwnerDeathEffectReceipt
+    ] = field(default_factory=dict)
+    resolution: Optional[PublicationOwnerDeathResolution] = None
+
+
+class PublicationOwnerDeathCoordinator:
+    """Replay-safe pure saga reducer owned by the global registry."""
+
+    def __init__(self) -> None:
+        self._records: dict[
+            PublicationOwnerDeathKey, _OwnerDeathRecord
+        ] = {}
+        self._admission_closed = False
+        self._lock = RLock()
+
+    def begin(
+        self, request: PublicationOwnerDeathRequest
+    ) -> PublicationOwnerDeathSnapshot:
+        """Freeze one exact cleanup request, or replay the same request."""
+
+        _validate_request(request)
+        with self._lock:
+            previous = self._records.get(request.key)
+            if previous is not None:
+                if previous.request != request:
+                    raise PublicationOwnerDeathConflictError(
+                        "publication owner-death evidence changed on replay"
+                    )
+                return self._snapshot(previous)
+            if self._admission_closed:
+                raise PublicationOwnerDeathStateError(
+                    "publication owner-death admission is closed"
+                )
+            record = _OwnerDeathRecord(
+                request, self._build_effects(request)
+            )
+            self._records[request.key] = record
+            return self._snapshot(record)
+
+    def next_effect(
+        self, key: PublicationOwnerDeathKey
+    ) -> Optional[PublicationOwnerDeathEffect]:
+        with self._lock:
+            return self._next_effect(self._record(key))
+
+    def acknowledge(
+        self, effect: PublicationOwnerDeathEffect,
+        receipt: PublicationOwnerDeathEffectReceipt,
+    ) -> PublicationOwnerDeathSnapshot:
+        """Commit one exact receipt; exact response-loss replay is a no-op."""
+
+        _validate_effect(effect)
+        with self._lock:
+            record = self._record(effect.key)
+            previous = record.receipts.get(effect)
+            if previous is not None:
+                if previous != receipt:
+                    raise PublicationOwnerDeathConflictError(
+                        "effect acknowledgement changed on replay"
+                    )
+                return self._snapshot(record)
+            if self._next_effect(record) != effect:
+                raise PublicationOwnerDeathStateError(
+                    "effect is not the saga's next exact obligation"
+                )
+            self._validate_receipt(record, effect, receipt)
+            record.receipts[effect] = receipt
+            if len(record.receipts) == len(record.effects):
+                record.resolution = PublicationOwnerDeathResolution(
+                    record.request,
+                    PublicationOwnerDeathTerminal.OWNER_DEATH_CLEANED,
+                    tuple(
+                        (item, record.receipts[item])
+                        for item in record.effects
+                    ),
+                )
+            return self._snapshot(record)
+
+    def snapshot(
+        self, key: PublicationOwnerDeathKey
+    ) -> PublicationOwnerDeathSnapshot:
+        with self._lock:
+            return self._snapshot(self._record(key))
+
+    def resolution(
+        self, key: PublicationOwnerDeathKey
+    ) -> Optional[PublicationOwnerDeathResolution]:
+        with self._lock:
+            return self._record(key).resolution
+
+    def close_admission(self) -> None:
+        """Fence unseen cleanups while preserving exact terminal replay."""
+
+        with self._lock:
+            self._admission_closed = True
+
+    def has_active_operations(self) -> bool:
+        with self._lock:
+            return any(
+                record.resolution is None
+                for record in self._records.values()
+            )
+
+    def has_active_obligations(self) -> bool:
+        return self.has_active_operations()
+
+    @classmethod
+    def _build_effects(
+        cls, request: PublicationOwnerDeathRequest
+    ) -> Tuple[PublicationOwnerDeathEffect, ...]:
+        fences = cls._fence_effects(request)
+        graph = request.graph
+        outer = request.key.publication_id.outer_object_id
+        graph_done = graph.container_released(outer)
+        holds = () if graph_done else cls._hold_effects(request)
+        abort = (
+            AbortPublicationGraphEffect(request.key, graph.manifest)
+            if (
+                not graph_done
+                and bool(graph.manifest.ordered_edges)
+                and graph.state in (
+                    PublicationOwnerDeathGraphState.NOT_FOUND,
+                    PublicationOwnerDeathGraphState.PREPARED,
+                )
+            )
+            else None
+        )
+        release = (
+            ReleasePublicationGraphEffect(
+                request.key, graph.manifest, outer
+            )
+            if (
+                not graph_done
+                and bool(graph.manifest.ordered_edges)
+                and graph.state
+                is PublicationOwnerDeathGraphState.COMMITTED
+            )
+            else None
+        )
+        middle: Tuple[PublicationOwnerDeathEffect, ...]
+        if abort is not None:
+            if isinstance(request, InlinePublicationOwnerDeathRequest):
+                middle = holds + (abort,)
+            else:
+                middle = (abort,) + holds
+        elif release is not None:
+            middle = holds + (release,)
+        else:
+            middle = holds
+        replicas: Tuple[PublicationOwnerDeathEffect, ...] = ()
+        if isinstance(request, StoredPublicationOwnerDeathRequest):
+            replicas = tuple(
+                DropPublicationReplicaEffect(request.key, descriptor)
+                for descriptor in request.replicas
+            )
+        cleanup_id = _cleanup_id(request)
+        finalize = FinalizePublicationOwnerDeathEffect(
+            _publisher_finalize_id(cleanup_id), request.key,
+            request.owner_death, request.publishing_node_id,
+            request.publication_history,
+        )
+        return fences + middle + replicas + (finalize,)
+
+    @staticmethod
+    def _fence_effects(
+        request: PublicationOwnerDeathRequest,
+    ) -> Tuple[FencePublicationOwnerDeathEffect, ...]:
+        by_node: dict[
+            NodeID, list[protocol.ObjectStoreDescriptor]
+        ] = {}
+        for descriptor in request.replicas:
+            by_node.setdefault(descriptor.node_id, []).append(descriptor)
+        for node_id in request.fence_node_ids:
+            by_node.setdefault(node_id, [])
+        ordered_nodes = (request.publishing_node_id,) + tuple(
+            node_id for node_id in sorted(by_node, key=bytes)
+            if node_id != request.publishing_node_id
+        )
+        cleanup_id = _cleanup_id(request)
+        return tuple(
+            FencePublicationOwnerDeathEffect(
+                _node_fence_id(cleanup_id, node_id), request.key,
+                request.owner_death, node_id, tuple(by_node[node_id]),
+            )
+            for node_id in ordered_nodes
+        )
+
+    @staticmethod
+    def _hold_effects(
+        request: PublicationOwnerDeathRequest,
+    ) -> Tuple[ReleasePublicationHoldEffect, ...]:
+        if isinstance(request, StoredPublicationOwnerDeathRequest):
+            values = []
+            transfers = request.recovery.manifest.transfers
+            for index in reversed(range(len(transfers))):
+                transfer = transfers[index]
+                values.append((transfer.edge, transfer.final_hold))
+            for index in reversed(range(len(transfers))):
+                if request.recovery.promoted_bitmap[index]:
+                    continue
+                transfer = transfers[index]
+                values.append((transfer.edge, transfer.provisional_hold))
+            return tuple(
+                ReleasePublicationHoldEffect(
+                    request.key, ordinal, edge, hold
+                )
+                for ordinal, (edge, hold) in enumerate(values)
+            )
+        return tuple(
+            ReleasePublicationHoldEffect(
+                request.key, index, edge,
+                edge.incoming_hold(request.owner_worker_id),
+            )
+            for index, edge in enumerate(
+                request.graph.manifest.ordered_edges
+            )
+        )
+
+    @staticmethod
+    def _next_effect(
+        record: _OwnerDeathRecord,
+    ) -> Optional[PublicationOwnerDeathEffect]:
+        if record.resolution is not None:
+            return None
+        for effect in record.effects:
+            if effect not in record.receipts:
+                return effect
+        raise AssertionError(
+            "all owner-death effects acknowledged without resolution"
+        )
+
+    @staticmethod
+    def _validate_receipt(
+        record: _OwnerDeathRecord,
+        effect: PublicationOwnerDeathEffect,
+        receipt: PublicationOwnerDeathEffectReceipt,
+    ) -> None:
+        if isinstance(effect, FencePublicationOwnerDeathEffect):
+            if (
+                not isinstance(receipt, PublicationNodeFenceReceipt)
+                or receipt.effect != effect
+            ):
+                raise PublicationOwnerDeathStateError(
+                    "Node fence did not echo the exact effect"
+                )
+            if receipt.disposition is PublicationNodeFenceDisposition.CONFLICT:
+                raise PublicationOwnerDeathStateError(
+                    "a conflicting Node fence cannot discharge cleanup"
+                )
+            return
+        if isinstance(effect, ReleasePublicationHoldEffect):
+            if (
+                not isinstance(receipt, PublicationHoldReceipt)
+                or receipt.effect != effect
+            ):
+                raise PublicationOwnerDeathStateError(
+                    "hold release did not echo the exact effect"
+                )
+            return
+        if isinstance(effect, AbortPublicationGraphEffect):
+            if (
+                not isinstance(receipt, ContainedGraphManifestReceipt)
+                or receipt.manifest != effect.manifest
+                or receipt.state
+                is not ContainedGraphTransactionState.ABORTED
+                or receipt.disposition not in (
+                    ContainedGraphManifestDisposition.APPLIED,
+                    ContainedGraphManifestDisposition.ALREADY_ABORTED,
+                )
+                or receipt.released_edges
+            ):
+                raise PublicationOwnerDeathStateError(
+                    "graph abort did not acknowledge the exact manifest"
+                )
+            return
+        if isinstance(effect, ReleasePublicationGraphEffect):
+            expected_edges = tuple(
+                edge for edge in effect.manifest.ordered_edges
+                if edge.container_object_id == effect.container_object_id
+            )
+            if (
+                not isinstance(receipt, ContainedGraphManifestReceipt)
+                or receipt.manifest != effect.manifest
+                or receipt.state
+                is not ContainedGraphTransactionState.COMMITTED
+                or receipt.disposition not in (
+                    ContainedGraphManifestDisposition.RELEASED,
+                    ContainedGraphManifestDisposition.ALREADY_RELEASED,
+                )
+                or receipt.released_edges != expected_edges
+            ):
+                raise PublicationOwnerDeathStateError(
+                    "graph release did not acknowledge every exact edge"
+                )
+            return
+        if (
+            isinstance(effect, DropPublicationReplicaEffect)
+        ):
+            if (
+                not isinstance(receipt, PublicationReplicaReceipt)
+                or receipt.effect != effect
+            ):
+                raise PublicationOwnerDeathStateError(
+                    "replica drop did not echo the exact effect"
+                )
+            fence_receipt = _replica_fence_receipt(record, effect.descriptor)
+            if fence_receipt.disposition is (
+                PublicationNodeFenceDisposition.NODE_DEAD
+            ):
+                if (
+                    receipt.disposition
+                    is not PublicationReplicaDisposition.NODE_DEAD
+                    or receipt.node_death != fence_receipt.node_death
+                ):
+                    raise PublicationOwnerDeathStateError(
+                        "dead-Node fence requires its exact replica death proof"
+                    )
+                return
+            index = fence_receipt.effect.expected_replicas.index(
+                effect.descriptor
+            )
+            status = fence_receipt.replica_statuses[index]
+            if status is PublicationReplicaFenceStatus.ABSENT:
+                if receipt.disposition is not (
+                    PublicationReplicaDisposition.ABSENT_AT_FENCE
+                ):
+                    raise PublicationOwnerDeathStateError(
+                        "ABSENT fence observation requires ABSENT_AT_FENCE"
+                    )
+                return
+            if status is PublicationReplicaFenceStatus.CONFLICT:
+                raise PublicationOwnerDeathStateError(
+                    "a conflicting replica observation cannot authorize drop"
+                )
+            if receipt.disposition not in (
+                PublicationReplicaDisposition.DROPPED,
+                PublicationReplicaDisposition.ALREADY_DROPPED,
+                PublicationReplicaDisposition.NODE_DEAD,
+            ):
+                raise PublicationOwnerDeathStateError(
+                    "present or pinned replica requires drop or Node death"
+                )
+            return
+        if (
+            not isinstance(effect, FinalizePublicationOwnerDeathEffect)
+            or not isinstance(
+                receipt, PublicationPublisherFinalizeReceipt
+            )
+            or receipt.effect != effect
+        ):
+            raise PublicationOwnerDeathStateError(
+                "publisher finalize did not echo the exact effect"
+            )
+
+    def _record(
+        self, key: PublicationOwnerDeathKey
+    ) -> _OwnerDeathRecord:
+        _validate_key(key)
+        try:
+            return self._records[key]
+        except KeyError as exc:
+            raise UnknownPublicationOwnerDeathError(
+                "publication owner-death cleanup has not begun"
+            ) from exc
+
+    @classmethod
+    def _snapshot(
+        cls, record: _OwnerDeathRecord
+    ) -> PublicationOwnerDeathSnapshot:
+        effect = cls._next_effect(record)
+        if record.resolution is not None:
+            phase = PublicationOwnerDeathPhase.RESOLVED
+        elif isinstance(effect, FencePublicationOwnerDeathEffect):
+            phase = PublicationOwnerDeathPhase.NODE_FENCE
+        elif isinstance(effect, AbortPublicationGraphEffect):
+            phase = PublicationOwnerDeathPhase.GRAPH_ABORT
+        elif isinstance(effect, ReleasePublicationHoldEffect):
+            phase = PublicationOwnerDeathPhase.HOLDS
+        elif isinstance(effect, ReleasePublicationGraphEffect):
+            phase = PublicationOwnerDeathPhase.GRAPH_RELEASE
+        elif isinstance(effect, DropPublicationReplicaEffect):
+            phase = PublicationOwnerDeathPhase.REPLICAS
+        else:
+            assert isinstance(effect, FinalizePublicationOwnerDeathEffect)
+            phase = PublicationOwnerDeathPhase.PUBLISHER_FINALIZE
+        return PublicationOwnerDeathSnapshot(
+            record.request, record.request.publication_history, phase, effect,
+            tuple(
+                item for item in record.effects
+                if item in record.receipts
+            ),
+            record.resolution,
+        )
+
+
+def _validate_common_request(
+    key: PublicationOwnerDeathKey,
+    publication_id: Union[InlinePublicationID, StoredPublicationID],
+    owner_worker_id: WorkerID,
+    publishing_node_id: NodeID,
+    owner_death: protocol.WorkerDeathRecord,
+    publication_history: PublicationRecoveryHistory,
+    graph: PublicationOwnerDeathGraphWitness,
+    expected_manifest: ContainedGraphManifest,
+) -> None:
+    _validate_key(key)
+    if key.publication_id != publication_id:
+        raise PublicationOwnerDeathConflictError(
+            "key belongs to another publication"
+        )
+    if not isinstance(owner_worker_id, WorkerID):
+        raise TypeError("owner_worker_id must be a WorkerID")
+    if not isinstance(publishing_node_id, NodeID):
+        raise TypeError("publishing_node_id must be a NodeID")
+    if not isinstance(owner_death, protocol.WorkerDeathRecord):
+        raise TypeError("owner_death must be a WorkerDeathRecord")
+    if owner_death.worker_id != owner_worker_id:
+        raise PublicationOwnerDeathConflictError(
+            "death proof names another outer owner"
+        )
+    if owner_death.reason is protocol.WorkerDeathReason.EXPECTED:
+        raise PublicationOwnerDeathStateError(
+            "EXPECTED Worker exit is not an owner-death proof"
+        )
+    if not isinstance(publication_history, PublicationRecoveryHistory):
+        raise TypeError(
+            "publication_history must be a PublicationRecoveryHistory"
+        )
+    if not isinstance(graph, PublicationOwnerDeathGraphWitness):
+        raise TypeError(
+            "graph must be a PublicationOwnerDeathGraphWitness"
+        )
+    if graph.manifest != expected_manifest:
+        raise PublicationOwnerDeathConflictError(
+            "graph witness does not match the frozen publication"
+        )
+    if graph.manifest.outer_owner_worker_id != owner_worker_id:
+        raise PublicationOwnerDeathConflictError(
+            "graph witness belongs to another outer owner"
+        )
+    if (
+        publication_history is PublicationRecoveryHistory.ADOPTED
+        and graph.state is not PublicationOwnerDeathGraphState.COMMITTED
+    ):
+        raise PublicationOwnerDeathStateError(
+            "ADOPTED history requires a committed graph witness"
+        )
+
+
+def _validate_request(request: object) -> None:
+    if not isinstance(
+        request,
+        (
+            InlinePublicationOwnerDeathRequest,
+            StoredPublicationOwnerDeathRequest,
+        ),
+    ):
+        raise TypeError(
+            "request must be an INLINE or STORED owner-death request"
+        )
+
+
+def _validate_key(key: object) -> None:
+    if not isinstance(
+        key,
+        (InlinePublicationOwnerDeathKey, StoredPublicationOwnerDeathKey),
+    ):
+        raise TypeError(
+            "key must be an INLINE or STORED owner-death key"
+        )
+
+
+def _validate_effect(effect: object) -> None:
+    if not isinstance(
+        effect,
+        (
+            FencePublicationOwnerDeathEffect,
+            ReleasePublicationHoldEffect,
+            AbortPublicationGraphEffect,
+            ReleasePublicationGraphEffect,
+            DropPublicationReplicaEffect,
+            FinalizePublicationOwnerDeathEffect,
+        ),
+    ):
+        raise TypeError("effect is not a publication owner-death effect")
+
+
+def _validate_effect_graph(
+    key: PublicationOwnerDeathKey, manifest: ContainedGraphManifest
+) -> None:
+    _validate_key(key)
+    if not isinstance(manifest, ContainedGraphManifest):
+        raise TypeError("manifest must be a ContainedGraphManifest")
+    if manifest.publication_id != key.publication_id:
+        raise ValueError("graph manifest belongs to another publication")
+
+
+def _replica_fence_receipt(
+    record: _OwnerDeathRecord, descriptor: protocol.ObjectStoreDescriptor,
+) -> PublicationNodeFenceReceipt:
+    for effect in record.effects:
+        if (
+            isinstance(effect, FencePublicationOwnerDeathEffect)
+            and descriptor in effect.expected_replicas
+        ):
+            receipt = record.receipts.get(effect)
+            if isinstance(receipt, PublicationNodeFenceReceipt):
+                return receipt
+            break
+    raise PublicationOwnerDeathStateError(
+        "replica drop requires its exact acknowledged Node fence"
+    )
+
+
+def _validate_fence_nodes(
+    values: object, publishing_node_id: NodeID,
+    replica_node_ids: Tuple[NodeID, ...],
+) -> Tuple[NodeID, ...]:
+    try:
+        supplied = tuple(values)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise TypeError("fence_node_ids must be iterable") from exc
+    if any(not isinstance(value, NodeID) for value in supplied):
+        raise TypeError("fence_node_ids must contain NodeID values")
+    required = (publishing_node_id,) + tuple(replica_node_ids)
+    return tuple(sorted(set(supplied).union(required), key=bytes))
+
+
+def _require_non_negative_int(value: object, label: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label} must be a non-negative integer")
+
+
+def _validate_non_empty(value: object, label: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+
+
+def _cleanup_id(request: PublicationOwnerDeathRequest) -> str:
+    publication_id = request.key.publication_id
+    digest = hashlib.sha256()
+    digest.update(b"miniray-publication-owner-death-v1\0")
+    digest.update(request.key.tier.value.encode("ascii"))
+    digest.update(bytes(publication_id.lease_id))
+    digest.update(bytes(publication_id.task_id))
+    digest.update(publication_id.attempt_id.attempt_number.to_bytes(8, "big"))
+    digest.update(bytes(publication_id.outer_object_id.task_id))
+    digest.update(
+        publication_id.outer_object_id.return_index.to_bytes(8, "big")
+    )
+    digest.update(bytes(request.owner_worker_id))
+    return "publication-owner-death:" + digest.hexdigest()
+
+
+def _node_fence_id(cleanup_id: str, node_id: NodeID) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"miniray-publication-owner-death-node-fence-v1\0")
+    digest.update(cleanup_id.encode("ascii"))
+    digest.update(bytes(node_id))
+    return "publication-owner-death-node-fence:" + digest.hexdigest()
+
+
+def _publisher_finalize_id(cleanup_id: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"miniray-publication-owner-death-finalize-v1\0")
+    digest.update(cleanup_id.encode("ascii"))
+    return "publication-owner-death-finalize:" + digest.hexdigest()
+
+
+__all__ = [
+    "AbortPublicationGraphEffect",
+    "DropPublicationReplicaEffect",
+    "FencePublicationOwnerDeathEffect",
+    "FinalizePublicationOwnerDeathEffect",
+    "InlinePublicationOwnerDeathKey",
+    "InlinePublicationOwnerDeathRequest",
+    "PublicationHoldDisposition",
+    "PublicationHoldReceipt",
+    "PublicationNodeFenceDisposition",
+    "PublicationNodeFenceReceipt",
+    "PublicationOwnerDeathConflictError",
+    "PublicationOwnerDeathCoordinator",
+    "PublicationOwnerDeathEffect",
+    "PublicationOwnerDeathEffectReceipt",
+    "PublicationOwnerDeathError",
+    "PublicationOwnerDeathGraphState",
+    "PublicationOwnerDeathGraphWitness",
+    "PublicationOwnerDeathKey",
+    "PublicationOwnerDeathPhase",
+    "PublicationOwnerDeathRequest",
+    "PublicationOwnerDeathResolution",
+    "PublicationOwnerDeathSnapshot",
+    "PublicationOwnerDeathStateError",
+    "PublicationOwnerDeathTerminal",
+    "PublicationRecoveryHistory",
+    "PublicationReplicaFenceStatus",
+    "PublicationPublisherFinalizeDisposition",
+    "PublicationPublisherFinalizeReceipt",
+    "PublicationReplicaDisposition",
+    "PublicationReplicaReceipt",
+    "PublicationTier",
+    "ReleasePublicationGraphEffect",
+    "ReleasePublicationHoldEffect",
+    "StoredPublicationOwnerDeathKey",
+    "StoredPublicationOwnerDeathRequest",
+    "UnknownPublicationOwnerDeathError",
+]

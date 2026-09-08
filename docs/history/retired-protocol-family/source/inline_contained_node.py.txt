@@ -1,0 +1,1280 @@
+"""Node-side intent journal for INLINE results containing ObjectRefs.
+
+The pure reducer in :mod:`miniray.inline_contained_publication` owns the
+contained-graph lifecycle.  This module adds the one fact a Worker-local
+coordinator cannot own: the Node's ``Complete`` boundary.  Before that
+boundary Worker loss rolls the prepared graph and child holds back; after it,
+the Node retains the INLINE bytes and rolls the graph forward so the logical
+owner can adopt the exact envelope.
+
+This is intentionally not the stored-publication saga.  INLINE publication has
+no replica, seal, promotion, physical location, or replica-custody state.
+Every fallible effect is injected and every acknowledgement echoes its exact
+request identity, making an ambiguous call safe to replay.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from enum import Enum
+from threading import RLock
+from typing import Callable, Iterator, Optional, Tuple
+
+from . import protocol
+from .contained_cycle import (
+    ContainedGraphManifestDisposition,
+    ContainedGraphManifestReceipt,
+    ContainedGraphTransactionState,
+)
+from .contained_edges import ContainedReferenceHold
+from .ids import AttemptID, LeaseID, NodeID, TaskID, WorkerID
+from .inline_contained_publication import (
+    InlineContainedPublicationReducer,
+    InlineEdgeEffect,
+    InlinePublicationConflictError,
+    InlinePublicationEnvelope,
+    InlinePublicationError,
+    InlinePublicationID,
+    InlinePublicationSnapshot,
+    InlinePublicationState,
+    InlinePublicationStateError,
+)
+
+
+_ABORT_ID_DOMAIN = b"miniray-inline-node-worker-loss-v1\0"
+
+
+_EXPLICIT_ABORT_ID_DOMAIN = b"miniray-inline-node-explicit-abort-v1\0"
+
+
+class InlinePublicationNodeError(InlinePublicationError):
+    """Base class for Node orchestration failures."""
+
+
+class InlinePublicationNodeConflictError(InlinePublicationConflictError):
+    """A stable publication identity was rebound to another execution."""
+
+
+class InlinePublicationRemoteError(InlinePublicationNodeError):
+    """A child owner or graph authority explicitly rejected an effect."""
+
+    def __init__(self, operation: str, detail: str) -> None:
+        self.operation = operation
+        self.detail = detail
+        super().__init__("{} rejected: {}".format(operation, detail))
+
+
+@dataclass(frozen=True, order=True)
+class InlineExecutionBinding:
+    """Exact Node lease incarnation allowed to publish one envelope."""
+
+    lease_id: LeaseID
+    task_id: TaskID
+    attempt_id: AttemptID
+    executor_worker_id: WorkerID
+    node_id: NodeID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.lease_id, LeaseID):
+            raise TypeError("lease_id must be a LeaseID")
+        if not isinstance(self.task_id, TaskID):
+            raise TypeError("task_id must be a TaskID")
+        if not isinstance(self.attempt_id, AttemptID):
+            raise TypeError("attempt_id must be an AttemptID")
+        if self.attempt_id.task_id != self.task_id:
+            raise ValueError("attempt_id belongs to another task")
+        if not isinstance(self.executor_worker_id, WorkerID):
+            raise TypeError("executor_worker_id must be a WorkerID")
+        if not isinstance(self.node_id, NodeID):
+            raise TypeError("node_id must be a NodeID")
+
+    def require_envelope(self, envelope: InlinePublicationEnvelope) -> None:
+        """Reject an envelope from any other lease execution or Node."""
+
+        if not isinstance(envelope, InlinePublicationEnvelope):
+            raise TypeError("envelope must be an InlinePublicationEnvelope")
+        publication_id = envelope.publication_id
+        manifest = envelope.manifest
+        if (
+            publication_id.lease_id != self.lease_id
+            or publication_id.task_id != self.task_id
+            or publication_id.attempt_id != self.attempt_id
+            or manifest.executor_worker_id != self.executor_worker_id
+            or manifest.publishing_node_id != self.node_id
+        ):
+            raise InlinePublicationNodeConflictError(
+                "INLINE envelope does not match its lease, task, attempt, "
+                "executor, and publishing Node binding"
+            )
+
+
+def _require_publication_binding(
+    binding: InlineExecutionBinding, publication_id: InlinePublicationID
+) -> None:
+    if not isinstance(publication_id, InlinePublicationID):
+        raise TypeError("publication_id must be an InlinePublicationID")
+    if (
+        publication_id.lease_id != binding.lease_id
+        or publication_id.task_id != binding.task_id
+        or publication_id.attempt_id != binding.attempt_id
+    ):
+        raise InlinePublicationNodeConflictError(
+            "INLINE publication does not match its lease, task, and attempt "
+            "binding"
+        )
+
+
+@dataclass(frozen=True)
+class InlinePublicationCompleteBoundary:
+    """Irreversible Node fact: this exact success must roll forward.
+
+    The envelope is deliberately absent.  It was already frozen by ``open``;
+    accepting result bytes again at Complete would let a late or compromised
+    Worker replace the Node's pre-effect recovery truth.
+    """
+
+    binding: InlineExecutionBinding
+    publication_id: InlinePublicationID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.binding, InlineExecutionBinding):
+            raise TypeError("binding must be an InlineExecutionBinding")
+        _require_publication_binding(self.binding, self.publication_id)
+
+
+@dataclass(frozen=True)
+class InlineWorkerLoss:
+    """Exact Worker-loss fact linearized against Node ``Complete``.
+
+    A loss observer supplies only execution identity.  Both recovery branches
+    must use the envelope retained by the earlier Node intent journal.
+    """
+
+    binding: InlineExecutionBinding
+    publication_id: InlinePublicationID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.binding, InlineExecutionBinding):
+            raise TypeError("binding must be an InlineExecutionBinding")
+        _require_publication_binding(self.binding, self.publication_id)
+
+
+@dataclass(frozen=True)
+class InlinePublicationAbort:
+    """Node-owned cancellation, kept distinct from a Worker-death fact."""
+
+    binding: InlineExecutionBinding
+    publication_id: InlinePublicationID
+    abort_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.binding, InlineExecutionBinding):
+            raise TypeError("binding must be an InlineExecutionBinding")
+        _require_publication_binding(self.binding, self.publication_id)
+        if not isinstance(self.abort_id, str) or not self.abort_id:
+            raise ValueError("abort_id must be a non-empty string")
+
+
+@dataclass(frozen=True)
+class InlineChildEffectRequest:
+    """Complete identity of one final child hold effect.
+
+    ``InlineEdgeEffect`` deliberately belongs to the graph reducer and does
+    not carry the outer owner's Worker incarnation.  Child-owner accounting
+    needs that last coordinate to distinguish equal container/token pairs.
+    """
+
+    effect: InlineEdgeEffect
+    container_owner_worker_id: WorkerID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, InlineEdgeEffect):
+            raise TypeError("effect must be an InlineEdgeEffect")
+        if not isinstance(self.container_owner_worker_id, WorkerID):
+            raise TypeError(
+                "container_owner_worker_id must be a WorkerID"
+            )
+
+    @property
+    def hold(self) -> ContainedReferenceHold:
+        return self.effect.edge.incoming_hold(
+            self.container_owner_worker_id
+        )
+
+
+@dataclass(frozen=True)
+class InlineChildEffectReply:
+    """Exact idempotent acknowledgement from a contained-object owner."""
+
+    request: InlineChildEffectRequest
+    accepted: bool
+    changed: Optional[bool] = None
+    error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, InlineChildEffectRequest):
+            raise TypeError("request must be an InlineChildEffectRequest")
+        if type(self.accepted) is not bool:
+            raise TypeError("accepted must be a bool")
+        if self.accepted:
+            if type(self.changed) is not bool or self.error is not None:
+                raise ValueError(
+                    "an accepted child effect requires changed bool and no error"
+                )
+        elif self.changed is not None or not isinstance(self.error, str) or not self.error:
+            raise ValueError(
+                "a rejected child effect requires only a non-empty error"
+            )
+
+
+class InlineNodePublicationPhase(str, Enum):
+    """Compact diagnostic projection of journal plus reducer state."""
+
+    INTENT = "INTENT"
+    GRAPH_PREPARING = "GRAPH_PREPARING"
+    PREPARED = "PREPARED"
+    PINS_INSTALLED = "PINS_INSTALLED"
+    COMPLETE_RECORDED = "COMPLETE_RECORDED"
+    COMMITTED = "COMMITTED"
+    ROLLING_BACK = "ROLLING_BACK"
+    ROLLED_BACK = "ROLLED_BACK"
+    ADOPTED = "ADOPTED"
+    OWNER_DEATH_CLEANED = "OWNER_DEATH_CLEANED"
+
+
+class InlineWorkerLossAction(str, Enum):
+    ROLLBACK = "ROLLBACK"
+    ADOPT = "ADOPT"
+
+
+@dataclass(frozen=True)
+class InlineNodePublicationSnapshot:
+    binding: InlineExecutionBinding
+    envelope: InlinePublicationEnvelope
+    graph_prepare_intent: bool
+    graph_prepared: bool
+    pin_intent_bitmap: Tuple[bool, ...]
+    pin_bitmap: Tuple[bool, ...]
+    complete_boundary: Optional[InlinePublicationCompleteBoundary]
+    worker_loss: Optional[InlineWorkerLoss]
+    explicit_abort: Optional[InlinePublicationAbort]
+    rollback_started: bool
+    graph_aborted: bool
+    rollback_finished: bool
+    adoption_exposed: bool
+    owner_death_cleanup: Optional[object]
+    reducer_snapshot: Optional[InlinePublicationSnapshot]
+
+    @property
+    def publication_id(self) -> InlinePublicationID:
+        return self.envelope.publication_id
+
+    @property
+    def complete_crossed(self) -> bool:
+        return self.complete_boundary is not None
+
+    @property
+    def explicit_abort_started(self) -> bool:
+        """Whether deterministic cancellation owns the rollback boundary."""
+
+        return self.explicit_abort is not None
+
+    @property
+    def phase(self) -> InlineNodePublicationPhase:
+        if self.owner_death_cleanup is not None:
+            return InlineNodePublicationPhase.OWNER_DEATH_CLEANED
+        if self.rollback_finished:
+            return InlineNodePublicationPhase.ROLLED_BACK
+        if self.rollback_started:
+            return InlineNodePublicationPhase.ROLLING_BACK
+        if self.adoption_exposed:
+            return InlineNodePublicationPhase.ADOPTED
+        if self.complete_boundary is not None:
+            if (
+                self.reducer_snapshot is not None
+                and self.reducer_snapshot.state is InlinePublicationState.COMMITTED
+            ):
+                return InlineNodePublicationPhase.COMMITTED
+            return InlineNodePublicationPhase.COMPLETE_RECORDED
+        if (
+            self.reducer_snapshot is not None
+            and self.reducer_snapshot.state is InlinePublicationState.PINS_INSTALLED
+        ):
+            return InlineNodePublicationPhase.PINS_INSTALLED
+        if self.graph_prepared:
+            return InlineNodePublicationPhase.PREPARED
+        if self.graph_prepare_intent:
+            return InlineNodePublicationPhase.GRAPH_PREPARING
+        return InlineNodePublicationPhase.INTENT
+
+
+@dataclass(frozen=True)
+class InlineWorkerLossOutcome:
+    """Terminal recovery work exposed to the surrounding Node runtime."""
+
+    loss: InlineWorkerLoss
+    action: InlineWorkerLossAction
+    envelope: Optional[InlinePublicationEnvelope]
+    changed: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.loss, InlineWorkerLoss):
+            raise TypeError("loss must be an InlineWorkerLoss")
+        if not isinstance(self.action, InlineWorkerLossAction):
+            raise TypeError("action must be an InlineWorkerLossAction")
+        if type(self.changed) is not bool:
+            raise TypeError("changed must be a bool")
+        if self.action is InlineWorkerLossAction.ADOPT:
+            if self.envelope is None:
+                raise ValueError(
+                    "ADOPT must expose the exact journaled envelope"
+                )
+            self.loss.binding.require_envelope(self.envelope)
+            if self.envelope.publication_id != self.loss.publication_id:
+                raise ValueError(
+                    "ADOPT envelope belongs to another publication"
+                )
+        elif self.envelope is not None:
+            raise ValueError("ROLLBACK cannot expose INLINE result bytes")
+
+
+@dataclass
+class _InlineNodeRecord:
+    binding: InlineExecutionBinding
+    envelope: InlinePublicationEnvelope
+    graph_prepare_intent: bool = False
+    graph_prepared: bool = False
+    pin_intents: list[bool] = field(default_factory=list)
+    complete_boundary: Optional[InlinePublicationCompleteBoundary] = None
+    worker_loss: Optional[InlineWorkerLoss] = None
+    explicit_abort: Optional[InlinePublicationAbort] = None
+    rollback_started: bool = False
+    graph_aborted: bool = False
+    rollback_finished: bool = False
+    adoption_exposed: bool = False
+    owner_death_cleanup: Optional[object] = None
+
+
+class InlinePublicationNodeJournal:
+    """In-memory Node authority for exact INLINE publication intents."""
+
+    def __init__(
+        self, reducer: Optional[InlineContainedPublicationReducer] = None
+    ) -> None:
+        if reducer is not None and not isinstance(
+            reducer, InlineContainedPublicationReducer
+        ):
+            raise TypeError(
+                "reducer must be an InlineContainedPublicationReducer or None"
+            )
+        self.reducer = reducer or InlineContainedPublicationReducer()
+        self._records: dict[InlinePublicationID, _InlineNodeRecord] = {}
+        self._publication_locks: dict[InlinePublicationID, RLock] = {}
+        self._lock = RLock()
+
+    @contextmanager
+    def linearize(
+        self, publication_id: InlinePublicationID
+    ) -> Iterator[None]:
+        """Serialize Complete, Worker loss, and effect replay per result."""
+
+        if not isinstance(publication_id, InlinePublicationID):
+            raise TypeError("publication_id must be an InlinePublicationID")
+        with self._lock:
+            lock = self._publication_locks.setdefault(publication_id, RLock())
+        with lock:
+            yield
+
+    def open(
+        self, binding: InlineExecutionBinding,
+        envelope: InlinePublicationEnvelope,
+    ) -> bool:
+        """Journal the full envelope before the first graph/child effect."""
+
+        self._validate_binding(binding, envelope)
+        with self._lock:
+            publication_id = envelope.publication_id
+            previous = self._records.get(publication_id)
+            if previous is not None:
+                self._require_record(previous, binding, envelope)
+                return False
+            if publication_id in self.reducer.publication_ids():
+                raise InlinePublicationStateError(
+                    "INLINE reducer state exists without a Node intent"
+                )
+            self._records[publication_id] = _InlineNodeRecord(
+                binding, envelope,
+                pin_intents=[False] * len(envelope.ordered_edges),
+            )
+            return True
+
+    def begin_graph_prepare(
+        self, binding: InlineExecutionBinding,
+        envelope: InlinePublicationEnvelope,
+    ) -> bool:
+        with self._lock:
+            record = self._record(envelope.publication_id)
+            self._require_record(record, binding, envelope)
+            self._require_forward_open(record)
+            if record.graph_prepare_intent:
+                return False
+            record.graph_prepare_intent = True
+            return True
+
+    def mark_graph_prepared(
+        self, binding: InlineExecutionBinding,
+        envelope: InlinePublicationEnvelope,
+        receipt: ContainedGraphManifestReceipt,
+    ) -> bool:
+        with self._lock:
+            record = self._record(envelope.publication_id)
+            self._require_record(record, binding, envelope)
+            self._require_forward_open(record)
+            if not record.graph_prepare_intent:
+                raise InlinePublicationStateError(
+                    "graph ACK has no journaled PREPARE intent"
+                )
+            if record.graph_prepared:
+                return False
+            changed = self.reducer.prepare(envelope, receipt)
+            record.graph_prepared = True
+            return changed
+
+    def begin_pin(
+        self, binding: InlineExecutionBinding, effect: InlineEdgeEffect
+    ) -> bool:
+        with self._lock:
+            record = self._record(effect.publication_id)
+            self._require_binding_only(record, binding)
+            self._require_forward_open(record)
+            self._require_effect(record, effect)
+            if not record.graph_prepared:
+                raise InlinePublicationStateError(
+                    "child pin requires an acknowledged graph PREPARE"
+                )
+            if record.pin_intents[effect.index]:
+                return False
+            record.pin_intents[effect.index] = True
+            return True
+
+    def mark_pin_installed(
+        self, binding: InlineExecutionBinding, effect: InlineEdgeEffect
+    ) -> bool:
+        with self._lock:
+            record = self._record(effect.publication_id)
+            self._require_binding_only(record, binding)
+            self._require_forward_open(record)
+            self._require_effect(record, effect)
+            if not record.pin_intents[effect.index]:
+                raise InlinePublicationStateError(
+                    "child ACK has no journaled pin intent"
+                )
+            return self.reducer.mark_pin_installed(effect)
+
+    def record_complete(
+        self, boundary: InlinePublicationCompleteBoundary
+    ) -> bool:
+        if not isinstance(boundary, InlinePublicationCompleteBoundary):
+            raise TypeError(
+                "boundary must be an InlinePublicationCompleteBoundary"
+            )
+        with self._lock:
+            record = self._record(boundary.publication_id)
+            self._require_binding_only(record, boundary.binding)
+            if (
+                record.worker_loss is not None
+                and record.complete_boundary is None
+            ):
+                raise InlinePublicationStateError(
+                    "Worker loss won before the INLINE Complete boundary"
+                )
+            if record.rollback_started:
+                raise InlinePublicationStateError(
+                    "a rolling-back INLINE publication cannot complete"
+                )
+            if record.complete_boundary is not None:
+                if record.complete_boundary != boundary:
+                    raise InlinePublicationNodeConflictError(
+                        "INLINE Complete boundary changed on replay"
+                    )
+                return False
+            if not record.graph_prepared:
+                raise InlinePublicationStateError(
+                    "INLINE Complete requires an acknowledged graph PREPARE"
+                )
+            snapshot = self.reducer.snapshot(boundary.publication_id)
+            if not snapshot.ready_to_commit:
+                raise InlinePublicationStateError(
+                    "INLINE Complete requires every child pin ACK"
+                )
+            record.complete_boundary = boundary
+            return True
+
+    def begin_commit(
+        self, boundary: InlinePublicationCompleteBoundary
+    ) -> bool:
+        with self._lock:
+            record = self._record(boundary.publication_id)
+            self._require_binding_only(record, boundary.binding)
+            if record.complete_boundary != boundary:
+                raise InlinePublicationStateError(
+                    "graph COMMIT requires the exact Node Complete boundary"
+                )
+            return self.reducer.begin_commit(record.envelope)
+
+    def mark_committed(
+        self, boundary: InlinePublicationCompleteBoundary,
+        receipt: ContainedGraphManifestReceipt,
+    ) -> bool:
+        with self._lock:
+            record = self._record(boundary.publication_id)
+            self._require_binding_only(record, boundary.binding)
+            if record.complete_boundary != boundary:
+                raise InlinePublicationStateError(
+                    "graph COMMIT ACK has no exact Node Complete boundary"
+                )
+            return self.reducer.commit(record.envelope, receipt)
+
+    def record_worker_loss(self, loss: InlineWorkerLoss) -> bool:
+        if not isinstance(loss, InlineWorkerLoss):
+            raise TypeError("loss must be an InlineWorkerLoss")
+        with self._lock:
+            record = self._record(loss.publication_id)
+            self._require_binding_only(record, loss.binding)
+            if record.explicit_abort is not None:
+                raise InlinePublicationStateError(
+                    "explicit INLINE abort already owns the rollback boundary"
+                )
+            if record.worker_loss is not None:
+                if record.worker_loss != loss:
+                    raise InlinePublicationNodeConflictError(
+                        "INLINE Worker-loss identity changed on replay"
+                    )
+                return False
+            record.worker_loss = loss
+            return True
+
+    def record_explicit_abort(self, abort: InlinePublicationAbort) -> bool:
+        if not isinstance(abort, InlinePublicationAbort):
+            raise TypeError("abort must be an InlinePublicationAbort")
+        with self._lock:
+            record = self._record(abort.publication_id)
+            self._require_binding_only(record, abort.binding)
+            if record.complete_boundary is not None:
+                raise InlinePublicationStateError(
+                    "a completed INLINE publication cannot abort"
+                )
+            if record.worker_loss is not None:
+                raise InlinePublicationStateError(
+                    "Worker loss already owns the rollback boundary"
+                )
+            if record.explicit_abort is not None:
+                if record.explicit_abort != abort:
+                    raise InlinePublicationNodeConflictError(
+                        "INLINE explicit abort identity changed on replay"
+                    )
+                return False
+            record.explicit_abort = abort
+            return True
+
+    def begin_explicit_rollback(self, abort: InlinePublicationAbort) -> bool:
+        with self._lock:
+            record = self._record(abort.publication_id)
+            self._require_explicit_abort(record, abort)
+            if record.rollback_started:
+                return False
+            record.rollback_started = True
+            if record.graph_prepared:
+                self.reducer.begin_abort(abort.publication_id, abort.abort_id)
+            return True
+
+    def next_explicit_compensation(
+        self, abort: InlinePublicationAbort,
+    ) -> Optional[InlineEdgeEffect]:
+        with self._lock:
+            record = self._record(abort.publication_id)
+            self._require_explicit_abort(record, abort)
+            if not record.rollback_started:
+                raise InlinePublicationStateError(
+                    "compensation requires an explicit rollback intent"
+                )
+            if not record.graph_prepared:
+                return None
+            return self.reducer.next_compensation(abort.publication_id)
+
+    def acknowledge_explicit_compensation(
+        self, abort: InlinePublicationAbort, effect: InlineEdgeEffect,
+    ) -> bool:
+        with self._lock:
+            record = self._record(abort.publication_id)
+            self._require_explicit_abort(record, abort)
+            self._require_effect(record, effect)
+            return self.reducer.acknowledge_compensation(effect)
+
+    def mark_explicit_graph_aborted(
+        self, abort: InlinePublicationAbort,
+        receipt: ContainedGraphManifestReceipt,
+    ) -> bool:
+        with self._lock:
+            record = self._record(abort.publication_id)
+            self._require_explicit_abort(record, abort)
+            if not record.rollback_started or not record.graph_prepare_intent:
+                raise InlinePublicationStateError(
+                    "graph ABORT ACK has no explicit rollback/PREPARE intent"
+                )
+            self._require_abort_receipt(record.envelope, receipt)
+            if record.graph_aborted:
+                return False
+            if record.graph_prepared:
+                self.reducer.finish_abort(
+                    abort.publication_id, abort.abort_id, receipt
+                )
+            record.graph_aborted = True
+            return True
+
+    def finish_explicit_rollback(self, abort: InlinePublicationAbort) -> bool:
+        with self._lock:
+            record = self._record(abort.publication_id)
+            self._require_explicit_abort(record, abort)
+            if record.rollback_finished:
+                return False
+            if not record.rollback_started:
+                raise InlinePublicationStateError(
+                    "rollback cannot finish before its explicit intent"
+                )
+            if record.graph_prepare_intent and not record.graph_aborted:
+                raise InlinePublicationStateError(
+                    "rollback cannot finish before exact graph ABORT ACK"
+                )
+            if record.graph_prepared and (
+                self.reducer.snapshot(abort.publication_id).state
+                is not InlinePublicationState.ABORTED
+            ):
+                raise InlinePublicationStateError(
+                    "rollback cannot finish before every child release ACK"
+                )
+            record.rollback_finished = True
+            return True
+
+    def begin_rollback(self, loss: InlineWorkerLoss) -> bool:
+        with self._lock:
+            record = self._record(loss.publication_id)
+            self._require_loss(record, loss)
+            if record.complete_boundary is not None:
+                raise InlinePublicationStateError(
+                    "post-Complete Worker loss must roll forward"
+                )
+            if record.rollback_started:
+                return False
+            record.rollback_started = True
+            if record.graph_prepared:
+                self.reducer.begin_abort(
+                    loss.publication_id, self._abort_id(record.envelope)
+                )
+            return True
+
+    def next_compensation(
+        self, loss: InlineWorkerLoss
+    ) -> Optional[InlineEdgeEffect]:
+        with self._lock:
+            record = self._record(loss.publication_id)
+            self._require_loss(record, loss)
+            if not record.rollback_started:
+                raise InlinePublicationStateError(
+                    "compensation requires a rollback intent"
+                )
+            if not record.graph_prepared:
+                return None
+            return self.reducer.next_compensation(loss.publication_id)
+
+    def acknowledge_compensation(
+        self, loss: InlineWorkerLoss, effect: InlineEdgeEffect
+    ) -> bool:
+        with self._lock:
+            record = self._record(loss.publication_id)
+            self._require_loss(record, loss)
+            self._require_effect(record, effect)
+            if not record.rollback_started or not record.graph_prepared:
+                raise InlinePublicationStateError(
+                    "compensation ACK has no rollback obligation"
+                )
+            return self.reducer.acknowledge_compensation(effect)
+
+    def mark_graph_aborted(
+        self, loss: InlineWorkerLoss,
+        receipt: ContainedGraphManifestReceipt,
+    ) -> bool:
+        with self._lock:
+            record = self._record(loss.publication_id)
+            self._require_loss(record, loss)
+            if not record.rollback_started or not record.graph_prepare_intent:
+                raise InlinePublicationStateError(
+                    "graph ABORT ACK has no rollback/PREPARE intent"
+                )
+            self._require_abort_receipt(record.envelope, receipt)
+            if record.graph_aborted:
+                return False
+            if record.graph_prepared:
+                self.reducer.finish_abort(
+                    loss.publication_id, self._abort_id(record.envelope), receipt
+                )
+            record.graph_aborted = True
+            return True
+
+    def finish_rollback(self, loss: InlineWorkerLoss) -> bool:
+        with self._lock:
+            record = self._record(loss.publication_id)
+            self._require_loss(record, loss)
+            if record.rollback_finished:
+                return False
+            if not record.rollback_started:
+                raise InlinePublicationStateError(
+                    "rollback cannot finish before its intent"
+                )
+            if record.graph_prepare_intent and not record.graph_aborted:
+                raise InlinePublicationStateError(
+                    "rollback cannot finish before exact graph ABORT ACK"
+                )
+            if record.graph_prepared and (
+                self.reducer.snapshot(loss.publication_id).state
+                is not InlinePublicationState.ABORTED
+            ):
+                raise InlinePublicationStateError(
+                    "rollback cannot finish before every child release ACK"
+                )
+            record.rollback_finished = True
+            return True
+
+    def expose_adoption(self, loss: InlineWorkerLoss) -> bool:
+        with self._lock:
+            record = self._record(loss.publication_id)
+            self._require_loss(record, loss)
+            if record.worker_loss != loss or record.complete_boundary is None:
+                raise InlinePublicationStateError(
+                    "adoption requires post-Complete Worker loss"
+                )
+            if (
+                self.reducer.snapshot(loss.publication_id).state
+                is not InlinePublicationState.COMMITTED
+            ):
+                raise InlinePublicationStateError(
+                    "adoption requires an acknowledged graph COMMIT"
+                )
+            if record.adoption_exposed:
+                return False
+            record.adoption_exposed = True
+            return True
+
+    def require_complete_boundary(
+        self, binding: InlineExecutionBinding,
+        publication_id: InlinePublicationID,
+    ) -> InlinePublicationCompleteBoundary:
+        """Recover the exact terminal intent from Node state alone."""
+
+        with self._lock:
+            record = self._record(publication_id)
+            self._require_binding_only(record, binding)
+            if record.complete_boundary is None:
+                raise InlinePublicationStateError(
+                    "INLINE publication has not crossed Complete"
+                )
+            return record.complete_boundary
+
+    def terminal_envelope(
+        self, binding: InlineExecutionBinding,
+        publication_id: InlinePublicationID,
+    ) -> InlinePublicationEnvelope:
+        """Expose the journaled envelope only after graph COMMIT."""
+
+        with self._lock:
+            record = self._record(publication_id)
+            self._require_binding_only(record, binding)
+            if record.complete_boundary is None:
+                raise InlinePublicationStateError(
+                    "INLINE terminal envelope requires Complete"
+                )
+            if (
+                not record.graph_prepared
+                or self.reducer.snapshot(publication_id).state
+                is not InlinePublicationState.COMMITTED
+            ):
+                raise InlinePublicationStateError(
+                    "INLINE terminal envelope requires graph COMMIT"
+                )
+            return record.envelope
+
+    def mark_owner_death_cleaned(
+        self, publication_id: InlinePublicationID, terminal: object,
+    ) -> bool:
+        """Install an independent owner-lifetime tombstone exactly once."""
+
+        from .publication_owner_death import (
+            FinalizePublicationOwnerDeathEffect,
+            InlinePublicationOwnerDeathKey,
+        )
+
+        if not isinstance(terminal, FinalizePublicationOwnerDeathEffect):
+            raise TypeError(
+                "terminal must be a FinalizePublicationOwnerDeathEffect"
+            )
+        with self._lock:
+            record = self._record(publication_id)
+            if (
+                terminal.key != InlinePublicationOwnerDeathKey(publication_id)
+                or terminal.publishing_node_id != record.binding.node_id
+                or terminal.owner_death.worker_id
+                != record.envelope.manifest.outer_owner_worker_id
+            ):
+                raise InlinePublicationNodeConflictError(
+                    "INLINE owner-death terminal changed publication identity"
+                )
+            if record.owner_death_cleanup is not None:
+                if record.owner_death_cleanup != terminal:
+                    raise InlinePublicationNodeConflictError(
+                        "INLINE owner-death terminal changed on replay"
+                    )
+                return False
+            record.owner_death_cleanup = terminal
+            return True
+
+    def snapshot(
+        self, publication_id: InlinePublicationID
+    ) -> InlineNodePublicationSnapshot:
+        with self._lock:
+            record = self._record(publication_id)
+            reducer_snapshot = (
+                self.reducer.snapshot(publication_id)
+                if record.graph_prepared else None
+            )
+            pin_bitmap = (
+                reducer_snapshot.pin_bitmap
+                if reducer_snapshot is not None
+                else (False,) * len(record.pin_intents)
+            )
+            return InlineNodePublicationSnapshot(
+                record.binding, record.envelope,
+                record.graph_prepare_intent, record.graph_prepared,
+                tuple(record.pin_intents), pin_bitmap,
+                record.complete_boundary, record.worker_loss,
+                record.explicit_abort,
+                record.rollback_started, record.graph_aborted,
+                record.rollback_finished, record.adoption_exposed,
+                record.owner_death_cleanup,
+                reducer_snapshot,
+            )
+
+    def publication_ids(self) -> Tuple[InlinePublicationID, ...]:
+        with self._lock:
+            return tuple(sorted(self._records))
+
+    def _record(self, publication_id: InlinePublicationID) -> _InlineNodeRecord:
+        if not isinstance(publication_id, InlinePublicationID):
+            raise TypeError("publication_id must be an InlinePublicationID")
+        try:
+            return self._records[publication_id]
+        except KeyError as exc:
+            raise InlinePublicationStateError(
+                "INLINE publication has no Node intent"
+            ) from exc
+
+    @staticmethod
+    def _validate_binding(
+        binding: InlineExecutionBinding, envelope: InlinePublicationEnvelope
+    ) -> None:
+        if not isinstance(binding, InlineExecutionBinding):
+            raise TypeError("binding must be an InlineExecutionBinding")
+        binding.require_envelope(envelope)
+
+    @classmethod
+    def _require_record(
+        cls, record: _InlineNodeRecord, binding: InlineExecutionBinding,
+        envelope: InlinePublicationEnvelope,
+    ) -> None:
+        cls._validate_binding(binding, envelope)
+        if record.binding != binding or record.envelope != envelope:
+            raise InlinePublicationNodeConflictError(
+                "INLINE publication identity names another Node intent"
+            )
+
+    @staticmethod
+    def _require_binding_only(
+        record: _InlineNodeRecord, binding: InlineExecutionBinding
+    ) -> None:
+        if not isinstance(binding, InlineExecutionBinding):
+            raise TypeError("binding must be an InlineExecutionBinding")
+        if record.binding != binding:
+            raise InlinePublicationNodeConflictError(
+                "INLINE effect belongs to another lease execution"
+            )
+
+    @classmethod
+    def _require_loss(
+        cls, record: _InlineNodeRecord, loss: InlineWorkerLoss
+    ) -> None:
+        if not isinstance(loss, InlineWorkerLoss):
+            raise TypeError("loss must be an InlineWorkerLoss")
+        cls._require_binding_only(record, loss.binding)
+        if (
+            record.envelope.publication_id != loss.publication_id
+            or record.worker_loss != loss
+        ):
+            raise InlinePublicationStateError(
+                "operation requires the exact journaled Worker-loss fact"
+            )
+
+    @classmethod
+    def _require_explicit_abort(
+        cls, record: _InlineNodeRecord, abort: InlinePublicationAbort,
+    ) -> None:
+        if not isinstance(abort, InlinePublicationAbort):
+            raise TypeError("abort must be an InlinePublicationAbort")
+        cls._require_binding_only(record, abort.binding)
+        if (
+            record.envelope.publication_id != abort.publication_id
+            or record.explicit_abort != abort
+        ):
+            raise InlinePublicationStateError(
+                "operation requires the exact journaled explicit abort"
+            )
+
+    @staticmethod
+    def _require_effect(
+        record: _InlineNodeRecord, effect: InlineEdgeEffect
+    ) -> None:
+        if not isinstance(effect, InlineEdgeEffect):
+            raise TypeError("effect must be an InlineEdgeEffect")
+        edges = record.envelope.ordered_edges
+        transfers = record.envelope.manifest.transfers
+        if (
+            effect.publication_id != record.envelope.publication_id
+            or effect.index >= len(edges)
+            or edges[effect.index] != effect.edge
+            or transfers[effect.index] != effect.transfer
+        ):
+            raise InlinePublicationNodeConflictError(
+                "INLINE child effect changed its publication or manifest slot"
+            )
+
+    @staticmethod
+    def _require_forward_open(record: _InlineNodeRecord) -> None:
+        if record.owner_death_cleanup is not None:
+            raise InlinePublicationStateError(
+                "owner-death cleanup has terminalized INLINE publication"
+            )
+        if record.worker_loss is not None:
+            raise InlinePublicationStateError(
+                "Worker-loss recovery has frozen INLINE publication"
+            )
+        if record.complete_boundary is not None:
+            raise InlinePublicationStateError(
+                "INLINE publication already crossed Complete"
+            )
+        if record.rollback_started:
+            raise InlinePublicationStateError(
+                "INLINE publication is rolling back"
+            )
+
+    @staticmethod
+    def _require_abort_receipt(
+        envelope: InlinePublicationEnvelope,
+        receipt: ContainedGraphManifestReceipt,
+    ) -> None:
+        if not isinstance(receipt, ContainedGraphManifestReceipt):
+            raise TypeError(
+                "graph receipt must be a ContainedGraphManifestReceipt"
+            )
+        if (
+            receipt.manifest != envelope.to_graph_manifest()
+            or receipt.state is not ContainedGraphTransactionState.ABORTED
+            or receipt.disposition not in (
+                ContainedGraphManifestDisposition.APPLIED,
+                ContainedGraphManifestDisposition.ALREADY_ABORTED,
+            )
+            or receipt.released_edges
+        ):
+            raise InlinePublicationNodeConflictError(
+                "graph ABORT receipt does not match the INLINE envelope"
+            )
+
+    @staticmethod
+    def _abort_id(envelope: InlinePublicationEnvelope) -> str:
+        digest = hashlib.sha256()
+        digest.update(_ABORT_ID_DOMAIN)
+        digest.update(envelope.publication_id.graph_transaction_id.encode())
+        digest.update(bytes.fromhex(envelope.manifest.manifest_digest))
+        return "inline-worker-loss:" + digest.hexdigest()
+
+
+PrepareGraph = Callable[
+    [protocol.PrepareContainedGraph], protocol.ContainedGraphReply
+]
+CommitGraph = Callable[
+    [protocol.CommitContainedGraph], protocol.ContainedGraphReply
+]
+AbortGraph = Callable[
+    [protocol.AbortContainedGraph], protocol.ContainedGraphReply
+]
+InstallChild = Callable[[InlineChildEffectRequest], InlineChildEffectReply]
+ReleaseChild = Callable[[InlineChildEffectRequest], InlineChildEffectReply]
+
+
+class InlinePublicationNodeRuntime:
+    """Order a Node journal around injected GCS and child-owner effects."""
+
+    def __init__(
+        self, journal: InlinePublicationNodeJournal, *,
+        prepare_graph: PrepareGraph, commit_graph: CommitGraph,
+        abort_graph: AbortGraph, install_child: InstallChild,
+        release_child: ReleaseChild,
+    ) -> None:
+        if not isinstance(journal, InlinePublicationNodeJournal):
+            raise TypeError("journal must be an InlinePublicationNodeJournal")
+        callbacks = (
+            (prepare_graph, "prepare_graph"),
+            (commit_graph, "commit_graph"),
+            (abort_graph, "abort_graph"),
+            (install_child, "install_child"),
+            (release_child, "release_child"),
+        )
+        for callback, name in callbacks:
+            if not callable(callback):
+                raise TypeError("{} must be callable".format(name))
+        self.journal = journal
+        self._prepare_graph = prepare_graph
+        self._commit_graph = commit_graph
+        self._abort_graph = abort_graph
+        self._install_child = install_child
+        self._release_child = release_child
+
+    def prepare(
+        self, binding: InlineExecutionBinding,
+        envelope: InlinePublicationEnvelope,
+    ) -> InlineNodePublicationSnapshot:
+        """Prepare the exact graph, then install every final child hold."""
+
+        publication_id = envelope.publication_id
+        with self.journal.linearize(publication_id):
+            self.journal.open(binding, envelope)
+            snapshot = self.journal.snapshot(publication_id)
+            if snapshot.complete_crossed:
+                return snapshot
+            if snapshot.rollback_started or snapshot.worker_loss is not None:
+                raise InlinePublicationStateError(
+                    "Worker-loss recovery has frozen INLINE preparation"
+                )
+            self.journal.begin_graph_prepare(binding, envelope)
+            snapshot = self.journal.snapshot(publication_id)
+            if not snapshot.graph_prepared:
+                request = protocol.PrepareContainedGraph(
+                    envelope.to_graph_manifest()
+                )
+                receipt = self._require_graph_reply(
+                    request, self._prepare_graph(request), "graph PREPARE"
+                )
+                self.journal.mark_graph_prepared(
+                    binding, envelope, receipt
+                )
+            for index in range(len(envelope.ordered_edges)):
+                effect = envelope.edge_effect(index)
+                if self.journal.snapshot(publication_id).pin_bitmap[index]:
+                    continue
+                self.journal.begin_pin(binding, effect)
+                child_request = InlineChildEffectRequest(
+                    effect, envelope.manifest.outer_owner_worker_id
+                )
+                self._require_child_reply(
+                    child_request, self._install_child(child_request),
+                    "child pin install",
+                )
+                self.journal.mark_pin_installed(binding, effect)
+            return self.journal.snapshot(publication_id)
+
+    def complete(
+        self, binding: InlineExecutionBinding,
+        publication_id: InlinePublicationID,
+    ) -> InlinePublicationEnvelope:
+        """Persist Complete and recover its envelope from the Node intent."""
+
+        boundary = InlinePublicationCompleteBoundary(binding, publication_id)
+        with self.journal.linearize(publication_id):
+            self.journal.record_complete(boundary)
+            self._ensure_committed(boundary)
+            return self.journal.terminal_envelope(binding, publication_id)
+
+    def abort(
+        self, binding: InlineExecutionBinding,
+        publication_id: InlinePublicationID,
+    ) -> InlineNodePublicationSnapshot:
+        """Compensate a prepare failure without fabricating Worker death."""
+
+        with self.journal.linearize(publication_id):
+            snapshot = self.journal.snapshot(publication_id)
+            abort = InlinePublicationAbort(
+                binding, publication_id,
+                self._explicit_abort_id(snapshot.envelope),
+            )
+            self.journal.record_explicit_abort(abort)
+            if snapshot.rollback_finished:
+                return snapshot
+            self.journal.begin_explicit_rollback(abort)
+            while True:
+                effect = self.journal.next_explicit_compensation(abort)
+                if effect is None:
+                    break
+                request = InlineChildEffectRequest(
+                    effect, snapshot.envelope.manifest.outer_owner_worker_id
+                )
+                self._require_child_reply(
+                    request, self._release_child(request),
+                    "child pin explicit rollback",
+                )
+                self.journal.acknowledge_explicit_compensation(abort, effect)
+            snapshot = self.journal.snapshot(publication_id)
+            if snapshot.graph_prepare_intent and not snapshot.graph_aborted:
+                request = protocol.AbortContainedGraph(
+                    snapshot.envelope.to_graph_manifest()
+                )
+                receipt = self._require_graph_reply(
+                    request, self._abort_graph(request), "graph ABORT"
+                )
+                self.journal.mark_explicit_graph_aborted(abort, receipt)
+            self.journal.finish_explicit_rollback(abort)
+            return self.journal.snapshot(publication_id)
+
+    def recover_worker_loss(
+        self, binding: InlineExecutionBinding,
+        publication_id: InlinePublicationID,
+    ) -> InlineWorkerLossOutcome:
+        """Resolve Worker loss solely from Node-journaled identity/state."""
+
+        loss = InlineWorkerLoss(binding, publication_id)
+        with self.journal.linearize(publication_id):
+            self.journal.record_worker_loss(loss)
+            snapshot = self.journal.snapshot(publication_id)
+            if snapshot.complete_crossed:
+                boundary = snapshot.complete_boundary
+                assert boundary is not None
+                self._ensure_committed(boundary)
+                changed = self.journal.expose_adoption(loss)
+                envelope = self.journal.terminal_envelope(
+                    binding, publication_id
+                )
+                return InlineWorkerLossOutcome(
+                    loss, InlineWorkerLossAction.ADOPT, envelope, changed
+                )
+
+            if snapshot.rollback_finished:
+                return InlineWorkerLossOutcome(
+                    loss, InlineWorkerLossAction.ROLLBACK, None, False
+                )
+            self.journal.begin_rollback(loss)
+            while True:
+                effect = self.journal.next_compensation(loss)
+                if effect is None:
+                    break
+                child_request = InlineChildEffectRequest(
+                    effect, snapshot.envelope.manifest.outer_owner_worker_id
+                )
+                self._require_child_reply(
+                    child_request, self._release_child(child_request),
+                    "child pin rollback",
+                )
+                self.journal.acknowledge_compensation(loss, effect)
+            snapshot = self.journal.snapshot(publication_id)
+            if snapshot.graph_prepare_intent and not snapshot.graph_aborted:
+                request = protocol.AbortContainedGraph(
+                    snapshot.envelope.to_graph_manifest()
+                )
+                receipt = self._require_graph_reply(
+                    request, self._abort_graph(request), "graph ABORT"
+                )
+                self.journal.mark_graph_aborted(loss, receipt)
+            changed = self.journal.finish_rollback(loss)
+            return InlineWorkerLossOutcome(
+                loss, InlineWorkerLossAction.ROLLBACK, None, changed
+            )
+
+    def _ensure_committed(
+        self, boundary: InlinePublicationCompleteBoundary
+    ) -> None:
+        snapshot = self.journal.snapshot(boundary.publication_id)
+        if (
+            snapshot.reducer_snapshot is not None
+            and snapshot.reducer_snapshot.state
+            is InlinePublicationState.COMMITTED
+        ):
+            return
+        self.journal.begin_commit(boundary)
+        envelope = self.journal.snapshot(boundary.publication_id).envelope
+        request = protocol.CommitContainedGraph(
+            envelope.to_graph_manifest()
+        )
+        receipt = self._require_graph_reply(
+            request, self._commit_graph(request), "graph COMMIT"
+        )
+        self.journal.mark_committed(boundary, receipt)
+
+    @staticmethod
+    def _explicit_abort_id(envelope: InlinePublicationEnvelope) -> str:
+        digest = hashlib.sha256()
+        digest.update(_EXPLICIT_ABORT_ID_DOMAIN)
+        digest.update(envelope.publication_id.graph_transaction_id.encode())
+        digest.update(bytes.fromhex(envelope.manifest.manifest_digest))
+        return "inline-explicit-abort:" + digest.hexdigest()
+
+    @staticmethod
+    def _require_graph_reply(
+        request: protocol.ContainedGraphRequest, reply: object, operation: str
+    ) -> ContainedGraphManifestReceipt:
+        if not isinstance(reply, protocol.ContainedGraphReply):
+            raise TypeError(
+                "{} must return ContainedGraphReply".format(operation)
+            )
+        if reply.request != request:
+            raise InlinePublicationNodeConflictError(
+                "{} reply changed its exact request".format(operation)
+            )
+        if reply.receipt is None:
+            raise InlinePublicationRemoteError(
+                operation, reply.error or "unspecified remote rejection"
+            )
+        return reply.receipt
+
+    @staticmethod
+    def _require_child_reply(
+        request: InlineChildEffectRequest, reply: object, operation: str
+    ) -> InlineChildEffectReply:
+        if not isinstance(reply, InlineChildEffectReply):
+            raise TypeError(
+                "{} must return InlineChildEffectReply".format(operation)
+            )
+        if reply.request != request:
+            raise InlinePublicationNodeConflictError(
+                "{} reply changed its exact child request".format(operation)
+            )
+        if not reply.accepted:
+            raise InlinePublicationRemoteError(
+                operation, reply.error or "unspecified remote rejection"
+            )
+        return reply
+
+
+__all__ = [
+    "InlineChildEffectRequest",
+    "InlineChildEffectReply",
+    "InlineExecutionBinding",
+    "InlineNodePublicationPhase",
+    "InlineNodePublicationSnapshot",
+    "InlinePublicationCompleteBoundary",
+    "InlinePublicationAbort",
+    "InlinePublicationNodeConflictError",
+    "InlinePublicationNodeError",
+    "InlinePublicationNodeJournal",
+    "InlinePublicationNodeRuntime",
+    "InlinePublicationRemoteError",
+    "InlineWorkerLoss",
+    "InlineWorkerLossAction",
+    "InlineWorkerLossOutcome",
+]

@@ -1,0 +1,970 @@
+"""GCS composition tests for publishing-Node stored takeover."""
+
+from __future__ import annotations
+
+import hashlib
+from threading import Event, Thread
+
+import pytest
+
+from miniray import control, protocol
+from miniray.contained_cycle import (
+    ContainedGraphTransactionState, ContainedReferenceGraphAuthority,
+)
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.control import StoredPublicationControlAdapter
+from miniray.ids import (
+    AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
+)
+from miniray.resources import ResourceVector
+from miniray.stored_node_loss import (
+    ReleaseStoredGraphEffect, ReleaseStoredHoldEffect,
+    RetireStoredOwnerEffect, StoredHoldResolutionDisposition,
+    StoredHoldResolutionReceipt, StoredNodeLossGraphState,
+    StoredNodeLossConflictError, StoredNodeLossPhase,
+    StoredNodeLossRecoveryCoordinator,
+    StoredNodeLossStateError, StoredOwnerRetirementDisposition,
+    StoredOwnerRetirementReceipt,
+)
+from miniray.stored_publication import (
+    OwnedContainedSource, PreparedContainedTransfer,
+    StoredPublicationHeader, StoredPublicationID, StoredPublicationIntent,
+    StoredPublicationLeaseTerminal, StoredPublicationManifest,
+)
+from miniray.stored_node_loss_runtime import StoredNodeLossRuntime
+
+
+pytestmark = pytest.mark.unit
+
+
+class _Fixture:
+    def __init__(
+        self, *, node: NodeID | None = None, node_pid: int = 43101,
+        registration_epoch: int = 7, completed: bool = False,
+        executor_owned_child: bool = False,
+    ) -> None:
+        self.job = JobID.random()
+        self.task = TaskID.derive(
+            self.job, TaskID.for_driver(self.job), 1
+        )
+        self.attempt = AttemptID(self.task, 0)
+        self.outer = ObjectID.for_task(self.task)
+        self.executor = WorkerID.random()
+        self.owner = WorkerID.random()
+        self.child_owner = (
+            self.executor if executor_owned_child else WorkerID.random()
+        )
+        self.node = node or NodeID.random()
+        self.node_pid = node_pid
+        self.registration_epoch = registration_epoch
+        self.publication = StoredPublicationID(
+            LeaseID.random(), self.task, self.attempt, self.outer
+        )
+        self.header = StoredPublicationHeader(
+            self.publication, self.job, self.executor, self.owner, self.node
+        )
+        child_task = TaskID.derive(
+            self.job, TaskID.for_driver(self.job), 2
+        )
+        transfer = PreparedContainedTransfer(
+            ObjectID.for_task(child_task), self.child_owner,
+            ("127.0.0.1", 29101), OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.outer, self.executor, "pin:1"),
+            ContainedReferenceHold(self.outer, self.owner, "pin:1"),
+        )
+        payload = b"stored takeover bytes"
+        checksum = hashlib.sha256(payload).hexdigest()
+        self.manifest = StoredPublicationManifest(
+            self.publication, (transfer,), len(payload), checksum,
+            hashlib.sha256(b"stored takeover manifest").hexdigest(),
+        )
+        self.graph = self.manifest.graph_manifest(self.owner)
+        self.intent = StoredPublicationIntent(
+            self.header, self.manifest, node_pid, registration_epoch
+        )
+        self.descriptor = protocol.ResultDescriptor(
+            self.outer, protocol.ResultStorage.OBJECT_STORE, len(payload),
+            self.owner, self.node, checksum,
+        )
+        self.terminal = StoredPublicationLeaseTerminal(
+            self.publication, protocol.TaskReplyStatus.SUCCEEDED
+        )
+        self.completed = completed
+
+    @property
+    def death(self) -> protocol.NodeDeathRecord:
+        return protocol.NodeDeathRecord(
+            "stored-node-loss", self.node, self.node_pid,
+            self.registration_epoch, 11, -9,
+            protocol.NodeDeathReason.PROCESS_EXIT, "publishing Node exited",
+        )
+
+    def report(self, adapter: StoredPublicationControlAdapter) -> None:
+        assert adapter.report_recovery(
+            protocol.ReportStoredPublicationIntent(self.intent)
+        ).accepted
+        if self.completed:
+            assert adapter.report_recovery(
+                protocol.ReportStoredPublicationReplicaSealed(
+                    self.publication, self.descriptor
+                )
+            ).accepted
+            assert adapter.report_recovery(
+                protocol.ReportStoredPublicationPromotions(
+                    self.publication, (True,)
+                )
+            ).accepted
+            assert adapter.report_recovery(
+                protocol.ReportStoredPublicationLeaseTerminal(
+                    self.publication, self.terminal
+                )
+            ).accepted
+
+
+class _Server:
+    def __init__(self, handlers, **_configuration) -> None:
+        self.handlers = dict(handlers)
+        self.address = ("127.0.0.1", 29999)
+        self.is_running = False
+
+    def start(self):
+        self.is_running = True
+        return self.address
+
+    def stop(self):
+        self.is_running = False
+
+
+def _registered_fixture(service: control.GCSLite) -> tuple[
+    protocol.RegisterNodeReply, _Fixture
+]:
+    node = NodeID.random()
+    registration = service.register_node(protocol.RegisterNode(
+        node, 43101, ("127.0.0.1", 29120),
+        ResourceVector({"CPU": 1}),
+    ))
+    return registration, _Fixture(
+        node=node, node_pid=registration.node_pid,
+        registration_epoch=registration.registration_epoch,
+    )
+
+
+def _death_request(
+    registration: protocol.RegisterNodeReply,
+) -> protocol.ReportNodeDeath:
+    return protocol.ReportNodeDeath(
+        "stored-node-loss", registration.node_id, registration.node_pid,
+        registration.registration_epoch, -9,
+        protocol.NodeDeathReason.PROCESS_EXIT, "publishing Node exited",
+    )
+
+
+def _register_worker(
+    service: control.GCSLite, registration: protocol.RegisterNodeReply,
+    worker_id: WorkerID, *, worker_pid: int = 53101,
+) -> protocol.WorkerIncarnation:
+    incarnation = protocol.WorkerIncarnation(
+        registration.node_id, registration.node_pid,
+        registration.registration_epoch, worker_id, worker_pid,
+    )
+    assert service.register_worker_incarnation(
+        protocol.RegisterWorkerIncarnation(incarnation)
+    ).accepted
+    return incarnation
+
+
+def test_report_node_death_applied_and_already_dead_begin_same_exact_saga(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    service = control.GCSLite()
+    registration, fixture = _registered_fixture(service)
+    fixture.report(service.stored_publications)
+    request = _death_request(registration)
+
+    applied = service.report_node_death(request)
+    first = service.stored_publications.node_loss.snapshots_for_death(
+        applied.death
+    )
+    replay = service.report_node_death(request)
+    second = service.stored_publications.node_loss.snapshots_for_death(
+        replay.death
+    )
+
+    assert applied.disposition is protocol.NodeDeathDisposition.APPLIED
+    assert replay.disposition is protocol.NodeDeathDisposition.ALREADY_DEAD
+    assert replay.death == applied.death
+    assert first == second
+    assert tuple(item.request.recovery.intent for item in first) == (
+        fixture.intent,
+    )
+    assert first[0].request.graph.state is StoredNodeLossGraphState.NOT_FOUND
+    assert service.stored_publications.node_loss.exact_death_contains(
+        applied.death, fixture.publication
+    )
+    absent = _Fixture(
+        node=fixture.node, node_pid=fixture.node_pid,
+        registration_epoch=fixture.registration_epoch,
+    )
+    assert not service.stored_publications.node_loss.exact_death_contains(
+        applied.death, absent.publication
+    )
+
+
+class _SnapshotPauseGraph(ContainedReferenceGraphAuthority):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = Event()
+        self.resume = Event()
+
+    def snapshot(self):
+        self.entered.set()
+        assert self.resume.wait(1)
+        return super().snapshot()
+
+
+class _CommitPauseGraph(ContainedReferenceGraphAuthority):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = Event()
+        self.resume = Event()
+
+    def commit_manifest(self, manifest):
+        self.entered.set()
+        assert self.resume.wait(1)
+        return super().commit_manifest(manifest)
+
+
+class _FailSecondBeginOnce(StoredNodeLossRecoveryCoordinator):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+        self.failed = False
+
+    def begin(self, request):
+        self.calls += 1
+        if self.calls == 2 and not self.failed:
+            self.failed = True
+            raise RuntimeError("injected second saga admission failure")
+        return super().begin(request)
+
+
+def test_death_witness_wins_race_and_fences_late_graph_commit() -> None:
+    graph = _SnapshotPauseGraph()
+    adapter = StoredPublicationControlAdapter(graph=graph)
+    fixture = _Fixture(completed=True)
+    fixture.report(adapter)
+    assert adapter.mutate_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    death_result: list[object] = []
+    commit_result: list[object] = []
+    death_thread = Thread(
+        target=lambda: death_result.extend(
+            adapter.begin_node_death(fixture.death)
+        )
+    )
+    death_thread.start()
+    assert graph.entered.wait(1)
+    commit_thread = Thread(
+        target=lambda: commit_result.append(adapter.mutate_graph(
+            protocol.CommitStoredPublicationGraph(fixture.graph)
+        ))
+    )
+    commit_thread.start()
+    graph.resume.set()
+    death_thread.join(1)
+    commit_thread.join(1)
+
+    assert not death_thread.is_alive() and not commit_thread.is_alive()
+    assert death_result[0].request.graph.state is (
+        StoredNodeLossGraphState.PREPARED
+    )
+    assert not commit_result[0].accepted
+    assert commit_result[0].error_kind is (
+        protocol.StoredPublicationRPCErrorKind.INVALID_STATE
+    )
+
+
+def test_graph_commit_wins_race_and_death_freezes_committed_witness() -> None:
+    graph = _CommitPauseGraph()
+    adapter = StoredPublicationControlAdapter(graph=graph)
+    fixture = _Fixture(completed=True)
+    fixture.report(adapter)
+    assert adapter.mutate_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    commit_result: list[object] = []
+    death_result: list[object] = []
+    commit_thread = Thread(
+        target=lambda: commit_result.append(adapter.mutate_graph(
+            protocol.CommitStoredPublicationGraph(fixture.graph)
+        ))
+    )
+    commit_thread.start()
+    assert graph.entered.wait(1)
+    death_thread = Thread(
+        target=lambda: death_result.extend(
+            adapter.begin_node_death(fixture.death)
+        )
+    )
+    death_thread.start()
+    graph.resume.set()
+    commit_thread.join(1)
+    death_thread.join(1)
+
+    assert not commit_thread.is_alive() and not death_thread.is_alive()
+    assert commit_result[0].accepted
+    assert death_result[0].request.graph.state is (
+        StoredNodeLossGraphState.COMMITTED
+    )
+    assert death_result[0].request.graph.active_edges == (
+        fixture.graph.ordered_edges
+    )
+
+
+def test_frozen_external_graph_mutations_reject_but_internal_abort_progresses() -> None:
+    adapter = StoredPublicationControlAdapter()
+    fixture = _Fixture()
+    fixture.report(adapter)
+    assert adapter.mutate_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    started = adapter.begin_node_death(fixture.death)[0]
+    assert started.phase is StoredNodeLossPhase.GRAPH_ABORT
+
+    for request in (
+        protocol.PrepareStoredPublicationGraph(fixture.graph),
+        protocol.CommitStoredPublicationGraph(fixture.graph),
+        protocol.AbortStoredPublicationGraph(fixture.graph),
+    ):
+        rejected = adapter.mutate_graph(request)
+        assert not rejected.accepted
+        assert rejected.error_kind is (
+            protocol.StoredPublicationRPCErrorKind.INVALID_STATE
+        )
+
+    progressed = adapter.node_loss.drive_non_owner(fixture.publication)
+    assert progressed.phase is StoredNodeLossPhase.HOLDS
+    graph_snapshot = adapter.graph.snapshot().manifests[0]
+    assert graph_snapshot.state is ContainedGraphTransactionState.ABORTED
+
+
+def test_frozen_external_release_rejects_but_internal_release_progresses() -> None:
+    adapter = StoredPublicationControlAdapter()
+    fixture = _Fixture(completed=True)
+    fixture.report(adapter)
+    assert adapter.mutate_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    assert adapter.mutate_graph(
+        protocol.CommitStoredPublicationGraph(fixture.graph)
+    ).accepted
+    adapter.begin_node_death(fixture.death)
+
+    owner = adapter.node_loss.next_effect(fixture.publication)
+    assert isinstance(owner, RetireStoredOwnerEffect)
+    adapter.node_loss.acknowledge(
+        owner, StoredOwnerRetirementReceipt(
+            owner, StoredOwnerRetirementDisposition.FENCED
+        ),
+    )
+    hold = adapter.node_loss.next_effect(fixture.publication)
+    assert isinstance(hold, ReleaseStoredHoldEffect)
+    adapter.node_loss.acknowledge(
+        hold, StoredHoldResolutionReceipt(
+            hold, StoredHoldResolutionDisposition.RELEASED
+        ),
+    )
+    assert isinstance(
+        adapter.node_loss.next_effect(fixture.publication),
+        ReleaseStoredGraphEffect,
+    )
+
+    external = adapter.mutate_graph(
+        protocol.ReleaseStoredPublicationGraphContainer(
+            fixture.graph, fixture.outer
+        )
+    )
+    assert not external.accepted
+    progressed = adapter.node_loss.drive_non_owner(fixture.publication)
+    assert progressed.phase is StoredNodeLossPhase.REPLICA_PROOF
+    graph_snapshot = adapter.graph.snapshot().manifests[0]
+    assert graph_snapshot.active_edges == ()
+    assert graph_snapshot.released_container_ids == (fixture.outer,)
+
+
+def test_owner_pull_returns_only_exact_owner_effect_and_validates_authority() -> None:
+    adapter = StoredPublicationControlAdapter()
+    fixture = _Fixture(completed=True)
+    fixture.report(adapter)
+    assert adapter.mutate_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    adapter.begin_node_death(fixture.death)
+    runtime = adapter.node_loss
+
+    snapshot, effect = runtime.pull_owner_effect(
+        fixture.publication, fixture.owner, fixture.death
+    )
+    assert snapshot.phase is StoredNodeLossPhase.OWNER_RETIREMENT
+    assert isinstance(effect, RetireStoredOwnerEffect)
+    with pytest.raises(StoredNodeLossStateError, match="another outer owner"):
+        runtime.pull_owner_effect(
+            fixture.publication, WorkerID.random(), fixture.death
+        )
+    with pytest.raises(StoredNodeLossConflictError, match="death proof"):
+        runtime.pull_owner_effect(
+            fixture.publication, fixture.owner,
+            protocol.NodeDeathRecord(
+                "other-proof", fixture.node, fixture.node_pid,
+                fixture.registration_epoch, 12, -9,
+                protocol.NodeDeathReason.PROCESS_EXIT,
+                "same incarnation, different proof",
+            ),
+        )
+
+    progressed = runtime.acknowledge_owner_effect(
+        fixture.owner, fixture.death, StoredOwnerRetirementReceipt(
+            effect, StoredOwnerRetirementDisposition.FENCED
+        ),
+    )
+    assert progressed.phase is StoredNodeLossPhase.GRAPH_ABORT
+    # The owner endpoint never exposes that non-owner graph obligation.
+    same, hidden = runtime.pull_owner_effect(
+        fixture.publication, fixture.owner, fixture.death
+    )
+    assert same == progressed and hidden is None
+
+
+def test_owner_progress_is_bounded_and_never_consumes_owner_effect() -> None:
+    adapter = StoredPublicationControlAdapter()
+    fixture = _Fixture(completed=True)
+    fixture.report(adapter)
+    assert adapter.mutate_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    adapter.begin_node_death(fixture.death)
+    runtime = adapter.node_loss
+
+    blocked = runtime.progress_for_owner(
+        fixture.publication, fixture.owner, fixture.death
+    )
+    assert blocked.phase is StoredNodeLossPhase.OWNER_RETIREMENT
+    owner = blocked.next_effect
+    assert isinstance(owner, RetireStoredOwnerEffect)
+    runtime.acknowledge_owner_effect(
+        fixture.owner, fixture.death, StoredOwnerRetirementReceipt(
+            owner, StoredOwnerRetirementDisposition.FENCED
+        ),
+    )
+
+    one = runtime.progress_for_owner(
+        fixture.publication, fixture.owner, fixture.death
+    )
+    assert one.phase is StoredNodeLossPhase.HOLDS
+    # Exactly one call performed exactly one graph abort; it did not continue
+    # through the child hold even though another obligation is immediately ready.
+    assert len(one.acknowledged_effects) == 2
+
+
+def test_active_takeover_saga_blocks_shutdown_until_terminal(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    service = control.GCSLite()
+    registration, fixture = _registered_fixture(service)
+    fixture.report(service.stored_publications)
+    applied = service.report_node_death(_death_request(registration))
+    assert applied.death is not None
+    shutdown = protocol.Shutdown("stored-node-loss-shutdown", "unit")
+
+    pending = service.shutdown(shutdown)
+    assert not pending.clean
+    assert not service._stop_event.is_set()
+
+    runtime = service.stored_publications.node_loss
+    # NOT_FOUND first writes an ABORT tombstone, then the exact child hold is
+    # externally acknowledged; the local replica proof closes the saga.
+    assert runtime.drive_non_owner(fixture.publication).phase is (
+        StoredNodeLossPhase.HOLDS
+    )
+    while True:
+        hold = runtime.next_effect(fixture.publication)
+        if not isinstance(hold, ReleaseStoredHoldEffect):
+            break
+        runtime.acknowledge(
+            hold, StoredHoldResolutionReceipt(
+                hold, StoredHoldResolutionDisposition.RELEASED
+            ),
+        )
+    terminal = runtime.drive_non_owner(fixture.publication)
+    assert terminal.phase is StoredNodeLossPhase.RESOLVED
+
+    clean = service.shutdown(shutdown)
+    assert clean.clean
+    assert service._stop_event.is_set()
+
+
+def test_typed_owner_pull_ack_and_bounded_progress_handlers(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    service = control.GCSLite()
+    registration, fixture = _registered_fixture(service)
+    fixture.completed = True
+    fixture.report(service.stored_publications)
+    assert service.prepare_stored_publication_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    death = service.report_node_death(_death_request(registration)).death
+    assert death is not None
+    pull = protocol.GetStoredNodeLoss(
+        fixture.publication, fixture.owner, death
+    )
+
+    owner = service.get_stored_node_loss(pull)
+    assert owner.disposition is protocol.StoredNodeLossDisposition.OWNER_EFFECT
+    assert isinstance(owner.owner_effect, RetireStoredOwnerEffect)
+    ack_request = protocol.AcknowledgeStoredOwnerRetirement(
+        fixture.publication, fixture.owner, death, owner.owner_effect,
+        StoredOwnerRetirementReceipt(
+            owner.owner_effect, StoredOwnerRetirementDisposition.FENCED
+        ),
+    )
+    ack = service.acknowledge_stored_owner_retirement(ack_request)
+    assert ack.accepted
+    waiting = service.get_stored_node_loss(pull)
+    assert waiting.disposition is (
+        protocol.StoredNodeLossDisposition.NON_OWNER_PROGRESS
+    )
+    before = len(waiting.snapshot.acknowledged_effects)
+    progressed = service.progress_stored_node_loss(
+        protocol.ProgressStoredNodeLoss(
+            fixture.publication, fixture.owner, death
+        )
+    )
+    assert progressed.progressed
+    assert len(progressed.snapshot.acknowledged_effects) == before + 1
+
+
+def test_default_gcs_resolver_releases_exact_hold_and_reaches_resolution(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    releases = []
+
+    def hold_rpc(address, handler, request):
+        releases.append((address, handler, request))
+        assert handler == "release_contained_reference"
+        return protocol.ReleaseContainedReferenceReply(
+            request.object_id, request.owner_worker_id, request.hold,
+            True, True,
+        )
+
+    # Patch the transport function before construction, but do not inject the
+    # adapter/resolver seam.  This exercises GCSLite's real default wiring from
+    # Progress -> runtime -> child-owner ReleaseContainedReference.
+    monkeypatch.setattr(control, "rpc_request", hold_rpc)
+    service = control.GCSLite()
+    registration, fixture = _registered_fixture(service)
+    fixture.completed = True
+    fixture.report(service.stored_publications)
+    assert service.prepare_stored_publication_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    death = service.report_node_death(_death_request(registration)).death
+    assert death is not None
+    pull = protocol.GetStoredNodeLoss(
+        fixture.publication, fixture.owner, death
+    )
+    owner = service.get_stored_node_loss(pull)
+    assert owner.disposition is protocol.StoredNodeLossDisposition.OWNER_EFFECT
+    assert isinstance(owner.owner_effect, RetireStoredOwnerEffect)
+    acknowledgement = service.acknowledge_stored_owner_retirement(
+        protocol.AcknowledgeStoredOwnerRetirement(
+            fixture.publication, fixture.owner, death, owner.owner_effect,
+            StoredOwnerRetirementReceipt(
+                owner.owner_effect,
+                StoredOwnerRetirementDisposition.PENDING_MARKED_LOST,
+            ),
+        )
+    )
+    assert acknowledgement.accepted
+
+    progress_request = protocol.ProgressStoredNodeLoss(
+        fixture.publication, fixture.owner, death
+    )
+    replies = []
+    while True:
+        current = service.get_stored_node_loss(pull)
+        if current.disposition is protocol.StoredNodeLossDisposition.RESOLVED:
+            break
+        reply = service.progress_stored_node_loss(progress_request)
+        assert reply.snapshot is not None
+        assert reply.progressed
+        replies.append(reply)
+
+    assert len(releases) == 1
+    address, handler, release = releases[0]
+    transfer = fixture.manifest.transfers[0]
+    assert address == transfer.contained_owner_address
+    assert handler == "release_contained_reference"
+    assert release == protocol.ReleaseContainedReference(
+        transfer.contained_object_id, transfer.contained_owner_worker_id,
+        transfer.final_hold,
+    )
+    assert any(
+        isinstance(effect, ReleaseStoredHoldEffect)
+        for reply in replies
+        for effect in reply.snapshot.acknowledged_effects
+    )
+    terminal = service.get_stored_node_loss(pull)
+    assert terminal.disposition is protocol.StoredNodeLossDisposition.RESOLVED
+    assert terminal.resolution is not None
+
+
+@pytest.mark.parametrize("failure", ("transport", "malformed", "rejected"))
+def test_default_gcs_resolver_keeps_hold_pending_on_untrusted_reply(
+    monkeypatch, failure: str,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+
+    def hold_rpc(_address, _handler, request):
+        if failure == "transport":
+            raise ConnectionError("hold reply was lost")
+        if failure == "malformed":
+            return object()
+        return protocol.ReleaseContainedReferenceReply(
+            request.object_id, request.owner_worker_id, request.hold,
+            False, False, "owner refused",
+        )
+
+    service = control.GCSLite(stored_hold_rpc=hold_rpc)
+    registration, fixture = _registered_fixture(service)
+    fixture.completed = True
+    fixture.report(service.stored_publications)
+    assert service.prepare_stored_publication_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    assert service.commit_stored_publication_graph(
+        protocol.CommitStoredPublicationGraph(fixture.graph)
+    ).accepted
+    death = service.report_node_death(_death_request(registration)).death
+    assert death is not None
+    pull = protocol.GetStoredNodeLoss(
+        fixture.publication, fixture.owner, death
+    )
+    owner = service.get_stored_node_loss(pull)
+    assert isinstance(owner.owner_effect, RetireStoredOwnerEffect)
+    assert service.acknowledge_stored_owner_retirement(
+        protocol.AcknowledgeStoredOwnerRetirement(
+            fixture.publication, fixture.owner, death, owner.owner_effect,
+            StoredOwnerRetirementReceipt(
+                owner.owner_effect,
+                StoredOwnerRetirementDisposition.PENDING_MARKED_LOST,
+            ),
+        )
+    ).accepted
+    before = service.stored_publications.node_loss.snapshot(
+        fixture.publication
+    )
+    assert isinstance(before.next_effect, ReleaseStoredHoldEffect)
+
+    failed = service.progress_stored_node_loss(
+        protocol.ProgressStoredNodeLoss(
+            fixture.publication, fixture.owner, death
+        )
+    )
+
+    assert failed.snapshot is None
+    assert failed.progressed is None
+    after = service.stored_publications.node_loss.snapshot(
+        fixture.publication
+    )
+    assert after == before
+
+
+def test_dead_executor_owned_child_uses_exact_worker_death_proof(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    attempts = []
+
+    def unreachable(address, handler, request):
+        attempts.append((address, handler, request))
+        raise ConnectionError("dead child owner is unreachable")
+
+    service = control.GCSLite(stored_hold_rpc=unreachable)
+    registration, base = _registered_fixture(service)
+    fixture = _Fixture(
+        node=base.node, node_pid=registration.node_pid,
+        registration_epoch=registration.registration_epoch,
+        completed=True, executor_owned_child=True,
+    )
+    _register_worker(service, registration, fixture.executor)
+    fixture.report(service.stored_publications)
+    assert service.prepare_stored_publication_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    death = service.report_node_death(_death_request(registration)).death
+    assert death is not None
+    worker = service.get_worker_state(
+        protocol.GetWorkerState(fixture.executor)
+    )
+    assert worker.found
+    assert worker.state is protocol.WorkerMembershipState.DEAD
+    assert worker.death is not None
+    assert worker.death.reason is protocol.WorkerDeathReason.NODE_EXIT
+
+    pull = protocol.GetStoredNodeLoss(
+        fixture.publication, fixture.owner, death
+    )
+    owner = service.get_stored_node_loss(pull)
+    assert isinstance(owner.owner_effect, RetireStoredOwnerEffect)
+    assert service.acknowledge_stored_owner_retirement(
+        protocol.AcknowledgeStoredOwnerRetirement(
+            fixture.publication, fixture.owner, death, owner.owner_effect,
+            StoredOwnerRetirementReceipt(
+                owner.owner_effect,
+                StoredOwnerRetirementDisposition.PENDING_MARKED_LOST,
+            ),
+        )
+    ).accepted
+
+    progress = protocol.ProgressStoredNodeLoss(
+        fixture.publication, fixture.owner, death
+    )
+    hold_receipt = None
+    for _ in range(8):
+        reply = service.progress_stored_node_loss(progress)
+        assert reply.snapshot is not None
+        for effect, receipt in (
+            reply.snapshot.resolution.effect_receipts
+            if reply.snapshot.resolution is not None else ()
+        ):
+            if isinstance(effect, ReleaseStoredHoldEffect):
+                hold_receipt = receipt
+        if reply.snapshot.resolution is not None:
+            break
+    else:
+        pytest.fail("executor-owned child takeover did not resolve")
+
+    assert len(attempts) == 1
+    assert isinstance(hold_receipt, StoredHoldResolutionReceipt)
+    assert hold_receipt.disposition is (
+        StoredHoldResolutionDisposition.OWNER_DEAD
+    )
+    assert hold_receipt.owner_death == worker.death
+
+
+@pytest.mark.parametrize(
+    "proof", ("missing", "wrong", "alive", "expected")
+)
+def test_untrusted_hold_reply_without_nonexpected_death_proof_stays_pending(
+    monkeypatch, proof: str,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    service = control.GCSLite(
+        stored_hold_rpc=lambda *_args: (_ for _ in ()).throw(
+            ConnectionError("hold unresolved")
+        )
+    )
+    registration, fixture = _registered_fixture(service)
+    fixture.completed = True
+    if proof == "wrong":
+        wrong = _register_worker(
+            service, registration, WorkerID.random(), worker_pid=53102
+        )
+        wrong_death = service.workers.report_death(
+            protocol.ReportWorkerDeath(
+                "wrong-child", wrong, -9,
+                protocol.WorkerDeathReason.PROCESS_EXIT,
+            )
+        )
+        assert wrong_death.death is not None
+        assert wrong_death.death.worker_id != fixture.child_owner
+    elif proof == "alive":
+        survivor = service.register_node(protocol.RegisterNode(
+            NodeID.random(), 43102, ("127.0.0.1", 29121),
+            ResourceVector({"CPU": 1}),
+        ))
+        _register_worker(service, survivor, fixture.child_owner)
+    elif proof == "expected":
+        incarnation = _register_worker(
+            service, registration, fixture.child_owner
+        )
+        death_reply = service.workers.report_death(
+            protocol.ReportWorkerDeath(
+                "expected-child", incarnation, 0,
+                protocol.WorkerDeathReason.EXPECTED,
+            )
+        )
+        assert death_reply.disposition is (
+            protocol.WorkerDeathDisposition.APPLIED
+        )
+    fixture.report(service.stored_publications)
+    assert service.prepare_stored_publication_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    assert service.commit_stored_publication_graph(
+        protocol.CommitStoredPublicationGraph(fixture.graph)
+    ).accepted
+    death = service.report_node_death(_death_request(registration)).death
+    assert death is not None
+    pull = protocol.GetStoredNodeLoss(
+        fixture.publication, fixture.owner, death
+    )
+    owner = service.get_stored_node_loss(pull)
+    assert isinstance(owner.owner_effect, RetireStoredOwnerEffect)
+    assert service.acknowledge_stored_owner_retirement(
+        protocol.AcknowledgeStoredOwnerRetirement(
+            fixture.publication, fixture.owner, death, owner.owner_effect,
+            StoredOwnerRetirementReceipt(
+                owner.owner_effect,
+                StoredOwnerRetirementDisposition.PENDING_MARKED_LOST,
+            ),
+        )
+    ).accepted
+    before = service.stored_publications.node_loss.snapshot(
+        fixture.publication
+    )
+    assert isinstance(before.next_effect, ReleaseStoredHoldEffect)
+
+    reply = service.progress_stored_node_loss(
+        protocol.ProgressStoredNodeLoss(
+            fixture.publication, fixture.owner, death
+        )
+    )
+
+    assert reply.snapshot is None
+    assert service.stored_publications.node_loss.snapshot(
+        fixture.publication
+    ) == before
+
+
+def test_typed_pull_absent_pending_and_authority_rejection() -> None:
+    adapter = StoredPublicationControlAdapter()
+    fixture = _Fixture()
+    fixture.report(adapter)
+    candidate = _Fixture(
+        node=fixture.node, node_pid=fixture.node_pid,
+        registration_epoch=fixture.registration_epoch,
+    )
+    pending = adapter.get_node_loss(protocol.GetStoredNodeLoss(
+        candidate.publication, candidate.owner, fixture.death
+    ))
+    assert pending.disposition is protocol.StoredNodeLossDisposition.PENDING
+
+    adapter.begin_node_death(fixture.death)
+    absent = adapter.get_node_loss(protocol.GetStoredNodeLoss(
+        candidate.publication, candidate.owner, fixture.death
+    ))
+    assert absent.disposition is protocol.StoredNodeLossDisposition.ABSENT
+    rejected_owner = adapter.get_node_loss(protocol.GetStoredNodeLoss(
+        fixture.publication, WorkerID.random(), fixture.death
+    ))
+    assert rejected_owner.disposition is (
+        protocol.StoredNodeLossDisposition.REJECTED
+    )
+    assert rejected_owner.error_kind is (
+        protocol.StoredPublicationRPCErrorKind.INVALID_STATE
+    )
+
+
+def test_shutdown_fence_still_admits_applied_and_replayed_node_death(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(control, "TCPServer", _Server)
+    service = control.GCSLite()
+    registration, fixture = _registered_fixture(service)
+    fixture.report(service.stored_publications)
+    shutdown = protocol.Shutdown("close-before-node-death", "unit")
+    assert service.shutdown(shutdown).clean
+
+    request = _death_request(registration)
+    applied = service.report_node_death(request)
+    replay = service.report_node_death(request)
+    assert applied.disposition is protocol.NodeDeathDisposition.APPLIED
+    assert replay.disposition is protocol.NodeDeathDisposition.ALREADY_DEAD
+    assert len(service.stored_publications.node_loss.snapshots_for_death(
+        applied.death
+    )) == 1
+    assert service.stored_publications.has_active_operations()
+
+
+def test_external_release_replay_allowed_only_after_exact_saga_receipt() -> None:
+    adapter = StoredPublicationControlAdapter()
+    fixture = _Fixture(completed=True)
+    fixture.report(adapter)
+    assert adapter.mutate_graph(
+        protocol.PrepareStoredPublicationGraph(fixture.graph)
+    ).accepted
+    assert adapter.mutate_graph(
+        protocol.CommitStoredPublicationGraph(fixture.graph)
+    ).accepted
+    adapter.begin_node_death(fixture.death)
+    runtime = adapter.node_loss
+    owner = runtime.next_effect(fixture.publication)
+    assert isinstance(owner, RetireStoredOwnerEffect)
+    runtime.acknowledge_owner_effect(
+        fixture.owner, fixture.death, StoredOwnerRetirementReceipt(
+            owner, StoredOwnerRetirementDisposition.FENCED
+        ),
+    )
+    while isinstance(
+        effect := runtime.next_effect(fixture.publication),
+        ReleaseStoredHoldEffect,
+    ):
+        runtime.acknowledge(
+            effect, StoredHoldResolutionReceipt(
+                effect, StoredHoldResolutionDisposition.RELEASED
+            ),
+        )
+    release = protocol.ReleaseStoredPublicationGraphContainer(
+        fixture.graph, fixture.outer
+    )
+    assert not adapter.mutate_graph(release).accepted
+    after_internal = runtime.drive_non_owner(fixture.publication)
+    assert after_internal.phase is StoredNodeLossPhase.REPLICA_PROOF
+
+    external_replay = adapter.mutate_graph(release)
+    assert external_replay.accepted
+    assert external_replay.receipt.disposition is (
+        protocol.ContainedGraphManifestDisposition.ALREADY_RELEASED
+    )
+
+
+def test_partial_multi_publication_begin_replays_after_shutdown_fence() -> None:
+    adapter = StoredPublicationControlAdapter()
+    first = _Fixture()
+    second = _Fixture(
+        node=first.node, node_pid=first.node_pid,
+        registration_epoch=first.registration_epoch,
+    )
+    first.report(adapter)
+    second.report(adapter)
+    coordinator = _FailSecondBeginOnce()
+    adapter.node_loss = StoredNodeLossRuntime(
+        adapter.graph, adapter.recovery, coordinator=coordinator,
+        composition_lock=adapter._composition_lock,
+    )
+    adapter.close_admission()
+
+    with pytest.raises(RuntimeError, match="second saga admission"):
+        adapter.begin_node_death(first.death)
+    assert adapter.node_loss.has_active_operations()
+    assert adapter.node_loss.is_publication_frozen(first.publication)
+    assert adapter.node_loss.is_publication_frozen(second.publication)
+    with pytest.raises(StoredNodeLossStateError, match="incomplete"):
+        adapter.node_loss.exact_death_contains(
+            first.death, first.publication
+        )
+
+    replayed = adapter.begin_node_death(first.death)
+
+    assert tuple(
+        item.request.publication_id for item in replayed
+    ) == tuple(sorted((first.publication, second.publication)))
+    assert coordinator.calls == 4
+    assert adapter.node_loss.snapshots_for_death(first.death) == replayed

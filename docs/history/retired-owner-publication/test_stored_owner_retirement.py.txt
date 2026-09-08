@@ -1,0 +1,290 @@
+"""Pure owner-table CAS for post-Complete publishing-Node loss."""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import replace
+
+import pytest
+
+from miniray import protocol
+from miniray.contained_edges import ContainedReferenceEdge
+from miniray.contained_cycle import (
+    ContainedGraphManifestDisposition, ContainedGraphManifestReceipt,
+    ContainedGraphTransactionState,
+)
+from miniray.ids import (
+    AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
+)
+from miniray.ownership import (
+    ObjectOwnerTable, ObjectState, StoredOwnerPublicationConflictError,
+    StoredOwnerPublicationPlan, StoredOwnerRetirementConflictError,
+    StoredOwnerRetirementInProgressError,
+)
+from miniray.resources import ResourceVector
+from miniray.stored_node_loss import (
+    NodeIncarnationWitness, ProveStoredReplicaGoneEffect,
+    ReleaseStoredGraphEffect, ReleaseStoredHoldEffect, RetireStoredOwnerEffect,
+    StoredHoldResolutionDisposition, StoredHoldResolutionReceipt,
+    StoredNodeLossGraphState, StoredNodeLossGraphWitness,
+    StoredNodeLossRecoveryCoordinator, StoredNodeLossRequest,
+    StoredOwnerRetirementDisposition, StoredReplicaResolutionDisposition,
+    StoredReplicaResolutionReceipt,
+)
+from miniray.stored_publication import (
+    OwnedContainedSource, PreparedContainedTransfer, StoredPublicationAdoption,
+    StoredPublicationClaim, StoredPublicationEnvelope, StoredPublicationHeader,
+    StoredPublicationID, StoredPublicationIntent, StoredPublicationLeaseTerminal,
+    StoredPublicationManifest, StoredPublicationRecoveryRecord,
+)
+from miniray.task_outputs import TaskExecutionKey
+
+
+pytestmark = pytest.mark.unit
+
+
+class _Fixture:
+    def __init__(self) -> None:
+        self.job = JobID.random()
+        self.task = TaskID.derive(
+            self.job, TaskID.for_driver(self.job), 91
+        )
+        self.attempt = AttemptID(self.task, 0)
+        self.outer = ObjectID.for_task(self.task)
+        self.owner = WorkerID.random()
+        self.executor = WorkerID.random()
+        self.node = NodeID.random()
+        self.spec = protocol.TaskSpec(
+            self.job, self.task, self.attempt,
+            protocol.FunctionKey(self.job, __name__, "producer", "v1"),
+            (), 1, ResourceVector(), self.owner, max_retries=1,
+        )
+        self.execution = TaskExecutionKey.from_task_spec(self.spec)
+        self.publication = StoredPublicationID(
+            LeaseID.random(), self.task, self.attempt, self.outer
+        )
+        self.header = StoredPublicationHeader(
+            self.publication, self.job, self.executor, self.owner, self.node
+        )
+        child = ObjectID.for_task(TaskID.derive(
+            self.job, TaskID.for_driver(self.job), 92
+        ))
+        self.transfer = PreparedContainedTransfer(
+            child, self.executor, ("127.0.0.1", 31992),
+            OwnedContainedSource(self.executor),
+            protocol.ContainedReferenceHold(
+                self.outer, self.executor, "retire-child"
+            ),
+            protocol.ContainedReferenceHold(
+                self.outer, self.owner, "retire-child"
+            ),
+        )
+        payload = b"stored owner retirement"
+        checksum = hashlib.sha256(payload).hexdigest()
+        self.manifest = StoredPublicationManifest(
+            self.publication, (self.transfer,), len(payload), checksum,
+            hashlib.sha256(b"manifest").hexdigest(),
+        )
+        self.graph = self.manifest.graph_manifest(self.owner)
+        self.descriptor = protocol.ResultDescriptor(
+            self.outer, protocol.ResultStorage.OBJECT_STORE, len(payload),
+            self.owner, self.node, checksum,
+        )
+        self.envelope = StoredPublicationEnvelope(
+            self.publication, self.manifest.manifest_digest, self.descriptor,
+            self.graph, self.header,
+        )
+        claim = StoredPublicationClaim(
+            self.publication, "claim:retirement", self.owner,
+            self.manifest.manifest_digest,
+        )
+        self.plan = StoredOwnerPublicationPlan(
+            self.execution, self.envelope,
+            StoredPublicationAdoption(claim, "commit:retirement"),
+        )
+        self.intent = StoredPublicationIntent(self.header, self.manifest, 4321, 7)
+        self.recovery = StoredPublicationRecoveryRecord(
+            self.manifest, self.descriptor, (True,),
+            StoredPublicationLeaseTerminal(
+                self.publication, protocol.TaskReplyStatus.SUCCEEDED
+            ),
+            self.intent,
+        )
+        self.death = protocol.NodeDeathRecord(
+            "retirement-node-death", self.node, 4321, 7, 12, -9,
+            protocol.NodeDeathReason.PROCESS_EXIT, "publishing Node exited",
+        )
+        self.request = StoredNodeLossRequest(
+            self.death, NodeIncarnationWitness.from_intent(self.intent),
+            self.recovery, StoredNodeLossGraphWitness(
+                self.graph, StoredNodeLossGraphState.COMMITTED,
+                self.graph.ordered_edges,
+            ),
+        )
+        identity = StoredNodeLossRecoveryCoordinator()
+        identity.begin(self.request)
+        effect = identity.next_effect(self.publication)
+        assert isinstance(effect, RetireStoredOwnerEffect)
+        self.effect = effect
+
+    def table(self) -> ObjectOwnerTable:
+        table = ObjectOwnerTable()
+        table.register_task_outputs(self.spec)
+        return table
+
+    def resolution(self, retirement):
+        saga = StoredNodeLossRecoveryCoordinator()
+        saga.begin(self.request)
+        effect = saga.next_effect(self.publication)
+        assert effect == self.effect
+        saga.acknowledge(effect, retirement)
+        while True:
+            effect = saga.next_effect(self.publication)
+            if effect is None:
+                break
+            if isinstance(effect, ReleaseStoredHoldEffect):
+                receipt = StoredHoldResolutionReceipt(
+                    effect, StoredHoldResolutionDisposition.RELEASED
+                )
+            elif isinstance(effect, ReleaseStoredGraphEffect):
+                receipt = ContainedGraphManifestReceipt(
+                    effect.manifest,
+                    ContainedGraphTransactionState.COMMITTED,
+                    ContainedGraphManifestDisposition.RELEASED,
+                    effect.manifest.ordered_edges,
+                )
+            else:
+                assert isinstance(effect, ProveStoredReplicaGoneEffect)
+                receipt = StoredReplicaResolutionReceipt(
+                    effect,
+                    StoredReplicaResolutionDisposition.DEAD_NODE_REPLICA_GONE,
+                )
+            saga.acknowledge(effect, receipt)
+        result = saga.resolution(self.publication)
+        assert result is not None
+        return result
+
+
+def test_pending_owner_is_marked_lost_without_exposing_a_location() -> None:
+    fixture = _Fixture()
+    table = fixture.table()
+
+    receipt = table.retire_stored_owner(fixture.effect)
+
+    assert receipt.disposition is (
+        StoredOwnerRetirementDisposition.PENDING_MARKED_LOST
+    )
+    snapshot = table.snapshot(fixture.outer)
+    assert snapshot.state is ObjectState.LOST
+    assert snapshot.locations == frozenset()
+    assert snapshot.canonical_stored_result == fixture.descriptor
+    assert snapshot.stored_publication is None
+    assert snapshot.stored_retirement_id == fixture.effect.retirement_id
+    assert table.retire_stored_owner(fixture.effect) == receipt
+
+
+def test_matching_ready_owner_loses_dead_location_and_keeps_exact_plan() -> None:
+    fixture = _Fixture()
+    table = fixture.table()
+    table.commit_stored_owner_publication(fixture.plan)
+
+    receipt = table.retire_stored_owner(fixture.effect)
+
+    assert receipt.disposition is (
+        StoredOwnerRetirementDisposition.READY_STORED_MARKED_LOST
+    )
+    snapshot = table.snapshot(fixture.outer)
+    assert snapshot.state is ObjectState.LOST
+    assert not snapshot.locations
+    assert snapshot.stored_publication == fixture.plan
+    assert snapshot.outgoing_contained_edges == frozenset(fixture.envelope.edges)
+
+
+def test_newer_attempt_and_matching_normal_collection_are_fenced() -> None:
+    fixture = _Fixture()
+    newer = replace(fixture.spec, attempt_id=fixture.attempt.next())
+    table = ObjectOwnerTable()
+    table.register_task_outputs(newer)
+    assert table.retire_stored_owner(fixture.effect).disposition is (
+        StoredOwnerRetirementDisposition.FENCED
+    )
+
+    table = fixture.table()
+    table.commit_stored_owner_publication(fixture.plan)
+    frozen = table.begin_stored_publication_collection(
+        fixture.outer, collection_id="normal-collection"
+    )
+    assert frozen is not None
+    assert table.retire_stored_owner(fixture.effect).disposition is (
+        StoredOwnerRetirementDisposition.FENCED
+    )
+
+
+def test_active_retirement_gates_results_attempts_and_collection_not_releases() -> None:
+    fixture = _Fixture()
+    table = fixture.table()
+    table.add_local_reference(fixture.outer, "local")
+    retirement = table.retire_stored_owner(fixture.effect)
+    assert table.has_active_stored_retirements()
+
+    with pytest.raises(StoredOwnerRetirementInProgressError):
+        table.publish_stored(fixture.outer, fixture.attempt, fixture.node)
+    with pytest.raises(StoredOwnerRetirementInProgressError):
+        table.publish_error(fixture.outer, fixture.attempt, RuntimeError("late"))
+    with pytest.raises(StoredOwnerRetirementInProgressError):
+        table.advance_task_outputs(fixture.execution, fixture.attempt.next())
+    with pytest.raises(StoredOwnerRetirementInProgressError):
+        table.begin_collection(
+            fixture.outer, canonical_size_bytes=fixture.descriptor.size_bytes,
+            canonical_checksum=fixture.descriptor.checksum,
+        )
+    assert table.release_local_reference(fixture.outer, "local")
+    assert retirement == table.retire_stored_owner(fixture.effect)
+
+
+def test_exact_terminal_resolution_clears_graph_metadata_and_opens_reconstruction() -> None:
+    fixture = _Fixture()
+    table = fixture.table()
+    table.commit_stored_owner_publication(fixture.plan)
+    retirement = table.retire_stored_owner(fixture.effect)
+    resolution = fixture.resolution(retirement)
+
+    completed = table.complete_stored_owner_retirement(
+        fixture.effect, resolution
+    )
+
+    assert completed.metadata_cleared
+    assert not table.has_active_stored_retirements()
+    snapshot = table.snapshot(fixture.outer)
+    assert snapshot.state is ObjectState.LOST
+    assert snapshot.current_attempt == fixture.attempt
+    assert snapshot.canonical_stored_result == fixture.descriptor
+    assert snapshot.stored_publication is None
+    assert not snapshot.outgoing_contained_edges
+    assert snapshot.stored_retirement_id is None
+    assert table.stored_owner_retirement_completion(
+        fixture.publication
+    ) == completed
+    assert table.complete_stored_owner_retirement(
+        fixture.effect, resolution
+    ) == completed
+    assert table.validate_advance_task_outputs(
+        fixture.execution, fixture.attempt.next()
+    ) is not None
+
+    wrong = replace(resolution, effect_receipts=resolution.effect_receipts[:-1])
+    other = fixture.table()
+    other.retire_stored_owner(fixture.effect)
+    with pytest.raises(StoredOwnerRetirementConflictError):
+        other.complete_stored_owner_retirement(fixture.effect, wrong)
+
+
+def test_conflicting_effect_replay_preserves_first_retirement() -> None:
+    fixture = _Fixture()
+    table = fixture.table()
+    first = table.retire_stored_owner(fixture.effect)
+    changed = replace(fixture.effect, retirement_id="retirement:changed")
+
+    with pytest.raises(StoredOwnerRetirementConflictError):
+        table.retire_stored_owner(changed)
+    assert table.retire_stored_owner(fixture.effect) == first

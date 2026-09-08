@@ -1,0 +1,827 @@
+"""Callback-injected runtime ordering for contained INLINE results.
+
+The pure :mod:`miniray.inline_contained_publication` reducer deliberately does
+not perform RPCs.  This module is its small executable adapter.  One adapter
+instance binds exactly one immutable envelope and makes the important ordering
+visible:
+
+``GCS PREPARE -> child final holds -> GCS COMMIT -> owner commit``
+
+Failure before the commit intent follows the inverse barrier:
+
+``child RELEASE (reverse, including unattempted slots) -> GCS ABORT``
+
+Releasing every slot is intentional.  A child callback may have installed a
+hold and then lost its acknowledgement, while another slot may receive a late
+install after rollback starts.  Child owners therefore implement
+release-before-add tombstones.  Once ``begin_commit`` is recorded, ABORT is no
+longer legal and only the exact COMMIT may be replayed.
+
+The reducer starts at a valid GCS PREPARE receipt.  A tiny adapter-local record
+covers the earlier ambiguous-PREPARE window so an applied-but-unacknowledged
+reservation can still be fenced by an exact ABORT.  All later lifecycle facts
+and acknowledgement bitmaps remain reducer-owned.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from threading import RLock
+from typing import Callable, Optional, Tuple, Union
+
+from . import protocol
+from .contained_cycle import (
+    ContainedGraphManifestDisposition,
+    ContainedGraphManifestReceipt,
+    ContainedGraphTransactionState,
+)
+from .inline_contained_publication import (
+    InlineContainedPublicationReducer,
+    InlineEdgeEffect,
+    InlinePublicationEnvelope,
+    InlinePublicationError,
+    InlinePublicationSnapshot,
+    InlinePublicationState,
+    InlinePublicationStateError,
+    UnknownInlinePublicationError,
+)
+
+
+class InlineContainedRuntimeError(InlinePublicationError):
+    """Base class for adapter ordering and acknowledgement failures."""
+
+
+class InlineContainedRuntimeProtocolError(InlineContainedRuntimeError):
+    """A callback returned a malformed or identity-changing ACK."""
+
+
+class InlineContainedRuntimeRemoteError(InlineContainedRuntimeError):
+    """A well-formed child-owner or graph-authority rejection."""
+
+    def __init__(
+        self, operation: str, detail: str, *, error_kind: object = None,
+    ) -> None:
+        self.operation = operation
+        self.detail = detail
+        self.error_kind = error_kind
+        rendered_kind = (
+            " [{}]".format(error_kind.value)
+            if isinstance(error_kind, protocol.StoredPublicationRPCErrorKind)
+            else ""
+        )
+        super().__init__(
+            "{} rejected{}: {}".format(operation, rendered_kind, detail)
+        )
+
+
+class InlineContainedRuntimeCleanupError(InlineContainedRuntimeError):
+    """Forward progress failed and its durable rollback still needs replay."""
+
+    def __init__(
+        self, primary_error: BaseException, cleanup_error: BaseException,
+    ) -> None:
+        self.primary_error = primary_error
+        self.cleanup_error = cleanup_error
+        super().__init__(
+            "INLINE publication failed and rollback did not acknowledge: "
+            "{}".format(cleanup_error)
+        )
+
+
+@dataclass(frozen=True)
+class InlineChildHoldInstallReply:
+    """Exact acknowledgement for one index-bound final-hold effect.
+
+    ``accepted`` means the requested hold is now installed (or was already
+    installed).  ``changed`` distinguishes first application from replay; it
+    is diagnostic and never substitutes for the full echoed effect.
+    """
+
+    effect: InlineEdgeEffect
+    accepted: bool
+    changed: Optional[bool] = None
+    error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, InlineEdgeEffect):
+            raise TypeError("effect must be an InlineEdgeEffect")
+        if type(self.accepted) is not bool:
+            raise TypeError("accepted must be a bool")
+        if self.accepted:
+            if type(self.changed) is not bool:
+                raise ValueError(
+                    "an accepted install reply requires changed bool"
+                )
+            if self.error is not None:
+                raise ValueError(
+                    "an accepted install reply cannot contain an error"
+                )
+        else:
+            if self.changed is not None:
+                raise ValueError(
+                    "a rejected install reply cannot report a mutation"
+                )
+            if not isinstance(self.error, str) or not self.error:
+                raise ValueError(
+                    "a rejected install reply requires an error"
+                )
+
+
+@dataclass(frozen=True)
+class PreparedInlineContainedPublication:
+    """Reducer-backed proof that every exact child hold acknowledged."""
+
+    envelope: InlinePublicationEnvelope
+    snapshot: InlinePublicationSnapshot
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.envelope, InlinePublicationEnvelope):
+            raise TypeError("envelope must be an InlinePublicationEnvelope")
+        if not isinstance(self.snapshot, InlinePublicationSnapshot):
+            raise TypeError("snapshot must be an InlinePublicationSnapshot")
+        if (
+            self.snapshot.envelope != self.envelope
+            or not self.snapshot.pin_bitmap
+            or not all(self.snapshot.pin_bitmap)
+            or self.snapshot.state not in (
+                InlinePublicationState.PINS_INSTALLED,
+                InlinePublicationState.COMMITTING,
+                InlinePublicationState.COMMITTED,
+            )
+        ):
+            raise ValueError(
+                "prepared proof requires the exact fully-pinned envelope"
+            )
+
+    @property
+    def pin_bitmap(self) -> Tuple[bool, ...]:
+        return self.snapshot.pin_bitmap
+
+
+@dataclass(frozen=True)
+class AbortedInlineContainedPublication:
+    """Proof that all release-before-add effects and GCS ABORT acknowledged."""
+
+    envelope: InlinePublicationEnvelope
+    compensation_bitmap: Tuple[bool, ...]
+    graph_aborted: bool
+    reducer_tracked: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.envelope, InlinePublicationEnvelope):
+            raise TypeError("envelope must be an InlinePublicationEnvelope")
+        bitmap = tuple(self.compensation_bitmap)
+        if (
+            len(bitmap) != len(self.envelope.ordered_edges)
+            or any(type(value) is not bool for value in bitmap)
+        ):
+            raise ValueError(
+                "compensation_bitmap must match every manifest slot"
+            )
+        if type(self.graph_aborted) is not bool:
+            raise TypeError("graph_aborted must be a bool")
+        if type(self.reducer_tracked) is not bool:
+            raise TypeError("reducer_tracked must be a bool")
+        if not self.graph_aborted or not all(bitmap):
+            raise ValueError(
+                "an abort proof requires every release and the graph ABORT"
+            )
+        object.__setattr__(self, "compensation_bitmap", bitmap)
+
+
+@dataclass(frozen=True)
+class InlineOwnerCommitRequest:
+    """Core-agnostic request to publish one graph-committed envelope."""
+
+    envelope: InlinePublicationEnvelope
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.envelope, InlinePublicationEnvelope):
+            raise TypeError("envelope must be an InlinePublicationEnvelope")
+
+
+@dataclass(frozen=True)
+class InlineOwnerCommitReply:
+    """Exact owner callback receipt; ``changed=False`` denotes replay."""
+
+    request: InlineOwnerCommitRequest
+    accepted: bool
+    changed: Optional[bool] = None
+    error: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, InlineOwnerCommitRequest):
+            raise TypeError("request must be an InlineOwnerCommitRequest")
+        if type(self.accepted) is not bool:
+            raise TypeError("accepted must be a bool")
+        if self.accepted:
+            if type(self.changed) is not bool:
+                raise ValueError(
+                    "an accepted owner reply requires changed bool"
+                )
+            if self.error is not None:
+                raise ValueError(
+                    "an accepted owner reply cannot contain an error"
+                )
+        else:
+            if self.changed is not None:
+                raise ValueError(
+                    "a rejected owner reply cannot report a mutation"
+                )
+            if not isinstance(self.error, str) or not self.error:
+                raise ValueError(
+                    "a rejected owner reply requires an error"
+                )
+
+
+PrepareGraph = Callable[
+    [protocol.PrepareContainedGraph], protocol.ContainedGraphReply
+]
+CommitGraph = Callable[
+    [protocol.CommitContainedGraph], protocol.ContainedGraphReply
+]
+AbortGraph = Callable[
+    [protocol.AbortContainedGraph], protocol.ContainedGraphReply
+]
+InstallChildHold = Callable[
+    [InlineEdgeEffect], InlineChildHoldInstallReply
+]
+ReleaseChildHold = Callable[
+    [protocol.ReleaseContainedReference],
+    protocol.ReleaseContainedReferenceReply,
+]
+CommitOwner = Callable[[InlineOwnerCommitRequest], InlineOwnerCommitReply]
+
+
+@dataclass
+class _PrePrepareAbort:
+    """Minimal state for an outcome-ambiguous GCS PREPARE call."""
+
+    envelope: InlinePublicationEnvelope
+    acknowledged: list[bool] = field(default_factory=list)
+    graph_aborted: bool = False
+
+
+class InlineContainedPublicationCoordinator:
+    """Order one immutable INLINE publication around the pure reducer.
+
+    The instance intentionally scopes one publication.  Serializing its
+    callbacks under one lock makes concurrent exact replay deterministic while
+    avoiding a second public phase machine beside the reducer.
+    """
+
+    def __init__(
+        self,
+        reducer: InlineContainedPublicationReducer,
+        *,
+        prepare_graph: PrepareGraph,
+        install_child: InstallChildHold,
+        release_child: ReleaseChildHold,
+        commit_graph: CommitGraph,
+        abort_graph: AbortGraph,
+    ) -> None:
+        if not isinstance(reducer, InlineContainedPublicationReducer):
+            raise TypeError(
+                "reducer must be an InlineContainedPublicationReducer"
+            )
+        callbacks = (
+            (prepare_graph, "prepare_graph"),
+            (install_child, "install_child"),
+            (release_child, "release_child"),
+            (commit_graph, "commit_graph"),
+            (abort_graph, "abort_graph"),
+        )
+        for callback, label in callbacks:
+            if not callable(callback):
+                raise TypeError("{} must be callable".format(label))
+        self.reducer = reducer
+        self._prepare_graph = prepare_graph
+        self._install_child = install_child
+        self._release_child = release_child
+        self._commit_graph = commit_graph
+        self._abort_graph = abort_graph
+        self._envelope: Optional[InlinePublicationEnvelope] = None
+        self._preprepare_abort: Optional[_PrePrepareAbort] = None
+        self._lock = RLock()
+
+    def prepare(
+        self, envelope: InlinePublicationEnvelope,
+    ) -> PreparedInlineContainedPublication:
+        """Reserve the exact DAG and install every exact final hold.
+
+        Any exception, rejection, or malformed ACK before ``COMMITTING``
+        starts complete reverse compensation.  If compensation itself is
+        interrupted, :meth:`abort` resumes from the first missing ACK.
+        """
+
+        with self._lock:
+            self._bind(envelope)
+            if self._preprepare_abort is not None:
+                self._drive_preprepare_abort()
+                raise InlinePublicationStateError(
+                    "the INLINE publication was aborted before PREPARE ACK"
+                )
+
+            snapshot = self._snapshot_or_none()
+            if snapshot is None:
+                try:
+                    request = protocol.PrepareContainedGraph(
+                        envelope.to_graph_manifest()
+                    )
+                    reply = self._prepare_graph(request)
+                    receipt = self._require_graph_reply(
+                        reply, request, "INLINE graph prepare",
+                        state=ContainedGraphTransactionState.PREPARED,
+                        dispositions=(
+                            ContainedGraphManifestDisposition.APPLIED,
+                            ContainedGraphManifestDisposition.ALREADY_PREPARED,
+                        ),
+                    )
+                    self.reducer.prepare(envelope, receipt)
+                except BaseException as primary_error:
+                    self._compensate_after_failure(primary_error)
+                    raise AssertionError("unreachable")
+                snapshot = self.reducer.snapshot(envelope.publication_id)
+
+            self._require_bound_snapshot(snapshot)
+            if snapshot.state is InlinePublicationState.ABORTING:
+                self._drive_reducer_abort()
+                raise InlinePublicationStateError(
+                    "the INLINE publication was already aborting"
+                )
+            if snapshot.state is InlinePublicationState.ABORTED:
+                raise InlinePublicationStateError(
+                    "the INLINE publication was already aborted"
+                )
+            if snapshot.state in (
+                InlinePublicationState.COLLECTING,
+                InlinePublicationState.RELEASED,
+            ):
+                raise InlinePublicationStateError(
+                    "a collecting or released INLINE publication cannot "
+                    "prepare again"
+                )
+            if snapshot.state in (
+                InlinePublicationState.PINS_INSTALLED,
+                InlinePublicationState.COMMITTING,
+                InlinePublicationState.COMMITTED,
+            ):
+                return PreparedInlineContainedPublication(envelope, snapshot)
+
+            try:
+                for index, acknowledged in enumerate(snapshot.pin_bitmap):
+                    if acknowledged:
+                        continue
+                    effect = envelope.edge_effect(index)
+                    reply = self._install_child(effect)
+                    self._require_install_reply(
+                        reply, effect, "INLINE child-hold install"
+                    )
+                    self.reducer.mark_pin_installed(effect)
+            except BaseException as primary_error:
+                self._compensate_after_failure(primary_error)
+                raise AssertionError("unreachable")
+
+            snapshot = self.reducer.snapshot(envelope.publication_id)
+            return PreparedInlineContainedPublication(envelope, snapshot)
+
+    def commit(
+        self, publication: Union[
+            InlinePublicationEnvelope, PreparedInlineContainedPublication
+        ],
+    ) -> InlinePublicationSnapshot:
+        """Persist roll-forward intent, then replay one exact GCS COMMIT."""
+
+        envelope = (
+            publication.envelope
+            if isinstance(publication, PreparedInlineContainedPublication)
+            else publication
+        )
+        with self._lock:
+            self._bind(envelope)
+            if self._preprepare_abort is not None:
+                raise InlinePublicationStateError(
+                    "an aborted pre-PREPARE publication cannot commit"
+                )
+            snapshot = self.reducer.snapshot(envelope.publication_id)
+            self._require_bound_snapshot(snapshot)
+            if snapshot.state is InlinePublicationState.COMMITTED:
+                return snapshot
+            if snapshot.state in (
+                InlinePublicationState.COLLECTING,
+                InlinePublicationState.RELEASED,
+            ):
+                return snapshot
+            self.reducer.begin_commit(envelope)
+            request = protocol.CommitContainedGraph(
+                envelope.to_graph_manifest()
+            )
+            # Any exception intentionally leaves COMMITTING authoritative.
+            reply = self._commit_graph(request)
+            receipt = self._require_graph_reply(
+                reply, request, "INLINE graph commit",
+                state=ContainedGraphTransactionState.COMMITTED,
+                dispositions=(
+                    ContainedGraphManifestDisposition.APPLIED,
+                    ContainedGraphManifestDisposition.ALREADY_COMMITTED,
+                ),
+            )
+            self.reducer.commit(envelope, receipt)
+            return self.reducer.snapshot(envelope.publication_id)
+
+    def abort(
+        self, envelope: InlinePublicationEnvelope,
+    ) -> AbortedInlineContainedPublication:
+        """Abort before COMMITTING, resuming the exact missing effects."""
+
+        with self._lock:
+            self._bind(envelope)
+            if self._preprepare_abort is not None:
+                self._drive_preprepare_abort()
+                return self._preprepare_abort_report()
+            snapshot = self._snapshot_or_none()
+            if snapshot is None:
+                self._start_preprepare_abort()
+                self._drive_preprepare_abort()
+                return self._preprepare_abort_report()
+            self._require_bound_snapshot(snapshot)
+            if snapshot.state is not InlinePublicationState.ABORTED:
+                abort_id = self._abort_id(envelope)
+                if snapshot.state is not InlinePublicationState.ABORTING:
+                    self.reducer.begin_abort(
+                        envelope.publication_id, abort_id
+                    )
+                self._drive_reducer_abort()
+            snapshot = self.reducer.snapshot(envelope.publication_id)
+            return AbortedInlineContainedPublication(
+                envelope, snapshot.compensation_bitmap, True, True
+            )
+
+    def _compensate_after_failure(
+        self, primary_error: BaseException,
+    ) -> None:
+        try:
+            snapshot = self._snapshot_or_none()
+            if snapshot is None:
+                self._start_preprepare_abort()
+                self._drive_preprepare_abort()
+            else:
+                self._require_bound_snapshot(snapshot)
+                if snapshot.state is not InlinePublicationState.ABORTING:
+                    self.reducer.begin_abort(
+                        snapshot.publication_id,
+                        self._abort_id(snapshot.envelope),
+                    )
+                self._drive_reducer_abort()
+        except BaseException as cleanup_error:
+            raise InlineContainedRuntimeCleanupError(
+                primary_error, cleanup_error
+            ) from primary_error
+        raise primary_error
+
+    def _drive_reducer_abort(self) -> None:
+        envelope = self._bound_envelope()
+        publication_id = envelope.publication_id
+        abort_id = self._abort_id(envelope)
+        while True:
+            effect = self.reducer.next_compensation(publication_id)
+            if effect is None:
+                break
+            request = self._release_request(envelope, effect)
+            reply = self._release_child(request)
+            self._require_release_reply(
+                reply, request, "INLINE child-hold compensation"
+            )
+            self.reducer.acknowledge_compensation(effect)
+        request = protocol.AbortContainedGraph(
+            envelope.to_graph_manifest()
+        )
+        reply = self._abort_graph(request)
+        receipt = self._require_graph_reply(
+            reply, request, "INLINE graph abort",
+            state=ContainedGraphTransactionState.ABORTED,
+            dispositions=(
+                ContainedGraphManifestDisposition.APPLIED,
+                ContainedGraphManifestDisposition.ALREADY_ABORTED,
+            ),
+        )
+        self.reducer.finish_abort(publication_id, abort_id, receipt)
+
+    def _start_preprepare_abort(self) -> None:
+        if self._preprepare_abort is not None:
+            return
+        envelope = self._bound_envelope()
+        self._preprepare_abort = _PrePrepareAbort(
+            envelope, [False] * len(envelope.ordered_edges)
+        )
+
+    def _drive_preprepare_abort(self) -> None:
+        record = self._preprepare_abort
+        if record is None:
+            raise AssertionError("pre-PREPARE abort was not started")
+        for index in reversed(range(len(record.acknowledged))):
+            if record.acknowledged[index]:
+                continue
+            effect = record.envelope.edge_effect(index)
+            request = self._release_request(record.envelope, effect)
+            reply = self._release_child(request)
+            self._require_release_reply(
+                reply, request, "INLINE pre-PREPARE compensation"
+            )
+            record.acknowledged[index] = True
+        if not record.graph_aborted:
+            request = protocol.AbortContainedGraph(
+                record.envelope.to_graph_manifest()
+            )
+            reply = self._abort_graph(request)
+            self._require_graph_reply(
+                reply, request, "INLINE pre-PREPARE graph abort",
+                state=ContainedGraphTransactionState.ABORTED,
+                dispositions=(
+                    ContainedGraphManifestDisposition.APPLIED,
+                    ContainedGraphManifestDisposition.ALREADY_ABORTED,
+                ),
+            )
+            record.graph_aborted = True
+
+    def _preprepare_abort_report(
+        self,
+    ) -> AbortedInlineContainedPublication:
+        record = self._preprepare_abort
+        if record is None:
+            raise AssertionError("pre-PREPARE abort was not started")
+        return AbortedInlineContainedPublication(
+            record.envelope, tuple(record.acknowledged),
+            record.graph_aborted, False,
+        )
+
+    def _bind(self, envelope: object) -> None:
+        if not isinstance(envelope, InlinePublicationEnvelope):
+            raise TypeError("envelope must be an InlinePublicationEnvelope")
+        if self._envelope is None:
+            # This assignment is the pre-effect immutable intent boundary.
+            self._envelope = envelope
+        elif self._envelope != envelope:
+            raise InlineContainedRuntimeProtocolError(
+                "one coordinator cannot be rebound to another envelope"
+            )
+
+    def _bound_envelope(self) -> InlinePublicationEnvelope:
+        if self._envelope is None:
+            raise AssertionError("coordinator has no bound envelope")
+        return self._envelope
+
+    def _snapshot_or_none(self) -> Optional[InlinePublicationSnapshot]:
+        envelope = self._bound_envelope()
+        try:
+            return self.reducer.snapshot(envelope.publication_id)
+        except UnknownInlinePublicationError:
+            return None
+
+    def _require_bound_snapshot(
+        self, snapshot: InlinePublicationSnapshot,
+    ) -> None:
+        if snapshot.envelope != self._bound_envelope():
+            raise InlineContainedRuntimeProtocolError(
+                "reducer publication identity names another envelope"
+            )
+
+    @staticmethod
+    def _abort_id(envelope: InlinePublicationEnvelope) -> str:
+        return "inline-runtime-abort:{}".format(
+            envelope.manifest.manifest_digest
+        )
+
+    @staticmethod
+    def _release_request(
+        envelope: InlinePublicationEnvelope, effect: InlineEdgeEffect,
+    ) -> protocol.ReleaseContainedReference:
+        edge = effect.edge
+        return protocol.ReleaseContainedReference(
+            edge.contained_object_id, edge.contained_owner_worker_id,
+            edge.incoming_hold(
+                envelope.manifest.outer_owner_worker_id
+            ),
+        )
+
+    @staticmethod
+    def _require_install_reply(
+        reply: object, effect: InlineEdgeEffect, operation: str,
+    ) -> InlineChildHoldInstallReply:
+        if not isinstance(reply, InlineChildHoldInstallReply):
+            raise InlineContainedRuntimeProtocolError(
+                "{} returned an invalid reply type".format(operation)
+            )
+        if reply.effect != effect:
+            raise InlineContainedRuntimeProtocolError(
+                "{} acknowledgement changed effect identity".format(
+                    operation
+                )
+            )
+        if type(reply.accepted) is not bool or (
+            reply.accepted and type(reply.changed) is not bool
+        ):
+            raise InlineContainedRuntimeProtocolError(
+                "{} returned malformed boolean fields".format(operation)
+            )
+        if not reply.accepted:
+            if not isinstance(reply.error, str) or not reply.error:
+                raise InlineContainedRuntimeProtocolError(
+                    "{} returned a malformed rejection".format(operation)
+                )
+            raise InlineContainedRuntimeRemoteError(operation, reply.error)
+        if reply.error is not None:
+            raise InlineContainedRuntimeProtocolError(
+                "{} accepted with an error".format(operation)
+            )
+        return reply
+
+    @staticmethod
+    def _require_release_reply(
+        reply: object, request: protocol.ReleaseContainedReference,
+        operation: str,
+    ) -> protocol.ReleaseContainedReferenceReply:
+        if not isinstance(reply, protocol.ReleaseContainedReferenceReply):
+            raise InlineContainedRuntimeProtocolError(
+                "{} returned an invalid reply type".format(operation)
+            )
+        if (
+            getattr(reply, "object_id", None) != request.object_id
+            or getattr(reply, "owner_worker_id", None)
+            != request.owner_worker_id
+            or getattr(reply, "hold", None) != request.hold
+        ):
+            raise InlineContainedRuntimeProtocolError(
+                "{} acknowledgement changed request identity".format(
+                    operation
+                )
+            )
+        accepted = getattr(reply, "accepted", None)
+        released = getattr(reply, "released", None)
+        error = getattr(reply, "error", None)
+        if type(accepted) is not bool or type(released) is not bool:
+            raise InlineContainedRuntimeProtocolError(
+                "{} returned malformed boolean fields".format(operation)
+            )
+        if not accepted:
+            if released or not isinstance(error, str) or not error:
+                raise InlineContainedRuntimeProtocolError(
+                    "{} returned a malformed rejection".format(operation)
+                )
+            raise InlineContainedRuntimeRemoteError(operation, error)
+        if error is not None:
+            raise InlineContainedRuntimeProtocolError(
+                "{} accepted with an error".format(operation)
+            )
+        return reply
+
+    @staticmethod
+    def _require_graph_reply(
+        reply: object, request: protocol.ContainedGraphRequest,
+        operation: str, *,
+        state: ContainedGraphTransactionState,
+        dispositions: Tuple[ContainedGraphManifestDisposition, ...],
+    ) -> ContainedGraphManifestReceipt:
+        if not isinstance(reply, protocol.ContainedGraphReply):
+            raise InlineContainedRuntimeProtocolError(
+                "{} returned an invalid reply type".format(operation)
+            )
+        if getattr(reply, "request", None) != request:
+            raise InlineContainedRuntimeProtocolError(
+                "{} acknowledgement changed request identity".format(
+                    operation
+                )
+            )
+        receipt = getattr(reply, "receipt", None)
+        error_kind = getattr(reply, "error_kind", None)
+        error = getattr(reply, "error", None)
+        if receipt is None:
+            if (
+                not isinstance(
+                    error_kind, protocol.StoredPublicationRPCErrorKind
+                )
+                or not isinstance(error, str)
+                or not error
+            ):
+                raise InlineContainedRuntimeProtocolError(
+                    "{} returned a malformed rejection".format(operation)
+                )
+            raise InlineContainedRuntimeRemoteError(
+                operation, error, error_kind=error_kind
+            )
+        if error_kind is not None or error is not None:
+            raise InlineContainedRuntimeProtocolError(
+                "{} accepted with rejection fields".format(operation)
+            )
+        if (
+            not isinstance(receipt, ContainedGraphManifestReceipt)
+            or receipt.manifest != request.manifest
+            or receipt.state is not state
+            or receipt.disposition not in dispositions
+            or receipt.released_edges
+        ):
+            raise InlineContainedRuntimeProtocolError(
+                "{} receipt changed the exact graph transition".format(
+                    operation
+                )
+            )
+        return receipt
+
+
+class InlineOwnerCommitCoordinator:
+    """Commit graph then invoke an exact, Core-independent owner callback.
+
+    A callback can translate ``request.envelope`` into its own atomic owner
+    plan.  A lost or malformed owner ACK leaves the graph committed and the
+    same request replayable; this helper never compensates after that boundary.
+    """
+
+    def __init__(
+        self, publication: InlineContainedPublicationCoordinator, *,
+        commit_owner: CommitOwner,
+    ) -> None:
+        if not isinstance(
+            publication, InlineContainedPublicationCoordinator
+        ):
+            raise TypeError(
+                "publication must be an "
+                "InlineContainedPublicationCoordinator"
+            )
+        if not callable(commit_owner):
+            raise TypeError("commit_owner must be callable")
+        self.publication = publication
+        self._commit_owner = commit_owner
+        self._request: Optional[InlineOwnerCommitRequest] = None
+        self._receipt: Optional[InlineOwnerCommitReply] = None
+        self._lock = RLock()
+
+    def commit(
+        self, publication: Union[
+            InlinePublicationEnvelope, PreparedInlineContainedPublication
+        ],
+    ) -> InlineOwnerCommitReply:
+        envelope = (
+            publication.envelope
+            if isinstance(publication, PreparedInlineContainedPublication)
+            else publication
+        )
+        with self._lock:
+            request = InlineOwnerCommitRequest(envelope)
+            if self._request is None:
+                self._request = request
+            elif self._request != request:
+                raise InlineContainedRuntimeProtocolError(
+                    "one owner coordinator cannot be rebound to another "
+                    "INLINE envelope"
+                )
+            if self._receipt is not None:
+                return self._receipt
+
+            # Graph COMMIT is the irreversible barrier.  If it or the owner
+            # callback is ambiguous, the next call repeats only that same
+            # missing exact effect and never enters the abort path.
+            self.publication.commit(envelope)
+            reply = self._commit_owner(request)
+            if not isinstance(reply, InlineOwnerCommitReply):
+                raise InlineContainedRuntimeProtocolError(
+                    "INLINE owner commit returned an invalid reply type"
+                )
+            if reply.request != request:
+                raise InlineContainedRuntimeProtocolError(
+                    "INLINE owner commit ACK changed request identity"
+                )
+            if type(reply.accepted) is not bool or (
+                reply.accepted and type(reply.changed) is not bool
+            ):
+                raise InlineContainedRuntimeProtocolError(
+                    "INLINE owner commit returned malformed boolean fields"
+                )
+            if not reply.accepted:
+                if not isinstance(reply.error, str) or not reply.error:
+                    raise InlineContainedRuntimeProtocolError(
+                        "INLINE owner commit returned a malformed rejection"
+                    )
+                raise InlineContainedRuntimeRemoteError(
+                    "INLINE owner commit", reply.error
+                )
+            if reply.error is not None:
+                raise InlineContainedRuntimeProtocolError(
+                    "INLINE owner commit accepted with an error"
+                )
+            self._receipt = reply
+            return reply
+
+
+__all__ = [
+    "AbortedInlineContainedPublication",
+    "InlineChildHoldInstallReply",
+    "InlineContainedPublicationCoordinator",
+    "InlineContainedRuntimeCleanupError",
+    "InlineContainedRuntimeError",
+    "InlineContainedRuntimeProtocolError",
+    "InlineContainedRuntimeRemoteError",
+    "InlineOwnerCommitCoordinator",
+    "InlineOwnerCommitReply",
+    "InlineOwnerCommitRequest",
+    "PreparedInlineContainedPublication",
+]
