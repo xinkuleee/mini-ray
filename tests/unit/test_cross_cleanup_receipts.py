@@ -284,12 +284,15 @@ def test_completed_receipt_cannot_bypass_journal_or_node_incarnation(monkeypatch
     effect = (replace(fixture.effect, stage=Stage.SLOT_DROP)
               if fault == "active" else fixture.begin_drop())
     error = OutputPublicationConflictError
-    if fault in ("active", "slot", "publication"):
+    if fault in ("active", "publication"):
         error = OutputPublicationJournalStateError
     if fault == "digest":
         effect = replace(effect, manifest_digest="0" * 64)
     elif fault == "slot":
-        effect = replace(effect, slot_index=0)
+        # Slot zero is the only output. Revalidate malformed wire input at
+        # the Node boundary instead of raising while constructing the fixture.
+        effect = replace(effect)
+        object.__setattr__(effect, "slot_index", 1)
     elif fault == "publication":
         effect = replace(effect, publication_id=replace(effect.publication_id, lease_id=ids.LeaseID(b"x" * 16)))
     before, journal = _snapshot(fixture), fixture.journal.snapshot(fixture.id)
@@ -323,7 +326,7 @@ def test_shared_receipt_does_not_acknowledge_another_drop_identity(monkeypatch, 
         "owner": replace(older.request, owner_worker_id=ids.WorkerID(b"o" * 16)),
         "checksum": replace(older.request, checksum="f" * 64),
         "node": replace(older.request, node_id=ids.NodeID(b"n" * 16)),
-        "return-index": replace(older.request, object_id=replace(older.object_id, return_index=0)),
+        "return-index": replace(older.request, object_id=replace(older.object_id, return_index=1)),
     }[changed]
     before = _snapshot(older)
     expected = _Status.REJECTED if changed in ("node", "return-index") else _Status.STALE_EPOCH
@@ -594,7 +597,9 @@ def test_generic_absence_receipt_cannot_retire_a_rebound_partial_claim(monkeypat
         _assert_reply(fixture.drop(operation), fixture.request, _Status.INCONSISTENT)
     claims = fixture.node._local_replica_write_claims
     original = claims[fixture.object_id]
-    claims[fixture.object_id] = replace(original, effect=replace(original.effect, slot_index=0))
+    # A valid effect shape can still lack this materializer's cleanup authority.
+    rebound = replace(original.effect, stage=Stage.SLOT_DROP)
+    claims[fixture.object_id] = replace(original, effect=rebound)
     before = _snapshot(fixture)
     _assert_reply(fixture.node._handle_drop_object_replica(fixture.request), fixture.request, _Status.INCONSISTENT)
     assert _snapshot(fixture) == before and not _receipts(fixture.node)

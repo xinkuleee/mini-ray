@@ -1,12 +1,14 @@
-"""Pure Worker-side tests for terminal lease completion paths.
+"""Finite Worker-side tests for terminal lease completion paths.
 
-No server is started here.  ``rpc_request`` is replaced with the smallest
-in-memory NodeManager acknowledgement needed to expose message ordering.
+No server is started. Successful replies come from one real INLINE journal,
+Node adapter and owner handoff; typed negative replies expose Worker ordering.
+No physical resources or remote effects are claimed by the transport fixture.
 """
 
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 
 import cloudpickle
 import pytest
@@ -14,17 +16,96 @@ import pytest
 from miniray import output_protocol as wire, protocol
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, TaskID, WorkerID
 from miniray.resources import ResourceVector
+from miniray.output_handoff import OutputHandoffTable
 from miniray.output_publication import OutputPublicationNodeIncarnation
+from miniray.output_publication_journal import OutputPublicationJournal
+from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.transport import TransportTimeout
 from miniray.worker import (
     COMPLETE_WORKER_LEASE_HANDLER,
     START_WORKER_LEASE_HANDLER,
     WorkerServer,
 )
-from tests.unit._unified_worker_rpc import UnifiedWorkerRPC
 
 
 pytestmark = pytest.mark.unit
+
+
+class _SingleOutputRPC:
+    """Real single-output reducers; callbacks replace only transport."""
+
+    def __init__(self):
+        self.prepared = {}
+        self.prepare_requests = []
+        self.completions = {}
+        self.journal = OutputPublicationJournal()
+        self.handoffs = OutputHandoffTable()
+        self.adapter = OutputPublicationNodeAdapter(
+            self.journal, register_owner=self._register_owner,
+            report_complete=self._report_complete, report_rollback=self._forbidden,
+            prepare_child=self._forbidden, promote_child=self._forbidden,
+            release_child=self._forbidden, seal_replica=self._forbidden,
+            drop_replica=self._forbidden,
+        )
+
+    @staticmethod
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("small INLINE completion fixture attempted child/store/rollback work")
+
+    def _register_owner(self, manifest):
+        snapshot = self.handoffs.register(manifest, manifest.publication_id.attempt_id)
+        reply = wire.OutputHandoffReply(wire.RegisterOutputHandoff(manifest), True, snapshot)
+        assert reply.accepted and reply.snapshot.manifest == manifest
+
+    def _report_complete(self, witness):
+        assert self.journal.snapshot(witness.publication_id).complete == witness
+        snapshot = self.handoffs.record_complete(witness)
+        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+        assert reply.accepted and reply.snapshot.complete == witness
+
+    def prepare(self, request):
+        assert type(request) is wire.PrepareOutputPublication
+        request = replace(request)
+        identity, header = request.manifest.publication_id, request.manifest.header
+        slot, = request.manifest.slots
+        assert slot.tier is protocol.ResultStorage.INLINE and not slot.transfers
+        assert slot.size_bytes <= 1024 and len(request.slot_payloads) == 1
+        key = identity.lease_id, identity.task_id, identity.attempt_id, header.executor_worker_id
+        assert not self.prepared or key in self.prepared
+        previous = self.prepared.get(key)
+        assert previous is None or previous == request
+        assert len(self.prepare_requests) < 3
+        self.adapter.prepare(request.manifest, request.slot_payloads)
+        self.prepared[key] = request
+        self.prepare_requests.append(request)
+        assert self.journal.snapshot(identity).ready_to_complete
+        return wire.PreparedOutputPublicationReply(request.request_identity, True)
+
+    def complete(self, request):
+        assert type(request) is protocol.CompleteWorkerLease
+        assert request.status is protocol.TaskReplyStatus.SUCCEEDED
+        request = replace(request)
+        key = request.lease_id, request.task_id, request.attempt_id, request.worker_id
+        prepared = self.prepared[key]
+        identity = prepared.manifest.publication_id
+        first = key not in self.completions
+
+        def commit(witness):
+            assert witness == self.journal.snapshot(identity).complete
+            assert key not in self.completions
+            self.completions[key] = (request, witness)
+
+        if not first:
+            assert self.completions[key][0] == request
+        envelope = self.adapter.complete(identity, commit_lease=commit)
+        if self.adapter.pending_terminal_reports():
+            assert self.adapter.report_terminal(identity)
+        assert self.handoffs.query(identity).complete == envelope.complete
+        return protocol.CompleteWorkerLeaseReply(
+            request.lease_id, request.task_id, request.attempt_id, request.worker_id,
+            request.status, protocol.LeaseExecutionState.COMPLETED, True, first,
+            scheduling_key=request.scheduling_key, output_publication=envelope,
+        )
 
 
 def _push(
@@ -229,7 +310,7 @@ def test_rejected_start_does_not_bind_attempt_to_lease(
     first = _push(worker.worker_id, cloudpickle.dumps(lambda: "first"))
     second = protocol.PushTask(LeaseID.random(), worker.worker_id, first.spec)
     starts = 0
-    publication = UnifiedWorkerRPC()
+    publication = _SingleOutputRPC()
 
     def fake_rpc(address, handler, message):
         nonlocal starts
@@ -266,7 +347,7 @@ def test_same_cache_key_rejects_a_changed_push_request(
 ) -> None:
     worker = _worker(WorkerID.random())
     push = _push(worker.worker_id, cloudpickle.dumps(lambda: "original"))
-    publication = UnifiedWorkerRPC()
+    publication = _SingleOutputRPC()
 
     def fake_rpc(address, handler, message):
         if handler == START_WORKER_LEASE_HANDLER:
@@ -312,7 +393,7 @@ def test_completion_retries_transport_failures_three_times_without_rerun(
 
     push = _push(worker.worker_id, cloudpickle.dumps(callable_once))
     completions: list[protocol.CompleteWorkerLease] = []
-    publication = UnifiedWorkerRPC()
+    publication = _SingleOutputRPC()
     monkeypatch.setattr(
         "miniray.worker.cloudpickle.loads", lambda payload: callable_once
     )
@@ -350,7 +431,7 @@ def test_worker_rejects_completion_ack_with_changed_full_identity(
 ) -> None:
     worker = _worker(WorkerID.random())
     push = _push(worker.worker_id, cloudpickle.dumps(lambda: "done"))
-    publication = UnifiedWorkerRPC()
+    publication = _SingleOutputRPC()
 
     def fake_rpc(_address, handler, message):
         if handler == START_WORKER_LEASE_HANDLER:
@@ -380,49 +461,3 @@ def test_worker_rejects_completion_ack_with_changed_full_identity(
     assert key not in worker._replies
     assert worker._prepared_output_replies[key].complete_envelope is None
     assert worker._prepared_output_replies[key].failure_reply is None
-
-
-def test_reconstructed_multi_return_executes_once_and_returns_full_manifest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = _worker(WorkerID.random())
-    executions = 0
-
-    def reconstructed_producer() -> tuple[int, int, int]:
-        nonlocal executions
-        executions += 1
-        return 10, 20, 30
-
-    push = _push(
-        worker.worker_id, cloudpickle.dumps(reconstructed_producer),
-        num_returns=3, attempt_number=2,
-    )
-    real_loads = cloudpickle.loads
-    publication = UnifiedWorkerRPC()
-
-    def fake_rpc(_address, handler, message):
-        if handler == START_WORKER_LEASE_HANDLER:
-            return _accepted_start(message, worker.node_id)
-        if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
-            return publication.prepare(message)
-        assert handler == COMPLETE_WORKER_LEASE_HANDLER
-        return publication.complete(message)
-
-    monkeypatch.setattr("miniray.worker.rpc_request", fake_rpc)
-    monkeypatch.setattr(
-        "miniray.worker.cloudpickle.loads",
-        lambda _payload: reconstructed_producer,
-    )
-    reply = worker._handle_push_task(push)
-    replay = worker._handle_push_task(push)
-
-    assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
-    assert replay is reply
-    assert executions == 1
-    assert tuple(result.object_id for result in reply.results) == (
-        push.spec.return_ids()
-    )
-    assert tuple(
-        real_loads(result.inline_data) for result in reply.results
-    ) == (10, 20, 30)
-    assert reply.attempt_id == push.spec.attempt_id

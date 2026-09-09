@@ -25,3 +25,5 @@ K2h：foreignwait修fixture后5通过；Task真实Seal/Drop/owner rollback未知
 K2i：core-owner7、sourceRef/Taskseal2、NodeMember6、NodeWorkerDeath8通过。关联6个旧SRC接口删除并AST核验，Node5未执行因父fixture规范hash变化被正确拒绝，下一冻结重登后验收。
 
 K2j发布族：discovery34/protocol37/journal23、Node-server13/owner-death10/dead-child28/replica22通过；publication50通过1异常类型断言、finalize6通过3旧progress预期失败均已精确修测试，待下一冻结复验。保留所有失败及hash拒绝记录，未降低runtime校验。
+
+K2k：publication51/finalize9、stored-contained7、Worker completion9/unified75、owner33/same-owner12/cross-cleanup45通过；同Core双caller真实2线程重建1通过。object-ownership7通过1因未终态fixture导致collection为空已修待验。

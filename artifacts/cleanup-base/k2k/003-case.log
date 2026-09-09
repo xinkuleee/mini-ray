@@ -1,0 +1,47 @@
+..F.....                                                                 [100%]
+=================================== FAILURES ===================================
+____ test_reference_tokens_keep_object_live_until_every_reason_is_released _____
+
+    def test_reference_tokens_keep_object_live_until_every_reason_is_released() -> None:
+        table = ObjectOwnerTable()
+        object_id, attempt_0, _, _ = object_and_attempts()
+        table.register(
+            object_id,
+            current_attempt=attempt_0,
+            producer_task_spec="task-spec-placeholder",
+            local_token="driver-handle",
+        )
+    
+        submitted_hold = TaskReferenceHold(
+            TaskReferenceHoldKind.SUBMITTED,
+            WorkerID.random(),
+            attempt_0.task_id,
+            attempt_0,
+        )
+        assert table.add_submitted_reference(object_id, submitted_hold)
+        assert not table.add_submitted_reference(object_id, submitted_hold)
+        assert table.add_borrowed_reference(object_id, "borrower:1")
+        contained = ContainedReferenceHold(ObjectID.for_task(TaskID.random()), WorkerID.random(), "container:outer")
+        assert table.add_contained_reference(object_id, contained)
+    
+        assert table.release_local_reference(object_id, "driver-handle")
+        assert table.is_live(object_id)
+        assert table.begin_collection(object_id) is None
+    
+        assert table.release_submitted_reference(object_id, submitted_hold)
+        assert not table.release_submitted_reference(object_id, submitted_hold)
+        assert table.release_borrowed_reference(object_id, "borrower:1")
+        assert table.is_live(object_id)  # The nested/contained edge remains.
+        assert table.release_contained_reference(object_id, contained)
+        assert not table.is_live(object_id)
+    
+        snapshot = table.snapshot(object_id)
+        assert snapshot.is_reconstructible
+        plan = table.begin_collection(object_id, collection_id="all-reference-reasons-released")
+>       assert plan is not None and table.complete_collection(plan).collected
+E       assert (None is not None)
+
+tests/unit/test_object_ownership.py:152: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_object_ownership.py::test_reference_tokens_keep_object_live_until_every_reason_is_released
+1 failed, 7 passed in 1.93s

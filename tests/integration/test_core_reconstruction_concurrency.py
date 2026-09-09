@@ -1,8 +1,8 @@
 """Opt-in L1: two real reconstruction callers, no OS cluster or transport.
 
 One threadless Core and one unstarted Node reducer compose actual Grant/Start,
-discovery, Prepare/Complete, owner adoption and physical drops for one or three
-tiny STORED outputs. A 1-KiB store and real publication/membership authorities
+discovery, Prepare/Complete, owner adoption and physical drops for one
+tiny STORED output. A 1-KiB store and real publication/membership authorities
 are in memory. No user callable, Worker process or Core runtime thread runs.
 
 Both request threads execute the full internal Core reconstruction path, not
@@ -40,20 +40,22 @@ from miniray import control, core as core_module, node as node_module, output_pr
 from miniray.control import NodeRegistry
 from miniray.core import CoreWorker, _PendingTask, _WAKE_COORDINATOR
 from miniray.errors import SystemTaskError
-from miniray.ids import LeaseID, ObjectID
-from miniray.node import NodeServer
+from miniray.ids import LeaseID, NodeID, ObjectID, WorkerID
+from miniray.lease_dependencies import LeaseDependencyCustody
+from miniray.node import NodeServer, _WorkerSlot
 from miniray.object_manager import ObjectManager
+from miniray.object_store import ObjectStore
 from miniray.output_discovery import OutputDiscoverySession
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.output_publication import OutputPublicationHeader, OutputPublicationID
 from miniray.output_publication_journal import OutputPublicationJournal
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.reconstruction_runtime import ReconstructionDisposition
 from miniray.recovery import TaskState, UnknownTaskError
-from miniray.resources import ResourceVector
+from miniray.resources import NodeSnapshot, ResourceLedger, ResourceVector
+from miniray.transfer_pins import TransferPinOutbox
 from miniray.worker import WorkerServer
 from tests.unit._pure_core import close_pure_core, make_pure_core
-from tests.unit.test_node_placement_group_runtime import _node
 
 
 pytestmark = pytest.mark.loopback_smoke
@@ -96,6 +98,38 @@ def _snapshot_queue(fifo):
         return tuple(fifo.queue)
 
 
+def _node():
+    """One real local lease/bytes authority, with a passive existing Worker."""
+    node = object.__new__(NodeServer)
+    node.node_id, node.worker_id = NodeID.random(), WorkerID.random()
+    node.num_workers_per_node = 1
+    process = SimpleNamespace(pid=7301, exitcode=None, is_alive=lambda: True)
+    node._worker_order = (node.worker_id,)
+    node._workers = {node.worker_id: _WorkerSlot(node.worker_id, process=process,
+        address=("worker.invalid", 7301), pid=process.pid)}
+    node._ledger = ResourceLedger(ResourceVector({"CPU": 1}))
+    node._cluster_nodes = (NodeSnapshot(node.node_id, node._ledger.total, node._ledger.available),)
+    node._cluster_addresses = {}
+    node._gcs_address, node._registered_with_gcs = None, False
+    node._node_pid, node._registration_epoch, node._membership_epoch = 7300, 1, 1
+    node._resource_report_version = node._resource_reported_version = 0
+    node._object_store = ObjectStore(1024)
+    node._sealed_metadata, node._dropped_metadata = {}, {}
+    node._dependency_pin_cleanups, node._pinned_transfers = {}, {}
+    node._object_localization_locks = {}
+    node._source_pin_releases = TransferPinOutbox()
+    node._lease_dependency_custody = LeaseDependencyCustody(node.node_id)
+    node._leases, node._lease_outcomes, node._lease_cancellations = {}, {}, {}
+    node._lease_request_locks = {}
+    node._inflight_lease_requests = node._worker_replacements_inflight = 0
+    node._shutdown_request_id = None
+    node._stop_event = threading.Event()
+    node._state_lock, node._scheduling_lock = threading.RLock(), threading.Lock()
+    node._gcs_lifecycle_lock = threading.Lock()
+    node.event_sink = None
+    return node
+
+
 class _Case:
     def __init__(self):
         self.core = core = make_pure_core()
@@ -109,7 +143,6 @@ class _Case:
         self.violations = queue.Queue(maxsize=8)
         self.violation_overflow = False
         self.registry = NodeRegistry()
-        self.recovery = OutputPublicationRecoveryAuthority()
         self.gcs_address = ("reconstruction-gcs.invalid", 1)
         node._server = SimpleNamespace(address=("reconstruction-node.invalid", 1))
         node._object_manager = ObjectManager(node.node_id, node.object_store)
@@ -139,8 +172,18 @@ class _Case:
         assert not self.violation_overflow and self.violations.empty(), _snapshot_queue(self.violations)
 
     def _control_rpc(self, address, handler, request):
-        assert address == self.gcs_address
         self.calls.put_nowait((handler, request))
+        if address == self.core.owner_address:
+            methods = {
+                wire.REGISTER_OUTPUT_HANDOFF_HANDLER: self.core.register_output_handoff,
+                wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: self.core.report_output_handoff_complete,
+                wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: self.core.report_output_handoff_rollback,
+            }
+            assert handler in methods
+            reply = methods[handler](request)
+            assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
+            return reply
+        assert address == self.gcs_address
         if handler == node_module.GCS_REGISTER_NODE_HANDLER:
             return self.registry.register_message(request)
         if handler == node_module.GCS_UPDATE_NODE_RESOURCES_HANDLER:
@@ -153,19 +196,9 @@ class _Case:
             return protocol.UpdateNodeResourcesReply(
                 request.node_id, request.node_pid, request.registration_epoch, request.report_seq, True,
             )
-        assert handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-        if type(request) is wire.ReportOutputPublicationIntent:
-            ack = self.recovery.report_intent(request.manifest)
-        elif type(request) is wire.ArmOutputPublication:
-            ack = self.recovery.arm_complete(request.publication_id, request.manifest_digest)
-        elif type(request) is wire.ReportOutputPublicationTerminal:
-            ack = self.recovery.report_terminal(request.witness)
-        elif type(request) is wire.ReportOutputPublicationAdopted:
-            ack = self.recovery.report_adopted(request.proof)
-        else:
-            assert type(request) is wire.ReportOutputPublicationSlotCollected
-            ack = self.recovery.report_slot_collected(request.proof)
-        return wire.OutputRecoveryReply(request, ack)
+        assert handler == "get_worker_deaths" and type(request) is protocol.GetWorkerDeaths
+        assert request.after_epoch == 0
+        return protocol.GetWorkerDeathsReply(0, 0, ())
 
     def rpc(self, address, handler, request):
         try:
@@ -201,24 +234,22 @@ class _Case:
                 self.core._submissions.task_done()
         pytest.fail("bounded reconstruction submission tail exceeded 16 records")
 
-    def prepare(self, num_returns):
-        assert num_returns in (1, 3)
+    def prepare(self):
         core, node = self.core, self.node
         self.prepare_thread = threading.current_thread()
-        function = (lambda: {"original": True}) if num_returns == 1 else (lambda: (10, 20, 30))
         pending, outputs = core._register_submission(
-            core.define_remote_function(function), (), {}, ResourceVector({"CPU": 1}),
-            num_returns=num_returns, max_retries=1 if num_returns == 1 else 2, _enqueue=True,
+            core.define_remote_function(lambda: {"original": True}), (), {}, ResourceVector({"CPU": 1}),
+            num_returns=1, max_retries=1, _enqueue=True,
         )
         self.pending = pending
-        self.refs = outputs if isinstance(outputs, tuple) else (outputs,)
-        assert len(self.refs) == num_returns
+        self.refs = (outputs,)
         assert core._submissions.get_nowait() is pending
         core._submissions.task_done()
         assert core._submissions.empty()
         request = protocol.RequestWorkerLease(
             LeaseID.random(), pending.task_id, pending.spec.attempt_id, pending.spec.resources,
             core.node_id, core.worker_id, target_node_id=node.node_id, return_ids=pending.output_ids,
+            requester_owner_address=core.owner_address,
         )
         grant = node._handle_request_lease(request)
         assert type(grant) is protocol.GrantWorkerLease
@@ -230,8 +261,7 @@ class _Case:
         discovery = OutputDiscoverySession(OutputPublicationHeader(
             self.identity, core.job_id, grant.worker_id, core.worker_id, started.node_incarnation,
         ), inline_threshold=0)
-        values = ({"original": True},) if num_returns == 1 else (10, 20, 30)
-        outputs = discovery.discover(values)
+        outputs = discovery.discover(({"original": True},))
         assert all(slot.tier is protocol.ResultStorage.OBJECT_STORE and not slot.transfers for slot in outputs.manifest.slots)
         assert sum(slot.size_bytes for slot in outputs.manifest.slots) < 128
         assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(
@@ -263,7 +293,9 @@ class _Case:
         assert all(core.owner_table.snapshot(object_id).state is ObjectState.LOST
                    and core.owner_table.snapshot(object_id).output_publication is not None
                    for object_id in pending.output_ids)
-        assert not self.recovery.snapshot(self.identity).slot_collections
+        handoff = core._output_handoff_table().query(self.identity)
+        assert handoff.phase is OutputHandoffPhase.ADOPTED and handoff.complete == self.reply.output_publication.complete
+        assert not core.owner_table._output_retirement_receipts
         assert not getattr(core, "_output_retirement_work", {})
         assert core._accepted_task_count == 0 and not core._task_finish_barriers
         self.drain_submissions()
@@ -458,8 +490,14 @@ def _concurrent_reconstruction(case, object_ids, allowed_threads):
                 assert request.producer_attempt_id == case.pending.spec.attempt_id
                 assert request.owner_worker_id == core.worker_id and request.node_id == node.node_id
                 assert reply.error is None
-        retired = case.recovery.snapshot(case.identity).slot_collections
-        assert tuple(proof.object_id for proof in retired) == case.pending.output_ids
+        receipts = tuple(core.owner_table._output_retirement_receipts.values())
+        assert len(receipts) == 1
+        receipt, = receipts
+        assert tuple(member.object_id for member in receipt.plan.memberships) == case.pending.output_ids
+        assert receipt.released_edges == ()
+        assert receipt.dropped_replicas == tuple(reply for _, _, reply in drops[count:])
+        assert core.owner_table.output_publication_retirement_receipt(receipt.plan).plan == receipt.plan
+        assert core._output_handoff_table().query(case.identity).complete == case.reply.output_publication.complete
         assert not core._output_retirement_work and not core._output_retirement_tickets
         case.assert_no_violations()
         yield core._submissions
@@ -484,7 +522,7 @@ def _assert_one_admission_and_stale_fence(case, captured):
     assert type(queued) is _PendingTask
     assert queued.task_id == original.task_id and queued.output_ids == original.output_ids
     assert queued.spec.attempt_id == original.spec.attempt_id.next()
-    assert queued.target_execution is None
+    assert len(queued.output_ids) == 1
     assert core._accepted_task_count == 1
     assert core._recovery.task_record(original.task_id).retries_started == 1
     assert core._recovery.active_recovery(original.task_id) == queued.spec.attempt_id
@@ -512,21 +550,8 @@ def _assert_one_admission_and_stale_fence(case, captured):
 def test_concurrent_lost_requests_merge_and_old_attempt_is_fenced(allowed_request_threads) -> None:
     case = _Case()
     try:
-        case.prepare(1)
+        case.prepare()
         with _concurrent_reconstruction(case, (case.pending.object_id,) * 2, allowed_request_threads) as captured:
-            _assert_one_admission_and_stale_fence(case, captured)
-        case.finish_current_and_collect()
-    finally:
-        case.close()
-
-
-def test_concurrent_multi_return_sibling_requests_start_once_and_join(allowed_request_threads) -> None:
-    case = _Case()
-    try:
-        case.prepare(3)
-        with _concurrent_reconstruction(
-            case, (case.pending.output_ids[0], case.pending.output_ids[2]), allowed_request_threads,
-        ) as captured:
             _assert_one_admission_and_stale_fence(case, captured)
         case.finish_current_and_collect()
     finally:

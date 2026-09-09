@@ -44,7 +44,6 @@ def _assert_no_owner_delivery(fixture, node, record, complete):
     query = protocol.GetWorkerLeaseOutcome(
         fixture.id.lease_id, fixture.id.task_id, fixture.id.attempt_id,
         fixture.values.executor, fixture.values.owner, fixture.id.output_ids,
-        target_execution=record.request.target_execution,
     )
     # Fenced Node handlers reject rather than turning a known Complete into
     # an ordinary descriptor-only success or supplying retired bytes.
@@ -93,7 +92,7 @@ def test_node_finalize_rejects_rebound_death_manifest_and_node_identity(monkeypa
     changed_manifest = OutputPublicationManifest.create(changed_header, fixture.manifest.slots)
     with pytest.raises(OutputPublicationConflictError, match="Node incarnation"):
         node._handle_finalize_output_owner_death(wire.FinalizeOutputOwnerDeath(changed_manifest, request.owner_death))
-    slots = (replace(fixture.manifest.slots[0], checksum="ab" * 32), fixture.manifest.slots[1])
+    slots = (replace(fixture.manifest.slots[0], checksum="ab" * 32),)
     rebound = OutputPublicationManifest.create(fixture.manifest.header, slots)
     with pytest.raises(OutputPublicationConflictError, match="publication identity"):
         node._handle_finalize_output_owner_death(wire.FinalizeOutputOwnerDeath(rebound, request.owner_death))
@@ -149,14 +148,15 @@ def test_finalize_fences_late_adoption_without_rewriting_success_history(monkeyp
 def test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback(monkeypatch, phase):
     fixture, node, record, complete, request = _fixture(monkeypatch, phase=phase)
     calls = []
+    worker_ready = False
 
     def rpc(address, handler, message):
         assert address == record.grant.worker_address
         assert handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER and message == request
         assert not node._state_lock._is_owned()
         calls.append(message)
-        assert len(calls) <= 2
-        return wire.FinalizeOutputOwnerDeathReply(message, len(calls) == 2)
+        assert len(calls) <= 3
+        return wire.FinalizeOutputOwnerDeathReply(message, worker_ready)
 
     node._background_rpc = rpc
     first = node._handle_finalize_output_owner_death(request)
@@ -168,10 +168,17 @@ def test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback(mon
     assert not fixture.adapter.owner_death_finished(fixture.id)
     # Owner cleanup may already have released CPU, but the live Worker's
     # pending ACK belongs to that same terminal, not a new rollback saga.
+    # The current supervisor retries that exact owner-death request itself;
+    # keep its ACK negative for this round rather than assuming no RPC occurs.
+    def ordinary_rollback(*_args, **_kwargs):
+        pytest.fail("owner-death pending ACK must not start an ordinary rollback")
+    monkeypatch.setattr(fixture.adapter, "rollback", ordinary_rollback)
     assert not node._drive_output_publications()
-    assert fixture.journal.snapshot(fixture.id) == before and calls == [request]
+    assert fixture.journal.snapshot(fixture.id) == before and calls == [request, request]
+    assert not fixture.adapter.owner_death_finished(fixture.id)
+    worker_ready = True
     assert node._handle_finalize_output_owner_death(request).cleaned
-    assert calls == [request, request]
+    assert calls == [request, request, request]
     assert fixture.adapter.owner_death_finished(fixture.id)
     after = fixture.journal.snapshot(fixture.id)
     assert after.state is OutputPublicationJournalState.RETIRED

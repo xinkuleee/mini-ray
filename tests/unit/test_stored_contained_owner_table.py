@@ -17,7 +17,7 @@ from miniray.ownership import (
     StoredContainedReferenceDisposition,
 )
 from miniray.protocol import ContainedTransferSource
-from miniray.stored_publication import (
+from miniray.publication_sources import (
     BorrowedContainedSource,
     OwnedContainedSource,
     PreparedContainedTransfer,
@@ -237,7 +237,7 @@ def test_borrowed_pin_uses_prepare_promote_for_every_storage_tier() -> None:
         transfer,
         source=BorrowedContainedSource(
             borrower, "inline-token",
-            ContainedTransferSource("wrong-source"),
+            ContainedTransferSource(replace(original_hold, transfer_token="wrong-source")),
         ),
     )
     with pytest.raises(InvalidObjectTransitionError, match="conflict"):

@@ -1,4 +1,4 @@
-"""Pure Worker publication replay contracts; at most four return slots.
+"""Pure Worker publication replay contracts; one output per execution.
 
 Every RPC is an in-memory value.  No process, socket, timer, sleep, or runtime
 Core is created; reducers and method calls expose every interleaving.
@@ -25,7 +25,7 @@ from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope,
     OutputPublicationManifest, OutputPublicationNodeIncarnation,
 )
-from miniray.task_outputs import TargetExecutionKey, TargetOutputManifest, TaskOutputManifest
+from miniray.output_handoff import OutputHandoffTable, OutputHandoffPhase
 from miniray.transport import TransportError
 from miniray.worker import (
     COMPLETE_WORKER_LEASE_HANDLER, GET_WORKER_LEASE_OUTCOME_HANDLER,
@@ -79,22 +79,22 @@ def _completion(request, envelope=None, *, accepted=True, witness=None):
         request.lease_id, request.task_id, request.attempt_id, request.worker_id,
         request.status, protocol.LeaseExecutionState.COMPLETED, accepted, accepted,
         error=None if accepted else "completion not yet accepted",
-        scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+        scheduling_key=request.scheduling_key,
         output_publication=envelope, output_completion=witness,
     )
 
 
 class _Fixture:
-    def __init__(self, monkeypatch, function, *, count=1, threshold=1024, target=False):
+    def __init__(self, monkeypatch, function, *, count=1, threshold=1024):
         self.worker = _worker(WorkerID.random(), inline_threshold=threshold)
         self.worker._server = SimpleNamespace(address=("127.0.0.1", 32301))
         self.push = _push(self.worker.worker_id, b"unified-output-function", num_returns=count)
-        if target:
-            full = TaskOutputManifest.from_task_spec(self.push.spec)
-            execution = TargetExecutionKey(TargetOutputManifest(
-                full, (full.output_ids[1], full.output_ids[3]),
-            ), self.push.spec.attempt_id)
-            self.push = replace(self.push, target_execution=execution)
+        assert count == 1
+        self.worker._lifecycle = threading.Condition(threading.RLock())
+        self.worker._accepted_pushes = {}
+        self.worker._push_obligations = set()
+        self.worker._accepting_tasks = True
+        self.worker._active_tasks = 0
         self.incarnation = OutputPublicationNodeIncarnation(self.worker.node_id, 23001, 7)
         self.calls = []
         self.executions = []
@@ -131,7 +131,7 @@ class _Fixture:
         if handler == START_WORKER_LEASE_HANDLER:
             return protocol.StartWorkerLeaseReply(
                 request.lease_id, protocol.LeaseExecutionState.RUNNING, True,
-                scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+                scheduling_key=request.scheduling_key,
                 node_incarnation=self.incarnation,
             )
         if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
@@ -157,25 +157,22 @@ class _Fixture:
 class _ActualNodePublication:
     """Bounded adapter/store composition for precise Worker migration tests.
 
-    At most two selected slots and one 128 KiB store; no Node constructor,
+    One output and one 128 KiB store; no Node constructor,
     transport or background worker. Complete comes from the real journal.
     """
 
     def __init__(self, fixture, *, child_tables=None):
-        from miniray.contained_cycle import ContainedReferenceGraphAuthority
         from miniray.node import NodeServer
         from miniray.object_manager import ObjectManager
         from miniray.object_store import ObjectStore
         from miniray.output_publication_journal import OutputPublicationJournal
         from miniray.output_publication_node import OutputPublicationNodeAdapter
-        from miniray.output_recovery import OutputPublicationRecoveryAuthority
         from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
 
         self.fixture = fixture
         self.children = child_tables or {}
         self.journal = OutputPublicationJournal()
-        self.recovery = OutputPublicationRecoveryAuthority()
-        self.graph = ContainedReferenceGraphAuthority()
+        self.handoffs = OutputHandoffTable()
         self.store = ObjectStore(128 * 1024)
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         self.token = AllocationToken("exact-worker-output")
@@ -194,21 +191,32 @@ class _ActualNodePublication:
         node._owner_death_fences = {}
         node._output_publication_journal = self.journal
         self.adapter = OutputPublicationNodeAdapter(
-            self.journal, report_intent=self.recovery.report_intent,
-            arm_complete=self.recovery.arm_complete, report_terminal=self.recovery.report_terminal,
-            report_rollback=self.recovery.report_rollback,
+            self.journal, register_owner=self.register_owner,
+            report_complete=self.report_complete, report_rollback=self.report_rollback,
             prepare_child=self.prepare_child, promote_child=self.promote_child,
             release_child=self.release_child,
-            prepare_graph=lambda request: protocol.ContainedGraphReply(
-                request, self.graph.prepare_manifest(request.manifest),
-            ),
-            abort_graph=lambda request: protocol.ContainedGraphReply(
-                request, self.graph.abort_manifest(request.manifest),
-            ),
             seal_replica=node._seal_output_publication_replica,
             drop_replica=node._drop_output_publication_replica,
         )
         fixture.on_prepare, fixture.on_complete = self.prepare, self.complete
+
+    def register_owner(self, manifest):
+        snapshot = self.handoffs.register(manifest, manifest.publication_id.attempt_id)
+        request = wire.RegisterOutputHandoff(manifest)
+        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert reply.request == request and reply.snapshot.manifest == manifest
+
+    def report_complete(self, witness):
+        assert self.journal.snapshot(witness.publication_id).complete == witness
+        snapshot = self.handoffs.record_complete(witness)
+        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+        assert reply.snapshot.complete == witness
+
+    def report_rollback(self, tombstone, *, manifest):
+        assert self.journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
+        snapshot = self.handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
+        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffRollback(manifest, tombstone), True, snapshot)
+        assert reply.snapshot.phase is OutputHandoffPhase.ABORTED
 
     def prepare_child(self, address, request):
         assert address == request.transfer.contained_owner_address
@@ -233,7 +241,7 @@ class _ActualNodePublication:
         )
 
     def prepare(self, request):
-        assert len(request.manifest.slots) <= 2
+        assert len(request.manifest.slots) == 1
         assert request.manifest == self.fixture.pending.outputs.manifest
         self.adapter.prepare(request.manifest, request.slot_payloads)
         return wire.PreparedOutputPublicationReply(request.request_identity, True)
@@ -252,34 +260,27 @@ class _ActualNodePublication:
 
         self.fixture.complete_envelope = self.adapter.complete(identity, commit_lease=commit)
         return _completion(request, self.fixture.complete_envelope)
-@pytest.mark.parametrize("case", ("inline", "stored", "mixed", "multi-contained", "targeted-contained"))
-def test_every_success_uses_one_unified_batch_and_one_actual_complete(monkeypatch, case):
+@pytest.mark.parametrize("case", ("inline", "stored", "tuple-value", "inline-contained", "stored-contained"))
+def test_every_success_uses_one_output_and_one_actual_complete(monkeypatch, case):
     values = []
-    target = case == "targeted-contained"
-    count = 4 if target else 2 if case in ("mixed", "multi-contained") else 1
-    threshold = 0 if case == "stored" else 1024
-    f = _Fixture(monkeypatch, lambda: values[0] if count == 1 else tuple(values),
-                 count=count, threshold=threshold, target=target)
+    stored = case in ("stored", "stored-contained")
+    f = _Fixture(monkeypatch, lambda: values[0], threshold=0 if stored else 1024)
+    children = {}
     if "contained" in case:
+        from miniray.ownership import ObjectOwnerTable
         child = ObjectRef(ObjectID.for_task(TaskID.random()), f.worker.worker_id, f.worker.address)
-        values.extend(({"same-child": child}, {"same-child": child, "large": b"x" * 4096}))
-        if target:
-            class _Unselected:
-                def __reduce__(self):
-                    pytest.fail("unselected result was serialized")
-
-            values[:] = [_Unselected(), values[0], _Unselected(), values[1]]
+        table = ObjectOwnerTable()
+        table.register(child.object_id, local_token="source-live")
+        children[f.worker.worker_id] = table
+        values.append({"same-child": (child, child)})
     else:
-        values.extend((7, b"x" * 4096) if count == 2 else (7,))
-    f.on_prepare = lambda request: (
-        request.manifest == f.pending.outputs.manifest
-        and request.slot_payloads == f.pending.outputs.slot_payloads
-        and wire.PreparedOutputPublicationReply(request.request_identity, True)
-    )
+        values.append((7, b"tuple-value") if case == "tuple-value" else 7)
+    actual = _ActualNodePublication(f, child_tables=children)
     reply = f.worker._handle_push_task(f.push)
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert reply.output_publication == f.complete_envelope
     assert reply.results == f.complete_envelope.results
+    assert len(actual.completions) == 1 and actual.completions[0] == reply.output_publication.complete
     assert not hasattr(reply, "stored_publication") and not hasattr(reply, "inline_publication")
     assert not hasattr(reply, "contained_edges")
     assert f.handlers == [START_WORKER_LEASE_HANDLER, wire.PREPARE_OUTPUT_PUBLICATION_HANDLER, COMPLETE_WORKER_LEASE_HANDLER]
@@ -287,18 +288,16 @@ def test_every_success_uses_one_unified_batch_and_one_actual_complete(monkeypatc
     assert f.worker._handle_push_task(f.push) is reply and f.executions == [True]
     manifest = f.prepares[0].manifest
     assert manifest.header.node_incarnation == f.incarnation
-    assert len(manifest.slots) == (2 if target else count)
-    if case in ("mixed", "multi-contained", "targeted-contained"):
-        assert tuple(slot.tier for slot in manifest.slots) == (
-            protocol.ResultStorage.INLINE, protocol.ResultStorage.OBJECT_STORE,
-        )
+    slot, = manifest.slots
+    assert slot.object_id == f.push.spec.return_ids()[0] and slot.object_id.return_index == 0
+    assert slot.tier is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     if "contained" in case:
-        first, second = manifest.slots
-        assert first.transfers[0].contained_object_id == second.transfers[0].contained_object_id
-        assert first.transfers[0].final_hold != second.transfers[0].final_hold
-    if target:
-        assert tuple(slot.object_id.return_index for slot in manifest.slots) == (1, 3)
-        assert manifest.execution == f.push.target_execution
+        transfer, = slot.transfers
+        assert transfer.contained_object_id == child.object_id
+        assert transfer.final_hold in table.snapshot(child.object_id).contained_holds
+        assert transfer.provisional_hold not in table.snapshot(child.object_id).contained_holds
+    if case == "tuple-value":
+        assert cloudpickle.loads(reply.results[0].inline_data) == (7, b"tuple-value")
 
 
 class _TrackedRef(ObjectRef):
@@ -313,7 +312,7 @@ class _TrackedRef(ObjectRef):
         self._closed = True
 
 
-def _borrowed_fixture(monkeypatch, *, threshold=1024, target=False):
+def _borrowed_fixture(monkeypatch, *, threshold=1024):
     reductions = []
 
     class _Returned:
@@ -326,9 +325,9 @@ def _borrowed_fixture(monkeypatch, *, threshold=1024, target=False):
 
     def function(container):
         returned = _Returned(container["child"])
-        return (None, returned, None, b"x" * 4096) if target else returned
+        return returned
 
-    f = _Fixture(monkeypatch, function, count=4 if target else 1, threshold=threshold, target=target)
+    f = _Fixture(monkeypatch, function, threshold=threshold)
     owner = WorkerID.random()
     child_id = ObjectID.for_task(TaskID.random())
     hold = protocol.TaskReferenceHold(protocol.TaskReferenceHoldKind.RETAINED,
@@ -417,7 +416,7 @@ def test_prepare_ack_survives_cleanup_effect_then_error_and_retries_only_local_d
 
 @pytest.mark.parametrize("mode", ("transport", "missing", "manifest", "malformed"))
 def test_complete_ambiguity_retains_prepared_success_without_republication_or_reserialization(monkeypatch, mode):
-    f, child, _imports, reductions = _borrowed_fixture(monkeypatch, target=True)
+    f, child, _imports, reductions = _borrowed_fixture(monkeypatch)
     completions = []
 
     def complete(request):
@@ -457,7 +456,7 @@ def _outcome(f, request, envelope=None, *, witness=None):
             request.lease_id, request.task_id, request.attempt_id, request.executor_worker_id,
             request.owner_worker_id, request.object_ids, f.worker.node_id, True, True,
             protocol.LeaseExecutionState.COMPLETED, protocol.TaskReplyStatus.SUCCEEDED,
-            scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+            scheduling_key=request.scheduling_key,
             output_completion=witness,
         )
     if envelope is None:
@@ -465,7 +464,7 @@ def _outcome(f, request, envelope=None, *, witness=None):
             request.lease_id, request.task_id, request.attempt_id, request.executor_worker_id,
             request.owner_worker_id, request.object_ids, f.worker.node_id,
             True, True, protocol.LeaseExecutionState.RUNNING,
-            scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+            scheduling_key=request.scheduling_key,
         )
     descriptors = tuple(protocol.ObjectStoreDescriptor(
         result.object_id, result.owner_worker_id, request.attempt_id, result.node_id,
@@ -475,14 +474,14 @@ def _outcome(f, request, envelope=None, *, witness=None):
         request.lease_id, request.task_id, request.attempt_id, request.executor_worker_id,
         request.owner_worker_id, request.object_ids, f.worker.node_id, True, True,
         protocol.LeaseExecutionState.COMPLETED, protocol.TaskReplyStatus.SUCCEEDED, descriptors,
-        scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+        scheduling_key=request.scheduling_key,
         output_publication=envelope,
     )
 
 
 @pytest.mark.parametrize("complete_failure", ("transport", "rejected"))
 def test_rejected_prepare_freezes_abort_and_keeps_custody_until_failed_complete_ack(monkeypatch, complete_failure):
-    f, child, imports, reductions = _borrowed_fixture(monkeypatch, target=True)
+    f, child, imports, reductions = _borrowed_fixture(monkeypatch)
     f.on_prepare = lambda request: wire.PreparedOutputPublicationReply(
         request.request_identity, False, wire.OutputPublicationRPCErrorKind.INVALID_STATE, "promotion rejected",
     )
@@ -516,7 +515,7 @@ def test_rejected_prepare_freezes_abort_and_keeps_custody_until_failed_complete_
 
 @pytest.mark.parametrize("metadata_only", (False, True))
 def test_positive_exact_outcome_replaces_abort_and_survives_local_cleanup_error(monkeypatch, metadata_only):
-    f, child, imports, reductions = _borrowed_fixture(monkeypatch, target=True)
+    f, child, imports, reductions = _borrowed_fixture(monkeypatch)
     f.on_prepare = lambda request: wire.PreparedOutputPublicationReply(
         request.request_identity, False, wire.OutputPublicationRPCErrorKind.CONFLICT, "success may already exist",
     )
@@ -525,7 +524,7 @@ def test_positive_exact_outcome_replaces_abort_and_survives_local_cleanup_error(
 
     def outcome(request):
         queries.append(request)
-        assert request.object_ids == f.push.target_execution.target_output_ids
+        assert request.object_ids == f.push.spec.return_ids()
         assert not child.closed
         if metadata_only:
             return _outcome(f, request, witness=OutputPublicationCompleteWitness.for_manifest(f.prepared_request.manifest))
@@ -590,7 +589,7 @@ def test_discovery_failure_has_no_prepare_effect_and_keeps_ordinary_failed_compl
             reductions.append("bad")
             raise ValueError("result reduction failed")
 
-    f = _Fixture(monkeypatch, lambda: (_Good(), _Bad()), count=2)
+    f = _Fixture(monkeypatch, lambda: (_Good(), _Bad()))
     reply = f.worker._handle_push_task(f.push)
     assert reply.status is protocol.TaskReplyStatus.SYSTEM_ERROR
     assert reply.output_publication is None and reply.results == ()
@@ -624,8 +623,9 @@ def test_pending_complete_keeps_lifecycle_obligation_until_success_reply_is_cach
     assert f.executions == [True]
 
 
-def test_owner_retires_payload_after_lost_complete_ack_then_worker_drain_uses_local_bytes(monkeypatch):
-    f, child, _imports, reductions = _borrowed_fixture(monkeypatch, target=True)
+@pytest.mark.parametrize("stored", (False, True))
+def test_owner_retires_payload_after_lost_complete_ack_then_worker_drain_uses_local_bytes(monkeypatch, stored):
+    f, child, _imports, reductions = _borrowed_fixture(monkeypatch, threshold=0 if stored else 1024)
     worker = f.worker
     worker._lifecycle = threading.Condition(threading.RLock())
     worker._accepted_pushes = {}
@@ -663,8 +663,9 @@ def test_owner_retires_payload_after_lost_complete_ack_then_worker_drain_uses_lo
     reply = worker._replies[f.key]
     assert reply.output_publication.complete == node_metadata[0]
     assert reply.output_publication.manifest == local_outputs.manifest
-    assert reply.results[0].inline_data == local_outputs.slot_payloads[0]
-    assert reply.results[1].inline_data is None
+    result, = reply.results
+    assert result.inline_data == (None if stored else local_outputs.slot_payloads[0])
+    assert result.storage is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     assert len(deadlines) == 1
     assert 0 < deadlines[0]["request_timeout"] <= 0.5
     assert deadlines[0]["connect_timeout"] == deadlines[0]["request_timeout"]
@@ -755,7 +756,7 @@ def test_drain_deadline_expiring_after_prepare_does_not_start_complete(monkeypat
 
 
 def test_invalid_metadata_outcome_does_not_override_frozen_abort_or_release_custody(monkeypatch):
-    f, child, imports, reductions = _borrowed_fixture(monkeypatch, target=True)
+    f, child, imports, reductions = _borrowed_fixture(monkeypatch)
     f.on_prepare = lambda request: wire.PreparedOutputPublicationReply(
         request.request_identity, False, wire.OutputPublicationRPCErrorKind.CONFLICT, "prepare rejected",
     )
@@ -797,8 +798,8 @@ def _owner_cleanup_lifecycle(worker):
     worker._active_tasks = 0
 
 
-def _owner_cleanup_fixture(monkeypatch, *, stage="pending", target=False):
-    f, child, imports, reductions = _borrowed_fixture(monkeypatch, target=target)
+def _owner_cleanup_fixture(monkeypatch, *, stage="pending", stored=False):
+    f, child, imports, reductions = _borrowed_fixture(monkeypatch, threshold=0 if stored else 1024)
     _owner_cleanup_lifecycle(f.worker)
 
     def lost_ack(_request):
@@ -854,9 +855,9 @@ def _assert_owner_cleanup_finished(f, request):
 
 
 @pytest.mark.parametrize("stage", ("pending", "complete-unknown", "cached", "aborted"))
-@pytest.mark.parametrize("target", (False, True))
-def test_output_owner_death_retires_exact_custody_and_replays_lost_cleanup_ack(monkeypatch, stage, target):
-    f, child, imports, reductions, request = _owner_cleanup_fixture(monkeypatch, stage=stage, target=target)
+@pytest.mark.parametrize("stored", (False, True))
+def test_output_owner_death_retires_exact_custody_and_replays_lost_cleanup_ack(monkeypatch, stage, stored):
+    f, child, imports, reductions, request = _owner_cleanup_fixture(monkeypatch, stage=stage, stored=stored)
     worker = f.worker
     pending = getattr(worker, "_prepared_output_replies", {}).get(f.key)
     if stage == "pending":

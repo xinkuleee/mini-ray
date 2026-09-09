@@ -1,13 +1,10 @@
-"""Pure discovery/publication contracts when the submitter executes its retry.
+"""Pure single-output custody when the submitter executes its own retry.
 
-At most four logical outputs (two selected), one shared child, one 16 KiB
-ObjectStore and one CPU ledger. Real discovery, Node adapter/storage callbacks,
-graph/recovery reducers and child/output owner tables run synchronously. The
-ObjectRef helpers are detached handles; borrowed credentials are installed by
-real owner retain/acquire transitions before publication, not assumed from
-the handle fields. No Core/Node constructor, RPC, threads, waits or processes.
-Targeted cases check selected-slot custody and original indices, not scheduler
-reconstruction or end-to-end shutdown of the unselected owner entries.
+One outer, one child, one 16 KiB ObjectStore and one CPU ledger. Real discovery,
+owner handoff/child tables, local owner CAS and Node storage handlers compose
+synchronously. Borrowed credentials require actual retain/acquire transitions.
+No Core/Node constructor, RPC, threads, waits or processes. Local composition
+does not claim scheduler reconstruction, distributed shutdown or GCS evidence.
 """
 
 from __future__ import annotations
@@ -23,18 +20,17 @@ import time
 import cloudpickle
 import pytest
 
-from miniray import protocol
-from miniray.contained_cycle import ContainedReferenceGraphAuthority
+from miniray import output_protocol as wire, protocol
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import AttemptID, ObjectID, TaskID
 from miniray.object_store import ObjectStore
 from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_publication import OutputPublicationManifest
 from miniray.output_publication_journal import (
-    OutputPublicationAdoptionProof, OutputPublicationJournal, OutputPublicationSlotCleanupProof,
+    OutputPublicationAdoptionProof, OutputPublicationJournal,
 )
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
+from miniray.output_handoff import OutputHandoffPhase, OutputHandoffTable
 from miniray.owner_service import StoredContainedPinOwnerAdapter
 from miniray.ownership import (
     ConflictingBorrowerTokenError, ObjectCollectionState, ObjectOwnerTable,
@@ -45,7 +41,7 @@ from miniray.publication_sources import PreparedContainedTransfer, prepared_cont
 from miniray.ref_transfer import exporting_references, importing_references
 from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
 from tests.unit.test_output_discovery import _borrowed, _header, _owned
-from tests.unit.test_output_publication_node import _bind_real_node_storage
+from tests.unit.test_output_publication_node_server import _bind_real_node_storage
 
 
 pytestmark = pytest.mark.unit
@@ -69,8 +65,8 @@ def _no_runtime(monkeypatch):
 
 
 class _Fixture:
-    def __init__(self, *, borrowed=False, targeted=False, same_owner=True):
-        header = _header(4 if targeted else 2, selected=(1, 3) if targeted else None)
+    def __init__(self, *, borrowed=False, stored=False, same_owner=True):
+        header = _header()
         self.header = replace(header, owner_worker_id=header.executor_worker_id) if same_owner else header
         header = self.header
         self.outer = ObjectOwnerTable()
@@ -93,36 +89,35 @@ class _Fixture:
                 self.child.object_id, self.child.borrow_source, self.borrower,
             )
         self.child_before = self.child_table.snapshot(self.child.object_id)
-        self.values = ([self.child, self.child], {"child": self.child, "padding": b"p" * 4096})
-        self.session = OutputDiscoverySession(header, inline_threshold=4096)
+        self.values = ([self.child, self.child],)
+        self.session = OutputDiscoverySession(header, inline_threshold=0 if stored else 4096)
         self.outputs = self.session.discover(self.values)
+        assert len(self.outputs.slot_payloads) == 1 and len(self.outputs.slot_payloads[0]) < 4096
         self.manifest = self.outputs.manifest
         self.identity = self.manifest.publication_id
         self.transfers = tuple(slot.transfers[0] for slot in self.manifest.slots)
         self.journal = OutputPublicationJournal()
-        self.recovery = OutputPublicationRecoveryAuthority()
-        self.graph = ContainedReferenceGraphAuthority()
+        self.handoffs = OutputHandoffTable()
         self.store = ObjectStore(16 * 1024)
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         self.token = self.ledger.allocate(ResourceVector({"CPU": 1}), AllocationToken("same-owner-execution"))
         self.pin_adapter = StoredContainedPinOwnerAdapter(self.child_table)
         self.events = []
         self.adapter = OutputPublicationNodeAdapter(
-            self.journal, report_intent=self.recovery.report_intent,
-            arm_complete=self.recovery.arm_complete, report_terminal=self.recovery.report_terminal,
-            report_rollback=self.recovery.report_rollback, prepare_child=self.prepare,
+            self.journal, register_owner=self.register_owner,
+            report_complete=self.report_complete, report_rollback=self.report_rollback,
+            prepare_child=self.prepare,
             promote_child=self.promote, release_child=self.release,
-            prepare_graph=self.prepare_graph, abort_graph=self.abort_graph,
             seal_replica=self.unbound_storage, drop_replica=self.unbound_storage,
         )
         self.node = _bind_real_node_storage(self)
         self.spec = protocol.TaskSpec(
             header.job_id, self.identity.task_id, self.identity.attempt_id,
             protocol.FunctionKey(header.job_id, __name__, "same-owner-output", "v1"),
-            (), len(self.identity.full_output_ids), ResourceVector({"CPU": 1}), header.owner_worker_id,
+            (), 1, ResourceVector({"CPU": 1}), header.owner_worker_id,
         )
         self.outer.register_task_outputs(self.spec, local_tokens=tuple(
-            "output-{}".format(output.return_index) for output in self.identity.full_output_ids
+            "output-{}".format(output.return_index) for output in self.identity.output_ids
         ))
 
     def unbound_storage(self, *_args):
@@ -154,36 +149,48 @@ class _Fixture:
             request.object_id, request.owner_worker_id, request.hold, True, released,
         )
 
-    def prepare_graph(self, request):
-        return protocol.ContainedGraphReply(request, self.graph.prepare_manifest(request.manifest))
+    def register_owner(self, manifest):
+        request = wire.RegisterOutputHandoff(manifest)
+        snapshot = self.handoffs.register(request.manifest, self.identity.attempt_id)
+        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert reply.request == request and reply.snapshot.manifest == self.manifest
 
-    def abort_graph(self, request):
-        return protocol.ContainedGraphReply(request, self.graph.abort_manifest(request.manifest))
+    def report_complete(self, witness):
+        request = wire.ReportOutputHandoffComplete(witness)
+        snapshot = self.handoffs.record_complete(request.witness)
+        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert reply.request == request and reply.snapshot.complete == witness
+
+    def report_rollback(self, tombstone, *, manifest):
+        request = wire.ReportOutputHandoffRollback(manifest, tombstone)
+        assert request.tombstone == self.journal.snapshot(self.identity).rollback_tombstone
+        snapshot = self.handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
+        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert reply.request == request and reply.snapshot.phase is OutputHandoffPhase.ABORTED
 
     def commit_lease(self, witness):
         assert witness.publication_id == self.identity and witness.manifest_digest == self.manifest.manifest_digest
         assert self.ledger.release(self.token)
 
 
-@pytest.mark.parametrize("borrowed,targeted", ((False, False), (True, False), (False, True), (True, True)))
-def test_same_owner_discovery_promotes_and_collects_each_selected_shared_child_slot(borrowed, targeted):
-    f = _Fixture(borrowed=borrowed, targeted=targeted)
-    expected_indices = (1, 3) if targeted else (0, 1)
-    assert tuple(slot.object_id.return_index for slot in f.manifest.slots) == expected_indices
-    assert tuple(slot.tier for slot in f.manifest.slots) == (protocol.ResultStorage.INLINE, protocol.ResultStorage.OBJECT_STORE)
-    assert all(len(slot.transfers) == 1 for slot in f.manifest.slots)
+@pytest.mark.parametrize("borrowed,stored", ((False, False), (True, False), (False, True), (True, True)),
+                         ids=("owned-inline", "borrowed-inline", "owned-stored", "borrowed-stored"))
+def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed, stored):
+    f = _Fixture(borrowed=borrowed, stored=stored)
+    slot, = f.manifest.slots
+    transfer, = f.transfers
+    assert slot.object_id.return_index == 0 and len(slot.transfers) == 1
+    assert slot.tier is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     assert f.child.object_id.task_id != f.identity.task_id
-    assert f.session.source_references == (f.child, f.child)
-    assert f.child_table.snapshot(f.child.object_id) == f.child_before  # Discovery acquired nothing.
-    for transfer in f.transfers:
-        assert transfer.provisional_hold != transfer.final_hold
-        assert transfer.provisional_hold.container_owner_worker_id == transfer.final_hold.container_owner_worker_id == f.header.owner_worker_id
-        assert transfer.provisional_hold.transfer_token == "provisional:" + transfer.final_hold.transfer_token
-        assert tuple(field.name for field in fields(transfer)) == (
-            "contained_object_id", "contained_owner_worker_id", "contained_owner_address",
-            "source", "provisional_hold", "final_hold",
-        )
-    assert len({hold for transfer in f.transfers for hold in (transfer.provisional_hold, transfer.final_hold)}) == 4
+    assert f.session.source_references == (f.child,)
+    assert f.child_table.snapshot(f.child.object_id) == f.child_before
+    assert transfer.provisional_hold != transfer.final_hold
+    assert transfer.provisional_hold.container_owner_worker_id == transfer.final_hold.container_owner_worker_id == f.header.owner_worker_id
+    assert transfer.provisional_hold.transfer_token == "provisional:" + transfer.final_hold.transfer_token
+    assert tuple(field.name for field in fields(transfer)) == (
+        "contained_object_id", "contained_owner_worker_id", "contained_owner_address",
+        "source", "provisional_hold", "final_hold",
+    )
     assert pickle.loads(pickle.dumps(f.outputs)) == f.outputs
     restored_holds = []
 
@@ -192,65 +199,62 @@ def test_same_owner_discovery_promotes_and_collects_each_selected_shared_child_s
         return object()
 
     with importing_references(restore):
-        left = cloudpickle.loads(f.outputs.slot_payloads[0])
-        right = cloudpickle.loads(f.outputs.slot_payloads[1])
-    assert left[0] is left[1] and left[0] is not right["child"]
-    assert restored_holds == [transfer.final_hold for transfer in f.transfers]
-    unselected = {output: f.outer.snapshot(output) for output in f.identity.full_output_ids
-                  if output not in f.identity.output_ids}
+        restored = cloudpickle.loads(f.outputs.slot_payloads[0])
+    assert restored[0] is restored[1] and restored_holds == [transfer.final_hold]
     f.adapter.prepare(f.manifest, f.outputs.slot_payloads)
-    assert [event[0] for event in f.events] == ["prepare", "prepare", "promote", "promote"]
+    assert [event[0] for event in f.events] == ["prepare", "promote"]
     assert all(reply.accepted for _stage, _request, reply in f.events)
-    active = f.child_table.snapshot(f.child.object_id).contained_holds
-    assert active == frozenset(transfer.final_hold for transfer in f.transfers)
-    for transfer in f.transfers:
-        assert f.child_table.contained_release_was_seen(f.child.object_id, transfer.provisional_hold)
-        assert not f.child_table.release_contained_reference(f.child.object_id, transfer.provisional_hold)
+    active = frozenset((transfer.final_hold,))
+    assert f.child_table.snapshot(f.child.object_id).contained_holds == active
+    assert f.child_table.contained_release_was_seen(f.child.object_id, transfer.provisional_hold)
+    assert not f.child_table.release_contained_reference(f.child.object_id, transfer.provisional_hold)
     assert f.child_table.snapshot(f.child.object_id).contained_holds == active
     f.session.release_sources_after_promotions()
     assert not f.session.source_references and not f.child.closed
     envelope = f.adapter.complete(f.identity, commit_lease=f.commit_lease)
     assert f.ledger.available == f.ledger.total
-    graph = f.manifest.to_graph_manifest()
-    f.graph.commit_manifest(graph)
-    assert f.outer.commit_output_publication(OutputOwnerPublicationPlan(f.identity.execution, envelope)).committed
-    proof = OutputPublicationAdoptionProof(envelope.complete, f.header.owner_worker_id, "same-owner-batch-cas")
-    f.recovery.report_adopted(proof)
-    f.journal.retire_completed(proof)
+    assert f.handoffs.query(f.identity).complete is None
     assert f.adapter.report_terminal(f.identity)
-    sibling = f.outer.snapshot(f.identity.output_ids[1])
-    for index, (slot, transfer) in enumerate(zip(f.manifest.slots, f.transfers)):
-        assert f.outer.release_local_reference(slot.object_id, "output-{}".format(slot.object_id.return_index))
-        collection = f.outer.begin_output_publication_collection(slot.object_id, collection_id="same-owner-gc-{}".format(index))
-        assert collection is not None
-        release = protocol.ReleaseContainedReference(f.child.object_id, f.child.owner_worker_id, transfer.final_hold)
-        assert f.release(f.child.owner_address, release).released
-        graph_receipt = f.graph.release_manifest_container(graph, slot.object_id)
-        if slot.tier is protocol.ResultStorage.OBJECT_STORE:
-            drop = protocol.DropObjectReplica(slot.object_id, f.identity.attempt_id, f.header.owner_worker_id,
-                                              f.header.node_incarnation.node_id, slot.checksum)
-            assert f.node._handle_drop_object_replica(drop).status is protocol.DropObjectReplicaStatus.DROPPED
-            assert f.node._handle_drop_object_replica(drop).status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED
-        f.recovery.report_slot_collected(OutputPublicationSlotCleanupProof(
-            envelope.complete, f.header.owner_worker_id, index, slot.object_id, collection.collection_id,
-        ))
-        assert f.outer.complete_output_publication_collection(collection, graph_receipt).collection.collected
-        assert f.outer.collection_state(slot.object_id) is ObjectCollectionState.COLLECTED
-        # Historical prepare/promote ACKs are idempotent, never new live holds.
-        assert f.child_table.prepare_stored_contained_reference(transfer, authority_worker_id=f.child.owner_worker_id) is Disposition.ALREADY_PREPARED
-        assert f.child_table.promote_stored_contained_reference(transfer, authority_worker_id=f.child.owner_worker_id) is Disposition.ALREADY_PROMOTED
-        assert not f.release(f.child.owner_address, release).released
-        remaining = frozenset(value.final_hold for value in f.transfers[index + 1:])
-        assert f.child_table.snapshot(f.child.object_id).contained_holds == remaining
-        if index == 0:
-            assert f.outer.snapshot(f.identity.output_ids[1]) == sibling
-    assert {output: f.outer.snapshot(output) for output in unselected} == unselected
+    assert f.handoffs.query(f.identity).complete == envelope.complete
+    assert f.outer.commit_output_publication(OutputOwnerPublicationPlan(f.identity.execution, envelope)).committed
+    proof = OutputPublicationAdoptionProof(envelope.complete, f.header.owner_worker_id, "same-owner-cas")
+    f.handoffs.adopt(proof)
+    f.journal.retire_completed(proof)
+    assert not f.journal.snapshot(f.identity).retained_result_slots
+    assert f.store.used_bytes == (len(f.outputs.slot_payloads[0]) if stored else 0)
+    # Node reply retirement must not consume the outer's child lifetime.
+    assert f.child_table.snapshot(f.child.object_id).contained_holds == active
+    assert f.outer.begin_output_publication_collection(slot.object_id, collection_id="too-early") is None
+    assert f.outer.release_local_reference(slot.object_id, "output-0")
+    collection = f.outer.begin_output_publication_collection(slot.object_id, collection_id="same-owner-gc")
+    assert collection is not None
+    assert collection.metadata_plan.contained_releases == slot.edges
+    release = protocol.ReleaseContainedReference(f.child.object_id, f.child.owner_worker_id, transfer.final_hold)
+    reply = f.release(f.child.owner_address, release)
+    assert reply.accepted and reply.released and reply.hold == transfer.final_hold
+    assert reply.object_id == f.child.object_id and reply.owner_worker_id == f.child.owner_worker_id
+    if stored:
+        drop = protocol.DropObjectReplica(slot.object_id, f.identity.attempt_id, f.header.owner_worker_id,
+                                          f.header.node_incarnation.node_id, slot.checksum)
+        dropped = f.node._handle_drop_object_replica(drop)
+        assert dropped.status is protocol.DropObjectReplicaStatus.DROPPED
+        assert (dropped.object_id, dropped.producer_attempt_id, dropped.owner_worker_id, dropped.node_id, dropped.checksum) == (
+            drop.object_id, drop.producer_attempt_id, drop.owner_worker_id, drop.node_id, drop.checksum)
+        assert f.node._handle_drop_object_replica(drop).status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED
+    # Current owner collection records the local metadata CAS after actual
+    # child release / optional Node Drop above; it takes no fabricated graph ACK.
+    assert f.outer.complete_output_publication_collection(collection).collection.collected
+    assert f.outer.collection_state(slot.object_id) is ObjectCollectionState.COLLECTED
+    assert f.child_table.prepare_stored_contained_reference(transfer, authority_worker_id=f.child.owner_worker_id) is Disposition.ALREADY_PREPARED
+    assert f.child_table.promote_stored_contained_reference(transfer, authority_worker_id=f.child.owner_worker_id) is Disposition.ALREADY_PROMOTED
+    assert not f.release(f.child.owner_address, release).released
     source_after = f.child_table.snapshot(f.child.object_id)
+    assert not source_after.contained_holds
     assert source_after.local_tokens == f.child_before.local_tokens
     assert source_after.borrowed_tokens == f.child_before.borrowed_tokens
     assert source_after.retained_tokens == f.child_before.retained_tokens
-    assert not f.graph.has_active_obligations() and f.store.used_bytes == 0
-    assert not f.journal.snapshot(f.identity).retained_result_slots
+    assert f.store.used_bytes == 0 and f.node._sealed_metadata == {}
+    assert f.adapter.pending_terminal_reports() == ()
 
 
 @pytest.mark.parametrize("released_phase", ("provisional", "final"))
@@ -307,7 +311,7 @@ def test_distinct_owner_discovery_keeps_unchanged_tokens_payloads_and_manifest_d
     expected_slots = []
     expected_payloads = []
     for slot, value, transfer in zip(f.manifest.slots, f.values, f.transfers):
-        token = "{}:slot:{}:transfer:0".format(f.identity.graph_transaction_id, slot.object_id.return_index)
+        token = "{}:slot:{}:transfer:0".format(f.identity.transaction_id, slot.object_id.return_index)
         expected = PreparedContainedTransfer(
             f.child.object_id, f.child.owner_worker_id, f.child.owner_address, transfer.source,
             ContainedReferenceHold(slot.object_id, f.header.executor_worker_id, token),

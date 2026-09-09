@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "8b013443184b2ff6075a23b37ba08a5df0670fc0",
+  "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_core_reconstruction_concurrency.py\n M tests/unit/test_core_actor_restart.py\n M tests/unit/test_cross_cleanup_receipts.py\n M tests/unit/test_node_publication_owner_death_finalize.py\n M tests/unit/test_object_ownership.py\n M tests/unit/test_output_owner_publication.py\n M tests/unit/test_output_publication.py\n M tests/unit/test_same_owner_output_custody.py\n M tests/unit/test_stored_contained_owner_table.py\n M tests/unit/test_worker_completion_paths.py\n M tests/unit/test_worker_side_core_contract.py\n M tests/unit/test_worker_unified_output.py\n",
+  "archive_sha256": "4e0df52459aadf5a953dfec4287f8aa1bfd558d22798706209fd6f68456b53d5",
+  "file_count": 488,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

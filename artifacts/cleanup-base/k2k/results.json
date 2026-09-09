@@ -1,0 +1,132 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication.py",
+    "exit_code": 0,
+    "seconds": 6.363,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_node_publication_owner_death_finalize.py",
+    "exit_code": 0,
+    "seconds": 7.273,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_node_publication_owner_death_finalize.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_contained_owner_table.py",
+    "exit_code": 0,
+    "seconds": 4.282,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_contained_owner_table.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_object_ownership.py",
+    "exit_code": 1,
+    "seconds": 7.695,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_object_ownership.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_completion_paths.py",
+    "exit_code": 0,
+    "seconds": 8.818,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_completion_paths.py"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_unified_output.py",
+    "exit_code": 0,
+    "seconds": 15.172,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_unified_output.py"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_publication.py",
+    "exit_code": 0,
+    "seconds": 9.308,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_publication.py"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_same_owner_output_custody.py",
+    "exit_code": 0,
+    "seconds": 9.288,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_same_owner_output_custody.py"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_cross_cleanup_receipts.py",
+    "exit_code": 0,
+    "seconds": 6.251,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_cross_cleanup_receipts.py"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_core_reconstruction_concurrency.py::test_concurrent_lost_requests_merge_and_old_attempt_is_fenced",
+    "exit_code": 0,
+    "seconds": 9.063,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_core_reconstruction_concurrency.py::test_concurrent_lost_requests_merge_and_old_attempt_is_fenced"
+    ],
+    "log": "009-case.log"
+  }
+]

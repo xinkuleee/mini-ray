@@ -1,4 +1,10 @@
-"""Pure selected-output owner CAS and per-slot GC; no runtime or threads."""
+"""Pure single-output owner CAS and frozen metadata collection.
+
+At most one publication and one unrelated control object per table. Explicit
+Complete values are reducer inputs; these tests do not prove remote child
+Release, physical Drop, Node execution or runtime GC. No runtime constructor,
+network, thread or process is used.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +16,6 @@ from enum import Enum
 import pytest
 
 from miniray import protocol
-from miniray.contained_cycle import (
-    ContainedGraphManifestDisposition, ContainedReferenceGraphAuthority,
-)
 from miniray.contained_edges import ContainedReferenceHold, LineageReferenceEdge
 from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
@@ -22,22 +25,22 @@ from miniray.output_publication import (
     OutputPublicationNodeIncarnation, OutputSlotManifest,
 )
 from miniray.ownership import (
-    ObjectCollectionInProgressError, ObjectCollectionState, ObjectOwnerTable,
+    InvalidObjectTransitionError, ObjectCollectionInProgressError, ObjectCollectionState, ObjectOwnerTable,
     ObjectState, OutputOwnerPublicationCollectionPlan,
     OutputOwnerPublicationCollectionRequiredError, OutputOwnerPublicationConflictError,
     OutputOwnerPublicationDisposition, OutputOwnerPublicationMembership,
     OutputOwnerPublicationPlan,
 )
 from miniray.resources import ResourceVector
-from miniray.stored_publication import OwnedContainedSource, PreparedContainedTransfer
-from miniray.task_outputs import TargetExecutionKey, TargetOutputManifest, TaskExecutionKey
+from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
+from miniray.task_outputs import TaskExecutionKey
 
 
 pytestmark = pytest.mark.unit
 
 
 class _Fixture:
-    def __init__(self, *, targeted=False, edges=True, all_stored=False):
+    def __init__(self, *, edges=True, all_stored=False):
         self.job = JobID.random()
         self.task = TaskID.derive(self.job, TaskID.for_driver(self.job), 31)
         self.attempt = AttemptID(self.task, 0)
@@ -48,17 +51,10 @@ class _Fixture:
             self.job, self.task, self.attempt,
             protocol.FunctionKey(self.job, __name__, "producer", "v1"),
             (protocol.InlineArg(b"producer-lineage-argument"),),
-            4 if targeted else 3, ResourceVector(), self.owner, max_retries=2,
+            1, ResourceVector(), self.owner, max_retries=2,
         )
         self.full_execution = TaskExecutionKey.from_task_spec(self.spec)
-        self.execution = (
-            TargetExecutionKey(
-                TargetOutputManifest(
-                    self.full_execution.manifest,
-                    (self.spec.return_ids()[1], self.spec.return_ids()[3]),
-                ), self.attempt.next(),
-            ) if targeted else self.full_execution
-        )
+        self.execution = self.full_execution
         self.publication_id = OutputPublicationID(LeaseID.random(), self.execution)
         self.header = OutputPublicationHeader(
             self.publication_id, self.job, self.executor, self.owner,
@@ -104,21 +100,7 @@ class _Fixture:
         table.register_task_outputs(
             self.spec, local_tokens=tuple(f"handle-{i}" for i in range(self.spec.num_returns))
         )
-        if isinstance(self.execution, TargetExecutionKey):
-            for object_id in self.publication_id.output_ids:
-                assert table.advance_attempt(
-                    object_id, expected_attempt=self.attempt,
-                    next_attempt=self.execution.attempt_id,
-                )
         return table
-
-    def graph(self):
-        graph = ContainedReferenceGraphAuthority()
-        manifest = self.manifest.to_graph_manifest()
-        if manifest is not None:
-            graph.prepare_manifest(manifest)
-            graph.commit_manifest(manifest)
-        return graph
 
     def release_handle(self, table, object_id):
         assert table.release_local_reference(object_id, f"handle-{object_id.return_index}")
@@ -169,8 +151,9 @@ def _assert_metadata_only(value):
         raise AssertionError(type(value).__name__)
 
 
-def test_mixed_batch_publishes_once_without_retaining_sibling_payloads():
-    fixture = _Fixture()
+@pytest.mark.parametrize("stored", (False, True))
+def test_single_output_publishes_once_with_metadata_only_owner_history(stored):
+    fixture = _Fixture(all_stored=stored)
     table = fixture.table()
     before = _snapshots(table, fixture)
     assert table.validate_output_publication(fixture.plan) is OutputOwnerPublicationDisposition.APPLIED
@@ -226,12 +209,13 @@ def test_conflicting_same_publication_replay_never_changes_ready_slots():
     assert _snapshots(table, fixture) == before
 
 
-def test_public_snapshot_and_membership_queries_cannot_poison_owner_metadata():
-    fixture = _Fixture()
+@pytest.mark.parametrize("stored", (False, True))
+def test_public_snapshot_and_membership_queries_cannot_poison_owner_metadata(stored):
+    fixture = _Fixture(all_stored=stored)
     table = fixture.table()
     table.commit_output_publication(fixture.plan)
     before = _snapshots(table, fixture)
-    first, stored, _ = fixture.publication_id.output_ids
+    first = fixture.publication_id.output_ids[0]
     snapshot = table.snapshot(first)
     object.__setattr__(snapshot.output_publication.manifest.header.owner_worker_id, "value", b"x" * 16)
     object.__setattr__(next(iter(snapshot.outgoing_contained_edges)).contained_object_id, "return_index", 9)
@@ -241,10 +225,11 @@ def test_public_snapshot_and_membership_queries_cannot_poison_owner_metadata():
     membership = table.output_owner_publication(first)
     object.__setattr__(membership.manifest.slots[0], "checksum", "0" * 64)
     object.__setattr__(membership.manifest.header.publication_id.lease_id, "value", b"z" * 16)
-    stored_snapshot = table.snapshot(stored)
-    object.__setattr__(stored_snapshot.canonical_stored_result.node_id, "value", b"q" * 16)
-    object.__setattr__(next(iter(stored_snapshot.locations)), "value", b"r" * 16)
-    result = table.output_owner_result(stored)
+    if stored:
+        stored_snapshot = table.snapshot(first)
+        object.__setattr__(stored_snapshot.canonical_stored_result.node_id, "value", b"q" * 16)
+        object.__setattr__(next(iter(stored_snapshot.locations)), "value", b"r" * 16)
+    result = table.output_owner_result(first)
     object.__setattr__(result.object_id, "return_index", 99)
     assert _snapshots(table, fixture) == before
     assert table.commit_output_publication(fixture.plan).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
@@ -262,7 +247,7 @@ def test_public_commit_receipt_never_shares_the_authoritative_manifest(source):
     before = _snapshots(table, fixture)
     object.__setattr__(receipt.plan.envelope.manifest, "manifest_digest", "f" * 64)
     object.__setattr__(receipt.plan.envelope.manifest.header.publication_id.lease_id, "value", b"c" * 16)
-    object.__setattr__(receipt.plan.envelope.results[1], "checksum", "e" * 64)
+    object.__setattr__(receipt.plan.envelope.results[0], "checksum", "e" * 64)
     object.__setattr__(receipt.plan.execution.attempt_id, "attempt_number", 100)
     assert _snapshots(table, fixture) == before
     assert table.commit_output_publication(fixture.plan).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
@@ -291,7 +276,7 @@ def test_wrong_owner_or_job_has_no_partial_result_mutation(bad_field):
     assert not table._output_publication_receipts
 
 
-def test_one_stale_selected_slot_fences_entire_batch():
+def test_stale_output_attempt_fences_publication_without_mutation():
     fixture = _Fixture()
     table = fixture.table()
     assert table.advance_attempt(
@@ -306,7 +291,7 @@ def test_one_stale_selected_slot_fences_entire_batch():
     assert not table._output_publication_receipts
 
 
-def test_late_slot_conflict_cannot_publish_earlier_slots():
+def test_existing_incompatible_result_cannot_be_replaced_by_publication():
     fixture = _Fixture()
     table = fixture.table()
     last = fixture.publication_id.output_ids[-1]
@@ -332,7 +317,7 @@ def test_plan_execution_and_nested_payload_revalidation_precede_owner_mutation()
     assert not table._output_publication_receipts
 
 
-def test_tampered_manifest_and_membership_cannot_bypass_selected_slot_identity():
+def test_tampered_manifest_and_membership_cannot_bypass_single_output_identity():
     fixture = _Fixture()
     table = fixture.table()
     forged = replace(fixture.plan)
@@ -346,30 +331,31 @@ def test_tampered_manifest_and_membership_cannot_bypass_selected_slot_identity()
             OutputOwnerPublicationMembership(fixture.manifest, invalid)
 
 
-def test_targeted_batch_changes_only_selected_slots_with_original_indices():
-    fixture = _Fixture(targeted=True)
+def test_publication_does_not_mutate_an_unrelated_object():
+    fixture = _Fixture()
     table = fixture.table()
-    healthy = (fixture.spec.return_ids()[0], fixture.spec.return_ids()[2])
-    for index, object_id in enumerate(healthy):
-        assert table.publish_inline(object_id, fixture.attempt, f"healthy-{index}".encode())
-    before = tuple(table.snapshot(object_id) for object_id in healthy)
+    unrelated = ObjectID.for_task(TaskID.derive(fixture.job, fixture.task, 80))
+    table.register(unrelated, current_attempt=AttemptID(unrelated.task_id, 0), local_token="unrelated")
+    assert table.publish_inline(unrelated, AttemptID(unrelated.task_id, 0), b"unrelated")
+    before = table.snapshot(unrelated)
     receipt = table.commit_output_publication(fixture.plan)
     assert receipt.committed
-    assert tuple(table.snapshot(object_id) for object_id in healthy) == before
+    assert table.snapshot(unrelated) == before
     assert tuple(table.snapshot(object_id).output_publication.slot_index
-                 for object_id in fixture.publication_id.output_ids) == (0, 1)
-    assert tuple(object_id.return_index for object_id in fixture.publication_id.output_ids) == (1, 3)
+                 for object_id in fixture.publication_id.output_ids) == (0,)
+    assert tuple(object_id.return_index for object_id in fixture.publication_id.output_ids) == (0,)
     for object_id in fixture.publication_id.output_ids:
         assert table.snapshot(object_id).current_attempt == fixture.execution.attempt_id
         assert table.snapshot(object_id).producer_task_spec == fixture.spec
 
 
-def test_targeted_commit_does_not_block_on_healthy_sibling_collection():
-    fixture = _Fixture(targeted=True)
+def test_publication_does_not_block_on_unrelated_collection():
+    fixture = _Fixture()
     table = fixture.table()
-    healthy = fixture.spec.return_ids()[0]
-    table.publish_inline(healthy, fixture.attempt, b"healthy")
-    fixture.release_handle(table, healthy)
+    healthy = ObjectID.for_task(TaskID.derive(fixture.job, fixture.task, 81))
+    table.register(healthy, current_attempt=AttemptID(healthy.task_id, 0), local_token="unrelated")
+    table.publish_inline(healthy, AttemptID(healthy.task_id, 0), b"healthy")
+    assert table.release_local_reference(healthy, "unrelated")
     frozen = table.begin_collection(healthy, collection_id="healthy-gc")
     before = table.snapshot(healthy)
     assert frozen is not None
@@ -377,32 +363,32 @@ def test_targeted_commit_does_not_block_on_healthy_sibling_collection():
     assert table.snapshot(healthy) == before
 
 
-def test_targeted_slot_collection_keeps_healthy_siblings_and_task_lineage():
-    fixture = _Fixture(targeted=True)
+def test_output_collection_preserves_unrelated_object_and_its_lineage():
+    fixture = _Fixture(edges=False)
     table = fixture.table()
-    healthy = (fixture.spec.return_ids()[0], fixture.spec.return_ids()[2])
-    for object_id in healthy:
-        table.publish_inline(object_id, fixture.attempt, b"healthy-value")
+    other_task = TaskID.derive(fixture.job, fixture.task, 82)
+    other_spec = replace(fixture.spec, task_id=other_task, attempt_id=AttemptID(other_task, 0))
+    table.register_task_outputs(other_spec, local_tokens=("unrelated",))
+    healthy = other_spec.return_ids()[0]
+    table.publish_inline(healthy, other_spec.attempt_id, b"healthy-value")
     dependency = ObjectID.for_task(TaskID.derive(fixture.job, fixture.task, 64))
     table.add_outgoing_lineage_edge(
-        healthy[0], LineageReferenceEdge(healthy[0], dependency, "shared-lineage")
+        healthy, LineageReferenceEdge(healthy, dependency, "unrelated-lineage")
     )
-    before = tuple(table.snapshot(object_id) for object_id in healthy)
-    graph = fixture.graph()
+    before = table.snapshot(healthy)
     table.commit_output_publication(fixture.plan)
     for object_id in fixture.publication_id.output_ids:
         fixture.release_handle(table, object_id)
         plan = table.begin_output_publication_collection(
             object_id, collection_id=f"target-gc-{object_id.return_index}"
         )
-        ack = graph.release_manifest_container(fixture.manifest.to_graph_manifest(), object_id)
-        result = table.complete_output_publication_collection(plan, ack)
+        result = table.complete_output_publication_collection(plan)
         assert not result.collection.lineage_releases
-    assert fixture.task in table._task_lineage
-    assert tuple(table.snapshot(object_id) for object_id in healthy) == before
+    assert other_task in table._task_lineage and fixture.task not in table._task_lineage
+    assert table.snapshot(healthy) == before
 
 
-def test_current_selected_slot_collection_prevents_batch_republication():
+def test_current_output_collection_prevents_republication():
     fixture = _Fixture()
     table = fixture.table()
     table.commit_output_publication(fixture.plan)
@@ -410,30 +396,28 @@ def test_current_selected_slot_collection_prevents_batch_republication():
     fixture.release_handle(table, first)
     assert table.begin_output_publication_collection(first, collection_id="pending-gc") is not None
     before = _snapshots(table, fixture)
-    with pytest.raises(ObjectCollectionInProgressError, match="selected output"):
+    with pytest.raises(ObjectCollectionInProgressError, match="output collection"):
         table.commit_output_publication(fixture.plan)
     assert _snapshots(table, fixture) == before
 
 
-def test_new_targeted_publication_cannot_replace_unretired_membership():
+def test_new_lease_publication_cannot_replace_unretired_membership():
     fixture = _Fixture(all_stored=True)
     table = fixture.table()
     table.commit_output_publication(fixture.plan)
-    target = fixture.publication_id.output_ids[1]
+    target = fixture.publication_id.output_ids[0]
     assert table.mark_lost(target, fixture.attempt)
     before = _snapshots(table, fixture)
     with pytest.raises(OutputOwnerPublicationCollectionRequiredError, match="retirement"):
         table.advance_attempt(
             target, expected_attempt=fixture.attempt, next_attempt=fixture.attempt.next()
         )
-    execution = TargetExecutionKey(
-        TargetOutputManifest(fixture.execution.manifest, (target,)), fixture.attempt
-    )
+    execution = fixture.execution
     header = replace(fixture.header, publication_id=OutputPublicationID(LeaseID.random(), execution))
-    manifest = OutputPublicationManifest.create(header, (fixture.manifest.slots[1],))
+    manifest = OutputPublicationManifest.create(header, (fixture.manifest.slots[0],))
     plan = OutputOwnerPublicationPlan(execution, OutputPublicationEnvelope(
         manifest, OutputPublicationCompleteWitness.for_manifest(manifest),
-        (fixture.envelope.results[1],),
+        (fixture.envelope.results[0],),
     ))
     with pytest.raises(OutputOwnerPublicationCollectionRequiredError, match="unretired"):
         table.commit_output_publication(plan)
@@ -441,22 +425,22 @@ def test_new_targeted_publication_cannot_replace_unretired_membership():
 
 
 def test_lost_stored_slot_replay_never_restores_a_dead_replica():
-    fixture = _Fixture()
+    fixture = _Fixture(all_stored=True)
     table = fixture.table()
     table.commit_output_publication(fixture.plan)
-    target = fixture.publication_id.output_ids[1]
+    target = fixture.publication_id.output_ids[0]
     assert table.mark_lost(target, fixture.attempt)
     before = _snapshots(table, fixture)
     assert table.commit_output_publication(fixture.plan).disposition is OutputOwnerPublicationDisposition.FENCED
     assert _snapshots(table, fixture) == before
-    assert table.output_owner_result(target) == fixture.envelope.results[1]
+    assert table.output_owner_result(target) == fixture.envelope.results[0]
     assert not table.snapshot(target).locations
 
 
-def test_no_reference_batch_uses_the_same_publication_and_per_slot_collection():
+def test_no_reference_output_uses_the_same_publication_and_collection():
     fixture = _Fixture(edges=False)
     table = fixture.table()
-    assert fixture.manifest.to_graph_manifest() is None
+    assert fixture.manifest.ordered_edges == ()
     assert table.commit_output_publication(fixture.plan).committed
     for object_id in fixture.publication_id.output_ids:
         fixture.release_handle(table, object_id)
@@ -470,116 +454,91 @@ def test_no_reference_batch_uses_the_same_publication_and_per_slot_collection():
     _assert_metadata_only(table._output_collection_receipts)
 
 
-@pytest.mark.parametrize("index", [0, 1, 2])
-def test_each_slot_collects_only_its_own_edges_and_never_keeps_sibling_bytes(index):
-    fixture = _Fixture()
+@pytest.mark.parametrize("stored", (False, True))
+def test_output_collection_preserves_exact_edges_and_replay_without_payloads(stored):
+    fixture = _Fixture(all_stored=stored)
     table = fixture.table()
-    graph = fixture.graph()
     table.commit_output_publication(fixture.plan)
-    object_id = fixture.publication_id.output_ids[index]
-    slot = fixture.manifest.slots[index]
+    object_id = fixture.publication_id.output_ids[0]
+    slot = fixture.manifest.slots[0]
     assert table.begin_output_publication_collection(object_id, collection_id="slot-gc") is None
     fixture.release_handle(table, object_id)
-    assert not table.collect_if_unused(object_id)
-    assert not table.collect_unused_with_edges(object_id).collected
     plan = table.begin_output_publication_collection(object_id, collection_id="slot-gc")
     assert plan is not None
     assert plan.metadata_plan.contained_releases == tuple(sorted(slot.edges))
-    before = tuple(table.snapshot(other) for other in fixture.publication_id.output_ids if other != object_id)
     with pytest.raises(OutputOwnerPublicationCollectionRequiredError, match="per-slot"):
         table.complete_collection(plan.metadata_plan)
-    graph_receipt = (graph.release_manifest_container(fixture.manifest.to_graph_manifest(), object_id)
-                     if slot.edges else None)
-    receipt = table.complete_output_publication_collection(plan, graph_receipt)
+    # Core is responsible for actual Release/Drop before this local metadata
+    # CAS. This pure test checks its frozen plan, not fabricated remote ACKs.
+    receipt = table.complete_output_publication_collection(plan)
     assert receipt.collection.contained_releases == tuple(sorted(slot.edges))
     assert not receipt.collection.lineage_releases
     assert receipt.disposition is OutputOwnerPublicationDisposition.APPLIED
     assert table.collection_state(object_id) is ObjectCollectionState.COLLECTED
     assert table.output_owner_result(object_id) is None
     assert table.output_owner_publication(object_id) is None
-    assert tuple(table.snapshot(other) for other in fixture.publication_id.output_ids if other != object_id) == before
     _assert_metadata_only(table._output_collection_receipts)
     _assert_metadata_only(table._output_publication_receipts)
-    replay = table.complete_output_publication_collection(plan, graph_receipt)
+    replay = table.complete_output_publication_collection(plan)
     assert replay.disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
     assert table.output_publication_collection_receipt(plan).collection == receipt.collection
     assert table.begin_output_publication_collection(object_id, collection_id="slot-gc") is None
     assert table.commit_output_publication(fixture.plan).disposition is OutputOwnerPublicationDisposition.FENCED
-    assert tuple(table.snapshot(other) for other in fixture.publication_id.output_ids if other != object_id) == before
 
 
-def test_collection_rejects_another_slots_graph_ack_and_altered_full_graph():
+def test_collection_rejects_changed_manifest_membership_and_frozen_metadata():
     fixture = _Fixture()
     table = fixture.table()
-    graph = fixture.graph()
     table.commit_output_publication(fixture.plan)
-    first, second, _ = fixture.publication_id.output_ids
+    first = fixture.publication_id.output_ids[0]
     fixture.release_handle(table, first)
     plan = table.begin_output_publication_collection(first, collection_id="first-gc")
-    other_ack = graph.release_manifest_container(fixture.manifest.to_graph_manifest(), second)
     before = table.snapshot(first)
-    with pytest.raises(OutputOwnerPublicationConflictError, match="exact batch"):
-        table.complete_output_publication_collection(plan, other_ack)
-    correct = graph.release_manifest_container(fixture.manifest.to_graph_manifest(), first)
-    wrong_graph = replace(correct, manifest=replace(
-        correct.manifest, transaction_id="another-graph"
-    ))
-    with pytest.raises(OutputOwnerPublicationConflictError, match="exact batch"):
-        table.complete_output_publication_collection(plan, wrong_graph)
-    with pytest.raises(TypeError, match="GraphManifestReceipt"):
-        table.complete_output_publication_collection(plan)
+    changed_header = replace(fixture.header, publication_id=replace(fixture.publication_id, lease_id=LeaseID.random()))
+    changed_manifest = OutputPublicationManifest.create(changed_header, fixture.manifest.slots)
+    changed_member = OutputOwnerPublicationMembership(changed_manifest, 0)
+    with pytest.raises(OutputOwnerPublicationConflictError):
+        table.complete_output_publication_collection(replace(plan, membership=changed_member))
+    altered = replace(plan, metadata_plan=replace(plan.metadata_plan, collection_id="other-gc"))
+    with pytest.raises(InvalidObjectTransitionError, match="identity changed"):
+        table.complete_output_publication_collection(altered)
     assert table.snapshot(first) == before
-    assert table.complete_output_publication_collection(plan, correct).collection.collected
-
-
-def test_empty_edge_slot_needs_no_graph_ack_even_when_siblings_have_refs():
-    fixture = _Fixture()
-    table = fixture.table()
-    graph = fixture.graph()
-    table.commit_output_publication(fixture.plan)
-    empty = fixture.publication_id.output_ids[2]
-    fixture.release_handle(table, empty)
-    plan = table.begin_output_publication_collection(empty, collection_id="empty-gc")
-    sibling_ack = graph.release_manifest_container(
-        fixture.manifest.to_graph_manifest(), fixture.publication_id.output_ids[0]
-    )
-    with pytest.raises(OutputOwnerPublicationConflictError, match="empty-edge"):
-        table.complete_output_publication_collection(plan, sibling_ack)
     assert table.complete_output_publication_collection(plan).collection.collected
 
 
-def test_shared_child_holds_and_task_lineage_survive_until_their_own_last_slot():
+def test_empty_edge_collection_requires_no_invented_remote_receipt():
+    fixture = _Fixture(edges=False)
+    table = fixture.table()
+    table.commit_output_publication(fixture.plan)
+    empty = fixture.publication_id.output_ids[0]
+    fixture.release_handle(table, empty)
+    plan = table.begin_output_publication_collection(empty, collection_id="empty-gc")
+    assert plan.metadata_plan.contained_releases == ()
+    assert plan.metadata_plan.locations == ()
+    assert table.complete_output_publication_collection(plan).collection.collected
+
+
+def test_single_output_collection_releases_its_child_and_final_task_lineage_once():
     fixture = _Fixture()
     table = fixture.table()
-    graph = fixture.graph()
-    first, second, last = fixture.publication_id.output_ids
+    first = fixture.publication_id.output_ids[0]
     dependency = ObjectID.for_task(TaskID.derive(fixture.job, fixture.task, 72))
     table.add_outgoing_lineage_edge(first, LineageReferenceEdge(first, dependency, "producer-lineage"))
     table.commit_output_publication(fixture.plan)
-    plans = []
-    for object_id in (first, second, last):
-        fixture.release_handle(table, object_id)
-        plans.append(table.begin_output_publication_collection(
-            object_id, collection_id=f"gc-{object_id.return_index}"
-        ))
-    assert all(not plan.metadata_plan.lineage_releases for plan in plans)
-    first_ack = graph.release_manifest_container(fixture.manifest.to_graph_manifest(), first)
-    first_done = table.complete_output_publication_collection(plans[0], first_ack)
-    assert not first_done.collection.lineage_releases
-    (graph_state,) = graph.snapshot().manifests
-    assert graph_state.active_edges == fixture.manifest.slots[1].edges
-    assert table.snapshot(second).outgoing_contained_edges == frozenset(fixture.manifest.slots[1].edges)
-    second_ack = graph.release_manifest_container(fixture.manifest.to_graph_manifest(), second)
-    second_done = table.complete_output_publication_collection(plans[1], second_ack)
-    assert not second_done.collection.lineage_releases
-    final = table.complete_output_publication_collection(plans[2])
+    fixture.release_handle(table, first)
+    plan = table.begin_output_publication_collection(first, collection_id="single-gc")
+    assert plan.metadata_plan.lineage_releases == (LineageReferenceEdge(first, dependency, "producer-lineage"),)
+    assert fixture.task in table._task_lineage
+    final = table.complete_output_publication_collection(plan)
+    assert final.collection.contained_releases == tuple(sorted(fixture.manifest.slots[0].edges))
     assert final.collection.lineage_releases == (
-        LineageReferenceEdge(last, dependency, "producer-lineage"),
+        LineageReferenceEdge(first, dependency, "producer-lineage"),
     )
     assert not table._task_lineage
     assert not table._entries
     _assert_metadata_only(table._output_collection_receipts)
     _assert_metadata_only(table._output_publication_receipts)
+    assert table.complete_output_publication_collection(plan).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
 
 
 def test_terminal_collection_replay_binds_metadata_hash_without_storing_taskspec():
@@ -622,37 +581,31 @@ def test_public_collection_plans_are_detached_from_live_collection_claim():
     object.__setattr__(public_snapshot.collection_plan.contained_releases[0], "transfer_token", "poisoned")
     assert _snapshots(table, fixture) == before
     assert table.begin_output_publication_collection(first, collection_id="detached-gc") == stable_plan
-    graph = fixture.graph()
-    ack = graph.release_manifest_container(fixture.manifest.to_graph_manifest(), first)
-    assert table.complete_output_publication_collection(stable_plan, ack).collection.collected
+    assert table.complete_output_publication_collection(stable_plan).collection.collected
 
 
 @pytest.mark.parametrize("source", ["complete", "replay", "query"])
-def test_public_collection_receipt_ids_cannot_poison_tombstones_or_siblings(source):
+def test_public_collection_receipt_ids_cannot_poison_tombstone_history(source):
     fixture = _Fixture()
     table = fixture.table()
     table.commit_output_publication(fixture.plan)
-    graph = fixture.graph()
-    first, second, _ = fixture.publication_id.output_ids
+    first = fixture.publication_id.output_ids[0]
     fixture.release_handle(table, first)
     plan = table.begin_output_publication_collection(first, collection_id="receipt-gc")
-    ack = graph.release_manifest_container(fixture.manifest.to_graph_manifest(), first)
-    receipt = table.complete_output_publication_collection(plan, ack)
+    receipt = table.complete_output_publication_collection(plan)
     if source == "replay":
-        receipt = table.complete_output_publication_collection(plan, ack)
+        receipt = table.complete_output_publication_collection(plan)
     elif source == "query":
         receipt = table.output_publication_collection_receipt(plan)
-    before = table.snapshot(second)
     terminal = deepcopy(table._output_collection_receipts[first])
     object.__setattr__(receipt.collection.contained_releases[0].contained_object_id, "return_index", 88)
     object.__setattr__(receipt.collection.object_id.task_id, "value", b"d" * 16)
     object.__setattr__(receipt.plan.metadata_plan.object_id.task_id, "value", b"e" * 16)
     object.__setattr__(receipt.plan.membership.manifest.header.publication_id.lease_id, "value", b"f" * 16)
-    assert table.snapshot(second) == before
     assert table._output_collection_receipts[first] == terminal
     assert table.collection_state(first) is ObjectCollectionState.COLLECTED
     assert table.output_publication_collection_receipt(plan).collection == terminal.collection
-    assert table.complete_output_publication_collection(plan, ack).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
+    assert table.complete_output_publication_collection(plan).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
     assert table.commit_output_publication(fixture.plan).disposition is OutputOwnerPublicationDisposition.FENCED
 
 
@@ -667,18 +620,21 @@ def test_legacy_objects_still_use_their_original_owner_and_gc_apis():
     assert table.complete_collection(metadata).collected
 
 
-def test_published_slot_edges_cannot_be_extended_by_legacy_helpers():
+def test_published_output_edges_cannot_be_extended_by_rebound_atomic_plan():
     fixture = _Fixture()
     table = fixture.table()
     table.commit_output_publication(fixture.plan)
     first = fixture.publication_id.output_ids[0]
     edge = fixture.manifest.slots[0].edges[0]
-    assert not table.add_outgoing_contained_edge(first, edge)
-    assert table.add_outgoing_contained_edges(first, (edge,)) == 0
     before = table.snapshot(first)
-    changed = replace(edge, transfer_token="not-the-committed-hold")
-    with pytest.raises(OutputOwnerPublicationConflictError, match="cannot change edges"):
-        table.add_outgoing_contained_edge(first, changed)
-    with pytest.raises(OutputOwnerPublicationConflictError, match="cannot change edges"):
-        table.add_outgoing_contained_edges(first, (edge, changed))
+    transfer = fixture.manifest.slots[0].transfers[0]
+    changed = replace(transfer,
+        provisional_hold=replace(transfer.provisional_hold, transfer_token="not-the-committed-hold"),
+        final_hold=replace(transfer.final_hold, transfer_token="not-the-committed-hold"))
+    manifest = OutputPublicationManifest.create(fixture.header, (
+        replace(fixture.manifest.slots[0], transfers=(transfer, changed)),))
+    rebound = OutputOwnerPublicationPlan(fixture.execution, OutputPublicationEnvelope(
+        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), fixture.envelope.results))
+    with pytest.raises(OutputOwnerPublicationConflictError, match="rebound"):
+        table.commit_output_publication(rebound)
     assert table.snapshot(first) == before
