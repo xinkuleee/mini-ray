@@ -1,0 +1,275 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_inline_publication_gate.py",
+    "exit_code": 0,
+    "seconds": 4.71,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_inline_publication_gate.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_publication_node_death_gc.py",
+    "exit_code": 0,
+    "seconds": 5.092,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_publication_node_death_gc.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_stored_object_refs.py",
+    "exit_code": 0,
+    "seconds": 7.508,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_stored_object_refs.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_trace_contract.py",
+    "exit_code": 0,
+    "seconds": 4.599,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_trace_contract.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_publication_trace_observation.py",
+    "exit_code": 0,
+    "seconds": 7.808,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_publication_trace_observation.py"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_resolution_preflight.py",
+    "exit_code": 1,
+    "seconds": 4.436,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_resolution_preflight.py"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_node.py",
+    "exit_code": 0,
+    "seconds": 4.109,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_node.py"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_execute_cannot_send_after_finish_claim",
+    "exit_code": 0,
+    "seconds": 6.123,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_execute_cannot_send_after_finish_claim"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_retained_hold_is_bound_idempotent_and_survives_parent_release",
+    "exit_code": 0,
+    "seconds": 5.829,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_retained_hold_is_bound_idempotent_and_survives_parent_release"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_release_before_retain_tombstones_reordered_delivery",
+    "exit_code": 0,
+    "seconds": 4.774,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_release_before_retain_tombstones_reordered_delivery"
+    ],
+    "log": "009-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_ambiguous_retain_rolls_back_exact_token_and_retains_obligation",
+    "exit_code": 0,
+    "seconds": 6.736,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_ambiguous_retain_rolls_back_exact_token_and_retains_obligation"
+    ],
+    "log": "010-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_foreign_pending_stays_off_lane_then_inline_rewrites_and_executes",
+    "exit_code": 0,
+    "seconds": 3.861,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_foreign_pending_stays_off_lane_then_inline_rewrites_and_executes"
+    ],
+    "log": "011-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_pending_foreign_dependency_does_not_block_independent_ready_task",
+    "exit_code": 0,
+    "seconds": 5.199,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_pending_foreign_dependency_does_not_block_independent_ready_task"
+    ],
+    "log": "012-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_foreign_error_or_lost_never_executes_user_path",
+    "exit_code": 0,
+    "seconds": 3.725,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_foreign_error_or_lost_never_executes_user_path"
+    ],
+    "log": "013-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_retry_keeps_same_foreign_guard_and_input_handle_may_close",
+    "exit_code": 0,
+    "seconds": 6.663,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_retry_keeps_same_foreign_guard_and_input_handle_may_close"
+    ],
+    "log": "014-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_finish_is_once_and_partial_multi_guard_retry_skips_released",
+    "exit_code": 0,
+    "seconds": 9.504,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_finish_is_once_and_partial_multi_guard_retry_skips_released"
+    ],
+    "log": "015-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_existing_protocol_fence_prevents_finish_release",
+    "exit_code": 0,
+    "seconds": 6.176,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_existing_protocol_fence_prevents_finish_release"
+    ],
+    "log": "016-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_owner_shutdown_waits_for_active_retained_hold_then_closes",
+    "exit_code": 0,
+    "seconds": 5.796,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_owner_shutdown_waits_for_active_retained_hold_then_closes"
+    ],
+    "log": "017-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_foreign_dependency_protocol_validates_full_identity_and_payload",
+    "exit_code": 0,
+    "seconds": 9.063,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_foreign_dependency_protocol_validates_full_identity_and_payload"
+    ],
+    "log": "018-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_registration_retain_is_outside_state_lock_and_shutdown_wins",
+    "exit_code": 0,
+    "seconds": 7.851,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_registration_retain_is_outside_state_lock_and_shutdown_wins"
+    ],
+    "log": "019-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_inline_task_dependencies.py::test_finish_claim_and_protocol_send_are_mutually_fenced",
+    "exit_code": 0,
+    "seconds": 7.783,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_inline_task_dependencies.py::test_finish_claim_and_protocol_send_are_mutually_fenced"
+    ],
+    "log": "020-case.log"
+  }
+]

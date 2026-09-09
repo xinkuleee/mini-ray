@@ -51,3 +51,5 @@ K3j：ordinary reconstruction9、recursive planning11通过；保DAG依赖顺序
 K3i/k：readiness trace4、public values修后24、typed-source7/contained identity6/nested manifest18通过；stored gate37pure+3原socket L1通过。contained retry2剩调度旧通知夹具已第二次修待重验，失败完整保留。
 
 K3l：PGdispatch2/普通结果knowledge5/containedGC失败ACK2修后通过；INLINE/STORED Node server原44函数全部pure+原L1通过，保重放/锁/实际写入/Complete不重复清账。3个未登记selector拒绝不计测试失败，已在下一冻结补登记。
+
+K3m：inlinegate33/NodeDeathGC2/foreignstored13/trace52/traceobservation6/Nodeadapter28通过，foreigninline12pure函数13case+2原race L1全部通过；preflight未知分支1处错要求successreceipt已定位修测试，25其它通过。

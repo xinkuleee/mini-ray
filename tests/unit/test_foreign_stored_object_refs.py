@@ -4,9 +4,11 @@ The owner RPC is a logical metadata lookup.  Stored bytes must instead travel
 from the descriptor's Node directly to the borrower, with the complete
 producer identity and integrity tuple acting as a fence.
 
-Only the protocol sum-type and fake-clock deadline cases are pure. Every
-_bare_core fixture starts a real reference-consumer thread; those original
-cases remain heavy until a separate bounded-runtime review.
+All five contracts are synchronous state combinations: one or two threadless
+Cores, one borrowed reference and at most 4 KiB payload. Real owner/borrower
+reducers run through the existing synchronous release mailbox. Transport and
+notifier callbacks model boundaries; no runtime, thread, socket or real wait
+is started and no physical store or process-lifecycle claim is made.
 """
 
 from __future__ import annotations
@@ -23,14 +25,24 @@ import pytest
 
 from miniray import protocol
 from miniray.core import CoreWorker, ObjectRef
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.errors import ProtocolError, SystemTaskError
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.ownership import ObjectOwnerTable
-from miniray.ref_transfer import ReferenceExportSession
+from miniray.ref_transfer import exporting_references
 from miniray.runtime_binding import ExecutionContext, bind_runtime
 from miniray.worker import WorkerServer
+from tests.unit._pure_core import close_pure_core, make_pure_core
+from tests.unit.test_foreign_wait_drop import _BorrowMailbox, _no_runtime as _guard_runtime
 
 
+
+
+@pytest.fixture(autouse=True)
+def _no_runtime(monkeypatch):
+    failed, _forbidden = _guard_runtime(monkeypatch)
+    yield
+    assert failed == [False]
 
 
 def _identity(index: int = 0) -> tuple[ObjectID, AttemptID]:
@@ -47,28 +59,15 @@ def _bare_core(
 ) -> CoreWorker:
     """Build only the owner/borrower half of CoreWorker for pure tests."""
 
-    core = object.__new__(CoreWorker)
-    core.job_id = JobID.random()
-    core.worker_id = worker_id or WorkerID.random()
-    core.driver_task_id = TaskID.for_driver(core.job_id)
-    core.node_id = node_id or NodeID.random()
+    core = make_pure_core()
+    core.worker_id = worker_id or core.worker_id
+    core.node_id = node_id or core.node_id
     core.node_address = node_address
-    core.gcs_address = None
-    core.owner_address = None
-    core._owner_table = ObjectOwnerTable()
-    core._objects = {}
-    core._stored_descriptors = {}
-    core._state_lock = threading.RLock()
-    core._completion = threading.Condition(core._state_lock)
-    core._accepting = True
-    core._owner_protocol_open = True
-    core._inflight_borrow_ops = 0
-    core._initialize_reference_events()
     return core
 
 
 def _stop(core: CoreWorker) -> None:
-    assert core._stop_reference_events(time.monotonic() + 1.0)
+    close_pure_core(core)
 
 
 def _descriptor(
@@ -207,7 +206,7 @@ def test_get_owned_object_reply_is_a_strict_state_payload_sum_type() -> None:
             protocol.GetOwnedObjectReply(**common, **changes)
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_owner_and_worker_publish_only_canonical_live_stored_metadata() -> None:
     owner = _bare_core()
     object_id, attempt_id = _identity()
@@ -287,7 +286,7 @@ class _RecordingNotifier:
             self.depth = 0
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_nested_ref_restore_then_stored_get_uses_owner_metadata_and_node_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -314,19 +313,15 @@ def test_nested_ref_restore_then_stored_get_uses_owner_metadata_and_node_bytes(
         checksum=checksum,
     )
 
-    # Model the real INLINE outer result: its deeply nested child is a logical
-    # ref, while the child's own value is already stored in the Node.
-    child = ObjectRef(object_id, owner.worker_id)
-    with ReferenceExportSession(
-        owner.worker_id,
-        owner_address,
-        pin=owner.owner_table.add_contained_reference,
-        unpin=owner.owner_table.release_contained_reference,
-    ) as session:
-        inline_outer = cloudpickle.dumps(
-            {"layers": [{"children": (child,)}]}
-        )
-        session.commit()
+    # Install one exact owner pin and serialize the supported scoped reducer.
+    # This models contained bytes, not a complete outer Task publication.
+    hold = ContainedReferenceHold(ObjectID.for_task(TaskID.random()), owner.worker_id, "stored-child-source")
+    assert owner.owner_table.add_contained_reference(object_id, hold)
+    child = ObjectRef(object_id, owner.worker_id, owner_address)
+    with exporting_references(lambda reference: (reference.object_id, owner.worker_id, owner_address, hold)):
+        inline_outer = cloudpickle.dumps({"layers": [{"children": (child,)}]})
+    release_failures = [False]
+    borrower._reference_mailbox = _BorrowMailbox(borrower, release_failures)
 
     owner_calls: list[tuple[str, object, object]] = []
 
@@ -406,6 +401,9 @@ def test_nested_ref_restore_then_stored_get_uses_owner_metadata_and_node_bytes(
         raise AssertionError(handler)
 
     monkeypatch.setattr(borrower, "_borrow_rpc", owner_rpc)
+    monkeypatch.setattr(borrower, "_borrow_rpc_with_deadline",
+        lambda address, handler, request, remaining: CoreWorker._borrow_rpc_with_deadline(
+            borrower, address, handler, request, remaining))
     monkeypatch.setattr("miniray.core.rpc_request", data_rpc)
     restored = borrower._loads_owned_value(inline_outer)
     borrowed = restored["layers"][0]["children"][0]
@@ -454,11 +452,14 @@ def test_nested_ref_restore_then_stored_get_uses_owner_metadata_and_node_bytes(
             )
             for reply in owned_replies
         )
-        borrowed.close()
-        borrower._reference_mailbox.events.join()
+        borrowed.close(timeout=0)
+        assert borrower._reference_mailbox.events.empty()
+        assert borrower._reference_mailbox.events.unfinished_tasks == 0
+        assert not release_failures[0]
         assert not owner.owner_table.snapshot(object_id).borrowed_tokens
+        assert owner.owner_table.release_contained_reference(object_id, hold)
     finally:
-        borrowed.close()
+        borrowed.close(timeout=0)
         _stop(borrower)
         _stop(owner)
 
@@ -477,7 +478,7 @@ def test_nested_ref_restore_then_stored_get_uses_owner_metadata_and_node_bytes(
         "missing_replica",
     ),
 )
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_borrower_rejects_every_stored_reply_identity_or_integrity_mismatch(
     corruption: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

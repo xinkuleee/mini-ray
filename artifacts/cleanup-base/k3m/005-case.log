@@ -1,0 +1,39 @@
+F.........................                                               [100%]
+=================================== FAILURES ===================================
+_ test_pristine_unreceived_output_preserves_incoming_holds_and_canonical_lineage[unknown] _
+
+known = False
+
+    @pytest.mark.parametrize("known", (False, True), ids=("unknown", "known-complete"))
+    def test_pristine_unreceived_output_preserves_incoming_holds_and_canonical_lineage(known):
+        values, owner, resolution = _case(known=known)
+        before = _snapshots(owner, values)
+        lineage = deepcopy(owner._task_lineage)
+        assert all(snapshot.state is ObjectState.PENDING and snapshot.output_publication is None
+                   for snapshot in before)
+        assert owner.resolve_output_node_loss(values.manifest, resolution)
+        after = _snapshots(owner, values)
+        state = ObjectState.LOST if known else ObjectState.PENDING
+        assert after == tuple(replace(snapshot, state=state) for snapshot in before)
+        assert owner._task_lineage == lineage
+        assert all(snapshot.producer_task_spec == values.spec and snapshot.current_attempt == values.attempt
+                   and snapshot.is_live and snapshot.inline_data is None
+                   and snapshot.canonical_stored_result is None and not snapshot.locations
+                   and not snapshot.outgoing_contained_edges for snapshot in after)
+        expected_slots = {(values.publication_id, output) for output in values.publication_id.output_ids}
+        expected_attempts = {(output, values.attempt) for output in values.publication_id.output_ids} if known else set()
+        assert owner._retired_output_slots == expected_slots
+        assert owner._retired_output_attempts == expected_attempts
+>       assert owner._output_publication_receipts == {values.publication_id: values.manifest}
+E       AssertionError: assert {} == {OutputPublic...9dfd9024ee6')}
+E         
+E         Right contains 1 more item:
+E         {OutputPublicationID(lease_id=LeaseID('6388caec0b854d7db3c67a1ac21513ad'), execution=TaskExecutionKey(manifest=TaskOutputManifest(task_id=TaskID('7d98fb3875df53f8cab29944a138eb76'), output_ids=(ObjectID(task_id=TaskID('7d98fb3875df53f8cab29944a138eb76'), return_index=0),)), attempt_id=AttemptID(task_id=TaskID('7d98fb3875df53f8cab29944a138eb76'), attempt_number=0))): OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=LeaseID('6388caec0b854d7db3c67a1ac21513ad'),
+E                                                                        ...
+E         
+E         ...Full output truncated (32 lines hidden), use '-vv' to show
+
+tests/unit/test_output_owner_resolution_preflight.py:108: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_output_owner_resolution_preflight.py::test_pristine_unreceived_output_preserves_incoming_holds_and_canonical_lineage[unknown]
+1 failed, 25 passed in 1.46s

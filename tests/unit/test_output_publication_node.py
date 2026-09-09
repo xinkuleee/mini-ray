@@ -1,6 +1,6 @@
 """Small, synchronous Node composition tests: no threads, sockets or waits.
 
-Each case has two tiny output slots, at most four child transfers, one in-memory
+Each case has one tiny output, at most two child transfers, one in-memory
 ObjectStore and one CPU ledger.  Faults are single callback exceptions; retries
 are explicit calls with fixed bounds, not a background runtime.
 """
@@ -15,7 +15,7 @@ from dataclasses import replace
 import pytest
 
 from miniray import protocol
-from miniray.contained_cycle import ContainedReferenceGraphAuthority
+from miniray.output_handoff import OutputHandoffPhase, OutputHandoffStateError, OutputHandoffTable
 from miniray.object_store import ObjectStore
 from miniray.object_manager import ObjectManager
 from miniray.node import NodeServer
@@ -28,10 +28,9 @@ from miniray.output_publication_journal import (
 from miniray.output_publication_node import (
     OutputPublicationBusy, OutputPublicationNodeAdapter, OutputPublicationRemoteError,
 )
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
 from miniray.ownership import ObjectOwnerTable, OutputOwnerPublicationPlan
 from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
-from miniray.stored_publication import BorrowedContainedSource
+from miniray.publication_sources import BorrowedContainedSource
 from tests.unit.test_output_publication import _Fixture as _Values, _assert_metadata
 
 
@@ -53,13 +52,12 @@ def _no_runtime(monkeypatch):
 
 
 class _Fixture:
-    def __init__(self, *, refs=True, target=False):
-        self.values = _Values(refs=refs, target=target)
+    def __init__(self, *, refs=True, stored=True):
+        self.values = _Values(refs=refs, stored=stored)
         self.manifest = self.values.manifest
         self.id = self.values.publication_id
         self.journal = OutputPublicationJournal()
-        self.recovery = OutputPublicationRecoveryAuthority()
-        self.graph = ContainedReferenceGraphAuthority()
+        self.handoffs = OutputHandoffTable()
         self.store = ObjectStore(1024)
         self.child_owners = {}
         self.events = []
@@ -83,11 +81,10 @@ class _Fixture:
                         transfer.contained_object_id, source, transfer.source.owner_table_token
                     )
         self.adapter = OutputPublicationNodeAdapter(
-            self.journal, report_intent=self.intent, arm_complete=self.arm,
-            report_terminal=self.terminal, report_rollback=self.rollback_report,
+            self.journal, register_owner=self.register_owner,
+            report_complete=self.terminal, report_rollback=self.rollback_report,
             prepare_child=self.prepare_child, promote_child=self.promote_child,
-            release_child=self.release_child, prepare_graph=self.prepare_graph,
-            abort_graph=self.abort_graph, seal_replica=self.seal, drop_replica=self.drop,
+            release_child=self.release_child, seal_replica=self.seal, drop_replica=self.drop,
         )
 
     def hit(self, stage):
@@ -96,23 +93,20 @@ class _Fixture:
             self.fault = None
             raise TimeoutError("injected effect-then-lost-ACK: " + stage)
 
-    def intent(self, manifest):
-        ack = self.recovery.report_intent(manifest)
-        self.hit("intent")
-        return ack
-
-    def arm(self, publication_id, digest):
-        ack = self.recovery.arm_complete(publication_id, digest)
-        self.hit("arm")
+    def register_owner(self, manifest):
+        ack = self.handoffs.register(manifest, self.id.attempt_id)
+        self.hit("owner-register")
+        assert ack.manifest == manifest
         return ack
 
     def terminal(self, witness):
-        ack = self.recovery.report_terminal(witness)
+        ack = self.handoffs.record_complete(witness)
         self.hit("terminal")
         return ack
 
     def rollback_report(self, tombstone, *, manifest):
-        ack = self.recovery.report_rollback(tombstone, manifest=manifest)
+        assert tombstone == self.journal.snapshot(self.id).rollback_tombstone
+        ack = self.handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
         self.hit("rollback-report")
         return ack
 
@@ -139,16 +133,6 @@ class _Fixture:
         return protocol.ReleaseContainedReferenceReply(
             request.object_id, request.owner_worker_id, request.hold, True, released
         )
-
-    def prepare_graph(self, request):
-        receipt = self.graph.prepare_manifest(request.manifest)
-        self.hit("graph")
-        return protocol.ContainedGraphReply(request, receipt)
-
-    def abort_graph(self, request):
-        receipt = self.graph.abort_manifest(request.manifest)
-        self.hit("abort")
-        return protocol.ContainedGraphReply(request, receipt)
 
     def seal(self, effect, descriptor, payload):
         assert effect.stage is Stage.MATERIALIZE
@@ -187,8 +171,8 @@ class _Fixture:
         return self.adapter.complete(self.id, commit_lease=self.commit)
 
     def rollback_all(self):
-        # One graph + two slots + eight hold inverses is the maximum here.
-        result = self.adapter.rollback(self.id, "test-rollback", max_effects=12)
+        # One result plus two pairs of child holds is the maximum here.
+        result = self.adapter.rollback(self.id, "test-rollback", max_effects=5)
         assert result is not None
         return result
 
@@ -200,8 +184,6 @@ class _Fixture:
                 snapshot = self.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
                 assert transfer.provisional_hold not in snapshot.contained_holds
                 assert transfer.final_hold not in snapshot.contained_holds
-        assert not self.graph.snapshot().prepared_edges
-        assert not self.graph.snapshot().committed_edges
 
 
 def _bind_real_node_storage(fixture):
@@ -225,30 +207,32 @@ def _bind_real_node_storage(fixture):
     return node
 
 
-@pytest.mark.parametrize("refs,target", ((True, False), (False, False), (True, True)))
-def test_mixed_batch_uses_one_graph_one_arm_and_local_complete(refs, target):
-    fixture = _Fixture(refs=refs, target=target)
+@pytest.mark.parametrize("refs,stored", ((True, True), (False, True), (True, False)))
+def test_single_output_uses_owner_registration_and_local_complete(refs, stored):
+    fixture = _Fixture(refs=refs, stored=stored)
     fixture.prepare()
-    assert fixture.events[0] == "intent" and fixture.events[-1] == "arm"
-    assert fixture.events.count("graph") == int(refs)
-    assert fixture.events.count("seal") == 1
+    assert fixture.events[0] == "owner-register"
+    assert fixture.events.count("prepare") == fixture.events.count("promote") == (2 if refs else 0)
+    assert fixture.events.count("seal") == int(stored)
     assert fixture.ledger.available == ResourceVector({"CPU": 0})
     envelope = fixture.complete()
     assert envelope == fixture.values.envelope
     assert fixture.releases == 1
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
     assert "terminal" not in fixture.events
-    assert fixture.recovery.snapshot(fixture.id).complete is None
+    assert fixture.handoffs.query(fixture.id).complete is None
     assert fixture.adapter.pending_terminal_reports() == (fixture.values.witness,)
-    assert fixture.journal.materialized_result(fixture.id, 0).inline_data == fixture.values.payloads[0]
-    assert fixture.store.get(fixture.manifest.slots[1].object_id) == fixture.values.payloads[1]
-    _assert_metadata(fixture.recovery.snapshot(fixture.id))
+    assert fixture.journal.materialized_result(fixture.id, 0).inline_data == (None if stored else fixture.values.payloads[0])
+    if stored:
+        assert fixture.store.get(fixture.manifest.slots[0].object_id) == fixture.values.payloads[0]
+    else:
+        assert fixture.store.used_bytes == 0
+    _assert_metadata(fixture.handoffs.query(fixture.id))
     _assert_metadata(fixture.journal.snapshot(fixture.id))
-    if target:
-        assert tuple(result.object_id.return_index for result in envelope.results) == (1, 3)
+    assert tuple(result.object_id.return_index for result in envelope.results) == (0,)
 
 
-@pytest.mark.parametrize("stage", ("intent", "prepare", "graph", "seal", "promote", "arm"))
+@pytest.mark.parametrize("stage", ("owner-register", "prepare", "seal", "promote"))
 def test_effect_then_lost_ack_replays_the_exact_frozen_publication(stage):
     fixture = _Fixture()
     fixture.fault = stage
@@ -289,7 +273,10 @@ def test_owner_adoption_can_precede_terminal_outbox_without_reopening_forward_wo
     fixture.prepare()
     fixture.complete()
     proof = OutputPublicationAdoptionProof(fixture.values.witness, fixture.values.owner, "owner-cas")
-    fixture.recovery.report_adopted(proof)
+    # Owner can receive Complete via the exact envelope, independently of the
+    # Node's reporting outbox; this table records that existing fact only.
+    fixture.handoffs.record_complete(fixture.values.witness)
+    fixture.handoffs.adopt(proof)
     assert fixture.adapter.report_terminal(fixture.id)
     assert fixture.adapter.pending_terminal_reports() == ()
     before = tuple(fixture.events)
@@ -350,14 +337,15 @@ def test_supervisor_converges_lease_after_payload_retirement_and_terminal_report
     assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
 
 
-@pytest.mark.parametrize("stage", ("intent", "prepare", "graph", "seal", "promote", "arm"))
+@pytest.mark.parametrize("stage", ("owner-register", "prepare", "seal", "promote"))
 def test_precomplete_rollback_compensates_intended_effects_without_ack(stage):
     fixture = _Fixture()
     fixture.fault = stage
     with pytest.raises(TimeoutError):
         fixture.prepare()
     tombstone = fixture.rollback_all()
-    assert fixture.recovery.snapshot(fixture.id).rollback == tombstone
+    assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ABORTED
+    assert fixture.journal.snapshot(fixture.id).rollback_tombstone == tombstone
     assert fixture.rollback_all() == tombstone
     assert fixture.journal.snapshot(fixture.id).state is OutputPublicationJournalState.RETIRED
     fixture.assert_no_pins_or_bytes()
@@ -365,7 +353,7 @@ def test_precomplete_rollback_compensates_intended_effects_without_ack(stage):
         fixture.prepare()
 
 
-@pytest.mark.parametrize("stage", ("abort", "drop", "release", "rollback-report"))
+@pytest.mark.parametrize("stage", ("drop", "release", "rollback-report"))
 def test_rollback_ack_loss_retains_same_effect_and_resumes(stage):
     fixture = _Fixture()
     fixture.prepare()
@@ -390,20 +378,20 @@ def test_partial_unsealed_local_write_is_dropped_by_intent_rollback():
     fixture.adapter._seal_replica = partial_write
     with pytest.raises(TimeoutError, match="before seal"):
         fixture.prepare()
-    slot_id = fixture.manifest.slots[1].object_id
+    slot_id = fixture.manifest.slots[0].object_id
     assert fixture.store.contains(slot_id, sealed_only=False)
     assert not fixture.store.contains(slot_id)
     fixture.rollback_all()
     fixture.assert_no_pins_or_bytes()
 
 
-def test_later_slot_bad_bytes_has_zero_journal_or_external_effects():
+def test_bad_single_output_bytes_has_zero_journal_or_external_effects():
     fixture = _Fixture()
     with pytest.raises(OutputPublicationConflictError, match="payload"):
-        fixture.adapter.prepare(fixture.manifest, (fixture.values.payloads[0], b"wrong-later-slot"))
+        fixture.adapter.prepare(fixture.manifest, (b"wrong-output",))
     assert fixture.events == []
     assert fixture.journal.publication_ids() == ()
-    assert fixture.recovery.publication_ids() == ()
+    assert fixture.handoffs.snapshots() == ()
 
 
 def test_wrong_child_echo_is_not_acknowledged_and_is_compensated():
@@ -412,7 +400,7 @@ def test_wrong_child_echo_is_not_acknowledged_and_is_compensated():
 
     def wrong_echo(address, request):
         actual = real(address, request)
-        other = fixture.manifest.slots[1].transfers[0]
+        other = fixture.manifest.slots[0].transfers[1]
         return protocol.StoredContainedPinReply(
             protocol.PrepareStoredContainedPin(other, other.contained_owner_worker_id),
             actual.disposition,
@@ -440,23 +428,19 @@ def test_nonblocking_ticket_prevents_reentrant_rollback_before_forward_ack():
 
     fixture.adapter._prepare_child = reentrant
     fixture.prepare()
-    assert len(observed) == 4
+    assert len(observed) == 2
     assert fixture.complete() == fixture.values.envelope
 
 
-def test_death_fenced_intent_does_not_authorize_any_new_effect():
+def test_aborted_owner_handoff_does_not_authorize_any_new_effect():
     fixture = _Fixture()
-    fixture.fault = "intent"
+    fixture.fault = "owner-register"
     with pytest.raises(TimeoutError):
         fixture.prepare()
-    node = fixture.manifest.header.node_incarnation
-    fixture.recovery.freeze_node_death(protocol.NodeDeathRecord(
-        "publisher-exit", node.node_id, node.node_pid, node.registration_epoch,
-        8, 1, protocol.NodeDeathReason.PROCESS_EXIT, "observed exit",
-    ))
-    with pytest.raises(OutputPublicationRemoteError, match="fenced"):
+    assert fixture.handoffs.abort(fixture.id, "owner-fenced")
+    with pytest.raises(OutputHandoffStateError, match="aborted"):
         fixture.prepare()
-    assert set(fixture.events) == {"intent"}
+    assert set(fixture.events) == {"owner-register"}
     assert fixture.store.used_bytes == 0
     assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
 
@@ -485,35 +469,35 @@ def test_drop_callback_cannot_mutate_the_expected_slot_identity():
     fixture.assert_no_pins_or_bytes()
 
 
-def test_mixed_batch_owner_adoption_then_per_slot_gc_preserves_sibling_child_holds():
-    """Actual pure authorities compose without N independent publications.
+def test_owner_adoption_then_gc_releases_single_output_and_each_child_hold():
+    """Actual owner CAS and child releases compose with physical Node Drop.
 
-    This deliberately does not claim the Worker/Node/GCS/Core RPC wiring is
-    enabled.  It checks the new journal, graph, child owner and output owner
-    contracts agree on one whole manifest and per-container cleanup.
+    Callback transport is synchronous; no Worker execution or GCS operation
+    is claimed. Both final child holds must remain live until explicit GC.
     """
     fixture = _Fixture()
+    node = _bind_real_node_storage(fixture)
     values = fixture.values
     output_owner = ObjectOwnerTable()
     spec = protocol.TaskSpec(
         values.job, values.task, values.attempt,
         protocol.FunctionKey(values.job, __name__, "producer", "v1"),
-        (), 2, ResourceVector(), values.owner,
+        (), 1, ResourceVector(), values.owner,
     )
-    output_owner.register_task_outputs(spec, local_tokens=("outer-0", "outer-1"))
+    output_owner.register_task_outputs(spec, local_tokens=("outer-0",))
     fixture.prepare()
     envelope = fixture.complete()
-    graph = envelope.manifest.to_graph_manifest()
-    assert fixture.graph.commit_manifest(graph).manifest == graph
     plan = OutputOwnerPublicationPlan(values.execution, envelope)
     assert output_owner.commit_output_publication(plan).committed
     proof = OutputPublicationAdoptionProof(values.witness, values.owner, "one-batch-cas")
-    fixture.recovery.report_adopted(proof)
+    fixture.handoffs.record_complete(values.witness)
+    fixture.handoffs.adopt(proof)
     fixture.journal.retire_completed(proof)
     assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
     assert fixture.store.used_bytes > 0  # reply retirement is not physical GC
     assert fixture.adapter.report_terminal(fixture.id)
-    second_before = output_owner.snapshot(values.publication_id.output_ids[1])
+    for transfer in fixture.manifest.slots[0].transfers:
+        assert transfer.final_hold in fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
 
     for index, slot in enumerate(fixture.manifest.slots):
         assert output_owner.release_local_reference(slot.object_id, "outer-{}".format(index))
@@ -526,37 +510,31 @@ def test_mixed_batch_owner_adoption_then_per_slot_gc_preserves_sibling_child_hol
                 transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.final_hold
             )
             assert fixture.release_child(transfer.contained_owner_address, request).accepted
-        request = protocol.ReleaseContainedGraphContainer(graph, slot.object_id)
-        graph_reply = protocol.ContainedGraphReply(
-            request, fixture.graph.release_manifest_container(graph, slot.object_id)
-        )
-        assert graph_reply.receipt.released_edges == slot.edges
         if slot.tier is protocol.ResultStorage.OBJECT_STORE:
-            assert fixture.store.delete(slot.object_id)
-        done = output_owner.complete_output_publication_collection(collection, graph_reply.receipt)
+            drop = protocol.DropObjectReplica(slot.object_id, fixture.id.attempt_id,
+                values.owner, values.node, slot.checksum)
+            assert node._handle_drop_object_replica(drop).status is protocol.DropObjectReplicaStatus.DROPPED
+            assert node._handle_drop_object_replica(drop).status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED
+        done = output_owner.complete_output_publication_collection(collection)
         assert done.collection.collected
-        if index == 0:
-            assert output_owner.snapshot(values.publication_id.output_ids[1]) == second_before
-            for transfer in fixture.manifest.slots[1].transfers:
-                assert transfer.final_hold in fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
-                    transfer.contained_object_id
-                ).contained_holds
+        assert done.collection.contained_releases == tuple(sorted(slot.edges))
+        assert output_owner.complete_output_publication_collection(collection).collection == done.collection
     assert not output_owner._entries
     fixture.assert_no_pins_or_bytes()
 
 
-def test_node_effect_adapter_uses_existing_node_storage_authority_for_mixed_complete():
+def test_node_effect_adapter_uses_existing_node_storage_authority_for_single_complete():
     fixture = _Fixture()
     node = _bind_real_node_storage(fixture)
     fixture.prepare()
-    slot = fixture.manifest.slots[1]
+    slot = fixture.manifest.slots[0]
     assert node._sealed_metadata == {slot.object_id: (
         fixture.id.attempt_id, fixture.values.owner, slot.size_bytes, slot.checksum,
     )}
     assert node._local_replica_write_claims == {}
     assert fixture.complete() == fixture.values.envelope
     assert fixture.releases == 1
-    assert fixture.store.get(slot.object_id) == fixture.values.payloads[1]
+    assert fixture.store.get(slot.object_id) == fixture.values.payloads[0]
 
 
 def test_real_node_partial_write_claim_composes_with_journal_reverse_rollback(monkeypatch):
@@ -571,7 +549,7 @@ def test_real_node_partial_write_claim_composes_with_journal_reverse_rollback(mo
     monkeypatch.setattr(fixture.store, "write", partial_write)
     with pytest.raises(TimeoutError, match="partial Node"):
         fixture.prepare()
-    slot = fixture.manifest.slots[1]
+    slot = fixture.manifest.slots[0]
     assert slot.object_id in node._local_replica_write_claims
     assert not node._sealed_metadata
     fixture.rollback_all()

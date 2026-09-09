@@ -147,7 +147,7 @@ def test_terminal_precedes_arrival_and_one_gate_does_not_pause_new_publication(m
 @pytest.mark.parametrize("completed", (False, True))
 def test_selected_identity_rebinding_is_rejected_even_at_another_phase(monkeypatch, changed, completed):
     gate = _gate()
-    first = _arrival(phase=gates.OutputPublicationGatePhase.AFTER_INTENT_ACK)
+    first = _arrival(phase=gates.OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK)
     monkeypatch.setattr(gates.socket, "create_connection", lambda *_a, **_k: _Connection([]))
     gate.checkpoint(first)
     if completed:
@@ -164,13 +164,13 @@ def test_selected_identity_rebinding_is_rejected_even_at_another_phase(monkeypat
     assert gate._selected == first
 
 
-def test_execution_scope_is_part_of_one_shot_publication_identity(monkeypatch):
+def test_execution_attempt_is_part_of_one_shot_publication_identity(monkeypatch):
     gate = _gate()
-    first = _arrival(phase=gates.OutputPublicationGatePhase.AFTER_INTENT_ACK)
+    first = _arrival(phase=gates.OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK)
     gate.checkpoint(first)
-    # Same Task/Attempt/Lease but a different selected execution is not a replay.
-    target = _arrival(targets=(0, 1, 2, 3))
-    gate.checkpoint(target, lambda _: pytest.fail("targeted identity replaced whole-task selection"))
+    # Same Task/Lease but another attempt is a different publication.
+    target = _arrival(attempt_number=4)
+    gate.checkpoint(target, lambda _: pytest.fail("new attempt replaced selected publication"))
     assert not gate._done.is_set()
     events = []
     monkeypatch.setattr(gates.socket, "create_connection", lambda *_a, **_k: _Connection(events))
@@ -301,12 +301,11 @@ def test_follower_after_deadline_gets_no_new_timeout_allowance(monkeypatch):
 
 
 @pytest.mark.parametrize("phase", (
-    gates.OutputPublicationGatePhase.AFTER_INTENT_ACK,
+    gates.OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
     gates.OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK,
-    gates.OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE,
 ))
 def test_node_preparation_gate_observes_acknowledged_phase_outside_locks(monkeypatch, phase):
-    fixture, node, record, _complete = _node(refs=False)
+    fixture, node, record, _complete = _node(refs=False, stored=False)
     gate = _gate(phase=phase)
     node._output_publication_gate = gate
     fixture.adapter._test_checkpoint = node._test_output_publication_checkpoint
@@ -317,16 +316,14 @@ def test_node_preparation_gate_observes_acknowledged_phase_outside_locks(monkeyp
         assert not node._state_lock._is_owned()
         assert not fixture.journal._lock._is_owned()
         snapshot = fixture.journal.snapshot(fixture.id)
-        recovery = fixture.recovery.snapshot(fixture.id)
+        handoff = fixture.handoffs.query(fixture.id)
         assert record.state is protocol.LeaseExecutionState.RUNNING
         assert snapshot.complete is None and fixture.ledger.available != fixture.ledger.total
-        if phase is gates.OutputPublicationGatePhase.AFTER_INTENT_ACK:
-            assert snapshot.materialized_slots == () and not recovery.armed
-        elif phase is gates.OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK:
-            assert snapshot.ready_to_arm and not snapshot.ready_to_complete
-            assert not recovery.armed
+        if phase is gates.OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK:
+            assert snapshot.materialized_slots == () and not snapshot.ready_to_complete
         else:
-            assert snapshot.ready_to_complete and recovery.armed
+            assert snapshot.ready_to_complete and snapshot.materialized_slots == (0,)
+        assert handoff.manifest == fixture.manifest and handoff.complete is None
         return _Connection(events)
 
     monkeypatch.setattr(gates.socket, "create_connection", connect)
@@ -336,13 +333,13 @@ def test_node_preparation_gate_observes_acknowledged_phase_outside_locks(monkeyp
     assert events == [gates.OutputPublicationGateArrival.from_manifest(
         fixture.manifest, phase,
     ), "released", "closed"]
-    assert gate._selected.phase is gates.OutputPublicationGatePhase.AFTER_INTENT_ACK
+    assert gate._selected.phase is gates.OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK
     assert fixture.journal.snapshot(fixture.id).ready_to_complete
-    assert fixture.recovery.snapshot(fixture.id).complete is None
+    assert fixture.handoffs.query(fixture.id).complete is None
 
 
-def _completed_node(*, target=False):
-    fixture, node, record, complete = _node(target=target)
+def _completed_node(*, stored=False):
+    fixture, node, record, complete = _node(stored=stored)
     prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(
         fixture.manifest, fixture.values.payloads,
     ))
@@ -356,14 +353,14 @@ def _outcome_request(fixture, record):
     values = fixture.values
     return protocol.GetWorkerLeaseOutcome(
         values.lease, values.task, values.attempt, values.executor,
-        values.owner, fixture.id.output_ids, target_execution=record.request.target_execution,
+        values.owner, fixture.id.output_ids,
     )
 
 
 @pytest.mark.parametrize("first_exit", ("complete", "outcome"))
-@pytest.mark.parametrize("target", (False, True))
-def test_complete_and_outcome_share_one_gate_without_authority_locks(monkeypatch, first_exit, target):
-    fixture, node, record, complete, _reply = _completed_node(target=target)
+@pytest.mark.parametrize("stored", (False, True))
+def test_complete_and_outcome_share_one_gate_without_authority_locks(monkeypatch, first_exit, stored):
+    fixture, node, record, complete, _reply = _completed_node(stored=stored)
     gate = _gate()
     node._output_publication_gate = gate
     events = []
@@ -375,24 +372,20 @@ def test_complete_and_outcome_share_one_gate_without_authority_locks(monkeypatch
         assert not fixture.journal._lock._is_owned()
         assert fixture.ledger.available == fixture.ledger.total
 
-    def report(address, handler, request, **options):
+    original_report = fixture.adapter._report_complete
+
+    def report(witness):
         unlocked()
-        assert address == node._gcs_address
-        assert handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-        assert type(request) is wire.ReportOutputPublicationTerminal
-        assert request.witness == fixture.values.witness
-        assert 0 < options["request_timeout"] <= 10.0
-        assert 0 < options["connect_timeout"] <= 0.5
-        assert options["deadline"] > gates.time.monotonic()
-        terminal_calls.append(request)
-        return wire.OutputRecoveryReply(request, fixture.recovery.report_terminal(request.witness))
+        assert witness == fixture.values.witness
+        terminal_calls.append(witness)
+        return original_report(witness)
 
     def connect(*_args, **_kwargs):
         unlocked()
-        assert fixture.recovery.snapshot(fixture.id).complete == fixture.values.witness
+        assert fixture.handoffs.query(fixture.id).complete == fixture.values.witness
         return _Connection(events, probe=unlocked)
 
-    node._background_rpc = report
+    fixture.adapter._report_complete = report
     monkeypatch.setattr(gates.socket, "create_connection", connect)
     exits = {
         "complete": lambda: node._handle_complete_worker_lease(complete),
@@ -436,7 +429,7 @@ def test_unconfigured_node_checkpoint_has_no_gate_effect():
     node._test_output_result_delivery_checkpoint(reply)
     outcome = node._handle_get_worker_lease_outcome(_outcome_request(fixture, record))
     assert outcome.output_publication == fixture.values.envelope
-    assert fixture.recovery.snapshot(fixture.id).complete is None
+    assert fixture.handoffs.query(fixture.id).complete is None
 
 
 def test_delivery_revalidates_payload_retirement_after_the_gate_opens():

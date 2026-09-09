@@ -113,6 +113,7 @@ def _component(process: str) -> str:
         "driver-process": "core_worker",
         "node-process": "node",
         "worker-process": "worker",
+        "owner-process": "owner_service",
     }[process]
 
 
@@ -185,23 +186,11 @@ def _success_records():
         *_rpc(
             "prepare", worker, node, "prepare_output_publication",
             (600, 600, 1100, 700), cause="start-done",
-            handler_span=True, finished_cause="arm-ack",
+            handler_span=True, finished_cause="handoff-done",
         ),
         *_rpc(
-            "intent", node, gcs, "report_output_publication",
+            "handoff", node, "owner-process", "register_output_handoff",
             (700, 1000, 1100, 800), cause="prepare-started", handler_span=True,
-        ),
-        fact(
-            "intent-ack", node, 810, "output_publication_ack",
-            cause="intent-done", stage="INTENT", accepted="true",
-        ),
-        *_rpc(
-            "arm", node, gcs, "report_output_publication",
-            (900, 2000, 2100, 1000), cause="intent-ack", handler_span=True,
-        ),
-        fact(
-            "arm-ack", node, 1010, "output_publication_ack",
-            cause="arm-done", stage="ARM_COMPLETE", accepted="true",
         ),
         *_rpc(
             "complete", worker, node, "complete_worker_lease",
@@ -217,26 +206,9 @@ def _success_records():
             "worker-terminal", worker, 1000, "worker", "task_succeeded",
             cause="complete-done", task_id=task, attempt_id=attempt,
         ),
-        *_rpc(
-            "terminal", driver, gcs, "report_output_publication",
-            (1400, 3000, 3100, 1500), handler_span=True,
-        ),
-        fact(
-            "terminal-ack", driver, 1510, "output_publication_ack",
-            cause="terminal-done", stage="TERMINAL", accepted="true",
-        ),
-        # Actual owner CAS/wakes precede the adoption and payload-retirement
-        # acknowledgements. The later object_ready observation is not the
-        # first instant at which an ObjectRef could be readable.
+        # This is the base branch's actual semantic order: owner CAS/wake
+        # after direct Push; Node metadata retirement follows owner readiness.
         fact("owner-ready", driver, 1600, "output_owner_ready", return_count=1),
-        *_rpc(
-            "adopted", driver, gcs, "report_output_publication",
-            (1700, 4000, 4100, 1800), handler_span=True,
-        ),
-        fact(
-            "adopted-ack", driver, 1810, "output_publication_ack",
-            cause="adopted-done", stage="ADOPTED", accepted="true",
-        ),
         *_rpc(
             "retire", driver, node, "ack_output_publication_adopted",
             (1900, 1400, 1500, 2000), handler_span=True,
@@ -255,7 +227,7 @@ def _success_records():
             storage="INLINE",
         ),
     ]
-    assert len(records) == 79
+    assert len(records) == 57
     return _bounded_records(records), task
 
 
@@ -376,23 +348,21 @@ def test_renderer_is_a_stable_teaching_sequence_not_a_raw_trace_dump() -> None:
         assert len(matches) == 1, fragment
         return matches[0]
 
-    # Push encloses Worker execution; Prepare encloses both Node -> GCS
-    # reports. A request row must never stand in for an already-finished RPC.
+    # B Prepare encloses Node -> owner registration. GCS only participates
+    # in membership; no ordinary result INTENT/ARM transaction is normalized in.
     ordered = (
         "Owner CoreWorker -> Execution Worker : push_task [request_sent]",
         "Execution Worker : task_started",
         "Execution Worker -> NodeServer : prepare_output_publication [request_sent]",
-        "GCS-lite -> NodeServer : report_output_publication [reply_received, transport_ok=true, stage=INTENT, accepted=true]",
-        "GCS-lite -> NodeServer : report_output_publication [reply_received, transport_ok=true, stage=ARM_COMPLETE, accepted=true]",
+        "NodeServer -> OwnerService (Driver owner) : register_output_handoff [request_sent]",
+        "OwnerService (Driver owner) -> NodeServer : register_output_handoff [reply_received, transport_ok=true]",
         "NodeServer -> Execution Worker : prepare_output_publication [reply_received, transport_ok=true]",
         "Execution Worker -> NodeServer : complete_worker_lease [request_sent]",
         "NodeServer : output_lease_completed [status=SUCCEEDED, released=true]",
         "NodeServer -> Execution Worker : complete_worker_lease [reply_received, transport_ok=true]",
         "Execution Worker : task_succeeded",
         "Execution Worker -> Owner CoreWorker : push_task [reply_received, transport_ok=true]",
-        "GCS-lite -> Owner CoreWorker : report_output_publication [reply_received, transport_ok=true, stage=TERMINAL, accepted=true]",
         "Owner CoreWorker : output_owner_ready [return_count=1]",
-        "GCS-lite -> Owner CoreWorker : report_output_publication [reply_received, transport_ok=true, stage=ADOPTED, accepted=true]",
         "NodeServer -> Owner CoreWorker : ack_output_publication_adopted [reply_received, transport_ok=true]",
         "Owner CoreWorker : output_payload_retired",
         "Owner CoreWorker : task_finished [status=SUCCEEDED]",
@@ -400,10 +370,7 @@ def test_renderer_is_a_stable_teaching_sequence_not_a_raw_trace_dump() -> None:
     )
     positions = tuple(position(fragment) for fragment in ordered)
     assert positions == tuple(sorted(positions))
-    assert sum(
-        "NodeServer -> GCS-lite : report_output_publication [request_sent]" in line
-        for line in lines
-    ) == 2
+    assert "report_output_publication" not in rendered
     assert "round trip" not in rendered
     for volatile in (
         "random-task-id",
@@ -459,8 +426,8 @@ def test_contract_rejects_rpc_name_match_without_concrete_cross_process_edge() -
     assert any("push_task" in violation for violation in match.violations)
 
 
-_STAGE_RPCS = ("intent_rpc", "arm_rpc", "terminal_rpc", "adopted_rpc")
-_ACK_IDS = ("intent-ack", "arm-ack", "terminal-ack", "adopted-ack")
+_STAGE_RPCS = ("register_handoff_rpc", "complete_rpc", "retire_rpc")
+_ACK_IDS = ("node-complete", "owner-ready", "payload-retired")
 
 
 def _change_record(records, event_id, *, fields=None, **changes):
@@ -478,137 +445,86 @@ def _change_record(records, event_id, *, fields=None, **changes):
 
 
 def _terminal_echo(records, prefix, *, fields=None):
-    """One complete earlier report, with its own RPC ID and scoped ACK."""
-    original = next(record for record in records if record.event_id == "terminal-ack")
+    """Independent synthetic retirement round trip and its identity fact."""
+    original = next(record for record in records if record.event_id == "payload-retired")
     values = dict(original.fields)
     values.update(fields or {})
-    echo = _rpc(
-        prefix, "driver-process", "gcs-process", "report_output_publication",
-        (1300, 2500, 2600, 1310), handler_span=True,
-    )
-    ack = _record(
-        "{}-ack".format(prefix), "driver-process", 1320, "core_worker",
-        "output_publication_ack", cause="{}-done".format(prefix), **values,
-    )
+    echo = _rpc(prefix, "driver-process", "node-process", "ack_output_publication_adopted",
+                (1700, 1320, 1350, 1800), handler_span=True)
+    ack = _record(prefix + "-ack", "driver-process", 1810, "core_worker",
+                  "output_payload_retired", cause=prefix + "-done", **values)
     return (*echo, ack)
 
 
-@pytest.mark.parametrize(
-    "event_id",
-    (*_ACK_IDS, "owner-ready", "node-complete", "payload-retired"),
-)
+@pytest.mark.parametrize("event_id", _ACK_IDS)
 def test_success_contract_requires_each_publication_fact(event_id) -> None:
     records, task_id = _ordinary_records()
     missing = tuple(record for record in records if record.event_id != event_id)
-
-    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(
-        missing, task_id=task_id,
-    ).ok
+    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(missing, task_id=task_id).ok
 
 
-@pytest.mark.parametrize(
-    ("event_id", "fields"),
-    [*((event_id, {"accepted": "false"}) for event_id in _ACK_IDS),
-     ("node-complete", {"released": "false"}),
-     ("node-complete", {"state": "STARTED"}),
-     ("owner-ready", {"return_count": "0"})],
-)
+@pytest.mark.parametrize(("event_id", "fields"), (
+    ("node-complete", {"released": "false"}),
+    ("node-complete", {"state": "STARTED"}),
+    ("owner-ready", {"return_count": "0"}),
+))
 def test_transport_ok_does_not_replace_accepted_publication_facts(event_id, fields) -> None:
     records, task_id = _ordinary_records()
     changed = _change_record(records, event_id, fields=fields)
-    assert all(
-        dict(record.fields)["ok"] == "true"
-        for record in changed if record.event == "rpc_reply_received"
-    )
-
-    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(
-        changed, task_id=task_id,
-    ).ok
+    assert all(dict(record.fields)["ok"] == "true" for record in changed if record.event == "rpc_reply_received")
+    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(changed, task_id=task_id).ok
 
 
-@pytest.mark.parametrize(
-    "field", ("task_id", "attempt_id", "lease_id", "manifest_digest"),
-)
+@pytest.mark.parametrize("field", ("task_id", "attempt_id", "lease_id", "manifest_digest"))
 @pytest.mark.parametrize("keep_original", (False, True))
-def test_other_publication_ack_cannot_substitute_or_hide_the_selected_report(
-    field, keep_original,
-) -> None:
+def test_other_publication_ack_cannot_substitute_or_hide_the_selected_report(field, keep_original) -> None:
     records, task_id = _ordinary_records()
-    echo = _terminal_echo(records, "foreign-terminal", fields={field: "foreign-{}".format(field)})
+    echo = _terminal_echo(records, "foreign-retire", fields={field: "foreign-" + field})
     if not keep_original:
-        records = tuple(record for record in records if not record.event_id.startswith("terminal-"))
+        records = tuple(record for record in records if not record.event_id.startswith("retire-") and record.event_id != "payload-retired")
     mixed = _bounded_records((*records, *echo))
-
-    match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(
-        reversed(mixed), task_id=task_id,
-    )
+    match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(reversed(mixed), task_id=task_id)
     assert match.ok is keep_original
     if keep_original:
-        assert match.rpc_matches["terminal_rpc"][0].event_id == "terminal-sent"
+        assert match.rpc_matches["retire_rpc"][0].event_id == "retire-sent"
 
 
-@pytest.mark.parametrize(
-    ("event_id", "cause"),
-    (
-        ("intent-received", "not-the-send-event"),
-        ("intent-done", "arm-reply"),
-        ("arm-ack", "intent-done"),
-        ("terminal-ack", "intent-done"),
-        ("adopted-ack", "terminal-done"),
-        ("payload-retired", "adopted-done"),
-        # All three retain the same Node process and chronological position.
-        # Only an explicit request -> business -> reply cause chain proves
-        # that the selected Complete RPC observed the selected local fact.
-        ("complete-started", "start-received"),
-        ("node-complete", "start-started"),
-        ("complete-finished", "start-started"),
-    ),
-)
+@pytest.mark.parametrize(("event_id", "cause"), (
+    ("handoff-received", "not-the-send-event"),
+    ("handoff-done", "complete-reply"),
+    ("retire-done", "handoff-reply"),
+    ("payload-retired", "handoff-done"),
+    ("complete-started", "start-received"),
+    ("node-complete", "start-started"),
+    ("complete-finished", "start-started"),
+))
 def test_publication_rpc_requires_its_exact_ack_and_server_cause_chain(event_id, cause) -> None:
     records, task_id = _ordinary_records()
     broken = _change_record(records, event_id, cause_event_id=cause)
-
-    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(
-        broken, task_id=task_id,
-    ).ok
+    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(broken, task_id=task_id).ok
 
 
-@pytest.mark.parametrize(
-    ("event_id", "other_rpc"),
-    (("arm-received", "intent"), ("terminal-reply", "adopted"),
-     ("retire-done", "adopted")),
-)
+@pytest.mark.parametrize(("event_id", "other_rpc"), (("handoff-received", "prepare"),
+    ("complete-reply", "handoff"), ("retire-done", "complete")))
 def test_publication_round_trip_cannot_mix_different_rpc_ids(event_id, other_rpc) -> None:
     records, task_id = _ordinary_records()
-    broken = _change_record(
-        records, event_id, fields={"rpc_id": "volatile-rpc-{}".format(other_rpc)},
-    )
-
-    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(
-        broken, task_id=task_id,
-    ).ok
+    broken = _change_record(records, event_id, fields={"rpc_id": "volatile-rpc-" + other_rpc})
+    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(broken, task_id=task_id).ok
 
 
-@pytest.mark.parametrize(
-    ("first", "second"), (("intent-ack", "arm-ack"), ("terminal-ack", "adopted-ack")),
-)
+@pytest.mark.parametrize(("first", "second"), (("owner-ready", "retire-sent"), ("payload-retired", "owner-terminal")))
 def test_publication_stages_cannot_be_reversed_inside_valid_round_trips(first, second) -> None:
     records, task_id = _ordinary_records()
-    stages = {record.event_id: dict(record.fields).get("stage") for record in records}
-    changed = _change_record(records, first, fields={"stage": stages[second]})
-    changed = _change_record(changed, second, fields={"stage": stages[first]})
-
-    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(
-        changed, task_id=task_id,
-    ).ok
+    sequences = {record.event_id: record.process_sequence for record in records}
+    changed = _change_record(records, first, process_sequence=sequences[second] + 1)
+    assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(changed, task_id=task_id).ok
 
 
-def test_publication_stages_select_four_distinct_request_edges() -> None:
+def test_publication_stages_select_distinct_current_base_request_edges() -> None:
     records, task_id = _ordinary_records()
     match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(records, task_id=task_id).require()
-
     assert tuple(match.rpc_matches[key][0].event_id for key in _STAGE_RPCS) == (
-        "intent-sent", "arm-sent", "terminal-sent", "adopted-sent",
+        "handoff-sent", "complete-sent", "retire-sent",
     )
     complete = match.rpc_matches["complete_rpc"]
     node_complete = next(record for record in records if record.event_id == "node-complete")
@@ -619,26 +535,20 @@ def test_publication_stages_select_four_distinct_request_edges() -> None:
 
 def test_valid_duplicate_report_keeps_its_own_reply_ack_and_does_not_supply_other_stages() -> None:
     records, task_id = _ordinary_records()
-    mixed = _bounded_records((*records, *_terminal_echo(records, "duplicate-terminal")))
+    mixed = _bounded_records((*records, *_terminal_echo(records, "duplicate-retire")))
     match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(mixed, task_id=task_id).require()
-
     reports = tuple(match.rpc_matches[key] for key in _STAGE_RPCS)
-    assert len({report[0].event_id for report in reports}) == 4
-    terminal = match.rpc_matches["terminal_rpc"]
-    assert terminal[0].event_id in ("terminal-sent", "duplicate-terminal-sent")
-    assert any(
-        record.cause_event_id == terminal[3].event_id
-        for record in match.event_matches["core_terminal_ack"]
-    )
+    assert len({report[0].event_id for report in reports}) == len(_STAGE_RPCS)
+    retired = match.rpc_matches["retire_rpc"]
+    assert retired[0].event_id in ("retire-sent", "duplicate-retire-sent")
+    assert any(record.cause_event_id == retired[3].event_id for record in match.event_matches["payload_retired"])
 
 
 def test_one_request_edge_cannot_satisfy_two_rpc_rules() -> None:
     records, task_id = _ordinary_records()
     contract = load_trace_contract(SUCCESS_TRACE_CONTRACT)
-    intent = next(rule for rule in contract.rpcs if rule.key == "intent_rpc")
-    duplicate_rule = replace(intent, key="second_intent_rpc")
-    contract = replace(contract, rpcs=(*contract.rpcs, duplicate_rule))
-
+    register = next(rule for rule in contract.rpcs if rule.key == "register_handoff_rpc")
+    contract = replace(contract, rpcs=(*contract.rpcs, replace(register, key="second_handoff_rpc")))
     assert not contract.match(records, task_id=task_id).ok
 
 
@@ -699,59 +609,68 @@ def test_render_schema_rejects_unknown_duplicate_or_unavailable_endpoints(points
         TraceContract.from_dict(value)
 
 
-@pytest.mark.parametrize(
-    ("event_id", "cause", "rpc_key"),
-    (
-        ("prepare-started", "start-received", "prepare_rpc"),
-        ("prepare-finished", "prepare-started", "prepare_rpc"),
-        ("push-started", "worker-ready", "push_rpc"),
-        ("push-finished", "push-started", "push_rpc"),
-    ),
-)
-def test_nested_prepare_and_push_require_their_business_fact_in_the_explicit_span(
-    event_id, cause, rpc_key,
-) -> None:
+@pytest.mark.parametrize(("event_id", "cause", "rpc_key"), (
+    ("complete-started", "start-received", "complete_rpc"),
+    ("complete-finished", "complete-started", "complete_rpc"),
+    ("push-started", "worker-ready", "push_rpc"),
+    ("push-finished", "push-started", "push_rpc"),
+))
+def test_nested_prepare_and_push_require_their_business_fact_in_the_explicit_span(event_id, cause, rpc_key) -> None:
     records, task_id = _ordinary_records()
     broken = _change_record(records, event_id, cause_event_id=cause)
-    assert tuple((record.process_id, record.process_sequence) for record in broken) == tuple(
-        (record.process_id, record.process_sequence) for record in records
-    )
-
+    assert tuple((r.process_id, r.process_sequence) for r in broken) == tuple((r.process_id, r.process_sequence) for r in records)
     match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(broken, task_id=task_id)
-    assert not match.ok
-    assert not match.rpc_matches[rpc_key]
+    assert not match.ok and not match.rpc_matches[rpc_key]
 
 
-def test_prepare_and_nested_arm_keep_the_same_ack_despite_an_earlier_independent_echo() -> None:
-    records, task_id = _ordinary_records()
-    original_arm = next(record for record in records if record.event_id == "arm-ack")
-    echo = _rpc(
-        "independent-arm", "node-process", "gcs-process", "report_output_publication",
-        (820, 1500, 1600, 830), handler_span=True,
-    )
-    echo_ack = _record(
-        "independent-arm-ack", "node-process", 840, "node", "output_publication_ack",
-        cause="independent-arm-done", **dict(original_arm.fields),
-    )
-    mixed = _bounded_records((*records, *echo, echo_ack))
-    assert len(mixed) == 86
-    assert echo[0].cause_event_id is None
-    assert echo_ack.process_sequence < original_arm.process_sequence
+def test_prepare_and_nested_handoff_reject_an_earlier_independent_echo() -> None:
+    # Shared semantic anchor is a generic matcher capability. Base's packaged
+    # registration RPC has no emitted semantic ACK, so test this with an
+    # explicitly synthetic local schema rather than inventing a base event.
+    schema = {
+        "schema": TRACE_CONTRACT_SCHEMA, "name": "synthetic_nested_ack",
+        "title": "Synthetic shared ACK anchor",
+        "participants": {"worker": "Worker", "node": "Node", "owner_service": "Owner"},
+        "input_bindings": ["task_id"],
+        "events": [{"key": "ack", "component": "node", "event": "toy_ack",
+                    "fields": {"task_id": "$task_id", "accepted": "true"}}],
+        "rpcs": [
+            {"key": "outer", "client": "worker", "server": "node",
+             "client_component": "transport", "handler": "toy_prepare", "round_trip": True, "server_event": "ack"},
+            {"key": "nested", "client": "node", "server": "owner_service",
+             "handler": "toy_register", "round_trip": True, "reply_event": "ack"},
+        ],
+    }
+    outer = _rpc("outer", "worker-process", "node-process", "toy_prepare",
+                 (10, 100, 300, 20), handler_span=True, finished_cause="nested-ack")
+    nested = _rpc("nested", "node-process", "owner-process", "toy_register",
+                  (200, 100, 200, 220), cause="outer-started", handler_span=True)
+    ack = _record("nested-ack", "node-process", 230, "node", "toy_ack",
+                  cause="nested-done", task_id="toy-task", accepted="true")
+    echo = _rpc("independent", "node-process", "owner-process", "toy_register",
+                (110, 10, 20, 120), handler_span=True)
+    echo_ack = _record("independent-ack", "node-process", 130, "node", "toy_ack",
+                       cause="independent-done", task_id="toy-task", accepted="true")
+    records = _bounded_records((*outer, *nested, ack, *echo, echo_ack))
+    match = TraceContract.from_dict(schema).match(reversed(records), task_id="toy-task").require()
+    assert match.rpc_matches["outer"][0].event_id == "outer-sent"
+    assert match.rpc_matches["nested"][0].event_id == "nested-sent"
+    assert match.event_matches["ack"][0] == ack
+    assert echo_ack in match.event_matches["ack"] and echo[0].cause_event_id is None
 
-    match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(
-        reversed(mixed), task_id=task_id,
-    ).require()
-    assert match.rpc_matches["prepare_rpc"][0].event_id == "prepare-sent"
-    assert match.rpc_matches["arm_rpc"][0].event_id == "arm-sent"
-    assert match.event_matches["arm_ack"][0] == original_arm
-    assert len(match.event_matches["arm_ack"]) == 2
-    assert match.event_matches["arm_ack"][1] == echo_ack
-    assert original_arm.cause_event_id == match.rpc_matches["arm_rpc"][3].event_id
-    # The same Arm ACK is both the nested call's reply anchor and part of
-    # Prepare's explicit server chain, not merely an earlier Node observation.
-    prepare_finished = next(record for record in records if record.event_id == "prepare-finished")
-    assert prepare_finished.cause_event_id == original_arm.event_id
-    assert match.rpc_matches["prepare_rpc"][2].cause_event_id == prepare_finished.event_id
+
+def test_synthetic_semantic_ack_rejects_false_acceptance_despite_transport_success():
+    # Generic matcher schema only. This local toy is not the packaged base
+    # runtime contract and makes no claim that B emits GCS publication stages.
+    value = _semantic_rpc_schema()
+    value["rpcs"][0]["reply_event"] = "ack"
+    contract = TraceContract.from_dict(value)
+    rpc = _rpc("toy", "driver-process", "gcs-process", "report_output_publication", (1, 1, 2, 2))
+    ack = _record("toy-ack", "driver-process", 3, "core_worker", "output_publication_ack",
+                  cause="toy-done", task_id="toy-task", stage="TERMINAL", accepted="true")
+    assert contract.match((*rpc, ack), task_id="toy-task").ok
+    false_ack = replace(ack, fields=tuple((key, "false" if key == "accepted" else item) for key, item in ack.fields))
+    assert not contract.match((*rpc, false_ack), task_id="toy-task").ok
 
 
 def test_ordinary_success_contract_rejects_retry_of_the_selected_task() -> None:
@@ -770,7 +689,7 @@ def test_ordinary_success_contract_rejects_retry_of_the_selected_task() -> None:
 
 def test_contract_rejects_duplicate_event_ids_before_they_can_alias_a_causal_edge() -> None:
     records, task_id = _ordinary_records()
-    sent = next(record for record in records if record.event_id == "intent-sent")
+    sent = next(record for record in records if record.event_id == "handoff-sent")
     # Keep component/event/count rules harmless while deliberately aliasing
     # the event ID used by the real cross-process request edge.
     duplicate = replace(sent, process_sequence=750)
