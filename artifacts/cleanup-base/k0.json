@@ -1,0 +1,21 @@
+{
+  "phase": "K0",
+  "status": "complete",
+  "base_branch": "refs/heads/teaching-base",
+  "base_start": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+  "enhanced_input": "ce29981a547f83b53b0c1df9f91354dcf89d8e4f",
+  "enhanced_branch_status": "not_created_until_K8",
+  "original_plan_hashes": {
+    "code-value-audit.md": "d80f3a76cebbe7ab3e29435180b2100272c9f28612276d2a413ac66fa344783a",
+    "retirement-inventory.md": "e3bb98c8452f8b2aaec0677a3c8b9a13b0f4cabadaae6187c3e170c8f75398b4",
+    "retirement-inventory.json": "f49e4b9ea042e286e821e18df760d3f46526d26363dd618e480aeb8f1ad4bb5e",
+    "project-cleanup-plan.md": "2429be9af341f1ee97e0ce600f63229b3afe9c54a8cd8ab62c8da3653195c95e",
+    "project-cleanup-plan.json": "bda42f5523c852535df807126c5015656c65f4b71e987fadae9439fa40e4a45e",
+    "project-cleanup-index.md": "717966e85bd35b170d805788f12d04b74b20bd40c9a8adb939bb2c857d9f5ea2",
+    "project-cleanup-review.md": "7487b46f8eed7977cf4c06cb40b943539d4cacc00403c8e7fc373a5e28e72416",
+    "redesign-plan.md": "47796c5fdb816f060034de16bb1fa9f4d311130334bc5e76c3f2c5b5c98c51f1"
+  },
+  "effective_plan_hash": "00332f8f5ac23fd93e62589d13dc5fae17f65c37a6c024cb71af06cfddb1fad5",
+  "review_clarification": "P3 limits CF-001 base fix to actual Node-loss proof consumer; enhanced put proof is not a proven independent base defect.",
+  "scope": "Two retained branches, sequential K0-K9; no runtime deletion before K1 verification."
+}
