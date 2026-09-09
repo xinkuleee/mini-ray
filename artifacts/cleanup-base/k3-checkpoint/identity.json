@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+  "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+  "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+  "file_count": 432,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

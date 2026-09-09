@@ -21,9 +21,7 @@ from miniray.ids import AttemptID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
-from miniray.output_publication import OutputPublicationManifest, OutputPublicationNodeIncarnation
 from miniray.resources import ResourceVector
-from tests.unit.test_output_publication import _Fixture as _OutputValues
 
 
 # No module-level unit marker: the live progress driver is deliberately L1.
@@ -90,9 +88,8 @@ def _fenced(request):
 
 def _service(monkeypatch, rpc):
     monkeypatch.setattr(control, "TCPServer", _Server)
-    publications = control.PublicationControlAdapter()
-    service = control.GCSLite(publications=publications, stored_hold_rpc=rpc)
-    assert service.publications is publications
+    service = control.GCSLite(owner_fence_rpc=rpc)
+    assert not hasattr(service, "publications")
     assert not hasattr(service, "stored_publications")
     return service
 
@@ -136,17 +133,16 @@ def test_zero_publication_owner_death_hides_node_until_fence_ack(
     ))
 
     assert death.death is not None
-    registry = service.publications.output_recovery
-    assert registry.publication_ids() == ()
-    assert registry.frozen_owner_workset(death.death) == ()
+    assert not hasattr(service, "publications")
+    assert service.get_worker_state(protocol.GetWorkerState(owner.worker_id)).death == death.death
     assert service.get_nodes(protocol.GetNodes()).nodes == ()
     assert len(service.owner_death_fences.pending()) == 1
 
-    drained = service.drain_publication_owner_deaths(
-        protocol.DrainPublicationOwnerDeaths("drain")
+    drained = service.drain_owner_death_fences(
+        protocol.DrainOwnerDeathFences("drain")
     )
 
-    assert drained.clean and drained.active_publications == 0
+    assert drained.clean and drained.active_fences == 0
     assert tuple(item.node_id for item in service.get_nodes().nodes) == (
         node.node_id,
     )
@@ -156,20 +152,15 @@ def test_zero_publication_owner_death_hides_node_until_fence_ack(
     assert calls[0][1].scope is (
         protocol.OwnerDeathFenceScope.OWNER_WIDE_SWEEP
     )
-    assert registry.publication_ids() == ()
-    assert registry.frozen_owner_workset(death.death) == ()
-    # Even without prior publications, the exact dead-owner identity remains
-    # fenced against a later intent; absence is not permission to resurrect it.
-    values = _OutputValues(refs=False)
-    manifest = OutputPublicationManifest.create(replace(
-        values.header, owner_worker_id=owner.worker_id,
-        node_incarnation=OutputPublicationNodeIncarnation(
-            node.node_id, node.node_pid, node.registration_epoch,
-        ),
-    ), values.slots)
-    with pytest.raises(ValueError, match="death-frozen"):
-        registry.report_intent(manifest)
-    assert registry.publication_ids() == ()
+    # Historical membership still fences re-registration after the exact
+    # owner-wide ACK; no central output INTENT registry is part of base.
+    replay = service.report_worker_death(protocol.ReportWorkerDeath(
+        "owner-exit", owner, -9, protocol.WorkerDeathReason.PROCESS_EXIT,
+    ))
+    assert replay.death == death.death
+    assert not service.register_worker_incarnation(protocol.RegisterWorkerIncarnation(owner)).accepted
+    assert service.get_worker_state(protocol.GetWorkerState(owner.worker_id)).death == death.death
+
 
 
 @pytest.mark.unit
@@ -189,8 +180,8 @@ def test_late_node_is_hidden_until_every_historical_fence_is_acked(
         "historical-owner-exit", owner, -9,
         protocol.WorkerDeathReason.PROCESS_EXIT,
     ))
-    assert service.drain_publication_owner_deaths(
-        protocol.DrainPublicationOwnerDeaths("drain-first")
+    assert service.drain_owner_death_fences(
+        protocol.DrainOwnerDeathFences("drain-first")
     ).clean
 
     late = _register(service, 2)
@@ -203,8 +194,8 @@ def test_late_node_is_hidden_until_every_historical_fence_is_acked(
         first.node_id,
     )
 
-    assert service.drain_publication_owner_deaths(
-        protocol.DrainPublicationOwnerDeaths("drain-late")
+    assert service.drain_owner_death_fences(
+        protocol.DrainOwnerDeathFences("drain-late")
     ).clean
     assert tuple(item.node_id for item in service.get_nodes().nodes) == (
         first.node_id, late.node_id,
@@ -327,10 +318,11 @@ def test_gcs_owner_wide_effect_drives_real_node_handler_and_deletes_bytes(
     def control_to_node(address, handler, request):
         assert address == ("127.0.0.1", 14004)
         assert handler == control.INSTALL_OWNER_DEATH_FENCE_HANDLER
+        assert not service._owner_fence_lock()._is_owned()
         calls.append(request)
         return node._handle_install_owner_death_fence(request)
 
-    service._stored_hold_rpc = control_to_node
+    service._owner_fence_rpc = control_to_node
     death = service.report_worker_death(protocol.ReportWorkerDeath(
         "ordinary-owner-composition-exit", owner, -9,
         protocol.WorkerDeathReason.PROCESS_EXIT,
@@ -338,11 +330,11 @@ def test_gcs_owner_wide_effect_drives_real_node_handler_and_deletes_bytes(
     assert death.death is not None
     assert node._object_store.contains(object_id)
 
-    progress = service.progress_publication_owner_death(
-        protocol.ProgressPublicationOwnerDeath(owner.worker_id)
-    )
+    progress = service.drain_owner_death_fences(protocol.DrainOwnerDeathFences(
+        "ordinary-owner-sweep",
+    ))
 
-    assert progress.progressed and progress.clean
+    assert progress.clean and progress.active_fences == 0
     assert len(calls) == 1
     assert calls[0].scope is protocol.OwnerDeathFenceScope.OWNER_WIDE_SWEEP
     assert calls[0].expected_replicas == ()

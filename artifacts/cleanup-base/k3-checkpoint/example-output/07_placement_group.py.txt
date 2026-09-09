@@ -1,0 +1,6 @@
+committed PGID: 297d36600fc44af92ebe84c999458fc3 attempt: 0
+bundle placement: 0 -> NodeID: 272fb6d29b7373522b326aaf9c1b8d54
+bundle placement: 1 -> NodeID: bc29c0921017214154ab772a51d1e9e8
+STRICT_SPREAD: distinct Nodes are a hard constraint, not a preference.
+Each Node has two CPUs: STRICT_PACK could place both one-CPU bundles on one Node; STRICT_SPREAD requires the two distinct Nodes used here.
+bundle executors: [(0, 10800), (1, 10808)]

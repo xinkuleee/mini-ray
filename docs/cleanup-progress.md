@@ -57,3 +57,5 @@ K3m：inlinegate33/NodeDeathGC2/foreignstored13/trace52/traceobservation6/Nodead
 K3n：collection通用guard17通过并退出旧7个硬编码锁；14个原集成迁移全部通过，覆盖回收收据重放/PG peer loss两个窗口/route与multiowner/child Worker death/INLINE已收未收/存活副本KEEP/unreported/embedded owner证书/borrowedunknown。
 
 K3o：foreignStoredTask原19全部通过，完整两个owner/location/custody/quarantine/GC未抹掉；owner预检修后26与Worker nested20通过。当前只剩原集成最后2case、owner-fence小组合及既定full32共同回归用于whole12退休，后续进入K4。
+
+K3低风险检查点：base-k3p-01同版26pure文件343passed/1deselected、32smoke全部通过含7示例。Node启动偶发5s超时原失败保留，同候选该case重跑通过，未放宽预算。最后12whole旧实现按逐项前像/依赖/保留合同证据退休；两份最后集成与GCS owner-fence5均通过。K4开始正式fixture/表示修改，K7最终验收尚未完成。

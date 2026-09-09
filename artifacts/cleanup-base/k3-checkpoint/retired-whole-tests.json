@@ -1,0 +1,434 @@
+[
+  {
+    "path": "tests/integration/test_actor_node_loss_migration_path.py",
+    "action": "retired",
+    "physical_lines": 573,
+    "checkout_sha256_before": "5bb0da01ad8379d94cec8b3b0f5e9569c66885389ceb747bccf8d3d8f583574b",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_actor_node_loss_migration_path.py::test_actor_migrates_after_remote_node_loss_and_resets_generation"
+    ],
+    "retained_contract": "Old-generation invocation fenced; constructor state reset only on same-Node restart; Node death becomes terminal DEAD, not migration.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2b/005-smoke.log",
+        "claim": "real same-Node Actor restart, constructor reset and old invocation fence passed"
+      },
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current base pure batch including Actor Node-loss DEAD/coordinator controls passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_actor_node_loss_registry.py::test_node_failure_commits_dead_without_consuming_restart",
+      "tests/unit/test_actor_node_loss_registry.py::test_worker_exit_proof_cannot_authorize_cross_node_restart",
+      "tests/unit/test_actor_node_loss_coordinator.py::test_node_loss_publishes_dead_without_reserving_a_survivor",
+      "tests/integration/test_actor_restart_path.py::test_actor_crash_restarts_once_fences_inflight_call_and_resets_state"
+    ],
+    "semantic_notes": [
+      "Cross-Node migration success is retired scope, so refusal in B is correct. Same-Node restart must not be renamed as proof of migration."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "5bb0da01ad8379d94cec8b3b0f5e9569c66885389ceb747bccf8d3d8f583574b"
+  },
+  {
+    "path": "tests/integration/test_mixed_borrowed_output_unknown_path.py",
+    "action": "retired",
+    "physical_lines": 466,
+    "checkout_sha256_before": "4b58c7e6fe3de659034de833457ab52581af4c2c4711c2a607d296c9f56a9192",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_mixed_borrowed_output_unknown_path.py::test_armed_unknown_mixed_borrowed_outputs_release_each_old_slot_before_one_retry"
+    ],
+    "retained_contract": "One output may contain multiple holds; unknown effect cleanup before retry; no multi-slot kept/collected vector.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_owner_led_publication.py::test_rollback_compensates_unknown_promotion_and_replays_exact_cleanup",
+      "tests/unit/test_output_handoff.py::test_unknown_registration_and_child_ack_keep_full_compensation_obligation",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "4b58c7e6fe3de659034de833457ab52581af4c2c4711c2a607d296c9f56a9192"
+  },
+  {
+    "path": "tests/integration/test_multi_contained_output_path.py",
+    "action": "retired",
+    "physical_lines": 381,
+    "checkout_sha256_before": "778c60c20b08e7e63739045a523f51de89c06519f1214a77948ad3db5510a61b",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_multi_contained_output_path.py::test_mixed_contained_outputs_share_one_publication_and_reconstruct_one_slot"
+    ],
+    "retained_contract": "Contained handoff, immutable logical ID, old/new exact hold replacement and GC survive as single-output path; helper consumers must be redirected.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "778c60c20b08e7e63739045a523f51de89c06519f1214a77948ad3db5510a61b"
+  },
+  {
+    "path": "tests/integration/test_multi_output_node_loss_path.py",
+    "action": "retired",
+    "physical_lines": 400,
+    "checkout_sha256_before": "598e7feee9b64bd8a43cc679c111404972a6ae9abe47e4d13b0f52c766b352d1",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_multi_output_node_loss_path.py::test_received_mixed_result_keeps_inline_and_reconstructs_only_lost_stored"
+    ],
+    "retained_contract": "Execution success distinct from bytes, old attempt fencing and whole replacement; mixed sibling KEEP/DROP requirement retired.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_owner_led_publication.py::test_rollback_compensates_unknown_promotion_and_replays_exact_cleanup",
+      "tests/unit/test_output_handoff.py::test_unknown_registration_and_child_ack_keep_full_compensation_obligation",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "598e7feee9b64bd8a43cc679c111404972a6ae9abe47e4d13b0f52c766b352d1"
+  },
+  {
+    "path": "tests/integration/test_multi_return_partial_reconstruction_path.py",
+    "action": "retired",
+    "physical_lines": 332,
+    "checkout_sha256_before": "2df2330d52b03964f6b0933d1aa8f56bc18879d24726fc6df530740e5ce1ef66",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_multi_return_partial_reconstruction_path.py::test_one_lost_return_reconstructs_without_changing_healthy_siblings"
+    ],
+    "retained_contract": "Single-output whole-function reconstruction and stale attempt fencing; no healthy sibling or selected slot state.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/unit/test_owner_reconstruction_completion_race.py::test_uncommitted_preview_cannot_use_old_terminal_recovery_as_start_receipt",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+      "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "2df2330d52b03964f6b0933d1aa8f56bc18879d24726fc6df530740e5ce1ef66"
+  },
+  {
+    "path": "tests/integration/test_multi_return_path.py",
+    "action": "retired",
+    "physical_lines": 407,
+    "checkout_sha256_before": "d90c10143d19ca304be91678fef66cd32416feca926051a88581f2bde573ff38",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_multi_return_path.py::test_public_multi_return_mixed_outputs_retry_dependencies_and_gc"
+    ],
+    "retained_contract": "Single output Task status, exact attempt and dependency/GC; cross-slot atomicity and last-sibling lineage no longer requirements.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/unit/test_owner_reconstruction_completion_race.py::test_uncommitted_preview_cannot_use_old_terminal_recovery_as_start_receipt",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+      "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "d90c10143d19ca304be91678fef66cd32416feca926051a88581f2bde573ff38"
+  },
+  {
+    "path": "tests/integration/test_multi_return_reconstruction_path.py",
+    "action": "retired",
+    "physical_lines": 388,
+    "checkout_sha256_before": "b565eedb2ef71be64440074278d4d80d95f52b16bec8035be2d9d591c070593a",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_multi_return_reconstruction_path.py::test_multi_return_all_outputs_lost_reconstructs_once_from_nonzero_sibling"
+    ],
+    "retained_contract": "One logical output START/JOIN and reconstruction budget; shared sibling trigger and final-sibling collection retired.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/unit/test_owner_reconstruction_completion_race.py::test_uncommitted_preview_cannot_use_old_terminal_recovery_as_start_receipt",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+      "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "b565eedb2ef71be64440074278d4d80d95f52b16bec8035be2d9d591c070593a"
+  },
+  {
+    "path": "tests/integration/test_targeted_borrowed_output_unknown_path.py",
+    "action": "retired",
+    "physical_lines": 610,
+    "checkout_sha256_before": "8370368fc7f6896552be34233eec235e6ded02c2a9170ef3c68d85f01885550b",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/integration/test_targeted_borrowed_output_unknown_path.py::test_targeted_borrowed_arm_loss_retries_only_lost_slot_and_preserves_healthy_sibling",
+      "tests/integration/test_targeted_borrowed_output_unknown_path.py::test_targeted_mixed_borrowed_arm_loss_retries_selected_batch_and_preserves_healthy_sibling"
+    ],
+    "retained_contract": "Single-output exact old-hold cleanup and fresh attempt fencing; targeted subset coordinator and healthy-sibling state retired.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/unit/test_owner_led_publication.py::test_rollback_compensates_unknown_promotion_and_replays_exact_cleanup",
+      "tests/unit/test_output_handoff.py::test_unknown_registration_and_child_ack_keep_full_compensation_obligation",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "8370368fc7f6896552be34233eec235e6ded02c2a9170ef3c68d85f01885550b"
+  },
+  {
+    "path": "tests/unit/test_node_actor_node_loss_migration.py",
+    "action": "retired",
+    "physical_lines": 130,
+    "checkout_sha256_before": "bf58018c33963c33d4f581700d76c4cda79b9986d17483d37dd5607cb4169841",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/unit/test_node_actor_node_loss_migration.py::test_survivor_accepts_cross_node_proof_without_local_predecessor",
+      "tests/unit/test_node_actor_node_loss_migration.py::test_migration_rejects_changed_proof_spec_without_spawning",
+      "tests/unit/test_node_actor_node_loss_migration.py::test_migration_rejects_reused_source_worker_incarnation"
+    ],
+    "retained_contract": "Exact owner/generation publication and capacity release remain; cross-Node re-create proof retired.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2b/005-smoke.log",
+        "claim": "real same-Node Actor restart, constructor reset and old invocation fence passed"
+      },
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current base pure batch including Actor Node-loss DEAD/coordinator controls passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_actor_node_loss_registry.py::test_node_failure_commits_dead_without_consuming_restart",
+      "tests/unit/test_actor_node_loss_registry.py::test_worker_exit_proof_cannot_authorize_cross_node_restart",
+      "tests/unit/test_actor_node_loss_coordinator.py::test_node_loss_publishes_dead_without_reserving_a_survivor",
+      "tests/integration/test_actor_restart_path.py::test_actor_crash_restarts_once_fences_inflight_call_and_resets_state"
+    ],
+    "semantic_notes": [
+      "Cross-Node migration success is retired scope, so refusal in B is correct. Same-Node restart must not be renamed as proof of migration."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "bf58018c33963c33d4f581700d76c4cda79b9986d17483d37dd5607cb4169841"
+  },
+  {
+    "path": "tests/unit/test_targeted_reconstruction.py",
+    "action": "retired",
+    "physical_lines": 589,
+    "checkout_sha256_before": "ef9f6d4a840e47460d1b9e22518ec847e732a23e40412e47677498616b115cca",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/unit/test_targeted_reconstruction.py::test_target_identity_has_no_ambiguous_output_ids_projection",
+      "tests/unit/test_targeted_reconstruction.py::test_pre_start_losses_merge_and_consume_one_attempt_and_budget",
+      "tests/unit/test_targeted_reconstruction.py::test_healthy_sibling_keeps_epoch_descriptor_state_and_location",
+      "tests/unit/test_targeted_reconstruction.py::test_old_target_publication_is_fenced_after_target_only_advance",
+      "tests/unit/test_targeted_reconstruction.py::test_start_preflight_failure_changes_neither_authority",
+      "tests/unit/test_targeted_reconstruction.py::test_owner_commit_rejection_changes_no_authority",
+      "tests/unit/test_targeted_reconstruction.py::test_targeted_publication_is_atomic_and_preserves_healthy_descriptor",
+      "tests/unit/test_targeted_reconstruction.py::test_success_coordinator_requires_and_publishes_all_targets_atomically",
+      "tests/unit/test_targeted_reconstruction.py::test_complete_refuses_partial_target_publication",
+      "tests/unit/test_targeted_reconstruction.py::test_complete_accepts_all_target_receipt_even_after_immediate_loss",
+      "tests/unit/test_targeted_reconstruction.py::test_system_retry_advances_same_targets_and_preserves_late_loss_queue",
+      "tests/unit/test_targeted_reconstruction.py::test_system_retry_owner_rejection_consumes_no_second_budget",
+      "tests/unit/test_targeted_reconstruction.py::test_terminal_target_error_is_atomic_and_does_not_touch_healthy_sibling",
+      "tests/unit/test_targeted_reconstruction.py::test_terminal_failure_atomically_converges_queued_late_losses",
+      "tests/unit/test_targeted_reconstruction.py::test_target_execution_receipts_are_bounded_by_final_sibling_gc",
+      "tests/unit/test_targeted_reconstruction.py::test_post_start_loss_is_queued_for_next_session",
+      "tests/unit/test_targeted_reconstruction.py::test_next_session_targets_can_have_different_expected_attempts",
+      "tests/unit/test_targeted_reconstruction.py::test_budget_exhaustion_leaves_open_session_and_owner_unchanged"
+    ],
+    "retained_contract": "Exact replay, input identity, genuine queued START and finite retry budget remain; selected-sibling/target wire removed.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/unit/test_owner_reconstruction_completion_race.py::test_uncommitted_preview_cannot_use_old_terminal_recovery_as_start_receipt",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+      "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "ef9f6d4a840e47460d1b9e22518ec847e732a23e40412e47677498616b115cca"
+  },
+  {
+    "path": "tests/unit/test_targeted_reconstruction_protocol.py",
+    "action": "retired",
+    "physical_lines": 489,
+    "checkout_sha256_before": "9121f81c80b2d9125e9ac5b61daa29f11f78bd26eaebfd751d0cf0e437566ca1",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_noncontiguous_target_identity_crosses_every_task_lease_message",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_target_identity_is_echoed_by_routing_and_terminal_ack_messages",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_target_mask_drift_reorder_and_attempt_mismatch_are_rejected",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_node_fences_start_completion_and_outcome_target_drift",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_node_outcome_scans_only_target_slots_not_healthy_sibling",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_node_recovers_stored_success_from_complete_target_publication",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_node_mixed_success_recovers_inline_and_stored_targets_from_one_envelope",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_node_inline_only_success_exposes_no_fake_descriptor",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_node_rejects_descriptor_only_success_without_prepared_publication",
+      "tests/unit/test_targeted_reconstruction_protocol.py::test_node_system_error_reports_only_partial_target_seals_as_orphans"
+    ],
+    "retained_contract": "Exact replay, input identity, genuine queued START and finite retry budget remain; selected-sibling/target wire removed.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/unit/test_owner_reconstruction_completion_race.py::test_uncommitted_preview_cannot_use_old_terminal_recovery_as_start_receipt",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+      "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "9121f81c80b2d9125e9ac5b61daa29f11f78bd26eaebfd751d0cf0e437566ca1"
+  },
+  {
+    "path": "tests/unit/test_targeted_worker_execution.py",
+    "action": "retired",
+    "physical_lines": 225,
+    "checkout_sha256_before": "add41562e06e7d8aeb673f8798df78a4b6bd293b884e50087edf295938f5e9b1",
+    "not_selected_as_current_baseline_file": true,
+    "old_test_selectors": [
+      "tests/unit/test_targeted_worker_execution.py::test_worker_validates_full_arity_but_serializes_only_target_values",
+      "tests/unit/test_targeted_worker_execution.py::test_worker_rejects_wrong_full_return_arity_before_target_projection",
+      "tests/unit/test_targeted_worker_execution.py::test_worker_exact_replay_never_reexecutes_and_mask_drift_is_rejected",
+      "tests/unit/test_targeted_worker_execution.py::test_worker_rejects_start_or_completion_ack_with_target_drift"
+    ],
+    "retained_contract": "Exact replay, input identity, genuine queued START and finite retry budget remain; selected-sibling/target wire removed.",
+    "accepted_specific_evidence": [
+      {
+        "log": "artifacts/cleanup-base/k2a/000-pure.log",
+        "claim": "current single output API, whole reconstruction request identity/START receipt, owner-led handoff/hold/Drop pure contracts passed"
+      }
+    ],
+    "shared_gate_selectors": [
+      "tests/unit/test_single_output_contract.py::test_task_spec_has_one_stable_output_across_attempts",
+      "tests/unit/test_single_output_contract.py::test_wire_no_longer_exposes_targeted_execution_identity",
+      "tests/unit/test_single_output_contract.py::test_worker_executes_and_serializes_sequence_as_one_result",
+      "tests/unit/test_owner_reconstruction_completion_race.py::test_uncommitted_preview_cannot_use_old_terminal_recovery_as_start_receipt",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+      "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "semantic_notes": [
+      "Only retired multi-return/targeted/sibling requirement is removed. Existing current smoke functions in shared_gate_selectors will be rerun by root in full32smoke checkpoint; that run not complete in this record."
+    ],
+    "remaining_product_contract_gap": null,
+    "procedural_guard": "Root verifies full current32smoke shared behavior on fixed snapshot; remove only retired file and update any literal/archive indexes; no source changes by this audit.",
+    "acceptance": "base-k3p-01 full26pure343pass/1deselected +32exact smokes, all7examples; priorfailure preserved",
+    "actual_sha256_before": "add41562e06e7d8aeb673f8798df78a4b6bd293b884e50087edf295938f5e9b1"
+  }
+]

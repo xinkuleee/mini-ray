@@ -2,9 +2,9 @@
 
 One zero-CPU parent task submits one child and returns that Worker-owned handle
 beside 64 KiB of padding. The single outer return crosses the unified output
-publication transaction with an OBJECT_STORE slot and one contained edge. The
-test proves the forward graph/owner/Node adoption barrier, then closes both
-public handles and proves the reverse child-pin/graph/replica/metadata barrier.
+owner-led publication with one OBJECT_STORE output and contained edge. The
+test proves the real owner handoff/Node adoption barrier, then closes both
+public handles and proves the reverse child-pin/replica/metadata barrier.
 
 Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
 bounds are one GCS, one NodeManager, two ordinary Workers, exactly two tasks,
@@ -16,7 +16,7 @@ epoch, reused by failure-finally rather than reset. Borrow RPCs retain their
 own finite retry policy; public deadlines do not cancel distributed cleanup.
 Four managed PIDs/five endpoints are checked after unconditional shutdown even
 if an assertion fails. Normal resource-clean assertions still certify the
-successful path. The legacy imported close helper below remains unchanged.
+successful path. Public close keeps the exact release receipt and deadline.
 """
 
 from __future__ import annotations
@@ -35,24 +35,16 @@ import pytest
 import miniray as ray
 from miniray import output_protocol as wire, protocol
 from miniray.api import _get_runtime
-from miniray.contained_cycle import (
-    ContainedGraphManifestDisposition,
-    ContainedGraphTransactionState,
-)
-from miniray.control import (
-    COMMIT_CONTAINED_GRAPH_HANDLER,
-    RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER,
-)
 from miniray.node import (
     GET_OBJECT_HANDLER, GET_WORKER_LEASE_OUTCOME_HANDLER,
 )
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.output_publication import OutputPublicationEnvelope
 from miniray.owner_service import RELEASE_CONTAINED_REFERENCE_HANDLER
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.publication_sources import OwnedContainedSource
 from miniray.transport import request as rpc_request
-from tests.support._legacy_reference_cleanup import _close_local
 
 
 pytestmark = pytest.mark.multiprocess_smoke
@@ -129,20 +121,6 @@ def _rpc(address, handler, request, deadline):
     )
 
 
-def _close_reference(reference, deadline):
-    if reference is None:
-        return
-    if reference.borrower_token is None:
-        _close_local(reference, deadline)
-        return
-    reference._closed = True
-    if reference._finalizer is not None:
-        reference._finalizer()
-    if reference._release_done is not None:
-        assert reference._release_done.wait(max(0.0, deadline - time.monotonic()))
-    assert reference.closed
-
-
 def _close_current(reference, deadline):
     done = reference._release_done
     assert done is not None and reference._finalizer is not None
@@ -204,7 +182,7 @@ def _get_exact_replica(
     return reply
 
 
-def test_stored_outer_publication_adopts_graph_and_collects(
+def test_stored_outer_publication_adopts_owner_handoff_and_collects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = None
@@ -278,8 +256,8 @@ def test_stored_outer_publication_adopts_graph_and_collects(
         descriptor = snapshot.canonical_stored_result
         assert descriptor == core.owner_table.output_owner_result(outer_id)
         output_manifest = publication.manifest
-        manifest = output_manifest.to_graph_manifest()
-        assert manifest is not None and publication.slot_index == 0
+        assert publication.slot_index == 0
+        assert not hasattr(output_manifest, "to_graph_manifest")
         assert descriptor == core._stored_descriptors[outer_id]
         assert descriptor.storage is protocol.ResultStorage.OBJECT_STORE
         assert descriptor.inline_data is None
@@ -302,7 +280,7 @@ def test_stored_outer_publication_adopts_graph_and_collects(
         assert len(edges) == 1
         edge = edges[0]
         assert snapshot.outgoing_contained_edges == frozenset(edges)
-        assert manifest.ordered_edges == edges
+        assert output_manifest.ordered_edges == edges
         assert edge.container_object_id == outer_id
         assert edge.contained_object_id == child.object_id
         assert edge.contained_owner_worker_id == child.owner_worker_id
@@ -312,22 +290,21 @@ def test_stored_outer_publication_adopts_graph_and_collects(
         # the dispatch lane.  Wait on that exact reducer notification, then
         # replay the two terminal operations to prove their durable states.
         assert _wait_for_adoption_ack(core, outer_id, deadline)
-        recovery_query = wire.GetOutputPublicationRecovery(publication_id)
+        recovery_query = wire.GetOutputHandoff(publication_id)
         recovery_reply = _rpc(
-            context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER,
+            runtime.owner_service.address, wire.GET_OUTPUT_HANDOFF_HANDLER,
             recovery_query, deadline,
         )
-        assert type(recovery_reply) is wire.GetOutputPublicationRecoveryReply
-        assert recovery_reply.request == recovery_query and recovery_reply.found
+        assert type(recovery_reply) is wire.OutputHandoffReply
+        assert recovery_reply.request == recovery_query and recovery_reply.accepted
         _assert_metadata_only(recovery_reply)
         recovery = recovery_reply.snapshot
-        assert recovery.manifest == output_manifest
-        assert recovery.complete is not None and recovery.adopted is not None
+        assert recovery.manifest == output_manifest and recovery.phase is OutputHandoffPhase.ADOPTED
+        assert recovery.complete is not None and recovery.adoption is not None
         assert recovery.complete.publication_id == publication_id
-        assert recovery.adopted.complete == recovery.complete
-        assert recovery.adopted.owner_worker_id == core.worker_id
-        assert recovery.slot_collections == ()
-        node_adoption_request = wire.AckOutputPublicationAdopted(recovery.adopted)
+        assert recovery.adoption.complete == recovery.complete
+        assert recovery.adoption.owner_worker_id == core.worker_id
+        node_adoption_request = wire.AckOutputPublicationAdopted(recovery.adoption)
         node_adoption = _rpc(
             node.node_address,
             wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER,
@@ -356,24 +333,6 @@ def test_stored_outer_publication_adopts_graph_and_collects(
         assert outcome.output_completion == recovery.complete
         assert not outcome.cleanup_pending
 
-        graph_commit_request = protocol.CommitContainedGraph(manifest)
-        graph_commit = _rpc(
-            context.gcs_address,
-            COMMIT_CONTAINED_GRAPH_HANDLER,
-            graph_commit_request, deadline,
-        )
-        assert isinstance(graph_commit, protocol.ContainedGraphReply)
-        assert graph_commit.request == graph_commit_request
-        assert graph_commit.receipt is not None
-        assert graph_commit.receipt.manifest == manifest
-        assert graph_commit.receipt.state is (
-            ContainedGraphTransactionState.COMMITTED
-        )
-        assert graph_commit.receipt.disposition is (
-            ContainedGraphManifestDisposition.ALREADY_COMMITTED
-        )
-        assert graph_commit.receipt.released_edges == ()
-
         before_collection = _get_exact_replica(
             node.node_address, node.node_id, descriptor,
             publication_id.attempt_id, deadline,
@@ -401,7 +360,7 @@ def test_stored_outer_publication_adopts_graph_and_collects(
 
         monkeypatch.setattr(core, "_emit", observe_collection)
 
-        # Remove the independent borrower first.  The graph-owned final hold
+        # Remove the independent borrower first. The owner-bound final hold
         # still keeps the child alive until collecting the outer releases it.
         # Close/GC and every original inverse replay share a single cleanup
         # epoch, additionally capped by the original whole-work deadline.
@@ -422,27 +381,6 @@ def test_stored_outer_publication_adopts_graph_and_collects(
         assert outer_id not in core._objects
         assert outer_id not in core._object_gc_obligations
         assert core._recovery.lineage_for_object(outer_id) is None
-
-        graph_release_request = (
-            protocol.ReleaseContainedGraphContainer(
-                manifest, outer_id
-            )
-        )
-        graph_release = _rpc(
-            context.gcs_address,
-            RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER,
-            graph_release_request, cleanup_deadline,
-        )
-        assert isinstance(graph_release, protocol.ContainedGraphReply)
-        assert graph_release.request == graph_release_request
-        assert graph_release.receipt is not None
-        assert graph_release.receipt.state is (
-            ContainedGraphTransactionState.COMMITTED
-        )
-        assert graph_release.receipt.disposition is (
-            ContainedGraphManifestDisposition.ALREADY_RELEASED
-        )
-        assert graph_release.receipt.released_edges == edges
 
         child_hold = edge.incoming_hold(core.worker_id)
         child_release_request = protocol.ReleaseContainedReference(
@@ -472,18 +410,25 @@ def test_stored_outer_publication_adopts_graph_and_collects(
         assert after_collection.owner_worker_id is None
         assert after_collection.size_bytes is None
         retired_reply = _rpc(
-            context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER,
+            runtime.owner_service.address, wire.GET_OUTPUT_HANDOFF_HANDLER,
             recovery_query, cleanup_deadline,
         )
-        assert type(retired_reply) is wire.GetOutputPublicationRecoveryReply
-        assert retired_reply.request == recovery_query and retired_reply.found
+        assert type(retired_reply) is wire.OutputHandoffReply
+        assert retired_reply.request == recovery_query and retired_reply.accepted
         _assert_metadata_only(retired_reply)
-        assert retired_reply.snapshot.manifest == output_manifest
-        assert retired_reply.snapshot.complete == recovery.complete
-        assert retired_reply.snapshot.adopted == recovery.adopted
-        (cleanup,) = retired_reply.snapshot.slot_collections
-        assert cleanup.object_id == outer_id and cleanup.slot_index == 0
-        assert cleanup.complete == recovery.complete and cleanup.owner_worker_id == core.worker_id
+        assert retired_reply.snapshot == recovery
+        # The collected owner keeps exact local metadata history, not a GCS
+        # slot-cleanup success claim. Actual child/byte absence was proved above.
+        terminal = core.owner_table._output_collection_receipts[outer_id]
+        assert terminal.publication_id == publication_id
+        assert terminal.manifest_digest == output_manifest.manifest_digest
+        assert terminal.slot_index == 0
+        assert terminal.collection.object_id == outer_id and terminal.collection.collected
+        assert terminal.collection.contained_releases == edges
+        _assert_metadata_only(terminal)
+        late_adoption = _rpc(node.node_address, wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER,
+                             node_adoption_request, cleanup_deadline)
+        assert late_adoption == node_adoption
         assert not core._borrowed_release_obligations
     finally:
         if cleanup_deadline is None:
