@@ -48,7 +48,7 @@ from miniray.publication_sources import BorrowedContainedSource
 from miniray.runtime_binding import current_execution_context
 from miniray.worker import GET_OWNED_OBJECT_HANDLER
 from tests.integration.test_borrowed_output_unknown_path import _wait
-from tests.integration.test_multi_contained_output_path import _close_local
+from tests.support._legacy_reference_cleanup import _close_local
 from tests.integration.test_stored_outer_node_loss_path import (
     _assert_metadata_only, _node_loss, _pid_exists, _poll_until, _query,
     _recovery, _recv_exact, _release_connection, _remaining,

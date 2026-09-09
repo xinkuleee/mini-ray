@@ -40,7 +40,7 @@ from miniray.output_recovery import OutputRecoveryOwnerDecision
 from miniray.publication_sources import BorrowedContainedSource
 from miniray.recovery import TaskState
 from miniray.transport import request as rpc_request
-from tests.integration.test_multi_contained_output_path import _close_local, _pid_exists
+from tests.support._legacy_reference_cleanup import _close_local, _pid_exists
 
 
 pytestmark = pytest.mark.multiprocess_smoke

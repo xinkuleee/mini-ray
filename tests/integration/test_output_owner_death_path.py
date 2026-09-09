@@ -46,7 +46,7 @@ from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.runtime_binding import current_core_worker
 from miniray.stored_publication import BorrowedContainedSource
 from miniray.transport import request as rpc_request
-from tests.integration.test_multi_contained_output_path import _close_local
+from tests.support._legacy_reference_cleanup import _close_local
 
 
 pytestmark = pytest.mark.multiprocess_smoke

@@ -36,6 +36,7 @@ from .actor_state import (
     ActorSubmitStatus,
 )
 from .errors import RuntimeShuttingDownError, StaleGenerationError
+from .ref_transfer import exporting_references
 from .transport import LOOPBACK_HOST, Address, TCPServer, request as rpc_request
 from .trace import EventSink, TraceSinkConfig
 from .trace_collector import sink_from_config
@@ -404,7 +405,13 @@ class ActorWorkerServer:
     def _encode_result(
         self, request: protocol.ActorCallRequest, value: object
     ) -> protocol.ResultDescriptor:
-        payload = cloudpickle.dumps(value)
+        def reject_actor_reference(_reference):
+            raise TypeError("Actor results do not support ObjectRef")
+
+        # Reject at the actual reducer boundary, including references hidden
+        # by custom Python reducers, before any descriptor or Store effect.
+        with exporting_references(reject_actor_reference):
+            payload = cloudpickle.dumps(value)
         checksum = hashlib.sha256(payload).hexdigest()
         object_id = ids.ObjectID(request.task_id, 0)
         if len(payload) <= self.inline_threshold:

@@ -53,7 +53,7 @@ from miniray.recovery import TaskState
 from miniray.resources import AllocationState
 from miniray.transport import TransportTimeout
 from tests.integration.test_borrowed_output_unknown_path import _RetryCut, _physical, _wait
-from tests.integration.test_multi_contained_output_path import _close_local
+from tests.support._legacy_reference_cleanup import _close_local
 from tests.integration.test_stored_outer_node_loss_path import (
     _BLOCKER_RELEASE, _SURVIVOR_RESOURCE, _assert_metadata_only, _graph,
     _node_loss, _occupy_survivor, _pid_exists, _poll_until, _query,

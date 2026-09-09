@@ -33,7 +33,7 @@ from miniray.errors import LeaseRejectedError
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.transport import TransportTimeout
 from tests.integration.test_local_replica_handoff_failure_path import _assert_cancelled, _poll, _remaining, _replica, _rpc, _wait
-from tests.integration.test_multi_contained_output_path import _close_local
+from tests.support._legacy_reference_cleanup import _close_local
 from tests.integration.test_output_owner_death_path import _pid_exists
 
 
