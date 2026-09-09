@@ -23,13 +23,10 @@ from miniray import node as node_module, protocol
 from miniray.ids import (
     AttemptID, LeaseID, NodeID, ObjectID, PlacementGroupID, TaskID, WorkerID,
 )
-from miniray.node import NodeServer
+from miniray.node import NodeServer, _WorkerSlot
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
-from miniray.task_outputs import (
-    TargetExecutionKey, TargetOutputManifest, TaskOutputManifest,
-)
 
 
 pytestmark = pytest.mark.unit
@@ -63,22 +60,18 @@ def _no_runtime(monkeypatch):
 def _wire_grant():
     task, child_task = _id(TaskID, 11), _id(TaskID, 12)
     node_id = _id(NodeID, 13)
-    full = TaskOutputManifest.for_task(task, 3)
-    target = TargetExecutionKey(
-        TargetOutputManifest(full, (full.output_ids[0], full.output_ids[2])),
-        AttemptID(task, 2),
-    )
+    attempt = AttemptID(task, 2)
     dependency = protocol.ObjectStoreDescriptor(
         ObjectID.for_task(child_task), _id(WorkerID, 14),
         AttemptID(child_task, 1), node_id, 3, "a" * 64,
     )
     key = protocol.PlacementGroupSchedulingKey(
-        _id(PlacementGroupID, 15), 1, 2, node_id, "b" * 64,
+        _id(PlacementGroupID, 15), 1, 1, node_id, "b" * 64,
     )
     return protocol.GrantWorkerLease(
-        _id(LeaseID, 16), task, target.attempt_id, node_id, _id(WorkerID, 17),
+        _id(LeaseID, 16), task, attempt, node_id, _id(WorkerID, 17),
         ("worker.invalid", 18), AllocationToken("historical-allocation"),
-        (dependency,), key, target,
+        (dependency,), key,
     )
 
 
@@ -110,16 +103,16 @@ def test_inventory_roundtrip_is_detached_and_preserves_target_and_pg():
         assert detached.dependencies[0].object_id is not grant.dependencies[0].object_id
         assert detached.dependencies[0].producer_attempt_id is not grant.dependencies[0].producer_attempt_id
         assert detached.scheduling_key is not grant.scheduling_key
-        assert detached.target_execution is not grant.target_execution
-        assert detached.target_execution.manifest is not grant.target_execution.manifest
-        assert detached.target_execution.full_output_ids[0] is not grant.target_execution.full_output_ids[0]
+        assert detached.attempt_id is not grant.attempt_id
+        assert detached.attempt_id.task_id is not grant.attempt_id.task_id
+        assert detached.task_id is not grant.task_id
     object.__setattr__(grant.dependencies[0], "checksum", "c" * 64)
     object.__setattr__(grant.allocation_token, "value", "rebound")
     object.__setattr__(grant.scheduling_key, "bundle_index", 7)
     assert reply.retired_grant == restored.retired_grant == validated
     assert reply.retired_grant.dependencies[0].checksum == "a" * 64
     assert reply.retired_grant.allocation_token.value == "historical-allocation"
-    assert reply.retired_grant.scheduling_key.bundle_index == 2
+    assert reply.retired_grant.scheduling_key.bundle_index == 1
 
 
 def _corrupt_path(root, path, value):
@@ -147,9 +140,9 @@ def _corrupt_path(root, path, value):
     ("scheduling_key.attempt", True),
     ("scheduling_key.placement_group_id.value", b"short"),
     ("scheduling_key.plan_digest", "bad"),
-    ("target_execution.attempt_id.attempt_number", True),
-    ("target_execution.manifest.full_manifest.output_ids.0.return_index", False),
-    ("target_execution.manifest.target_output_ids", ()),
+    ("attempt_id.task_id.value", b"short"),
+    ("dependencies.0.object_id.task_id.value", b"short"),
+    ("scheduling_key.bundle_index", True),
 ))
 def test_inventory_revalidates_nested_corruption_on_entry_and_wire(path, value):
     reply = _wire_reply()
@@ -186,7 +179,7 @@ def test_inventory_must_match_outer_cancellation_identity(changed):
     elif changed == "attempt":
         changes = dict(attempt_id=AttemptID(reply.task_id, 3))
     else:
-        changes = dict(scheduling_key=replace(reply.scheduling_key, bundle_index=3))
+        changes = dict(scheduling_key=replace(reply.scheduling_key, bundle_index=0))
     with pytest.raises(protocol.ProtocolError):
         replace(reply, **changes)
 
@@ -242,6 +235,11 @@ def _node(node_id, worker_id):
     node._cluster_nodes, node._cluster_addresses = (), {}
     node._worker_process = SimpleNamespace(is_alive=lambda: True)
     node._worker_address = ("worker.invalid", 31)
+    node._workers = {worker_id: _WorkerSlot(worker_id, process=node._worker_process,
+        address=node._worker_address, pid=3131)}
+    node._worker_order = (worker_id,)
+    node._gcs_lifecycle_lock = threading.Lock()
+    node._registered_with_gcs = False
     node.event_sink = None
     return node
 
@@ -352,7 +350,7 @@ def test_worker_lost_rejection_preserves_inventory_for_exact_outcome_query(monke
     outcome = fixture.target._handle_get_worker_lease_outcome(protocol.GetWorkerLeaseOutcome(
         inventory.lease_id, inventory.task_id, inventory.attempt_id, inventory.worker_id,
         fixture.request.requester_worker_id, fixture.request.return_ids,
-        inventory.scheduling_key, inventory.target_execution,
+        inventory.scheduling_key,
     ))
     assert outcome.found and not outcome.worker_alive
     assert outcome.state is protocol.LeaseExecutionState.WORKER_LOST

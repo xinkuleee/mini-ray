@@ -43,3 +43,5 @@ K3e：确认并修复ownerINLINE真实数据仍在却因scratch丢失被误判LO
 K3f：单次manifest校验共用path缓存、单次verify复用已得hash，缓存不跨CLI；33工具case通过、入口约1.2s。publication-source21/worker-crash16通过，旧module alias/跨版本pickle回退不恢复。
 
 K3g：inline恢复7/Worker discovery29/stored metadata2/PG key1/supervisor wire2通过；pregrant/GrantACK未知/PinACK未知/ReleaseACK未知/requester真实死亡5个原集成场景均通过，未加新故障组合。
+
+K3h：cancel-inventory40/location-custody27/Actoroptions1通过；readiness trace3个旧Pending字段fixture失败已移除过期field等待复验。

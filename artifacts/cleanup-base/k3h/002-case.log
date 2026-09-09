@@ -1,0 +1,98 @@
+.FFF                                                                     [100%]
+=================================== FAILURES ===================================
+_______ test_object_ready_uses_only_the_validated_reply_manifest[False] ________
+
+reconstruction = False
+
+    @pytest.mark.parametrize("reconstruction", (False, True))
+    def test_object_ready_uses_only_the_validated_reply_manifest(
+        reconstruction: bool,
+    ) -> None:
+>       core, pending = _pending(reconstruction=reconstruction)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_task_readiness_trace_contract.py:97: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _pending(*, reconstruction: bool = False) -> tuple[CoreWorker, _PendingTask]:
+        core = object.__new__(CoreWorker)
+        core.event_sink = MemoryEventSink(process_id=lambda: 17)
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 0)
+        attempt = AttemptID(task, 2 if reconstruction else 0)
+        spec = protocol.TaskSpec(
+            job, task, attempt,
+            protocol.FunctionKey(job, __name__, "producer", "v1"),
+            (), 1, ResourceVector({"CPU": 1}), WorkerID.random(),
+        )
+>       return core, _PendingTask(
+            spec.return_ids()[0], spec,
+            reconstruction_origin_attempt=attempt if reconstruction else None,
+        )
+E       TypeError: _PendingTask.__init__() got an unexpected keyword argument 'reconstruction_origin_attempt'
+
+tests/unit/test_task_readiness_trace_contract.py:76: TypeError
+________ test_object_ready_uses_only_the_validated_reply_manifest[True] ________
+
+reconstruction = True
+
+    @pytest.mark.parametrize("reconstruction", (False, True))
+    def test_object_ready_uses_only_the_validated_reply_manifest(
+        reconstruction: bool,
+    ) -> None:
+>       core, pending = _pending(reconstruction=reconstruction)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_task_readiness_trace_contract.py:97: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _pending(*, reconstruction: bool = False) -> tuple[CoreWorker, _PendingTask]:
+        core = object.__new__(CoreWorker)
+        core.event_sink = MemoryEventSink(process_id=lambda: 17)
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 0)
+        attempt = AttemptID(task, 2 if reconstruction else 0)
+        spec = protocol.TaskSpec(
+            job, task, attempt,
+            protocol.FunctionKey(job, __name__, "producer", "v1"),
+            (), 1, ResourceVector({"CPU": 1}), WorkerID.random(),
+        )
+>       return core, _PendingTask(
+            spec.return_ids()[0], spec,
+            reconstruction_origin_attempt=attempt if reconstruction else None,
+        )
+E       TypeError: _PendingTask.__init__() got an unexpected keyword argument 'reconstruction_origin_attempt'
+
+tests/unit/test_task_readiness_trace_contract.py:76: TypeError
+______ test_dependency_ready_is_emitted_once_after_successful_preparation ______
+
+    def test_dependency_ready_is_emitted_once_after_successful_preparation() -> None:
+>       core, pending = _pending()
+                        ^^^^^^^^^^
+
+tests/unit/test_task_readiness_trace_contract.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _pending(*, reconstruction: bool = False) -> tuple[CoreWorker, _PendingTask]:
+        core = object.__new__(CoreWorker)
+        core.event_sink = MemoryEventSink(process_id=lambda: 17)
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 0)
+        attempt = AttemptID(task, 2 if reconstruction else 0)
+        spec = protocol.TaskSpec(
+            job, task, attempt,
+            protocol.FunctionKey(job, __name__, "producer", "v1"),
+            (), 1, ResourceVector({"CPU": 1}), WorkerID.random(),
+        )
+>       return core, _PendingTask(
+            spec.return_ids()[0], spec,
+            reconstruction_origin_attempt=attempt if reconstruction else None,
+        )
+E       TypeError: _PendingTask.__init__() got an unexpected keyword argument 'reconstruction_origin_attempt'
+
+tests/unit/test_task_readiness_trace_contract.py:76: TypeError
+=========================== short test summary info ============================
+FAILED tests/unit/test_task_readiness_trace_contract.py::test_object_ready_uses_only_the_validated_reply_manifest[False]
+FAILED tests/unit/test_task_readiness_trace_contract.py::test_object_ready_uses_only_the_validated_reply_manifest[True]
+FAILED tests/unit/test_task_readiness_trace_contract.py::test_dependency_ready_is_emitted_once_after_successful_preparation
+3 failed, 1 passed in 0.94s

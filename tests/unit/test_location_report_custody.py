@@ -27,10 +27,7 @@ from miniray.output_publication import (
     OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation,
     OutputSlotManifest,
 )
-from miniray.output_recovery import (
-    OutputRecoveryOwnerDecision, OutputRecoveryOwnerDecisionRecord,
-    OutputRecoveryResolution, OutputSlotDecision,
-)
+from miniray.output_handoff import NodeLostOutputResolution
 from miniray.ownership import ObjectState, OutputOwnerPublicationPlan
 from miniray.resources import ResourceVector
 from miniray.task_outputs import TaskExecutionKey
@@ -353,15 +350,14 @@ def test_retired_or_frozen_publication_keeps_exact_cleanup_not_custody_location(
     core = f.core
     try:
         if phase == "latched-drop":
-            core._output_loss_choices = {f.identity: OutputRecoveryOwnerDecisionRecord(
-                f.identity, f.manifest.manifest_digest, core.worker_id, "latched-before-report",
-                (OutputSlotDecision(0, f.output, OutputRecoveryOwnerDecision.DROP),), f.complete,
-            )}
+            # This exact local decision is an input to the custody reducer,
+            # not a GCS publication decision or proof of physical cleanup.
+            core._output_loss_choices = {f.identity: False}
         elif phase == "resolved-drop":
             death = f.lose_source()
-            resolution = OutputRecoveryResolution(
-                f.identity, f.manifest.manifest_digest, death, core.worker_id,
-                "resolved-before-report", (), f.complete,
+            resolution = NodeLostOutputResolution(
+                f.identity, f.manifest.manifest_digest, core.worker_id, death,
+                complete=f.complete, keep=False,
             )
             assert core.owner_table.resolve_output_node_loss(f.manifest, resolution)
         elif phase == "collection":

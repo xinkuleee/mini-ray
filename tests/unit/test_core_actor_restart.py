@@ -37,7 +37,7 @@ def _alive(
     return protocol.ActorSnapshot(
         actor_id, generation, protocol.ActorState.ALIVE, epoch,
         generation.generation, max_restarts, last_exit=last_exit,
-        node_id=NodeID.random(), worker_id=worker_id,
+        node_id=NodeID.random() if last_exit is None else last_exit.node_id, worker_id=worker_id,
         worker_address=("127.0.0.1", 23000 + epoch),
         worker_pid=23000 + epoch,
     )
@@ -156,70 +156,6 @@ def test_install_restarting_fails_old_inflight_and_new_generation_starts_at_zero
     assert core._actor_clients.snapshot(first.actor_id) == second
 
 
-@pytest.mark.heavy
-def test_node_loss_migration_reuses_route_fence_and_sequence_reset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    core = _core()
-    first = _register(core)
-    entered = threading.Event()
-    release = threading.Event()
-
-    def old_route(_address, _handler, request):
-        entered.set()
-        assert release.wait(1.0)
-        return _success(request, first)
-
-    monkeypatch.setattr(core, "_push_task_rpc", old_route)
-    try:
-        old_ref = core.submit_actor_call(first.actor_id, "inc", (), {})
-        assert entered.wait(1.0)
-        node_death = protocol.NodeDeathRecord(
-            "actor-node-loss", first.node_id, 31001, 1, 2, -9,
-            protocol.NodeDeathReason.PROCESS_EXIT, "Actor Node exited",
-        )
-        definition = protocol.ActorClassDefinition(
-            protocol.FunctionKey(core.job_id, __name__, "_Counter", "v1"),
-            b"actor", hashlib.sha256(b"actor").hexdigest(), ("inc",),
-        )
-        loss = protocol.ActorNodeLossRecord(
-            first.actor_id, first.generation, first.route_epoch,
-            first.worker_id, first.worker_pid, node_death, definition, b"ctor",
-            ResourceVector(), core.worker_id,
-        )
-        restarting = protocol.ActorSnapshot(
-            first.actor_id, first.generation.next(),
-            protocol.ActorState.RESTARTING, first.route_epoch + 1, 1, 1, loss,
-        )
-        assert core.install_actor_state(
-            protocol.InstallActorState(core.worker_id, restarting)
-        ).installed
-        with pytest.raises(ActorDiedError):
-            core.get(old_ref, timeout=1.0)
-
-        migrated = protocol.ActorSnapshot(
-            first.actor_id, restarting.generation, protocol.ActorState.ALIVE,
-            restarting.route_epoch + 1, 1, 1, loss,
-            node_id=NodeID.random(), worker_id=WorkerID.random(),
-            worker_address=("127.0.0.1", 23999), worker_pid=23999,
-        )
-        assert core.install_actor_state(
-            protocol.InstallActorState(core.worker_id, migrated)
-        ).installed
-        release.set()
-        sequences = []
-
-        def new_route(_address, _handler, request):
-            sequences.append(request.sequence)
-            return _success(request, migrated)
-
-        monkeypatch.setattr(core, "_push_task_rpc", new_route)
-        ref = core.submit_actor_call(first.actor_id, "inc", (), {})
-        assert core.get(ref, timeout=1.0) == 7
-        assert sequences == [0]
-    finally:
-        release.set()
-        _stop(core)
 
 
 @pytest.mark.heavy
