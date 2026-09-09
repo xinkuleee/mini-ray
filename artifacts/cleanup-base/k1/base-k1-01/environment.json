@@ -1,0 +1,21 @@
+{
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-libc",
+  "packages": {
+    "pytest": "8.4.2",
+    "cloudpickle": "3.1.2",
+    "packaging": "26.3",
+    "pluggy": "1.6.0",
+    "iniconfig": "2.3.0",
+    "pygments": "2.21.0"
+  },
+  "source": {
+    "branch": "refs/heads/teaching-base",
+    "head": "1a3822877d4d587e95bc2a4b72f7ad5d38fc998f",
+    "working_tree_status": " M .github/workflows/baseline.yml\n M scripts/baseline_manifest.json\n M scripts/run_baseline.py\n M src/miniray/control.py\n M src/miniray/core.py\n M src/miniray/ownership.py\n M tests/integration/test_runner_process_tree_path.py\n M tests/unit/test_baseline_runner.py\n M tests/unit/test_bounded_runner.py\n M tests/unit/test_bounded_test_modes.py\n M tests/unit/test_reviewed_pure_runner.py\n?? scripts/_ci_baseline.py\n?? scripts/_test_process.py\n?? tests/unit/test_common_cleanup_progress.py\n?? tests/unit/test_owner_retirement.py\n",
+    "archive_sha256": "c16676e0f24cf124c1a54ea9b60a521cd103746eb2f984e518a001ae167c5cdc",
+    "file_count": 488,
+    "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+  },
+  "selection_mode": "smoke"
+}

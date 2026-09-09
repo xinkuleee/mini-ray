@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "1a3822877d4d587e95bc2a4b72f7ad5d38fc998f",
+  "working_tree_status": " M .github/workflows/baseline.yml\n M scripts/baseline_manifest.json\n M scripts/run_baseline.py\n M src/miniray/control.py\n M src/miniray/core.py\n M src/miniray/ownership.py\n M tests/integration/test_runner_process_tree_path.py\n M tests/unit/test_baseline_runner.py\n M tests/unit/test_bounded_runner.py\n M tests/unit/test_bounded_test_modes.py\n M tests/unit/test_reviewed_pure_runner.py\n?? scripts/_ci_baseline.py\n?? scripts/_test_process.py\n?? tests/unit/test_common_cleanup_progress.py\n?? tests/unit/test_owner_retirement.py\n",
+  "archive_sha256": "46aa2145ade097061987dc08b764c4a73bee6da136df785f590b9c57f222c9f7",
+  "file_count": 488,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

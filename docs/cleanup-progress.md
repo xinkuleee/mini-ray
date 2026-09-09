@@ -1,8 +1,9 @@
 # 双分支整理执行记录
 
-本页记录[清理计划](project-cleanup-plan.md)的实际执行，不是另一份计划。
+本页记录[清理计划](project-cleanup-plan.md)的执行，不是另一份计划。
 
-- K0完成：从固定基础提交创建teaching-base工作树，保存原计划/审计身份，按独立复核收窄CF-001的B put文案。
-- K1进行中：有界迁移入口与四项公共正确性修复。
-- K2–K7待执行；teaching-enhanced尚未创建，须从K7已验收B派生后执行K8–K9。
-- 本轮尚无新运行时验收结果或远端发布结果。
+- K0完成：teaching-base从固定6910677派生，审计输入提交1a38228。原tag不变。
+- K1完成：单schema2有界gate/迁移入口、CF-001至004公共修复；新入口验证后退休三个旧工具文件。详见[实际记录](../artifacts/cleanup-base/k1/summary.json)。首轮新fixture失败已保存，真实准入修正后12组合case通过。
+- K2进行中：确认残留/API清理；只有删除前提已满足条目才应用。
+- K3至K7未完成；teaching-enhanced尚未创建，须从K7已验收B派生后执行K8至K9。
+- 未运行远端Actions或发布清理分支。

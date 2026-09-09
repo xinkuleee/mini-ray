@@ -1,5 +1,6 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "edition": "base",
   "pure": [
     "tests/unit/test_bounded_runner.py",
     "tests/unit/test_bounded_test_modes.py",
@@ -24,40 +25,285 @@
     "tests/unit/test_put_owner_edges.py",
     "tests/unit/test_put_reference_runtime.py",
     "tests/unit/test_baseline_runner.py",
-    "tests/unit/test_put_home_failover.py"
+    "tests/unit/test_put_home_failover.py",
+    "tests/unit/test_owner_retirement.py",
+    "tests/unit/test_common_cleanup_progress.py"
+  ],
+  "known_non_unit_in_pure": [
+    "tests/unit/test_owner_reconstruction.py::test_concurrent_exact_requests_commit_once_and_replay_one_reply"
   ],
   "smoke": [
-    "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
-    "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
-    "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example01]",
-    "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example02]",
-    "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example03]",
-    "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example04]",
-    "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example05]",
-    "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example06]",
-    "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example07]",
-    "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process",
-    "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently",
-    "tests/integration/test_cross_node_dependency_pull.py::test_store_backed_dependency_pulls_to_consumer_node_before_direct_push",
-    "tests/integration/test_lease_locality_path.py::test_stored_dependency_selects_data_first_hop_and_resources_can_spill_back_home",
-    "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas",
-    "tests/integration/test_foreign_reconstruction_path.py::test_driver_reconstructs_worker_owned_stored_object_through_owner",
-    "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
-    "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
-    "tests/integration/test_actor_restart_path.py::test_actor_crash_restarts_once_fences_inflight_call_and_resets_state",
-    "tests/integration/test_placement_group_path.py::test_strict_spread_tasks_use_committed_bundles_and_remove_restores_resources",
-    "tests/integration/test_placement_group_prepare_failure_path.py::test_second_participant_prepare_rejection_aborts_first_and_restores_roots",
-    "tests/integration/test_placement_group_node_loss_path.py::test_participant_node_loss_is_terminal_and_survivor_cleans_pg",
-    "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
-    "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container",
-    "tests/integration/test_node_crash_recovery_path.py::test_remote_node_death_retries_task_on_survivor_and_reports_crash",
-    "tests/integration/test_worker_crash_recovery_path.py::test_after_complete_worker_crash_recovers_output_without_reexecution",
-    "tests/integration/test_worker_owner_death_path.py::test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release",
-    "tests/integration/test_put_contained_ref_path.py::test_stored_put_foreign_ref_survives_source_close_and_task_argument_import",
-    "tests/integration/test_precomplete_output_owner_death_path.py::test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds",
-    "tests/integration/test_put_contained_ref_path.py::test_stored_put_dependency_survives_consumer_reconstruction",
-    "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
-    "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
-    "tests/integration/test_runner_process_tree_path.py::test_timeout_cleanup_reaps_owned_parent_and_detached_grandchild"
+    {
+      "selector": "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example01]",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example02]",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example03]",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example04]",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example05]",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example06]",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example07]",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_cross_node_dependency_pull.py::test_store_backed_dependency_pulls_to_consumer_node_before_direct_push",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_lease_locality_path.py::test_stored_dependency_selects_data_first_hop_and_resources_can_spill_back_home",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_foreign_reconstruction_path.py::test_driver_reconstructs_worker_owned_stored_object_through_owner",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_actor_restart_path.py::test_actor_crash_restarts_once_fences_inflight_call_and_resets_state",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_placement_group_path.py::test_strict_spread_tasks_use_committed_bundles_and_remove_restores_resources",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_placement_group_prepare_failure_path.py::test_second_participant_prepare_rejection_aborts_first_and_restores_roots",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_placement_group_node_loss_path.py::test_participant_node_loss_is_terminal_and_survivor_cleans_pg",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_node_crash_recovery_path.py::test_remote_node_death_retries_task_on_survivor_and_reports_crash",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_worker_crash_recovery_path.py::test_after_complete_worker_crash_recovers_output_without_reexecution",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_worker_owner_death_path.py::test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_put_contained_ref_path.py::test_stored_put_foreign_ref_survives_source_close_and_task_argument_import",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_precomplete_output_owner_death_path.py::test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_put_contained_ref_path.py::test_stored_put_dependency_survives_consumer_reconstruction",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
+      "marker": "multiprocess_smoke"
+    },
+    {
+      "selector": "tests/integration/test_runner_process_tree_path.py::test_timeout_cleanup_reaps_owned_parent_and_detached_grandchild",
+      "marker": "multiprocess_smoke"
+    }
+  ],
+  "reviewed_migrations": [
+    {
+      "selector": "tests/unit/test_cpu_yield_accounting.py",
+      "marker": "unit",
+      "purpose": "migration",
+      "work_package_id": "K1",
+      "review_source_commit": "1a3822877d4d587e95bc2a4b72f7ad5d38fc998f",
+      "reviewed_tree_hash": "0727662143852b365f9fe9c0a483d2b738ef9751ea2e8b87fff42104fc072ff3",
+      "reviewed_files": {
+        "conftest.py": "3d6cdf2e8266a174d481b75525b6488dd0d9b1b5f3514d31d5c784d6ef5b57eb",
+        "pyproject.toml": "57bf07b37a00e326f47cf5ee24904c7eaba59fe4c82381a74d868f8c62501292",
+        "scripts/_test_process.py": "8173ef9cdfa22fe9e4ca10db9df92787d2d5074a9fe4490541891d16c8b29938",
+        "scripts/run_baseline.py": "2d43722b55783e13855e677d43545905390b156f7ae566a9e0418fc8afc2f2bf",
+        "src/miniray/__init__.py": "099e228560194ea94593aaebf7d7abdcdb652db20084fe5b4befb9ef4c41b071",
+        "src/miniray/actor_client.py": "66dc8b26f6adffc17f25350d470c31dacb8c25b0ac4071be8e733b3ea7107da4",
+        "src/miniray/actor_state.py": "ce812eb20191409bb677358f4cd42e5f79993fb632e66eee43a650725bd29783",
+        "src/miniray/actor_worker.py": "76da914269b249a4d8db77457c9901ec64f6d4fb5bab0a9fbf074f35948b0f92",
+        "src/miniray/api.py": "869879702a4075514e09a80f8ba2ac9da72baa9848e47b87129169523114b990",
+        "src/miniray/blocking.py": "8a077ecb82783aec2229f2d2f2d94299f8cd7478fa9579cf27f8dc3dd75a9f2f",
+        "src/miniray/contained_edges.py": "441bb27b8d2f861a307f7231f7213ec50f4f73faa7bd91b7824d26fe5302b1db",
+        "src/miniray/control.py": "ab09c51af846c0e940da26b88f1a4fc938a96e7194aeaba05077437a89c9b4cf",
+        "src/miniray/core.py": "e58eedf611c5a6505a1fbb26dca4686188d35be658d5ec140e2cdd096012b9f9",
+        "src/miniray/death_proofs.py": "40f3d99007d0cd015c0f87fb91a8bcdb1a2511e97cf3ac732cfda30eb496722e",
+        "src/miniray/dependency.py": "b8cd51bce67e855fad7da0602972de910193ce2fadcd68b835fdb3ccb2f79632",
+        "src/miniray/errors.py": "e82090f25675151ecb6378b2aef4bc7ea2cc25082596ee22ffadecacaedcf94e",
+        "src/miniray/foreign_lineage.py": "d9aa6f99ad631957fbda08cf9078d7d87a8af35d0c901e5ada6d907662233d43",
+        "src/miniray/foreign_lineage_runtime.py": "fefc0f8e6ad793331b2d36b1c45f58c6495b11f12cab67d3f87500891f93f4de",
+        "src/miniray/function_registry.py": "d9d7a9fd7e21bed58905f2eb581461bf4957ccb2edb9e71d4ee66ee9ec58affb",
+        "src/miniray/ids.py": "fda9e64bc73da361d63e3aaff64abce6c091350eabe6e345836d3846849605e5",
+        "src/miniray/lease_dependencies.py": "0407f8b01f79846b9b183b33aaf78f40f42eddb67549460196d786a0fde8a89c",
+        "src/miniray/lease_policy.py": "e0c91a30b2b64aca9bdfaf3a7033315e4e120d5bcdf1b2ea03bc8c20b2780710",
+        "src/miniray/node.py": "363cd9a7338bb8ea19987359504dd1d075716b998a9fd8daf74f4ac19e4d20cf",
+        "src/miniray/node_death_view.py": "f068ab62a4221e8c0d19b12dc5897e6e7c68b157c5826b6ec97adea3a40a3cc3",
+        "src/miniray/node_monitor.py": "8f6ffb80a78636ffaa6b13ee68e55a7a3005c29ab0141d308f7beda3a20d52f9",
+        "src/miniray/object_manager.py": "c7b7b3716afdf992499d8527a9baabab4581d22e838fbd39b3a8d4f72e6ee8b6",
+        "src/miniray/object_store.py": "2c48d36e81347b6e990e09660b2acd0d1bcc19b8f5815c7d645a2322956864d4",
+        "src/miniray/output_discovery.py": "8707808a87001bb7c8360a37bfaf03e5cfd9e5958116d9e9d3a130a8d3a07f8c",
+        "src/miniray/output_handoff.py": "a518921e8277927b98d23408bc611901d449cdba64ca7af8f7fd485a169e65be",
+        "src/miniray/output_protocol.py": "070b8a5b6cdbf0d99fec22f6a7264800cd6017598fe336f269b2959e1c3e937b",
+        "src/miniray/output_publication.py": "4aeb25778271f9d7c9ac2bebceb69b805e09e6afe8c20a4fc89bcb917fe428e0",
+        "src/miniray/output_publication_journal.py": "4e2223e324e9b226862da159b50b490717db7014e2e11b75c88e85124585107d",
+        "src/miniray/output_publication_node.py": "08e8a75399767e0b4f7deb16bd8734193fec60c4dbf161e5d770b5f487a2892a",
+        "src/miniray/owner_death_fence_registry.py": "2073ca44038e00332515d6bfb795e0509692b02ed1ca3fd385f86974e7cf2f9e",
+        "src/miniray/owner_reconstruction.py": "c6d2b90265bac709108c4bf85a9f0aae7ec9fb92ef83b296bdfe20913e731564",
+        "src/miniray/owner_service.py": "cc34e173bbec36730538790087f1755f764357d9b8e0c6fec4544dffa7f78ace",
+        "src/miniray/ownership.py": "26c928b207d652dbdbcafaeb033a1febb1725ffad6690c54c61cbdeaf8ba2a09",
+        "src/miniray/placement.py": "6c5438a5381ad655ab5588e8d0504113dc922f05ae65f2f5db85db752c8bdf46",
+        "src/miniray/placement_group_runtime.py": "1c3239c19266aca6b89dae78a206fb984cd3768257bb26828c34004c34bdffd4",
+        "src/miniray/protocol.py": "45989e91d8c4f77904c907f4e2ab3609137e1bb83dba5027d4cea4467191baeb",
+        "src/miniray/publication_gate.py": "398d23664ade5f200f0a4e3072776aa3320b48d14a19bfe8dc47b37aef8b6f93",
+        "src/miniray/publication_sources.py": "5ba9e831a2258f64b557971d49cd64cad7882f8e6271aea3cb95975adea573a0",
+        "src/miniray/put_handoff.py": "f9b6920c46724501994a2eebd84e6e181e33ded576f3fde9c6ecc00694fc0fbc",
+        "src/miniray/reconstruction_runtime.py": "4f16a1260e20ea6d633240763ffe9f2e0766e7b455ad2e79e2d0997887bc86e9",
+        "src/miniray/recovery.py": "cb68cbe26ce7575a9c25f267054f00717c652a3f41720dba48de994da0068328",
+        "src/miniray/ref_transfer.py": "4170a7520dbbe907155c1a7753cc479eee3186440c96dbad93e59d1ea61b8418",
+        "src/miniray/replica_cleanup.py": "c265ac15a9153e2cbec619769bb99f2239886a94fb8634dab653e388c8d03ce4",
+        "src/miniray/resources.py": "74590bb1ef6ff7391ad61a7943a7fb52514d69b2885c427c9fee08099a03b32d",
+        "src/miniray/retained_replacement.py": "c3238ffd77edb5efa8f2b165b18459ad68f9fc9dbff67d65a545a2f6bbf61cab",
+        "src/miniray/runtime_binding.py": "6db54ccf3fe9548e65ef00091900f3a91804b5ae1774e60bd75239a6a6112289",
+        "src/miniray/task_outputs.py": "71eb24779f0b6950d4066e245cbf72b165006354fbc66a8c91108a5197511ac3",
+        "src/miniray/trace.py": "b6f2cea683ca6c7ee88f13e18a02ceba57e01a31531412da915fbf545587a9ed",
+        "src/miniray/trace_collector.py": "7c24327bfff5cbbf2fd7743c0e047719443f72ffb9f360daf7b0a0e7545950d6",
+        "src/miniray/transfer_pins.py": "866f61a0874af63f3bd4a34de5fc22e22099f7ef412ede10f6f96f41664a093a",
+        "src/miniray/transport.py": "634e3d82d5b58fc281b70a6128a06e126a3f8b361dee7eb32ad0ab040228c620",
+        "src/miniray/worker.py": "5c8395a9028ea3a5201d05af8d6ff4ff4124b1c6ff1cf4c21bdcc121ce99888f",
+        "tests/unit/test_cpu_yield_accounting.py": "921a13e1a7c59fda548512fd1df17f3198df35350ebac7094d51d3090fd54a34",
+        "uv.lock": "5c22361c7257f2b740cd3e9c72786b3d0cd1e230df7fc39e2d122e1d42c9879d"
+      },
+      "cost_review": "K1 reviewed 7 functions/8 cases: ResourceLedger only; at most two allocations, three fixed episodes; no process, thread, socket, sleep or runtime fixture. Tests CPU-only yield, debt/reacquire and exact final release under fixed30s runner."
+    },
+    {
+      "selector": "tests/integration/test_cross_process_trace.py::test_one_task_emits_cross_process_golden_trace_and_cleans_up",
+      "marker": "multiprocess_smoke",
+      "purpose": "migration",
+      "work_package_id": "K1",
+      "review_source_commit": "1a3822877d4d587e95bc2a4b72f7ad5d38fc998f",
+      "reviewed_tree_hash": "2256b8c0e5b63fd9dbb67cf9b4efd5ede640c8742fbbbc1fe8aa560abab9c1b6",
+      "reviewed_files": {
+        "conftest.py": "3d6cdf2e8266a174d481b75525b6488dd0d9b1b5f3514d31d5c784d6ef5b57eb",
+        "pyproject.toml": "57bf07b37a00e326f47cf5ee24904c7eaba59fe4c82381a74d868f8c62501292",
+        "scripts/_test_process.py": "8173ef9cdfa22fe9e4ca10db9df92787d2d5074a9fe4490541891d16c8b29938",
+        "scripts/run_baseline.py": "2d43722b55783e13855e677d43545905390b156f7ae566a9e0418fc8afc2f2bf",
+        "src/miniray/__init__.py": "099e228560194ea94593aaebf7d7abdcdb652db20084fe5b4befb9ef4c41b071",
+        "src/miniray/actor_client.py": "66dc8b26f6adffc17f25350d470c31dacb8c25b0ac4071be8e733b3ea7107da4",
+        "src/miniray/actor_state.py": "ce812eb20191409bb677358f4cd42e5f79993fb632e66eee43a650725bd29783",
+        "src/miniray/actor_worker.py": "76da914269b249a4d8db77457c9901ec64f6d4fb5bab0a9fbf074f35948b0f92",
+        "src/miniray/api.py": "869879702a4075514e09a80f8ba2ac9da72baa9848e47b87129169523114b990",
+        "src/miniray/blocking.py": "8a077ecb82783aec2229f2d2f2d94299f8cd7478fa9579cf27f8dc3dd75a9f2f",
+        "src/miniray/contained_edges.py": "441bb27b8d2f861a307f7231f7213ec50f4f73faa7bd91b7824d26fe5302b1db",
+        "src/miniray/control.py": "ab09c51af846c0e940da26b88f1a4fc938a96e7194aeaba05077437a89c9b4cf",
+        "src/miniray/core.py": "e58eedf611c5a6505a1fbb26dca4686188d35be658d5ec140e2cdd096012b9f9",
+        "src/miniray/death_proofs.py": "40f3d99007d0cd015c0f87fb91a8bcdb1a2511e97cf3ac732cfda30eb496722e",
+        "src/miniray/dependency.py": "b8cd51bce67e855fad7da0602972de910193ce2fadcd68b835fdb3ccb2f79632",
+        "src/miniray/errors.py": "e82090f25675151ecb6378b2aef4bc7ea2cc25082596ee22ffadecacaedcf94e",
+        "src/miniray/foreign_lineage.py": "d9aa6f99ad631957fbda08cf9078d7d87a8af35d0c901e5ada6d907662233d43",
+        "src/miniray/foreign_lineage_runtime.py": "fefc0f8e6ad793331b2d36b1c45f58c6495b11f12cab67d3f87500891f93f4de",
+        "src/miniray/function_registry.py": "d9d7a9fd7e21bed58905f2eb581461bf4957ccb2edb9e71d4ee66ee9ec58affb",
+        "src/miniray/golden_traces/ordinary_task_application_error.json": "31971517da6a5fc6dc05ef20bbc5b9950cf1e29cb78a0daae306e0b53a20a189",
+        "src/miniray/golden_traces/ordinary_task_success.json": "c32319966575ee25bafca99cd2dfc59d5db8d10e269ebe99c42e0a4ea06457e8",
+        "src/miniray/ids.py": "fda9e64bc73da361d63e3aaff64abce6c091350eabe6e345836d3846849605e5",
+        "src/miniray/lease_dependencies.py": "0407f8b01f79846b9b183b33aaf78f40f42eddb67549460196d786a0fde8a89c",
+        "src/miniray/lease_policy.py": "e0c91a30b2b64aca9bdfaf3a7033315e4e120d5bcdf1b2ea03bc8c20b2780710",
+        "src/miniray/node.py": "363cd9a7338bb8ea19987359504dd1d075716b998a9fd8daf74f4ac19e4d20cf",
+        "src/miniray/node_death_view.py": "f068ab62a4221e8c0d19b12dc5897e6e7c68b157c5826b6ec97adea3a40a3cc3",
+        "src/miniray/node_monitor.py": "8f6ffb80a78636ffaa6b13ee68e55a7a3005c29ab0141d308f7beda3a20d52f9",
+        "src/miniray/object_manager.py": "c7b7b3716afdf992499d8527a9baabab4581d22e838fbd39b3a8d4f72e6ee8b6",
+        "src/miniray/object_store.py": "2c48d36e81347b6e990e09660b2acd0d1bcc19b8f5815c7d645a2322956864d4",
+        "src/miniray/output_discovery.py": "8707808a87001bb7c8360a37bfaf03e5cfd9e5958116d9e9d3a130a8d3a07f8c",
+        "src/miniray/output_handoff.py": "a518921e8277927b98d23408bc611901d449cdba64ca7af8f7fd485a169e65be",
+        "src/miniray/output_protocol.py": "070b8a5b6cdbf0d99fec22f6a7264800cd6017598fe336f269b2959e1c3e937b",
+        "src/miniray/output_publication.py": "4aeb25778271f9d7c9ac2bebceb69b805e09e6afe8c20a4fc89bcb917fe428e0",
+        "src/miniray/output_publication_journal.py": "4e2223e324e9b226862da159b50b490717db7014e2e11b75c88e85124585107d",
+        "src/miniray/output_publication_node.py": "08e8a75399767e0b4f7deb16bd8734193fec60c4dbf161e5d770b5f487a2892a",
+        "src/miniray/owner_death_fence_registry.py": "2073ca44038e00332515d6bfb795e0509692b02ed1ca3fd385f86974e7cf2f9e",
+        "src/miniray/owner_reconstruction.py": "c6d2b90265bac709108c4bf85a9f0aae7ec9fb92ef83b296bdfe20913e731564",
+        "src/miniray/owner_service.py": "cc34e173bbec36730538790087f1755f764357d9b8e0c6fec4544dffa7f78ace",
+        "src/miniray/ownership.py": "26c928b207d652dbdbcafaeb033a1febb1725ffad6690c54c61cbdeaf8ba2a09",
+        "src/miniray/placement.py": "6c5438a5381ad655ab5588e8d0504113dc922f05ae65f2f5db85db752c8bdf46",
+        "src/miniray/placement_group_runtime.py": "1c3239c19266aca6b89dae78a206fb984cd3768257bb26828c34004c34bdffd4",
+        "src/miniray/protocol.py": "45989e91d8c4f77904c907f4e2ab3609137e1bb83dba5027d4cea4467191baeb",
+        "src/miniray/publication_gate.py": "398d23664ade5f200f0a4e3072776aa3320b48d14a19bfe8dc47b37aef8b6f93",
+        "src/miniray/publication_sources.py": "5ba9e831a2258f64b557971d49cd64cad7882f8e6271aea3cb95975adea573a0",
+        "src/miniray/put_handoff.py": "f9b6920c46724501994a2eebd84e6e181e33ded576f3fde9c6ecc00694fc0fbc",
+        "src/miniray/reconstruction_runtime.py": "4f16a1260e20ea6d633240763ffe9f2e0766e7b455ad2e79e2d0997887bc86e9",
+        "src/miniray/recovery.py": "cb68cbe26ce7575a9c25f267054f00717c652a3f41720dba48de994da0068328",
+        "src/miniray/ref_transfer.py": "4170a7520dbbe907155c1a7753cc479eee3186440c96dbad93e59d1ea61b8418",
+        "src/miniray/replica_cleanup.py": "c265ac15a9153e2cbec619769bb99f2239886a94fb8634dab653e388c8d03ce4",
+        "src/miniray/resources.py": "74590bb1ef6ff7391ad61a7943a7fb52514d69b2885c427c9fee08099a03b32d",
+        "src/miniray/retained_replacement.py": "c3238ffd77edb5efa8f2b165b18459ad68f9fc9dbff67d65a545a2f6bbf61cab",
+        "src/miniray/runtime_binding.py": "6db54ccf3fe9548e65ef00091900f3a91804b5ae1774e60bd75239a6a6112289",
+        "src/miniray/task_outputs.py": "71eb24779f0b6950d4066e245cbf72b165006354fbc66a8c91108a5197511ac3",
+        "src/miniray/trace.py": "b6f2cea683ca6c7ee88f13e18a02ceba57e01a31531412da915fbf545587a9ed",
+        "src/miniray/trace_collector.py": "7c24327bfff5cbbf2fd7743c0e047719443f72ffb9f360daf7b0a0e7545950d6",
+        "src/miniray/trace_contract.py": "3d42717e9c1f5cf8a215c6ad56a9d3e064c44223eb5f500288a472a47106b347",
+        "src/miniray/transfer_pins.py": "866f61a0874af63f3bd4a34de5fc22e22099f7ef412ede10f6f96f41664a093a",
+        "src/miniray/transport.py": "634e3d82d5b58fc281b70a6128a06e126a3f8b361dee7eb32ad0ab040228c620",
+        "src/miniray/worker.py": "5c8395a9028ea3a5201d05af8d6ff4ff4124b1c6ff1cf4c21bdcc121ce99888f",
+        "tests/integration/test_cross_process_trace.py": "c608c00729cdf8e1dbaed6677651d66d153e673f46c18601706bbd632da876c6",
+        "tests/integration/test_task_path.py": "f9e04f38e74a5f645dc8cd0ea69cf5608958f8c5b6b5a92aa81afd2deeae209c",
+        "uv.lock": "5c22361c7257f2b740cd3e9c72786b3d0cd1e230df7fc39e2d122e1d42c9879d"
+      },
+      "cost_review": "K1 existing owner-led golden trace: one GCS, one Node, one Worker (three children), five endpoints,1MiB store, one tiny42 Task;10s work+2s trace subdeadline+3s close then bounded shutdown. Actual PID/port/exitcode/resource/finalized/forced assertions retained; external30s process-tree boundary."
+    }
   ]
 }

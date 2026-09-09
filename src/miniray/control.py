@@ -2622,6 +2622,7 @@ class GCSLite:
         self._owner_death_progress_wakeup = Event()
         self._owner_death_progress_stop = Event()
         self._owner_death_progress_thread: Optional[Thread] = None
+        self._owner_fence_progress_cursor = 0
         self.nodes = NodeRegistry(scheduling_visible=lambda node_id: node_id in (
             self.owner_death_fences.cleanup_safe_node_ids()
         ))
@@ -2815,8 +2816,16 @@ class GCSLite:
         return protocol.DrainOwnerDeathFencesReply(request.request_id, active == 0, active)
 
     def _drive_owner_death_fence_once(self) -> bool:
-        pending = self._owner_fence_registry().pending()
-        return bool(pending and self._drive_owner_death_fence(pending[0]))
+        # Advance on attempts so a pinned or unreachable target cannot starve
+        # independent owner fences. The remote call stays outside this lock.
+        with self._owner_fence_lock():
+            pending = self._owner_fence_registry().pending()
+            if not pending:
+                return False
+            cursor = getattr(self, "_owner_fence_progress_cursor", 0)
+            effect = pending[cursor % len(pending)]
+            self._owner_fence_progress_cursor = cursor + 1
+        return self._drive_owner_death_fence(effect)
 
     def _drive_owner_death_fence(
         self, effect: OwnerDeathFenceEffect,

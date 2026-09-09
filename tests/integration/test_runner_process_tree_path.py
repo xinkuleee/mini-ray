@@ -30,7 +30,7 @@ import time
 
 import pytest
 
-from scripts import run_bounded_test as bounded
+from scripts import _test_process as bounded
 
 
 pytestmark = pytest.mark.multiprocess_smoke

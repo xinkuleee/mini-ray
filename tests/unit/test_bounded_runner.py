@@ -7,7 +7,7 @@ from typing import Dict, Iterable, Optional
 
 import pytest
 
-from scripts import run_bounded_test as runner
+from scripts import _test_process as runner
 
 
 pytestmark = pytest.mark.unit
@@ -409,7 +409,7 @@ def test_signal_helpers_reject_non_positive_or_boolean_targets(
 def test_main_cleans_exact_process_tree_when_wait_is_interrupted(
     monkeypatch,
 ) -> None:
-    node_id = next(iter(runner.ALLOWED_NODE_IDS))
+    node_id = "tests/integration/test_task_path.py::test_one_node_one_worker_task_path"
     process = _FakeProcess()
     cleaned = []
 
@@ -427,6 +427,6 @@ def test_main_cleans_exact_process_tree_when_wait_is_interrupted(
     )
 
     with pytest.raises(KeyboardInterrupt):
-        runner.main([node_id])
+        runner.run_pytest((node_id,), "multiprocess_smoke", root=__import__("pathlib").Path.cwd())
 
     assert cleaned == [process]

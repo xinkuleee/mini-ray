@@ -1542,6 +1542,7 @@ class CoreWorker:
         # owner-table fence commits; transport reachability is never evidence
         # that a Worker died.
         self._worker_death_cursor = 0
+        self._worker_death_records: dict[WorkerID, protocol.WorkerDeathRecord] = {}
         self._worker_death_sync_lock = threading.Lock()
         self._worker_death_next_poll_at = (
             time.monotonic() + _WORKER_DEATH_POLL_SECONDS
@@ -2266,6 +2267,7 @@ class CoreWorker:
                 cursor = getattr(self, "_worker_death_cursor", 0)
             request = protocol.GetWorkerDeaths(cursor)
             try:
+                from .death_proofs import owner_death
                 candidate = self._rpc(
                     gcs_address, _GET_WORKER_DEATHS_HANDLER, request
                 )
@@ -2277,7 +2279,7 @@ class CoreWorker:
                 reply = replace(candidate)
                 if reply.after_epoch != cursor:
                     return False
-                deaths = tuple(replace(death) for death in reply.deaths)
+                deaths = tuple(owner_death(death) for death in reply.deaths)
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:
@@ -2299,6 +2301,12 @@ class CoreWorker:
                             cleanup = self._owner_table.install_dead_worker(
                                 death.worker_id, death_id
                             )
+                            records = getattr(self, "_worker_death_records", None)
+                            if records is None:
+                                records = self._worker_death_records = {}
+                            prior = records.setdefault(death.worker_id, death)
+                            if prior != death:
+                                raise ValueError("Worker death history was rebound")
                             foreign_runtime = self._ensure_foreign_lineage_runtime()
                             foreign_runtime.mark_owner_dead(cleanup.record)
                         self._discharge_dead_owner_obligations(death)
@@ -7075,6 +7083,11 @@ class CoreWorker:
             }
             for request in plan.contained_releases:
                 if request not in current["child"]:
+                    with self._state_lock:
+                        death = getattr(self, "_worker_death_records", {}).get(request.owner_worker_id)
+                    if death is not None:
+                        current["child"][request] = death
+                        continue
                     reply = self._borrow_rpc(routes[(request.object_id, request.hold)], _RELEASE_CONTAINED_REFERENCE_HANDLER, request)
                     if (not isinstance(reply, protocol.ReleaseContainedReferenceReply) or not reply.accepted
                             or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
@@ -11363,8 +11376,10 @@ class CoreWorker:
                 manifest = handoff.manifest
                 if manifest.header.owner_worker_id != self.worker_id or manifest.publication_id.execution != pending.execution:
                     raise SystemTaskError('Node-loss handoff changed owner execution')
-                complete = handoff.complete or (None if envelope is None else envelope.complete)
-                if complete is not None and handoff.complete is None:
+                latched = getattr(self, '_output_node_cleanup', {}).get(identity)
+                complete = (latched['complete'] if latched is not None else
+                            handoff.complete or (None if envelope is None else envelope.complete))
+                if complete is not None and handoff.complete is None and handoff.phase is not OutputHandoffPhase.ABORTED:
                     table.record_complete(complete)
                 works = getattr(self, '_output_node_cleanup', None)
                 if works is None:
@@ -11391,7 +11406,7 @@ class CoreWorker:
                         if request in work['acks']:
                             continue
                         with self._state_lock:
-                            owner_death = self._owner_table.dead_worker_record(transfer.contained_owner_worker_id)
+                            owner_death = getattr(self, '_worker_death_records', {}).get(transfer.contained_owner_worker_id)
                         if owner_death is not None:
                             work['acks'][request] = owner_death
                             continue

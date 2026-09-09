@@ -1,0 +1,41 @@
+{
+  "phase": "K1",
+  "status": "complete",
+  "tool_entry": "schema2 gate plus reviewed migrations, same 30s/PID/environment cleanup kernel",
+  "common_fixes": [
+    "CF-001",
+    "CF-002",
+    "CF-003",
+    "CF-004"
+  ],
+  "gate": {
+    "pure_files": 26,
+    "smokes": 32,
+    "reviewed_migrations": 2
+  },
+  "validation": [
+    {
+      "snapshot": "base-k1-01",
+      "pure": "319 passed, 1 failed, 9 setup errors, 1 deselected; new fixture lacked accepted task; retained failed evidence",
+      "registry_unit": "7 passed",
+      "registry_real_trace": "1 passed",
+      "process_tree_timeout": "1 passed"
+    },
+    {
+      "snapshot": "base-k1-02",
+      "common_cleanup": "12 passed after real enqueue/dequeue fixture fix",
+      "runner_including_CI_identity": "24 passed"
+    }
+  ],
+  "retired_after_entry_validation": [
+    "scripts/run_bounded_test.py",
+    "scripts/run_reviewed_pure.py",
+    "scripts/reviewed_pure_manifest.json"
+  ],
+  "input_mapping": "Surviving worktree inputs equal base-k1-02. Untouched tests exercised in base-k1-01; 02 reran changed tests. Retired CLI/import closure checked after deletion.",
+  "not_claimed": [
+    "K7 final baseline",
+    "remote Actions run",
+    "enhanced successor delivery"
+  ]
+}
