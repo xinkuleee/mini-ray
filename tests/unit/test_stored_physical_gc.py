@@ -17,17 +17,24 @@ from dataclasses import replace
 import pytest
 
 from miniray import protocol
-from miniray.contained_edges import ContainedReferenceEdge
+from miniray.contained_edges import ContainedReferenceEdge, ContainedReferenceHold
 from miniray.core import CoreWorker, _ObjectWaiter, _PendingTask
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.ownership import (
-    ObjectCollectionInProgressError, ObjectCollectionState, ObjectOwnerTable,
+    ObjectCollectionInProgressError, ObjectCollectionState, ObjectOwnerTable, InvalidObjectTransitionError,
 )
 from miniray.reconstruction_runtime import (
     ReconstructionCoordinator, ReconstructionRuntimeError,
 )
 from miniray.recovery import RecoveryManager
 from miniray.resources import ResourceVector
+from miniray.output_publication import (OutputPublicationHeader, OutputPublicationID,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationCompleteWitness, OutputPublicationEnvelope)
+from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
+from miniray.ownership import OutputOwnerPublicationPlan
+from miniray.task_outputs import TaskExecutionKey
+from miniray.ids import LeaseID
 
 
 def _identity(index: int = 0) -> tuple[JobID, ObjectID, AttemptID]:
@@ -119,13 +126,27 @@ def test_owner_freezes_complete_stored_plan_and_fences_every_mutator() -> None:
     spec = _spec(job_id, object_id, attempt, owner_id)
     table = ObjectOwnerTable()
     table.register(object_id, current_attempt=attempt, producer_task_spec=spec)
-    for node in nodes:
-        table.publish_stored(object_id, attempt, node)
     child = ObjectID.for_task(TaskID.random())
     edge = ContainedReferenceEdge(
         object_id, child, WorkerID.random(), ("127.0.0.1", 27001), "edge"
     )
-    table.add_outgoing_contained_edge(object_id, edge)
+    descriptor = protocol.ResultDescriptor(
+        object_id, protocol.ResultStorage.OBJECT_STORE, 17, owner_id, nodes[0], "a" * 64,
+    )
+    execution = TaskExecutionKey.from_task_spec(spec)
+    transfer = PreparedContainedTransfer(child, edge.contained_owner_worker_id,
+        edge.contained_owner_address, OwnedContainedSource(edge.contained_owner_worker_id),
+        ContainedReferenceHold(object_id, edge.contained_owner_worker_id, edge.transfer_token),
+        ContainedReferenceHold(object_id, owner_id, edge.transfer_token))
+    manifest = OutputPublicationManifest.create(OutputPublicationHeader(
+        OutputPublicationID(LeaseID.random(), execution), job_id, edge.contained_owner_worker_id,
+        owner_id, OutputPublicationNodeIncarnation(nodes[0], 101, 1)),
+        (OutputSlotManifest(object_id, descriptor.storage, 17, descriptor.checksum, (transfer,)),))
+    assert table.commit_output_publication(OutputOwnerPublicationPlan(execution,
+        OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest),
+                                  (descriptor,)))).committed
+    for node in nodes[1:]:
+        table.publish_stored(object_id, attempt, node)
 
     plan = table.begin_collection(
         object_id, collection_id="collection-1",
@@ -143,7 +164,8 @@ def test_owner_freezes_complete_stored_plan_and_fences_every_mutator() -> None:
     mutators = (
         lambda: table.add_local_reference(object_id, "late-local"),
         lambda: table.add_borrowed_reference(object_id, "late-borrow"),
-        lambda: table.add_contained_reference(object_id, "late-contained"),
+        lambda: table.add_contained_reference(object_id, ContainedReferenceHold(
+            ObjectID.for_task(TaskID.random()), WorkerID.random(), "late-contained")),
         lambda: table.publish_stored(object_id, attempt, NodeID.random()),
         lambda: table.mark_lost(object_id, attempt),
         lambda: table.advance_attempt(
@@ -345,12 +367,14 @@ def test_owner_completion_failure_never_deletes_recovery_lineage(
 
 
 @pytest.mark.unit
-def test_legacy_collection_api_cannot_bypass_stored_replica_drops() -> None:
+def test_stored_collection_requires_canonical_metadata_before_freezing_drop_plan() -> None:
     _job, object_id, attempt = _identity()
     table = ObjectOwnerTable()
     table.register(object_id, current_attempt=attempt)
     table.publish_stored(object_id, attempt, NodeID.random())
 
-    assert not table.collect_if_unused(object_id)
-    assert not table.collect_unused_with_edges(object_id).collected
+    before = table.snapshot(object_id)
+    with pytest.raises(InvalidObjectTransitionError, match="canonical metadata"):
+        table.begin_collection(object_id)
+    assert table.snapshot(object_id) == before
     assert table.contains(object_id)

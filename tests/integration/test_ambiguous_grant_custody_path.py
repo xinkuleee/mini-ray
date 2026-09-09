@@ -242,7 +242,7 @@ def test_lost_grant_replies_cancel_and_transfer_both_input_replicas():
         assert core._recovery.active_recovery(consumer.object_id.task_id) is None
         outcome_request = protocol.GetWorkerLeaseOutcome(
             grant.lease_id, grant.task_id, grant.attempt_id, grant.worker_id, core.worker_id, (consumer.object_id,),
-            grant.scheduling_key, grant.target_execution,
+            grant.scheduling_key,
         )
         outcome = _rpc(node_b.node_address, GET_WORKER_LEASE_OUTCOME_HANDLER, outcome_request, deadline)
         _assert_empty_outcome(outcome, outcome_request, node_b.node_id)

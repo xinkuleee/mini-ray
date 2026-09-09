@@ -1,0 +1,158 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_inline_recovery.py",
+    "exit_code": 0,
+    "seconds": 3.695,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_inline_recovery.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_output_discovery.py",
+    "exit_code": 0,
+    "seconds": 3.533,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_output_discovery.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_physical_gc.py::test_owner_freezes_complete_stored_plan_and_fences_every_mutator",
+    "exit_code": 0,
+    "seconds": 4.39,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_physical_gc.py::test_owner_freezes_complete_stored_plan_and_fences_every_mutator"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_physical_gc.py::test_stored_collection_requires_canonical_metadata_before_freezing_drop_plan",
+    "exit_code": 0,
+    "seconds": 4.604,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_physical_gc.py::test_stored_collection_requires_canonical_metadata_before_freezing_drop_plan"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_worker_start_and_complete_echo_task_scheduling_key",
+    "exit_code": 0,
+    "seconds": 5.624,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_worker_start_and_complete_echo_task_scheduling_key"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_outcome_reply_rejects_orphan_overlap_extra_and_reordering",
+    "exit_code": 0,
+    "seconds": 4.219,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_outcome_reply_rejects_orphan_overlap_extra_and_reordering"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_node_rejects_outcome_manifest_subset_extra_and_reordering",
+    "exit_code": 0,
+    "seconds": 5.106,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_node_rejects_outcome_manifest_subset_extra_and_reordering"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_pregrant_custody_path.py::test_second_source_loss_hands_off_first_replica_without_a_grant",
+    "exit_code": 0,
+    "seconds": 12.876,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_pregrant_custody_path.py::test_second_source_loss_hands_off_first_replica_without_a_grant"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_ambiguous_grant_custody_path.py::test_lost_grant_replies_cancel_and_transfer_both_input_replicas",
+    "exit_code": 0,
+    "seconds": 18.446,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_ambiguous_grant_custody_path.py::test_lost_grant_replies_cancel_and_transfer_both_input_replicas"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_transfer_pin_ack_loss_path.py::test_real_pin_ack_loss_closes_unknown_source_session_before_rejection",
+    "exit_code": 0,
+    "seconds": 15.131,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_transfer_pin_ack_loss_path.py::test_real_pin_ack_loss_closes_unknown_source_session_before_rejection"
+    ],
+    "log": "009-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_transfer_pin_ack_loss_path.py::test_three_real_release_ack_losses_retry_from_the_existing_node_outbox",
+    "exit_code": 0,
+    "seconds": 18.471,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_transfer_pin_ack_loss_path.py::test_three_real_release_ack_losses_retry_from_the_existing_node_outbox"
+    ],
+    "log": "010-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_transfer_pin_requester_death_path.py::test_requester_node_death_closes_only_its_source_transfer_pin",
+    "exit_code": 0,
+    "seconds": 12.435,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3g-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_transfer_pin_requester_death_path.py::test_requester_node_death_closes_only_its_source_transfer_pin"
+    ],
+    "log": "011-case.log"
+  }
+]

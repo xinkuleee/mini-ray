@@ -16,6 +16,8 @@ from miniray.core import ObjectRef
 from miniray.errors import ProtocolError
 from miniray.ids import NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_discovery import OutputDiscoverySession
+from miniray.output_handoff import OutputHandoffPhase
+from miniray.ownership import ObjectOwnerTable
 from miniray.output_publication_journal import (
     OutputPublicationJournalState, OutputPublicationStage,
 )
@@ -26,7 +28,7 @@ from miniray.worker import (
 )
 from tests.unit.test_output_publication_node_server import _node
 from tests.unit.test_worker_unified_output import (
-    _Fixture, _borrowed_fixture, _completion, _envelope, _outcome,
+    _ActualNodePublication, _Fixture, _borrowed_fixture, _completion, _envelope, _outcome,
     _no_runtime as _no_runtime,
 )
 
@@ -49,7 +51,7 @@ def test_plain_shapes_discover_every_slot_once_before_first_prepare(monkeypatch,
 
     values = tuple(_Value(index) for index in range(count))
     f = _Fixture(monkeypatch, lambda: values[0] if count == 1 else values,
-                 count=count, threshold=threshold)
+                 threshold=threshold)
 
     def prepare(request):
         assert reductions == list(range(count))
@@ -62,7 +64,7 @@ def test_plain_shapes_discover_every_slot_once_before_first_prepare(monkeypatch,
     reply = f.worker._handle_push_task(f.push)
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert reply.output_publication == f.complete_envelope
-    assert len(reply.results) == count
+    assert len(reply.results) == 1
     tier = protocol.ResultStorage.OBJECT_STORE if threshold == 0 else protocol.ResultStorage.INLINE
     assert all(result.storage is tier for result in reply.results)
     assert f.handlers == [START_WORKER_LEASE_HANDLER, wire.PREPARE_OUTPUT_PUBLICATION_HANDLER,
@@ -73,62 +75,54 @@ def test_plain_shapes_discover_every_slot_once_before_first_prepare(monkeypatch,
     assert len(f.prepares) == 1 and len(f.calls) == 3
 
 
-@pytest.mark.parametrize("target", (False, True))
-def test_multi_contained_outputs_publish_once_after_all_selected_slots_discover(monkeypatch, target):
-    returned = []
-    reductions = []
-    f = _Fixture(monkeypatch, lambda: tuple(returned), count=4 if target else 2,
-                 threshold=1024, target=target)
+@pytest.mark.parametrize("threshold", (0, 65536))
+def test_multi_contained_outputs_publish_once_after_all_selected_slots_discover(monkeypatch, threshold):
+    returned, reductions = [], []
+    f = _Fixture(monkeypatch, lambda: tuple(returned), threshold=threshold)
     child = ObjectRef(ObjectID.for_task(TaskID.random()), f.worker.worker_id, f.worker.address)
+    table = ObjectOwnerTable()
+    table.register(child.object_id, local_token="source-live")
+    actual = _ActualNodePublication(f, child_tables={f.worker.worker_id: table})
 
-    class _Selected:
+    class Part:
         def __init__(self, index, padding):
-            self.index = index
-            self.padding = padding
+            self.index, self.padding = index, padding
 
         def __reduce__(self):
             reductions.append(self.index)
             return dict, ((("child", child), ("padding", self.padding)),)
 
-    class _Unselected:
-        def __reduce__(self):
-            pytest.fail("unselected output was serialized")
-
-    indices = (1, 3) if target else (0, 1)
-    values = (_Selected(indices[0], b""), _Selected(indices[1], b"x" * 8192))
-    returned.extend((_Unselected(), values[0], _Unselected(), values[1]) if target else values)
+    returned.extend((Part(0, b""), Part(1, b"x" * 8192)))
 
     def prepare(request):
-        assert reductions == list(indices)
-        assert f.pending.discovery.source_references == (child, child)
+        assert reductions == [0, 1]
+        assert f.pending.discovery.source_references == (child,)
         assert f.pending.outputs.manifest == request.manifest
-        assert tuple(slot.object_id.return_index for slot in request.manifest.slots) == indices
-        first, second = request.manifest.slots
-        assert first.transfers[0].contained_object_id == second.transfers[0].contained_object_id == child.object_id
-        assert first.transfers[0].final_hold != second.transfers[0].final_hold
-        return wire.PreparedOutputPublicationReply(request.request_identity, True)
+        slot, = request.manifest.slots
+        assert slot.object_id.return_index == 0
+        transfer, = slot.transfers
+        assert transfer.contained_object_id == child.object_id
+        return actual.prepare(request)
 
     f.on_prepare = prepare
     reply = f.worker._handle_push_task(f.push)
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert reply.output_publication == f.complete_envelope
-    assert tuple(result.storage for result in reply.results) == (
-        protocol.ResultStorage.INLINE, protocol.ResultStorage.OBJECT_STORE,
-    )
-    assert not hasattr(reply, "inline_publication") and not hasattr(reply, "stored_publication")
-    assert reductions == list(indices) and f.executions == [True]
+    assert len(reply.results) == 1
+    assert reply.results[0].storage is (protocol.ResultStorage.OBJECT_STORE if threshold == 0 else protocol.ResultStorage.INLINE)
+    assert reductions == [0, 1] and f.executions == [True]
     assert f.handlers == [START_WORKER_LEASE_HANDLER, wire.PREPARE_OUTPUT_PUBLICATION_HANDLER,
                           COMPLETE_WORKER_LEASE_HANDLER]
-    assert not f.worker._prepared_output_replies
+    assert not f.worker._prepared_output_replies and len(actual.completions) == 1
     assert f.worker._handle_push_task(f.push) is reply and len(f.calls) == 3
-    assert reductions == list(indices)
+    assert reductions == [0, 1]
 
 
 def test_bad_later_selected_slot_releases_discovery_custody_without_publication_effect(monkeypatch):
     returned = []
     reductions = []
     sessions = []
-    f = _Fixture(monkeypatch, lambda: tuple(returned), count=2, threshold=0)
+    f = _Fixture(monkeypatch, lambda: tuple(returned), threshold=0)
     child = ObjectRef(ObjectID.for_task(TaskID.random()), f.worker.worker_id, f.worker.address)
     original_discover = OutputDiscoverySession.discover
 
@@ -171,7 +165,7 @@ def test_start_requires_exact_registered_incarnation_before_user_decode(monkeypa
         f.calls.append((handler, request))
         return protocol.StartWorkerLeaseReply(
             request.lease_id, protocol.LeaseExecutionState.RUNNING, True,
-            scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+            scheduling_key=request.scheduling_key,
             node_incarnation=value,
         )
 
@@ -452,7 +446,7 @@ def test_node_failed_complete_withholds_ack_after_release_effect_until_exact_ret
     assert snapshot.complete is None and snapshot.rollback_tombstone is None
     pending = journal.next_rollback_effect(fixture.id)
     assert pending.stage is OutputPublicationStage.PROVISIONAL_RELEASE
-    assert fixture.recovery.snapshot(fixture.id).rollback is None
+    assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.PENDING
     reply = node._handle_complete_worker_lease_inner(request)
     assert reply.accepted and not reply.released
     assert len(allocation_releases) == 1 and len(release_calls) == 2
@@ -461,7 +455,8 @@ def test_node_failed_complete_withholds_ack_after_release_effect_until_exact_ret
     snapshot = journal.snapshot(fixture.id)
     assert snapshot.state is OutputPublicationJournalState.RETIRED
     assert snapshot.rollback_tombstone is not None
-    assert fixture.recovery.snapshot(fixture.id).rollback == snapshot.rollback_tombstone
+    assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ABORTED
+    assert fixture.adapter.rollback_reported(fixture.id)
     replay = node._handle_complete_worker_lease_inner(request)
     assert replay.accepted and not replay.released
     assert len(allocation_releases) == 1 and len(release_calls) == 2

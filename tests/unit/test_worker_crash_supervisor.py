@@ -34,7 +34,7 @@ from miniray.output_publication import (
 )
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
+from miniray.output_handoff import OutputHandoffTable, OutputHandoffPhase
 from miniray.resources import AllocationToken, NodeSnapshot, ResourceLedger, ResourceVector
 from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
 from miniray.worker import (
@@ -201,20 +201,34 @@ def _attach_output_publication(node):
     node._local_replica_write_claims = {}
     node._object_localization_locks = {}
     journal = node._output_publication_journal = OutputPublicationJournal()
-    recovery = OutputPublicationRecoveryAuthority()
+    handoffs = OutputHandoffTable()
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("ref-free publication attempted child/graph/RPC effects")
 
+    def register_owner(manifest):
+        snapshot = handoffs.register(manifest, manifest.publication_id.attempt_id)
+        reply = wire.OutputHandoffReply(wire.RegisterOutputHandoff(manifest), True, snapshot)
+        assert reply.snapshot.manifest == manifest
+
+    def report_complete(witness):
+        snapshot = handoffs.record_complete(witness)
+        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+        assert reply.snapshot.complete == witness
+
+    def report_rollback(tombstone, *, manifest):
+        assert journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
+        snapshot = handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
+        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffRollback(manifest, tombstone), True, snapshot)
+        assert reply.snapshot.phase is OutputHandoffPhase.ABORTED
+
     adapter = node._output_publications = OutputPublicationNodeAdapter(
-        journal, report_intent=recovery.report_intent, arm_complete=recovery.arm_complete,
-        report_terminal=recovery.report_terminal, report_rollback=recovery.report_rollback,
-        prepare_child=forbidden, promote_child=forbidden, release_child=forbidden,
-        prepare_graph=forbidden, abort_graph=forbidden,
-        seal_replica=node._seal_output_publication_replica,
+        journal, register_owner=register_owner, report_complete=report_complete,
+        report_rollback=report_rollback, prepare_child=forbidden, promote_child=forbidden,
+        release_child=forbidden, seal_replica=node._seal_output_publication_replica,
         drop_replica=node._drop_output_publication_replica,
     )
-    return SimpleNamespace(journal=journal, recovery=recovery, adapter=adapter)
+    return SimpleNamespace(journal=journal, handoffs=handoffs, adapter=adapter)
 
 
 def _prepare_one_output(node, request, grant, publication, payload, *, stored):
@@ -234,7 +248,7 @@ def _prepare_one_output(node, request, grant, publication, payload, *, stored):
     prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(manifest, (payload,)))
     assert prepared.accepted and node._leases[request.lease_id].output_publication_id == identity
     assert publication.journal.snapshot(identity).ready_to_complete
-    assert publication.recovery.snapshot(identity).armed
+    assert publication.handoffs.query(identity).manifest == manifest
     assert publication.journal.snapshot(identity).complete is None
     assert node._leases[request.lease_id].state is protocol.LeaseExecutionState.RUNNING
     assert node.resource_ledger.snapshot() == before and node._ledger.release_calls == 0
@@ -355,7 +369,7 @@ def test_completed_outcome_survives_death_and_returns_only_matching_descriptor(
     assert reply.output_publication == completed.output_publication
     assert reply.output_completion is None and not reply.cleanup_pending
     assert publication.journal.snapshot(identity).complete == completed.output_publication.complete
-    assert publication.recovery.snapshot(identity).complete == completed.output_publication.complete
+    assert publication.handoffs.query(identity).complete == completed.output_publication.complete
     assert reply.descriptors == (protocol.ObjectStoreDescriptor(
         object_id, request.requester_worker_id, request.attempt_id, node.node_id,
         len(payload), checksum,
@@ -449,68 +463,46 @@ def test_sealed_output_before_worker_loss_is_reported_only_as_orphan(
 @pytest.mark.unit
 def test_outcome_reply_rejects_orphan_overlap_extra_and_reordering() -> None:
     node, request, grant, object_id = _node_fixture()
-    second_id = ObjectID(request.task_id, 1)
-    first = protocol.ObjectStoreDescriptor(
-        object_id, request.requester_worker_id, request.attempt_id, node.node_id,
-        1, hashlib.sha256(b"a").hexdigest(),
-    )
-    second = protocol.ObjectStoreDescriptor(
-        second_id, request.requester_worker_id, request.attempt_id, node.node_id,
-        1, hashlib.sha256(b"b").hexdigest(),
-    )
-    values = dict(
-        lease_id=request.lease_id, task_id=request.task_id,
+    first = protocol.ObjectStoreDescriptor(object_id, request.requester_worker_id,
+        request.attempt_id, node.node_id, 1, hashlib.sha256(b"a").hexdigest())
+    values = dict(lease_id=request.lease_id, task_id=request.task_id,
         attempt_id=request.attempt_id, executor_worker_id=grant.worker_id,
-        owner_worker_id=request.requester_worker_id,
-        object_ids=(object_id, second_id), node_id=node.node_id, found=True,
-        worker_alive=False, state=protocol.LeaseExecutionState.WORKER_LOST,
-    )
+        owner_worker_id=request.requester_worker_id, object_ids=(object_id,),
+        node_id=node.node_id, found=True, worker_alive=False,
+        state=protocol.LeaseExecutionState.WORKER_LOST)
     with pytest.raises(ProtocolError, match="disjoint"):
-        protocol.GetWorkerLeaseOutcomeReply(
-            **values, descriptors=(first,), orphan_descriptors=(first,),
-        )
+        protocol.GetWorkerLeaseOutcomeReply(**values, descriptors=(first,), orphan_descriptors=(first,))
+    other_task = TaskID.random()
+    extra = protocol.ObjectStoreDescriptor(ObjectID.for_task(other_task), request.requester_worker_id,
+        AttemptID(other_task, 0), node.node_id, 1, hashlib.sha256(b"c").hexdigest())
     with pytest.raises(ProtocolError, match="was not requested"):
-        extra = ObjectID(request.task_id, 2)
-        protocol.GetWorkerLeaseOutcomeReply(
-            **values, orphan_descriptors=(protocol.ObjectStoreDescriptor(
-                extra, request.requester_worker_id, request.attempt_id,
-                node.node_id, 1, hashlib.sha256(b"c").hexdigest(),
-            ),),
-        )
-    with pytest.raises(ProtocolError, match="manifest order"):
-        protocol.GetWorkerLeaseOutcomeReply(
-            **values, orphan_descriptors=(second, first),
-        )
-    # A strict subset is legal for orphan cleanup; it simply names the
-    # physical replicas that actually exist for the failed attempt.
-    subset = protocol.GetWorkerLeaseOutcomeReply(
-        **values, orphan_descriptors=(second,),
-    )
-    assert subset.orphan_descriptors == (second,)
+        protocol.GetWorkerLeaseOutcomeReply(**values, orphan_descriptors=(extra,))
+    # Two-output ordering is retired. Duplicate entries for the one output
+    # must still fail; neither an empty observation nor one orphan is success.
+    with pytest.raises(ProtocolError, match="unique objects"):
+        protocol.GetWorkerLeaseOutcomeReply(**values, orphan_descriptors=(first, first))
+    empty = protocol.GetWorkerLeaseOutcomeReply(**values)
+    assert empty.orphan_descriptors == () and empty.completion_status is None
+    present = protocol.GetWorkerLeaseOutcomeReply(**values, orphan_descriptors=(first,))
+    assert present.orphan_descriptors == (first,) and present.completion_status is None
 
 
 @pytest.mark.unit
 def test_node_rejects_outcome_manifest_subset_extra_and_reordering() -> None:
     node, request, grant, first_id = _node_fixture()
-    second_id = ObjectID(request.task_id, 1)
-    bound = replace(request, return_ids=(first_id, second_id))
-    node._leases[request.lease_id].request = bound
-    node._lease_outcomes[request.lease_id] = _LeaseOutcome(bound, grant)
-
-    manifests = (
-        (first_id,),
-        (first_id, second_id, ObjectID(request.task_id, 2)),
-        (second_id, first_id),
-    )
-    for manifest in manifests:
-        reply = node._handle_get_worker_lease_outcome(
-            protocol.GetWorkerLeaseOutcome(
-                request.lease_id, request.task_id, request.attempt_id,
-                grant.worker_id, request.requester_worker_id, manifest,
-            )
-        )
-        assert not reply.found
-        assert "return manifest" in (reply.error or "")
+    # The supported empty probe is structurally valid but cannot match the
+    # actual lease's one-output manifest at the Node authority.
+    empty = protocol.GetWorkerLeaseOutcome(request.lease_id, request.task_id,
+        request.attempt_id, grant.worker_id, request.requester_worker_id, ())
+    assert not node._handle_get_worker_lease_outcome(empty).found
+    # Multi-output/reordered manifests are rejected by the wire boundary,
+    # before they can reach a Node whose lease is still unchanged.
+    for manifest in ((first_id, first_id), (ObjectID(request.task_id, 1),),
+                     (first_id, ObjectID(request.task_id, 1))):
+        with pytest.raises(ProtocolError):
+            protocol.GetWorkerLeaseOutcome(request.lease_id, request.task_id,
+                request.attempt_id, grant.worker_id, request.requester_worker_id, manifest)
+    assert node._leases[request.lease_id].request == request
 
 
 @pytest.mark.unit
@@ -543,7 +535,7 @@ def test_death_and_complete_have_one_terminal_winner(
         expected = protocol.LeaseExecutionState.WORKER_LOST
         assert publication.journal.snapshot(identity).complete is None
         assert publication.adapter.rollback_reported(identity)
-        assert publication.recovery.snapshot(identity).rollback is not None
+        assert publication.handoffs.query(identity).phase is OutputHandoffPhase.ABORTED
     assert node._leases[request.lease_id].state is expected
     assert node.resource_ledger.available == node.resource_ledger.total
     assert node._ledger.release_calls == 1
@@ -862,7 +854,7 @@ def test_crash_failpoint_exits_after_complete_before_task_reply(
             prepared = node._handle_prepare_output_publication(message)
             identity = message.manifest.publication_id
             assert prepared.accepted and publication.journal.snapshot(identity).ready_to_complete
-            assert publication.recovery.snapshot(identity).armed
+            assert publication.handoffs.query(identity).manifest == message.manifest
             assert publication.journal.snapshot(identity).complete is None
             assert node.resource_ledger.snapshot() == before and node._ledger.release_calls == 0
             return prepared

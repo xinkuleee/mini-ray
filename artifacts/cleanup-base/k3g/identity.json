@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "57b65e22927d607a989aea517d2365e96671d8c2",
+  "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_ambiguous_grant_custody_path.py\n M tests/integration/test_local_replica_handoff_failure_path.py\n M tests/integration/test_pregrant_custody_path.py\n M tests/unit/test_cancelled_grant_inventory.py\n M tests/unit/test_contained_edge_runtime.py\n M tests/unit/test_core_actor_restart.py\n M tests/unit/test_core_placement_group_scheduling.py\n M tests/unit/test_inline_recovery.py\n M tests/unit/test_stored_physical_gc.py\n M tests/unit/test_worker_crash_supervisor.py\n M tests/unit/test_worker_output_discovery.py\n",
+  "archive_sha256": "0f867c1fc303ade0b936bde702d9d17da40fd089524f39180ebc333d008d2b64",
+  "file_count": 482,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

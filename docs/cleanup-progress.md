@@ -41,3 +41,5 @@ K3d：NodeDeath16/recursive6/foreign8/retirement8修后通过；PG4/boundary2/ow
 K3e：确认并修复ownerINLINE真实数据仍在却因scratch丢失被误判LOST；先从既有owner完整receipt/result重组envelope，保已锁UNKNOWN不反转。receipt6+NodeLoss9+CF12、lease4/storedadopt26、owner存活34/replica20/retirement26全部过；增强后继须继承此公共修复。
 
 K3f：单次manifest校验共用path缓存、单次verify复用已得hash，缓存不跨CLI；33工具case通过、入口约1.2s。publication-source21/worker-crash16通过，旧module alias/跨版本pickle回退不恢复。
+
+K3g：inline恢复7/Worker discovery29/stored metadata2/PG key1/supervisor wire2通过；pregrant/GrantACK未知/PinACK未知/ReleaseACK未知/requester真实死亡5个原集成场景均通过，未加新故障组合。

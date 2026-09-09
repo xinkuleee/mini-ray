@@ -38,7 +38,6 @@ from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_publication import OutputPublicationHeader, OutputPublicationID
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
 from miniray.ownership import (
     ObjectCollectionState, ObjectOwnerTable, ObjectState, OutputOwnerPublicationPlan,
 )
@@ -144,7 +143,7 @@ def _no_pg_admission_runtime(monkeypatch):
 
 
 class _PurePgAdmission:
-    """One real committed bundle and tiny selected-output/owner authorities.
+    """Two real committed bundles and tiny single-output/owner authorities.
 
     Addresses and the Node's existing inert Worker slot are metadata only.
     At most two logical Tasks, three leases, two publications and one 1-KiB
@@ -176,32 +175,29 @@ class _PurePgAdmission:
         # only Core's cached control reply is installed as a direct fixture.
         created = self.pg.create(protocol.CreatePlacementGroupRequest(
             PlacementGroupID.random(), 3,
-            (protocol.PlacementGroupBundle(0, ResourceVector({"CPU": 1})),),
-            PlacementStrategy.PACK.value,
+            (protocol.PlacementGroupBundle(0, ResourceVector({"CPU": 1})),
+             protocol.PlacementGroupBundle(1, ResourceVector({"CPU": 1}))),
+            PlacementStrategy.STRICT_PACK.value,
         ))
         assert created.accepted and created.phase is protocol.PlacementGroupPhaseStatus.CREATED
-        assert len(created.placements) == 1 and len(self.participant_calls) == 2
+        assert len(created.placements) == 2 and len(self.participant_calls) == 2
         self.key = created.placements[0]
         self.identity = created.placement_group_id, created.attempt
         core._placement_group_states = {self.identity: created.phase}
         core._placement_group_manifests = {self.identity: created.placements}
         self.child = node._bundle_reservations.ledger_for(*self.identity, 0)
         assert self.child.total == self.child.available == ResourceVector({"CPU": 1})
-        assert node.resource_ledger.available == ResourceVector({"CPU": 1})
+        assert node.resource_ledger.available == ResourceVector()
         self.journal = OutputPublicationJournal()
-        self.output_recovery = OutputPublicationRecoveryAuthority()
 
         def no_reference_effect(*_args, **_kwargs):
             pytest.fail("ref-free PG result attempted a child or graph effect")
 
         self.adapter = OutputPublicationNodeAdapter(
-            self.journal, report_intent=self.output_recovery.report_intent,
-            arm_complete=self.output_recovery.arm_complete,
-            report_terminal=self.output_recovery.report_terminal,
-            report_rollback=self.output_recovery.report_rollback,
+            self.journal, register_owner=self.register_owner,
+            report_complete=self.report_complete, report_rollback=self.report_rollback,
             prepare_child=no_reference_effect, promote_child=no_reference_effect,
-            release_child=no_reference_effect, prepare_graph=no_reference_effect,
-            abort_graph=no_reference_effect,
+            release_child=no_reference_effect,
             seal_replica=node._seal_output_publication_replica,
             drop_replica=node._drop_output_publication_replica,
         )
@@ -209,6 +205,28 @@ class _PurePgAdmission:
         node._local_replica_write_claims = {}
         node._output_publication_journal, node._output_publications = self.journal, self.adapter
         core._rpc, core._push_task_rpc = self.rpc, self.push_rpc
+
+    def owner_call(self, request, method):
+        reply = method(request)
+        assert type(reply) is output_wire.OutputHandoffReply and reply.accepted, reply.error
+        assert reply.request == request
+        return reply.snapshot
+
+    def register_owner(self, manifest):
+        snapshot = self.owner_call(output_wire.RegisterOutputHandoff(manifest), self.core.register_output_handoff)
+        assert snapshot.manifest == manifest and snapshot.complete is None
+
+    def report_complete(self, witness):
+        snapshot = self.owner_call(output_wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete)
+        assert snapshot.complete == witness
+
+    def report_rollback(self, tombstone, *, manifest):
+        snapshot = self.owner_call(output_wire.ReportOutputHandoffRollback(manifest, tombstone),
+                                   self.core.report_output_handoff_rollback)
+        assert snapshot.manifest == manifest and snapshot.adoption is None
+
+    def handoff(self, identity):
+        return self.owner_call(output_wire.GetOutputHandoff(identity), self.core.get_output_handoff)
 
     def resource_rpc(self, address, handler, request):
         assert address == self.core.gcs_address and handler == "update_node_resources"
@@ -276,32 +294,9 @@ class _PurePgAdmission:
             reply = node._handle_request_lease(request)
             assert type(reply) in (protocol.GrantWorkerLease, protocol.RejectWorkerLease)
             return reply
-        if handler == output_wire.REPORT_OUTPUT_PUBLICATION_HANDLER:
-            assert address == core.gcs_address
-            if type(request) is output_wire.ReportOutputPublicationTerminal:
-                envelope = self.publications[request.witness.publication_id]
-                assert request.witness == envelope.complete
-                ack = self.output_recovery.report_terminal(request.witness)
-            elif type(request) is output_wire.ReportOutputPublicationAdopted:
-                envelope = self.publications[request.proof.complete.publication_id]
-                assert core.owner_table.output_owner_publication_receipt(
-                    OutputOwnerPublicationPlan(envelope.manifest.execution, envelope),
-                ).committed
-                ack = self.output_recovery.report_adopted(request.proof)
-            else:
-                assert type(request) is output_wire.ReportOutputPublicationSlotCollected
-                snapshot = core.owner_table.snapshot(request.proof.object_id)
-                if snapshot.output_retirement_id is not None:
-                    assert snapshot.state is ObjectState.LOST
-                    assert request.proof.cleanup_id == snapshot.output_retirement_id
-                else:
-                    assert core.owner_table.collection_state(request.proof.object_id) is ObjectCollectionState.COLLECTING
-                assert not node.object_store.contains(request.proof.object_id, sealed_only=False)
-                ack = self.output_recovery.report_slot_collected(request.proof)
-            return output_wire.OutputRecoveryReply(request, ack)
         if handler == output_wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER:
             assert address == self.target_address
-            assert self.output_recovery.snapshot(request.proof.complete.publication_id).adopted == request.proof
+            assert self.handoff(request.proof.complete.publication_id).adoption == request.proof
             return node._handle_ack_output_publication_adopted(request)
         if handler == "drop_object_replica":
             assert address == self.target_address and len(self.drops) < 4
@@ -342,7 +337,8 @@ class _PurePgAdmission:
             prepared = node._handle_prepare_output_publication(output_wire.PrepareOutputPublication(
                 outputs.manifest, outputs.slot_payloads,
             ))
-            assert prepared.accepted and self.output_recovery.snapshot(identity).armed
+            assert prepared.accepted and self.journal.snapshot(identity).ready_to_complete
+            assert self.handoff(identity).manifest == outputs.manifest
             discovery.release_sources_after_promotions()
         status = protocol.TaskReplyStatus.SYSTEM_ERROR if mode == "system" else protocol.TaskReplyStatus.SUCCEEDED
         complete = node._handle_complete_worker_lease(protocol.CompleteWorkerLease(
@@ -382,8 +378,9 @@ class _PurePgAdmission:
                 assert core.owner_table.collection_state(ref.object_id) is ObjectCollectionState.COLLECTED
                 assert core._recovery.lineage_for_object(ref.object_id) is None
             for identity in self.publications:
-                snapshot = self.output_recovery.snapshot(identity)
-                assert snapshot.adopted is not None and len(snapshot.slot_collections) == 1
+                snapshot = self.handoff(identity)
+                assert snapshot.adoption is not None
+                assert core.owner_table.collection_state(identity.output_ids[0]) is ObjectCollectionState.COLLECTED
                 assert not self.journal.snapshot(identity).retained_result_slots
                 assert self.adapter.report_terminal(identity)
             assert not self.adapter.pending_terminal_reports()
@@ -392,7 +389,7 @@ class _PurePgAdmission:
             assert self.child.available == self.child.total
             # This fixture does not claim distributed shutdown/removal: the
             # existing committed PG root reservation remains authoritative.
-            assert self.node.resource_ledger.available == ResourceVector({"CPU": 1})
+            assert self.node.resource_ledger.available == ResourceVector()
             assert core._placement_group_states[self.identity] is protocol.PlacementGroupPhaseStatus.CREATED
         finally:
             for ref in self.refs:
@@ -819,7 +816,8 @@ def test_pg_key_survives_system_retry_and_reconstruction() -> None:
         assert core._recovery.task_record(pending.task_id).retries_started == 2
         assert core._recovery.task_record(pending.task_id).retries_remaining == 0
         assert core._recovery.active_recovery(pending.task_id) == reconstructed.spec.attempt_id
-        assert len(scenario.output_recovery.snapshot(old_envelope.publication_id).slot_collections) == 1
+        assert scenario.handoff(old_envelope.publication_id).adoption is not None
+        assert not scenario.journal.snapshot(old_envelope.publication_id).retained_result_slots
         assert [reply.status for _, reply in scenario.drops] == [
             protocol.DropObjectReplicaStatus.DROPPED, protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
         ]
@@ -840,50 +838,50 @@ def test_pg_key_survives_system_retry_and_reconstruction() -> None:
 @pytest.mark.unit
 def test_worker_start_and_complete_echo_task_scheduling_key(monkeypatch) -> None:
     from miniray.output_publication import OutputPublicationNodeIncarnation
+    from tests.unit.test_worker_completion_paths import _SingleOutputRPC, _worker
 
-    node_id = NodeID.random()
-    worker_id = WorkerID.random()
+    node_id, worker_id, job_id = NodeID.random(), WorkerID.random(), JobID.random()
     key = _scheduling_key(node_id)
-    job_id = JobID.random()
     task_id = TaskID.derive(job_id, TaskID.for_driver(job_id), 0)
-    spec = protocol.TaskSpec(
-        job_id, task_id, AttemptID(task_id, 0),
+    spec = protocol.TaskSpec(job_id, task_id, AttemptID(task_id, 0),
         protocol.FunctionKey(job_id, __name__, "pg_worker", "v1"), (), 1,
-        ResourceVector(), WorkerID.random(), scheduling_key=key,
-    )
+        ResourceVector(), WorkerID.random(), scheduling_key=key)
     push = protocol.PushTask(LeaseID.random(), worker_id, spec)
-    worker = object.__new__(WorkerServer)
-    worker.worker_id = worker_id
+    worker = _worker(worker_id)
     worker.node_id = node_id
     worker.node_address = ("127.0.0.1", 22001)
-    worker._completion_acked = set()
-    worker._push_obligations = set()
+    actual = _SingleOutputRPC()
+    incarnation = OutputPublicationNodeIncarnation(node_id, 21001, 3)
     seen = []
 
     def rpc(_address, handler, request):
         seen.append(request)
         if handler == START_WORKER_LEASE_HANDLER:
-            return protocol.StartWorkerLeaseReply(
-                request.lease_id, protocol.LeaseExecutionState.RUNNING, True,
-                scheduling_key=request.scheduling_key,
-                node_incarnation=OutputPublicationNodeIncarnation(node_id, 21001, 3),
-            )
+            return protocol.StartWorkerLeaseReply(request.lease_id,
+                protocol.LeaseExecutionState.RUNNING, True,
+                scheduling_key=request.scheduling_key, node_incarnation=incarnation)
         assert handler == COMPLETE_WORKER_LEASE_HANDLER
-        return protocol.CompleteWorkerLeaseReply(
-            request.lease_id, request.task_id, request.attempt_id,
-            request.worker_id, request.status,
-            protocol.LeaseExecutionState.COMPLETED, True, True,
-            scheduling_key=request.scheduling_key,
-        )
+        return actual.complete(request)
 
     monkeypatch.setattr("miniray.worker.rpc_request", rpc)
     worker._start_worker_lease(push)
-    reply = protocol.TaskReply(
-        task_id, spec.attempt_id, worker_id, protocol.TaskReplyStatus.SUCCEEDED, ()
-    )
-    worker._ensure_completion_acked(push, reply, (spec.attempt_id, push.lease_id))
-    assert len(seen) == 2
-    assert all(request.scheduling_key is key for request in seen)
+    session = OutputDiscoverySession(OutputPublicationHeader(
+        OutputPublicationID(push.lease_id, TaskExecutionKey.from_task_spec(spec)),
+        job_id, worker_id, spec.owner_worker_id, incarnation), inline_threshold=1024)
+    outputs = session.discover(("pg",))
+    assert actual.prepare(output_wire.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads)).accepted
+    session.release_sources_after_promotions()
+    assert actual.journal.snapshot(outputs.manifest.publication_id).complete is None
+    completion = protocol.CompleteWorkerLease(push.lease_id, task_id, spec.attempt_id,
+        worker_id, protocol.TaskReplyStatus.SUCCEEDED, key)
+    completed = actual.complete(completion)
+    reply = protocol.TaskReply(task_id, spec.attempt_id, worker_id,
+        protocol.TaskReplyStatus.SUCCEEDED, completed.output_publication.results,
+        output_publication=completed.output_publication)
+    witness = worker._ensure_completion_acked(push, reply, (spec.attempt_id, push.lease_id))
+    assert witness == completed.output_publication
+    assert len(actual.completions) == 1
+    assert len(seen) == 2 and all(request.scheduling_key is key for request in seen)
 
 
 @pytest.mark.unit
@@ -957,18 +955,18 @@ def test_core_create_replays_one_pg_transaction_until_created(
                 request.placement_group_id, request.attempt, False, first_phase,
                 error="participant acknowledgement is unresolved",
             )
-        key = protocol.PlacementGroupSchedulingKey(
-            request.placement_group_id, request.attempt, 0, NodeID.random(),
-            "c" * 64,
-        )
+        node = NodeID.random()
+        keys = tuple(protocol.PlacementGroupSchedulingKey(
+            request.placement_group_id, request.attempt, index, node, "c" * 64,
+        ) for index in range(2))
         return protocol.CreatePlacementGroupReply(
             request.placement_group_id, request.attempt, True,
-            protocol.PlacementGroupPhaseStatus.CREATED, (key,),
+            protocol.PlacementGroupPhaseStatus.CREATED, keys,
         )
 
     core._rpc = rpc
     reply = core.create_placement_group(
-        (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+        (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
     )
 
     assert reply.accepted
@@ -1006,7 +1004,7 @@ def test_core_create_waits_for_removed_before_raising_rejection(
     core._rpc = rpc
     with pytest.raises(SystemTaskError, match="participant rejected"):
         core.create_placement_group(
-            (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+            (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
         )
 
     assert len(requests) == 2
@@ -1021,7 +1019,7 @@ def test_core_and_gcs_adapter_converge_ambiguous_prepare_with_one_pg_id(
     nodes = NodeRegistry()
     target_node = NodeID.random()
     nodes.register(
-        target_node, ("127.0.0.1", 23001), ResourceVector({"CPU": 1}),
+        target_node, ("127.0.0.1", 23001), ResourceVector({"CPU": 2}),
         node_pid=4301,
     )
     first_prepare = None
@@ -1056,7 +1054,7 @@ def test_core_and_gcs_adapter_converge_ambiguous_prepare_with_one_pg_id(
 
     core._rpc = gcs_rpc
     reply = core.create_placement_group(
-        (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+        (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
     )
 
     assert reply.phase is protocol.PlacementGroupPhaseStatus.CREATED
@@ -1073,7 +1071,7 @@ def test_core_and_gcs_adapter_raise_only_after_reject_abort_is_removed(
     nodes = NodeRegistry()
     target_node = NodeID.random()
     nodes.register(
-        target_node, ("127.0.0.1", 23002), ResourceVector({"CPU": 1}),
+        target_node, ("127.0.0.1", 23002), ResourceVector({"CPU": 2}),
         node_pid=4302,
     )
     create_requests = []
@@ -1106,7 +1104,7 @@ def test_core_and_gcs_adapter_raise_only_after_reject_abort_is_removed(
 
     with pytest.raises(SystemTaskError, match="busy"):
         core.create_placement_group(
-            (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+            (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
         )
 
     pg_id = create_requests[0].placement_group_id
@@ -1144,13 +1142,13 @@ def test_pg_create_is_a_shutdown_visible_inflight_operation(monkeypatch) -> None
                 protocol.PlacementGroupPhaseStatus.PREPARING,
                 error="prepare pending",
             )
-        key = protocol.PlacementGroupSchedulingKey(
-            request.placement_group_id, request.attempt, 0, NodeID.random(),
-            "d" * 64,
-        )
+        node = NodeID.random()
+        keys = tuple(protocol.PlacementGroupSchedulingKey(
+            request.placement_group_id, request.attempt, index, node, "d" * 64,
+        ) for index in range(2))
         return protocol.CreatePlacementGroupReply(
             request.placement_group_id, request.attempt, True,
-            protocol.PlacementGroupPhaseStatus.CREATED, (key,),
+            protocol.PlacementGroupPhaseStatus.CREATED, keys,
         )
 
     core._rpc = rpc
@@ -1158,7 +1156,7 @@ def test_pg_create_is_a_shutdown_visible_inflight_operation(monkeypatch) -> None
     def create():
         try:
             created.append(core.create_placement_group(
-                (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+                (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
             ))
         except BaseException as exc:
             errors.append(exc)
@@ -1194,7 +1192,7 @@ def test_pg_control_admission_rejects_after_shutdown_fence() -> None:
 
     with pytest.raises(RuntimeShuttingDownError, match="shutting down"):
         core.create_placement_group(
-            (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+            (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
         )
     with pytest.raises(RuntimeShuttingDownError, match="shutting down"):
         core.remove_placement_group(PlacementGroupID.random(), 0)
@@ -1299,7 +1297,7 @@ def test_core_and_adapter_replay_pending_against_fresh_capacity(
     core = _core()
     nodes = NodeRegistry()
     target_node = NodeID.random()
-    total = ResourceVector({"CPU": 1})
+    total = ResourceVector({"CPU": 2})
     nodes.register(
         target_node, ("127.0.0.1", 24001), total,
         node_pid=4401,
@@ -1341,7 +1339,7 @@ def test_core_and_adapter_replay_pending_against_fresh_capacity(
 
     core._rpc = rpc
     reply = core.create_placement_group(
-        (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+        (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
     )
 
     assert reply.phase is protocol.PlacementGroupPhaseStatus.CREATED
@@ -1495,7 +1493,7 @@ def test_pg_control_timeout_hands_off_at_shutdown_fence(
         try:
             if operation == "create":
                 core.create_placement_group(
-                    (ResourceVector({"CPU": 1}),), PlacementStrategy.PACK
+                    (ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})), PlacementStrategy.STRICT_PACK
                 )
             else:
                 core.remove_placement_group(pg_id, 0)

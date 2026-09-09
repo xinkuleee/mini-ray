@@ -227,8 +227,8 @@ def test_second_source_loss_hands_off_first_replica_without_a_grant():
         ((rejected_request, rejection),) = target_replies
         assert rejected_request == frozen_request and type(rejection) is protocol.RejectWorkerLease
         assert rejection.reason is protocol.LeaseRejectReason.DEPENDENCY_UNAVAILABLE
-        assert (rejection.lease_id, rejection.task_id, rejection.attempt_id, rejection.scheduling_key, rejection.target_execution) == (
-            frozen_request.lease_id, frozen_request.task_id, frozen_request.attempt_id, frozen_request.scheduling_key, frozen_request.target_execution,
+        assert (rejection.lease_id, rejection.task_id, rejection.attempt_id, rejection.scheduling_key) == (
+            frozen_request.lease_id, frozen_request.task_id, frozen_request.attempt_id, frozen_request.scheduling_key,
         )
         assert not any(type(reply) is protocol.GrantWorkerLease for _, _, reply in observed)
         assert not any(kind in (GET_WORKER_LEASE_OUTCOME_HANDLER, "report_retained_object_location") for kind, _, _ in observed)

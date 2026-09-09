@@ -149,9 +149,9 @@ def _node_state(context, node, deadline):
 def _assert_empty_outcome(reply, request, node_id):
     assert type(reply) is protocol.GetWorkerLeaseOutcomeReply and reply.found
     assert (reply.lease_id, reply.task_id, reply.attempt_id, reply.executor_worker_id,
-            reply.owner_worker_id, reply.object_ids, reply.node_id, reply.scheduling_key, reply.target_execution) == (
+            reply.owner_worker_id, reply.object_ids, reply.node_id, reply.scheduling_key) == (
         request.lease_id, request.task_id, request.attempt_id, request.executor_worker_id,
-        request.owner_worker_id, request.object_ids, node_id, request.scheduling_key, request.target_execution,
+        request.owner_worker_id, request.object_ids, node_id, request.scheduling_key,
     )
     assert reply.completion_status is None and not reply.cleanup_pending
     assert not reply.descriptors and not reply.orphan_descriptors
