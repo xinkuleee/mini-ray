@@ -1,0 +1,301 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_typed_borrow_sources.py",
+    "exit_code": 0,
+    "seconds": 4.602,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_typed_borrow_sources.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_contained_pin_owner_identity.py",
+    "exit_code": 0,
+    "seconds": 4.235,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_contained_pin_owner_identity.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_nested_argument_manifest.py",
+    "exit_code": 0,
+    "seconds": 3.683,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_nested_argument_manifest.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_public_multi_return_runtime.py",
+    "exit_code": 0,
+    "seconds": 9.351,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_public_multi_return_runtime.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_contained_edge_runtime.py::test_failed_edge_release_freezes_outer_metadata_until_retry_ack",
+    "exit_code": 1,
+    "seconds": 4.282,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_contained_edge_runtime.py::test_failed_edge_release_freezes_outer_metadata_until_retry_ack"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_contained_edge_runtime.py::test_shutdown_retries_retained_edge_obligation_before_clean",
+    "exit_code": 1,
+    "seconds": 3.398,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_contained_edge_runtime.py::test_shutdown_retries_retained_edge_obligation_before_clean"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_inline_publication_gate.py",
+    "exit_code": 2,
+    "seconds": 0.208,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_inline_publication_gate.py"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_fixed_frame_round_trip_preserves_single_execution",
+    "exit_code": 0,
+    "seconds": 4.49,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_fixed_frame_round_trip_preserves_single_execution"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_distinct_task_attempt_or_lease_never_aliases_one_publication",
+    "exit_code": 0,
+    "seconds": 3.352,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_distinct_task_attempt_or_lease_never_aliases_one_publication"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_arrival_frame_rejects_corruption_and_drifted_identity",
+    "exit_code": 0,
+    "seconds": 6.084,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_arrival_frame_rejects_corruption_and_drifted_identity"
+    ],
+    "log": "009-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_frame_rejects_invalid_incarnation_or_phase",
+    "exit_code": 0,
+    "seconds": 4.681,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_frame_rejects_invalid_incarnation_or_phase"
+    ],
+    "log": "010-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_arrival_requires_a_complete_metadata_digest",
+    "exit_code": 0,
+    "seconds": 4.873,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_arrival_requires_a_complete_metadata_digest"
+    ],
+    "log": "011-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_config_rejects_invalid_node_index",
+    "exit_code": 0,
+    "seconds": 4.878,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_config_rejects_invalid_node_index"
+    ],
+    "log": "012-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_config_rejects_unbound_address",
+    "exit_code": 0,
+    "seconds": 4.692,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_config_rejects_unbound_address"
+    ],
+    "log": "013-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_config_rejects_invalid_phase",
+    "exit_code": 0,
+    "seconds": 5.733,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_config_rejects_invalid_phase"
+    ],
+    "log": "014-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_config_rejects_invalid_timeout",
+    "exit_code": 0,
+    "seconds": 4.23,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_config_rejects_invalid_timeout"
+    ],
+    "log": "015-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_init_rejects_wrong_gate_type_before_spawning",
+    "exit_code": 0,
+    "seconds": 7.857,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_init_rejects_wrong_gate_type_before_spawning"
+    ],
+    "log": "016-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_receiver_requires_a_real_socket_contract_and_positive_bound",
+    "exit_code": 0,
+    "seconds": 4.639,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_receiver_requires_a_real_socket_contract_and_positive_bound"
+    ],
+    "log": "017-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_receiver_uses_one_deadline_for_fragmented_frame",
+    "exit_code": 0,
+    "seconds": 4.373,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_receiver_uses_one_deadline_for_fragmented_frame"
+    ],
+    "log": "018-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_receiver_does_not_reset_deadline_after_partial_frame",
+    "exit_code": 0,
+    "seconds": 7.705,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_receiver_does_not_reset_deadline_after_partial_frame"
+    ],
+    "log": "019-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_arrival_frame_round_trips_exact_incarnation_and_publication",
+    "exit_code": 0,
+    "seconds": 4.678,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_arrival_frame_round_trips_exact_incarnation_and_publication"
+    ],
+    "log": "020-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_stored_arrival_frame_preserves_single_output_and_attempt",
+    "exit_code": 0,
+    "seconds": 5.924,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_stored_arrival_frame_preserves_single_output_and_attempt"
+    ],
+    "log": "021-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_stored_intent_gate.py::test_receiver_rejects_truncated_frame_before_peer_exit",
+    "exit_code": 0,
+    "seconds": 6.627,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3k-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_stored_intent_gate.py::test_receiver_rejects_truncated_frame_before_peer_exit"
+    ],
+    "log": "022-case.log"
+  }
+]

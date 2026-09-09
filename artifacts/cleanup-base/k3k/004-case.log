@@ -1,0 +1,29 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_failed_edge_release_freezes_outer_metadata_until_retry_ack ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7cc4ef7c3440>
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures('_no_edge_retry_runtime')
+    def test_failed_edge_release_freezes_outer_metadata_until_retry_ack(monkeypatch):
+        f=_EdgeRetryFixture(monkeypatch)
+        try:
+            f.register();f.adopt_finish();c=f.core
+            _edge_release_local(f.ref);_edge_drain_notices(c)
+            obligation=c._object_gc_obligations[f.ref.object_id]
+            plan=obligation.plan
+            assert obligation.pending_edges=={f.edge} and obligation.retry_scheduled
+            assert not obligation.pending_drops and f.node.object_store.used_bytes==0
+            assert c.owner_table.collection_state(f.ref.object_id) is ObjectCollectionState.COLLECTING
+            assert f.child_owner.owner_table.snapshot(f.child_id).contained_holds==frozenset({f.transfer.final_hold})
+            blocked=tuple(f.release_calls)
+            scheduled=tuple(f.delayed)
+>           assert 1<=len(blocked)<=2 and not f.released and scheduled
+E           AssertionError: assert (3 <= 2)
+E            +  where 3 = len((ReleaseContainedReference(object_id=ObjectID(task_id=TaskID('f2402206d16e8a837f9a8563dfee31b2'), return_index=0), own...oken='output-publication-handoff:27d1c8068b0a7e53c919a87ce251d4faa69db503dd940df4c54716dc6c6b9dd0:slot:0:transfer:0'))))
+
+tests/unit/test_contained_edge_runtime.py:167: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_contained_edge_runtime.py::test_failed_edge_release_freezes_outer_metadata_until_retry_ack
+1 failed in 1.02s

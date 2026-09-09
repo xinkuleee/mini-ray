@@ -21,9 +21,68 @@ from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, ObjectID, TaskID, WorkerID
 from miniray.protocol import (
     FunctionKey, InlineArg, NestedReferenceTransfer, RefArg, TaskReferenceHold,
-    StoredArg, TaskReferenceHoldKind, TaskSpec,
+    TaskReferenceHoldKind, TaskSpec,
 )
 from miniray.resources import ResourceVector
+
+
+def test_explicit_refarg_readiness_does_not_promote_adjacent_nested_handles():
+    nested, submitter, task_id = _identity(18)
+    transfer = _transfer(nested, submitter, task_id)
+    encoded = encode_task_argument({'nested':nested}, export_nested_ref=lambda _:transfer)
+    storage_id = ObjectID.for_task(TaskID(bytes([22])*16))
+    explicit = RefArg(storage_id,submitter)
+    assert top_level_dependencies((explicit,encoded)) == (storage_id,)
+    assert nested_references((explicit,encoded)) == (transfer,)
+    assert contained_references((explicit,encoded)) == (nested.object_id,)
+    loads=[]
+    imported=object()
+    def materialize(object_id,owner):
+        loads.append((object_id,owner))
+        assert (object_id,owner)==(storage_id,submitter)
+        return {'stored':'decoded'}
+    decoded=decode_task_arguments((explicit,encoded),materialize_ref=materialize,
+        import_nested_ref=lambda item: imported if item==transfer else pytest.fail('wrong nested identity'))
+    assert decoded[0]=={'stored':'decoded'} and decoded[1]['nested'] is imported
+    assert loads==[(storage_id,submitter)]
+
+
+def test_malformed_inline_manifest_rolls_back_already_acquired_handle():
+    first,submitter,task_id=_identity(19)
+    second,_,_=_identity(23)
+    one,two=_transfer(first,submitter,task_id),_transfer(second,submitter,task_id)
+    closed=[]
+    session=NestedReferenceImportSession(lambda item:_Handle('one' if item==one else 'two',closed))
+    argument=InlineArg(_payload(_Marker(0)),nested_refs=(one,two))
+    with pytest.raises(ArgumentEncodingError,match='invalid serialized'):
+        decode_task_arguments((argument,),materialize_ref=lambda *_:pytest.fail('no top level RefArg'),
+            import_nested_ref=session)
+    assert closed==['one'] and session.acquired==()
+
+
+def test_refarg_materializer_returns_decoded_bytes_without_second_deserialization():
+    argument=RefArg(ObjectID.for_task(TaskID.random()),WorkerID.random())
+    value=pickle.dumps(7)
+    calls=[]
+    with pytest.raises(UnresolvedDependencyError,match='top-level object'):
+        decode_task_argument(argument)
+    decoded=decode_task_argument(argument,materialize_ref=lambda *identity:(calls.append(identity),value)[1])
+    assert decoded==value and type(decoded) is bytes
+    assert calls==[(argument.object_id,argument.owner_worker_id)]
+
+
+@pytest.mark.parametrize('other_role',['inline_nested','top_level'])
+def test_task_spec_rejects_nested_owner_conflicts_across_supported_argument_roles(other_role):
+    reference,submitter,task_id=_identity(53)
+    transfer=_transfer(reference,submitter,task_id)
+    nested=InlineArg(_payload(_Marker(0)),nested_refs=(transfer,))
+    other_owner=WorkerID(bytes([58])*16)
+    conflict=(InlineArg(b'unused',nested_refs=(replace(transfer,owner_worker_id=other_owner),))
+              if other_role=='inline_nested' else RefArg(reference.object_id,other_owner))
+    job=JobID(bytes([59])*16)
+    with pytest.raises(ProtocolError,match='conflicting owners'):
+        TaskSpec(job,task_id,AttemptID(task_id,0),FunctionKey(job,'m','f','v'),(nested,),1,
+            ResourceVector(),submitter,kwargs=(('other',conflict),))
 
 
 class _Handle:
@@ -185,94 +244,6 @@ def test_manifest_projection_is_non_gating_and_rejects_cross_argument_conflict()
         )
 
 
-def test_stored_arg_is_a_readiness_edge_but_keeps_nested_refs_non_gating() -> None:
-    nested, submitter, task_id = _identity(18)
-    transfer = _transfer(nested, submitter, task_id)
-    encoded = encode_task_argument(
-        {"nested": nested},
-        export_nested_ref=lambda _value: transfer,
-    )
-    assert isinstance(encoded, InlineArg)
-    storage_task = TaskID(bytes([22]) * 16)
-    storage_id = ObjectID.for_task(storage_task)
-    stored = StoredArg(
-        storage_id, submitter, encoded.serializer, encoded.nested_refs
-    )
-
-    assert top_level_dependencies((stored,)) == (storage_id,)
-    assert nested_references((stored,)) == (transfer,)
-    assert contained_references((stored,)) == (nested.object_id,)
-
-    imported = object()
-    decoded = decode_task_arguments(
-        (stored,),
-        materialize_ref=lambda *_identity: pytest.fail(
-            "StoredArg bytes must not use RefArg value materialization"
-        ),
-        materialize_stored=lambda object_id, owner: (
-            encoded.data
-            if (object_id, owner) == (storage_id, submitter)
-            else pytest.fail("wrong StoredArg identity")
-        ),
-        import_nested_ref=lambda item: (
-            imported if item == transfer
-            else pytest.fail("wrong nested transfer")
-        ),
-    )
-    assert decoded == ({"nested": imported},)
-
-
-def test_stored_arg_malformed_manifest_rolls_back_acquired_handles() -> None:
-    first, submitter, task_id = _identity(19)
-    second, _, _ = _identity(23)
-    one = _transfer(first, submitter, task_id)
-    two = _transfer(second, submitter, task_id)
-    storage_id = ObjectID.for_task(TaskID(bytes([27]) * 16))
-    stored = StoredArg(
-        storage_id, submitter, "pickle", (one, two)
-    )
-    closed: list[str] = []
-    session = NestedReferenceImportSession(
-        lambda item: _Handle(
-            "one" if item == one else "two", closed
-        )
-    )
-
-    with pytest.raises(ArgumentEncodingError, match="invalid serialized"):
-        decode_task_arguments(
-            (stored,),
-            materialize_ref=lambda *_identity: pytest.fail(
-                "unexpected RefArg materialization"
-            ),
-            materialize_stored=lambda *_identity: _payload(_Marker(0)),
-            import_nested_ref=session,
-        )
-
-    assert closed == ["one"]
-    assert session.acquired == ()
-
-
-def test_stored_arg_never_uses_the_already_decoded_ref_value_loader() -> None:
-    stored = StoredArg(ObjectID.for_task(TaskID.random()), WorkerID.random())
-    user_value = pickle.dumps(7)
-    value_loads: list[object] = []
-
-    def materialize_value(*identity: object) -> object:
-        value_loads.append(identity)
-        return user_value
-
-    with pytest.raises(UnresolvedDependencyError, match="stored by-value"):
-        decode_task_argument(stored, materialize_ref=materialize_value)
-    assert value_loads == []
-
-    decoded = decode_task_argument(
-        stored, materialize_ref=materialize_value,
-        materialize_stored=lambda *_identity: pickle.dumps(user_value),
-    )
-    assert decoded == user_value
-    assert value_loads == []
-
-
 @pytest.mark.parametrize(
     "persistent_id",
     [
@@ -414,31 +385,4 @@ def test_task_spec_rejects_nested_hold_from_another_task_or_submitter() -> None:
                 argument,
                 nested_refs=(replace(transfer, hold=replace(transfer.hold, submitting_worker_id=WorkerID(bytes([52]) * 16))),),
             )
-        )
-
-
-@pytest.mark.parametrize("other_role", ["inline_nested", "top_level"])
-def test_task_spec_rejects_cross_storage_nested_owner_conflicts(
-    other_role: str,
-) -> None:
-    reference, submitter, task_id = _identity(53)
-    transfer = _transfer(reference, submitter, task_id)
-    stored = StoredArg(
-        ObjectID.for_task(TaskID.random()), submitter,
-        "pickle", (transfer,),
-    )
-    other_owner = WorkerID(bytes([58]) * 16)
-    conflict = (
-        InlineArg(b"unused", nested_refs=(replace(
-            transfer, owner_worker_id=other_owner,
-        ),))
-        if other_role == "inline_nested"
-        else RefArg(reference.object_id, other_owner)
-    )
-    job_id = JobID(bytes([59]) * 16)
-    with pytest.raises(ProtocolError, match="conflicting owners"):
-        TaskSpec(
-            job_id, task_id, AttemptID(task_id, 0),
-            FunctionKey(job_id, "m", "f", "v"), (stored,), 1,
-            ResourceVector(), submitter, kwargs=(("other", conflict),),
         )

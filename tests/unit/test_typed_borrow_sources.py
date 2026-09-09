@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import AttemptID, JobID, ObjectID, TaskID, WorkerID
 from miniray.ownership import (
     ConflictingBorrowerTokenError,
@@ -46,23 +47,24 @@ def _task() -> TaskID:
     return TaskID.derive(job_id, TaskID.for_driver(job_id), 0)
 
 
-def test_contained_source_keeps_legacy_replay_and_does_not_cascade_on_unpin() -> None:
+def test_contained_source_replays_exact_hold_and_does_not_cascade_on_release() -> None:
     table = ObjectOwnerTable()
     object_id, task_id = _identity()
     table.register(object_id)
-    table.add_contained_reference(object_id, "transfer")
+    contained_hold = ContainedReferenceHold(ObjectID.for_task(task_id), WorkerID.random(), "transfer")
+    table.add_contained_reference(object_id, contained_hold)
     hold = _hold(
         TaskReferenceHoldKind.SUBMITTED, WorkerID.random(), task_id
     )
     table.add_submitted_reference(object_id, hold)
     borrower = (WorkerID.random(), "attempt-borrower")
-    contained = ContainedTransferSource("transfer")
+    contained = ContainedTransferSource(contained_hold)
 
     assert table.acquire_exported_reference(object_id, contained, borrower)
-    assert not table.acquire_exported_reference(object_id, "transfer", borrower)
+    assert not table.acquire_exported_reference(object_id, contained, borrower)
     snapshot = table.snapshot(object_id)
     assert (borrower, contained) in snapshot.borrowed_sources
-    assert (borrower, "transfer") in snapshot.borrowed_transfer_tokens
+    assert snapshot.contained_holds == frozenset({contained_hold})
 
     conflicting = TaskHoldSource(hold)
     with pytest.raises(ConflictingBorrowerTokenError, match="another source"):
@@ -70,7 +72,7 @@ def test_contained_source_keeps_legacy_replay_and_does_not_cascade_on_unpin() ->
 
     # Existing contained-transfer semantics deliberately do not tie a borrower
     # to the lifetime of the transfer pin after the acquire acknowledgement.
-    assert table.release_contained_reference(object_id, "transfer")
+    assert table.release_contained_reference(object_id, contained_hold)
     assert table.has_borrowed_reference(object_id, borrower)
     assert table.release_borrowed_reference(object_id, borrower)
 

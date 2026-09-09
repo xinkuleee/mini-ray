@@ -1,0 +1,44 @@
+.......................F                                                 [100%]
+=================================== FAILURES ===================================
+_____ test_pinned_stored_output_keeps_task_lineage_until_exact_drop_replay _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78381d2075c0>
+
+    def test_pinned_stored_output_keeps_task_lineage_until_exact_drop_replay(monkeypatch):
+        with _core_case() as (core, refs):
+            backend = _bind_backend(core)
+            producer, dependency = _register(core)
+            consumer, result = _register(core, dependency)
+            refs.extend((dependency, result))
+            edges = core.owner_table.task_lineage_edges(consumer.task_id)
+            backend.succeed(producer, stored=False, value=1)
+            backend.succeed(consumer, stored=True, value=2)
+            assert core._finish_pending_task(producer) and core._finish_pending_task(consumer)
+            assert _take(core) == ()
+            scheduled, drops = [], []
+            rpc = core._rpc
+            def observe(address, handler, request):
+                reply = rpc(address, handler, request)
+                if handler == "drop_object_replica":
+                    drops.append((request, reply))
+                return reply
+            monkeypatch.setattr(core, "_rpc", observe)
+            monkeypatch.setattr(core, "_schedule_reference_event", lambda mailbox, event, delay: scheduled.append((mailbox, event)))
+            pin = backend.store.pin(result.object_id, ("physical-reader", result.object_id))
+            _release(result)
+            core._reference_mailbox.drain()
+            assert core.owner_table.collection_state(result.object_id) is ObjectCollectionState.COLLECTING
+            assert drops[-1][1].status is protocol.DropObjectReplicaStatus.PINNED
+            obligation = core._object_gc_obligations[result.object_id]
+            plan = obligation.plan
+            assert set(plan.lineage_releases) == set(edges)
+            assert core.owner_table.task_lineage_edges(consumer.task_id) == edges
+            assert all(edge.token in core.owner_table.snapshot(producer.object_id).lineage_tokens for edge in edges)
+>           assert len(scheduled) == 1 and backend.store.snapshot(result.object_id).pin_count == 1
+E           AssertionError: assert (3 == 1)
+E            +  where 3 = len([(<tests.unit._pure_core.SynchronousReferenceMailbox object at 0x78381d206c60>, _RetryInlineGc(object_id=ObjectID(task...78381d206c60>, _RetryInlineGc(object_id=ObjectID(task_id=TaskID('d2808bd61a3d38ec527bdd7f9d12882a'), return_index=0)))])
+
+tests/unit/test_public_multi_return_runtime.py:519: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_public_multi_return_runtime.py::test_pinned_stored_output_keeps_task_lineage_until_exact_drop_replay
+1 failed, 23 passed in 1.78s

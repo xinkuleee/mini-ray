@@ -1,0 +1,54 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_public_multi_return_runtime.py",
+    "exit_code": 1,
+    "seconds": 6.759,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3i-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_public_multi_return_runtime.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_task_readiness_trace_contract.py",
+    "exit_code": 0,
+    "seconds": 4.934,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3i-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_task_readiness_trace_contract.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_contained_edge_runtime.py::test_failed_edge_release_freezes_outer_metadata_until_retry_ack",
+    "exit_code": 1,
+    "seconds": 4.965,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3i-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_contained_edge_runtime.py::test_failed_edge_release_freezes_outer_metadata_until_retry_ack"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_contained_edge_runtime.py::test_shutdown_retries_retained_edge_obligation_before_clean",
+    "exit_code": 1,
+    "seconds": 3.215,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3i-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_contained_edge_runtime.py::test_shutdown_retries_retained_edge_obligation_before_clean"
+    ],
+    "log": "003-case.log"
+  }
+]

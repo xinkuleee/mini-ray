@@ -1,0 +1,22 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_shutdown_retries_retained_edge_obligation_before_clean __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fbb95daee70>
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures('_no_edge_retry_runtime')
+    def test_shutdown_retries_retained_edge_obligation_before_clean(monkeypatch):
+        f=_EdgeRetryFixture(monkeypatch)
+        try:
+            f.register();f.adopt_finish();c=f.core
+            _edge_release_local(f.ref);_edge_drain_notices(c)
+>           assert len(f.release_calls)==1 and f.ref.object_id in c._object_gc_obligations
+E           AssertionError: assert (2 == 1)
+E            +  where 2 = len([ReleaseContainedReference(object_id=ObjectID(task_id=TaskID('41146316da62acdda680ad3817c8bb81'), return_index=0), own...oken='output-publication-handoff:7cc8a966bc2c4b746dfdef84209a11763e7dfb376a2625b4973f54ed9d08c194:slot:0:transfer:0'))])
+E            +    where [ReleaseContainedReference(object_id=ObjectID(task_id=TaskID('41146316da62acdda680ad3817c8bb81'), return_index=0), own...oken='output-publication-handoff:7cc8a966bc2c4b746dfdef84209a11763e7dfb376a2625b4973f54ed9d08c194:slot:0:transfer:0'))] = <test_contained_edge_runtime._EdgeRetryFixture object at 0x7fbb95fc6480>.release_calls
+
+tests/unit/test_contained_edge_runtime.py:243: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_contained_edge_runtime.py::test_shutdown_retries_retained_edge_obligation_before_clean
+1 failed in 0.97s

@@ -11,7 +11,6 @@ from miniray import protocol
 from miniray.core import CoreWorker, _PendingTask, _ReadyTask
 from miniray.ids import AttemptID, JobID, NodeID, TaskID, WorkerID
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TargetExecutionKey
 from miniray.trace import MemoryEventSink
 
 
@@ -63,27 +62,19 @@ def test_required_readiness_events_bind_task_attempt_and_output_slot() -> None:
     }
 
 
-def _pending(*, targeted: bool = False) -> tuple[CoreWorker, _PendingTask]:
+def _pending(*, reconstruction: bool = False) -> tuple[CoreWorker, _PendingTask]:
     core = object.__new__(CoreWorker)
     core.event_sink = MemoryEventSink(process_id=lambda: 17)
     job = JobID.random()
     task = TaskID.derive(job, TaskID.for_driver(job), 0)
-    attempt = AttemptID(task, 2 if targeted else 0)
+    attempt = AttemptID(task, 2 if reconstruction else 0)
     spec = protocol.TaskSpec(
         job, task, attempt,
         protocol.FunctionKey(job, __name__, "producer", "v1"),
-        (), 3, ResourceVector({"CPU": 1}), WorkerID.random(),
-    )
-    execution = (
-        TargetExecutionKey.from_task_spec(
-            spec, (spec.return_ids()[0], spec.return_ids()[2]),
-            attempt_id=attempt,
-        )
-        if targeted else None
+        (), 1, ResourceVector({"CPU": 1}), WorkerID.random(),
     )
     return core, _PendingTask(
-        spec.return_ids()[0], spec, target_execution=execution,
-        reconstruction_origin_attempt=attempt if targeted else None,
+        spec.return_ids()[0], spec,
     )
 
 
@@ -98,11 +89,11 @@ def _result(
     )
 
 
-@pytest.mark.parametrize("targeted", (False, True))
+@pytest.mark.parametrize("reconstruction", (False, True))
 def test_object_ready_uses_only_the_validated_reply_manifest(
-    targeted: bool,
+    reconstruction: bool,
 ) -> None:
-    core, pending = _pending(targeted=targeted)
+    core, pending = _pending(reconstruction=reconstruction)
     results = tuple(
         _result(
             pending, object_id,
@@ -114,7 +105,6 @@ def test_object_ready_uses_only_the_validated_reply_manifest(
     reply = protocol.TaskReply(
         pending.task_id, pending.spec.attempt_id, WorkerID.random(),
         protocol.TaskReplyStatus.SUCCEEDED, results,
-        target_execution=pending.target_execution,
     )
 
     core._emit_published_task_reply(pending, reply)

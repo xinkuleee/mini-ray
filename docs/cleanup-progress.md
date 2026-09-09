@@ -47,3 +47,5 @@ K3g：inline恢复7/Worker discovery29/stored metadata2/PG key1/supervisor wire2
 K3h：cancel-inventory40/location-custody27/Actoroptions1通过；readiness trace3个旧Pending字段fixture失败已移除过期field等待复验。
 
 K3j：ordinary reconstruction9、recursive planning11通过；保DAG依赖顺序/去重/正确拒环与nested lifetime-only区别，旧selected/sibling维度未恢复。
+
+K3i/k：readiness trace4、public values修后24、typed-source7/contained identity6/nested manifest18通过；stored gate37pure+3原socket L1通过。contained retry2剩调度旧通知夹具已第二次修待重验，失败完整保留。

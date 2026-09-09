@@ -7,7 +7,6 @@ import pytest
 from miniray.contained_edges import (
     ContainedReferenceEdge,
     ContainedReferenceHold,
-    LegacyContainedReferenceHold,
 )
 from miniray.ids import AttemptID, JobID, ObjectID, TaskID, WorkerID
 from miniray.ownership import (
@@ -15,8 +14,6 @@ from miniray.ownership import (
     ObjectOwnerTable,
     ReleasedBorrowerTokenError,
 )
-
-
 
 
 def _object(index: int) -> tuple[ObjectID, AttemptID]:
@@ -33,23 +30,24 @@ def _hold(
 
 
 @pytest.mark.unit
-def test_typed_hold_snapshot_keeps_authority_and_legacy_projection() -> None:
+def test_typed_hold_snapshot_keeps_complete_authority_for_equal_tokens() -> None:
     table = ObjectOwnerTable()
     contained, attempt = _object(0)
     container_owner = WorkerID.random()
     typed = _hold(1, container_owner, "same-token")
+    other = _hold(2, container_owner, "same-token")
 
     table.register(contained, current_attempt=attempt)
     assert table.add_contained_reference(contained, typed)
     assert not table.add_contained_reference(contained, typed)
-    assert table.add_contained_reference(contained, "legacy-token")
+    assert table.add_contained_reference(contained, other)
 
     snapshot = table.snapshot(contained)
     assert snapshot.contained_holds == frozenset(
-        {typed, LegacyContainedReferenceHold("legacy-token")}
+        {typed, other}
     )
     assert snapshot.contained_tokens == frozenset(
-        {"same-token", "legacy-token"}
+        {"same-token"}
     )
     assert snapshot.is_live
 
@@ -136,28 +134,26 @@ def test_death_cleanup_releases_only_matching_container_owner_holds() -> None:
 
 
 @pytest.mark.unit
-def test_dead_fence_rejects_late_typed_hold_but_never_guesses_legacy_owner() -> None:
+def test_dead_fence_rejects_late_hold_without_consuming_another_owner() -> None:
     table = ObjectOwnerTable()
     contained, attempt = _object(0)
     dead = WorkerID.random()
     typed = _hold(1, dead, "typed")
-    legacy = LegacyContainedReferenceHold("legacy")
+    live = _hold(1, WorkerID.random(), "typed")
 
     table.register(contained, current_attempt=attempt)
-    assert table.add_contained_reference(contained, legacy)
+    assert table.add_contained_reference(contained, live)
     cleanup = table.install_dead_worker(dead, "death:before-typed-pin")
     assert not cleanup.affected_object_ids
-    assert table.snapshot(contained).contained_holds == frozenset({legacy})
+    assert table.snapshot(contained).contained_holds == frozenset({live})
 
     with pytest.raises(DeadWorkerReferenceError, match="dead Worker"):
         table.add_contained_reference(contained, typed)
 
-    # Raw-token compatibility has no owner incarnation.  Keeping it alive is
-    # safer than attributing it to an unrelated dead Worker and collecting the
-    # contained object prematurely.
-    assert not table.add_contained_reference(contained, "legacy")
-    assert table.release_contained_reference(contained, "legacy")
-    assert table.contained_release_was_seen(contained, "legacy")
+    # Equal token/container with a different physical owner is independent.
+    assert not table.add_contained_reference(contained, live)
+    assert table.release_contained_reference(contained, live)
+    assert table.contained_release_was_seen(contained, live)
 
 
 @pytest.mark.unit

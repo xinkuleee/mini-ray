@@ -22,10 +22,7 @@ from miniray.output_publication import (
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
     OutputPublicationNodeIncarnation, OutputSlotManifest,
 )
-from miniray.task_outputs import (
-    MAX_TASK_RETURNS, TargetExecutionKey, TargetOutputManifest, TaskExecutionKey,
-    TaskOutputManifest,
-)
+from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
 
 
 # No module-level unit marker: the three real socketpair cases stay opt-in.
@@ -47,17 +44,11 @@ def _no_runtime_in_pure_cases(request, monkeypatch):
     monkeypatch.setattr(time, "sleep", forbidden)
 
 
-def _manifest(*, num_returns=4, targets=None, task_byte=2, lease_byte=4):
+def _manifest(*, task_byte=2, lease_byte=4, attempt_number=3, stored=False):
     task = TaskID(bytes((task_byte,)) * 16)
-    full = TaskOutputManifest.for_task(task, num_returns)
-    attempt = AttemptID(task, 3)
-    execution = (
-        TaskExecutionKey(full, attempt) if targets is None else
-        TargetExecutionKey(
-            TargetOutputManifest(full, tuple(full.output_ids[index] for index in targets)),
-            attempt,
-        )
-    )
+    full = TaskOutputManifest.for_task(task, 1)
+    attempt = AttemptID(task, attempt_number)
+    execution = TaskExecutionKey(full, attempt)
     publication = OutputPublicationID(LeaseID(bytes((lease_byte,)) * 16), execution)
     header = OutputPublicationHeader(
         publication, JobID(b"J" * 16), WorkerID(b"E" * 16), WorkerID(b"O" * 16),
@@ -65,8 +56,8 @@ def _manifest(*, num_returns=4, targets=None, task_byte=2, lease_byte=4):
     )
     slots = tuple(
         OutputSlotManifest(
-            object_id, protocol.ResultStorage.INLINE if index % 2 == 0 else
-            protocol.ResultStorage.OBJECT_STORE, 1, hashlib.sha256(bytes((index,))).hexdigest(),
+            object_id, protocol.ResultStorage.OBJECT_STORE if stored else
+            protocol.ResultStorage.INLINE, 1, hashlib.sha256(bytes((index,))).hexdigest(),
         ) for index, object_id in enumerate(publication.output_ids)
     )
     return OutputPublicationManifest.create(header, slots)
@@ -94,10 +85,10 @@ def test_arrival_frame_round_trips_exact_incarnation_and_publication() -> None:
 
 
 @pytest.mark.loopback_smoke
-def test_targeted_arrival_frame_preserves_full_manifest_and_selected_indices() -> None:
+def test_stored_arrival_frame_preserves_single_output_and_attempt() -> None:
     arrival = _arrival(
-        num_returns=MAX_TASK_RETURNS, targets=(1, MAX_TASK_RETURNS - 1),
-        phase=gates.OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE,
+        stored=True, attempt_number=7,
+        phase=gates.OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK,
     )
     sender, receiver = socket.socketpair()
     try:
@@ -107,9 +98,9 @@ def test_targeted_arrival_frame_preserves_full_manifest_and_selected_indices() -
         observed = gates.recv_output_publication_gate_arrival(receiver)
         assert observed == arrival
         execution = observed.publication_id.execution
-        assert type(execution) is TargetExecutionKey
-        assert len(execution.full_output_ids) == MAX_TASK_RETURNS
-        assert tuple(value.return_index for value in execution.target_output_ids) == (1, 15)
+        assert type(execution) is TaskExecutionKey
+        assert execution.attempt_id.attempt_number == 7
+        assert tuple(value.return_index for value in execution.output_ids) == (0,)
     finally:
         sender.close()
         receiver.close()
@@ -133,35 +124,30 @@ def test_receiver_rejects_truncated_frame_before_peer_exit() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("phase", tuple(gates.OutputPublicationGatePhase))
-@pytest.mark.parametrize("count,targets", (
-    (1, None), (4, None), (16, None), (4, (1, 3)), (16, (0, 15)),
-))
-def test_fixed_frame_round_trip_preserves_full_or_targeted_execution(phase, count, targets):
-    manifest = _manifest(num_returns=count, targets=targets)
+@pytest.mark.parametrize("stored", (False, True))
+def test_fixed_frame_round_trip_preserves_single_execution(phase, stored):
+    manifest = _manifest(stored=stored)
     arrival = gates.OutputPublicationGateArrival.from_manifest(manifest, phase)
     frame = arrival.to_bytes()
     restored = gates.OutputPublicationGateArrival.from_bytes(frame)
     assert restored == arrival
     assert restored.publication_id == manifest.publication_id
     assert restored.manifest_digest == manifest.manifest_digest
-    assert len(frame) == 119
-    assert type(restored.publication_id.execution) is (
-        TaskExecutionKey if targets is None else TargetExecutionKey
-    )
+    assert len(frame) == struct.calcsize("!8s16sQQ16s16sQ32sB") == 113
+    assert type(restored.publication_id.execution) is TaskExecutionKey
+    assert restored.publication_id.output_ids[0].return_index == 0
     assert restored.node_id == manifest.header.node_incarnation.node_id
     assert restored.node_pid == manifest.header.node_incarnation.node_pid
     assert restored.registration_epoch == manifest.header.node_incarnation.registration_epoch
 
 
 @pytest.mark.unit
-def test_full_and_all_selected_targeted_executions_keep_distinct_scope():
+def test_distinct_task_attempt_or_lease_never_aliases_one_publication():
     full = _arrival()
-    target = _arrival(targets=(0, 1, 2, 3))
-    assert full.publication_id.output_ids == target.publication_id.output_ids
-    assert full.publication_id != target.publication_id
-    assert full.to_bytes() != target.to_bytes()
-    assert type(gates.OutputPublicationGateArrival.from_bytes(full.to_bytes()).publication_id.execution) is TaskExecutionKey
-    assert type(gates.OutputPublicationGateArrival.from_bytes(target.to_bytes()).publication_id.execution) is TargetExecutionKey
+    for other in (_arrival(task_byte=5), _arrival(lease_byte=6), _arrival(attempt_number=4)):
+        assert full.publication_id != other.publication_id
+        assert full.to_bytes() != other.to_bytes()
+        assert gates.OutputPublicationGateArrival.from_bytes(other.to_bytes()) == other
 
 
 @pytest.mark.unit
@@ -183,11 +169,9 @@ def test_arrival_frame_rejects_corruption_and_drifted_identity() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("field,value", (
-    (7, 2), (8, 0), (8, 17), (9, 0), (9, 1 << 4), (9, 3), (11, 4),
-))
-def test_frame_rejects_noncanonical_scope_bitmap_and_phase(field, value):
-    frame = struct.Struct("!8s16sQQ16s16sQBBI32sB")
+@pytest.mark.parametrize("field,value", ((2, 0), (3, 0), (8, 3), (8, 255)))
+def test_frame_rejects_invalid_incarnation_or_phase(field, value):
+    frame = struct.Struct("!8s16sQQ16s16sQ32sB")
     values = list(frame.unpack(_arrival().to_bytes()))
     values[field] = value
     with pytest.raises(ValueError):
@@ -283,7 +267,7 @@ def test_receiver_requires_a_real_socket_contract_and_positive_bound(monkeypatch
 
 @pytest.mark.unit
 def test_receiver_uses_one_deadline_for_fragmented_frame(monkeypatch):
-    arrival = _arrival(targets=(1, 3))
+    arrival = _arrival(stored=True)
     frame = arrival.to_bytes()
     now = [100.0]
     connection = _Receiver((frame[:7], frame[7:23], frame[23:]), clock=now, advance=0.2)
