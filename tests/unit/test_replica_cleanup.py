@@ -1,6 +1,6 @@
 """Pure exact physical-cleanup and retired-output metadata admission.
 
-Two requests at most; one three-slot owner fixture. No Core, Node, runtime,
+Two requests at most; one single-output owner fixture. No Core, Node, runtime,
 thread, socket, process or wait. Typed replies are reducer inputs, not proof
 of physical deletion; the real-store compositions verify that separately.
 """
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 def _request():
     values, _owner, secondary = _case()
-    slot = values.manifest.slots[1]
+    slot = values.manifest.slots[0]
     return protocol.DropObjectReplica(slot.object_id, values.attempt, values.owner, secondary, slot.checksum)
 
 
@@ -124,7 +124,7 @@ def test_installed_node_death_discharges_only_that_node_without_fake_drop_ack():
 
 
 def _descriptor(values, secondary):
-    slot = values.manifest.slots[1]
+    slot = values.manifest.slots[0]
     return protocol.ObjectStoreDescriptor(slot.object_id, values.owner, values.attempt, secondary,
                                           slot.size_bytes, slot.checksum)
 
@@ -137,7 +137,13 @@ def test_owner_late_replica_requires_latched_or_applied_retirement_not_current_r
     drop = owner.retired_output_replica(descriptor, rejected_publications=(values.publication_id,))
     assert drop == protocol.DropObjectReplica(descriptor.object_id, values.attempt, values.owner, secondary, descriptor.checksum)
     assert owner.snapshot(descriptor.object_id) == before
-    resolution = replace(_resolution(values), kept_slots=(0, 2))
+    # Exact accepted release replies are explicit inputs to this owner-only
+    # reduction; real child effects are tested by Core/Node compositions.
+    cleanup = tuple(protocol.ReleaseContainedReferenceReply(
+        transfer.contained_object_id, transfer.contained_owner_worker_id, hold, True, False,
+    ) for transfer in values.manifest.slots[0].transfers
+      for hold in (transfer.final_hold, transfer.provisional_hold))
+    resolution = replace(_resolution(values), keep=False, cleanup=cleanup)
     assert owner.resolve_output_node_loss(values.manifest, resolution, values.envelope)
     assert owner.snapshot(descriptor.object_id).canonical_stored_result is None
     assert owner.retired_output_replica(descriptor) == drop
@@ -179,11 +185,9 @@ def test_active_or_completed_collection_still_admits_only_exact_physical_cleanup
         plan = owner.begin_output_publication_collection(output, collection_id="late-report-collection")
         assert plan is not None
         if phase == "collected":
-            # Output collection consumes the exact graph receipt supplied by
-            # its caller; no remote cleanup is claimed by this metadata test.
-            graph = values.manifest.to_graph_manifest()
-            receipt = values.graph().release_manifest_container(graph, output)
-            owner.complete_output_publication_collection(plan, receipt)
+            # Current base collection binds the exact frozen owner plan.
+            # Core owns real child/replica cleanup; no graph receipt is invented.
+            owner.complete_output_publication_collection(plan)
             assert not owner.contains(output)
     else:
         owner.mark_lost(output, values.attempt)

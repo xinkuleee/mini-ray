@@ -1,0 +1,106 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_output_receipt_loss.py",
+    "exit_code": 0,
+    "seconds": 6.378,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_output_receipt_loss.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_output_node_loss.py",
+    "exit_code": 0,
+    "seconds": 4.319,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_output_node_loss.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_common_cleanup_progress.py",
+    "exit_code": 0,
+    "seconds": 6.063,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_common_cleanup_progress.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_output_lease_domain.py",
+    "exit_code": 0,
+    "seconds": 4.174,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_output_lease_domain.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_stored_publication_adoption.py",
+    "exit_code": 0,
+    "seconds": 7.784,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_stored_publication_adoption.py"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_surviving_replica.py",
+    "exit_code": 0,
+    "seconds": 4.76,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_surviving_replica.py"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_replica_cleanup.py",
+    "exit_code": 0,
+    "seconds": 4.295,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_replica_cleanup.py"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_retirement.py",
+    "exit_code": 0,
+    "seconds": 4.631,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3e-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_retirement.py"
+    ],
+    "log": "007-case.log"
+  }
+]

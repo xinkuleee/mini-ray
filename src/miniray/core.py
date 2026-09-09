@@ -11354,6 +11354,12 @@ class CoreWorker:
                 if manifest.header.owner_worker_id != self.worker_id or manifest.publication_id.execution != pending.execution:
                     raise SystemTaskError('Node-loss handoff changed owner execution')
                 latched = getattr(self, '_output_node_cleanup', {}).get(identity)
+                if latched is None and envelope is None and handoff.complete is not None:
+                    # A successful owner CAS retains its own bytes and exact
+                    # membership even if transient delivery custody vanished.
+                    # Recover only that verified local result, before latching
+                    # the loss choice; a later envelope cannot reverse DISCARD.
+                    envelope = self._locally_retained_output_completion(pending, handoff.complete)
                 complete = (latched['complete'] if latched is not None else
                             handoff.complete or (None if envelope is None else envelope.complete))
                 if complete is not None and handoff.complete is None and handoff.phase is not OutputHandoffPhase.ABORTED:

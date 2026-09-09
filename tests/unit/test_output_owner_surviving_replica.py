@@ -1,7 +1,7 @@
 """Pure owner reductions for STORED KEEP after publishing-Node loss.
 
-Each case has three tiny result slots, one shared outgoing child identity,
-three incoming holds and one task-lineage edge. Locations are *already
+Each case has one tiny result, one outgoing child identity,
+one incoming hold and one task-lineage edge. Locations are *already
 advertised metadata* installed through the real owner reducer; these tests
 do not prove that any physical replica exists. Grant/Node-store validation
 belongs to Core composition tests, not this transport-free owner reducer.
@@ -24,8 +24,9 @@ import pytest
 
 from miniray import protocol
 from miniray.contained_edges import ContainedReferenceHold, LineageReferenceEdge
-from miniray.ids import NodeID, ObjectID, TaskID
-from miniray.output_recovery import OutputRecoveryResolution
+from miniray.ids import JobID, LeaseID, NodeID, ObjectID, TaskID
+from miniray.output_handoff import NodeLostOutputResolution, OutputHandoffConflictError
+from miniray.output_publication import OutputPublicationManifest
 from miniray.ownership import ObjectState, OutputOwnerPublicationConflictError
 from tests.unit.test_output_owner_publication import _Fixture, _assert_metadata_only
 
@@ -53,7 +54,7 @@ def _no_runtime(monkeypatch):
     monkeypatch.setattr(time, "sleep", forbidden)
 
 
-def _case(*, all_stored=False, adopted=True):
+def _case(*, all_stored=True, adopted=True):
     values = _Fixture(all_stored=all_stored)
     owner = values.table()
     for index, output in enumerate(values.publication_id.output_ids):
@@ -98,10 +99,9 @@ def _resolution(values):
         publisher.registration_epoch, 1, -9, protocol.NodeDeathReason.PROCESS_EXIT,
         "confirmed publishing Node exit",
     )
-    return OutputRecoveryResolution(
-        values.publication_id, values.manifest.manifest_digest, death, values.owner,
-        "stored-keep-exact-cleanup", tuple(range(len(values.manifest.slots))),
-        values.envelope.complete,
+    return NodeLostOutputResolution(
+        values.publication_id, values.manifest.manifest_digest, values.owner, death,
+        complete=values.envelope.complete, keep=True, cleanup=(),
     )
 
 
@@ -145,17 +145,20 @@ def test_survivor_query_filters_publisher_and_unavailable_nodes_without_mutation
     _advertise(owner, values, other)
     before = _owner_state(owner, values)
     queries = (
-        (1, (), tuple(sorted((secondary, other)))),
-        (1, (other,), (secondary,)),
-        (1, (secondary, other), ()),
-        (0, (), ()),  # INLINE custody is not a physical replica route.
-        (2, (), ()),
+        ((), tuple(sorted((secondary, other)))),
+        ((other,), (secondary,)),
+        ((secondary, other), ()),
     )
-    for index, unavailable, expected in queries:
-        assert owner.surviving_output_locations(
-            values.manifest, index, unavailable_nodes=unavailable,
-        ) == expected
+    for unavailable, expected in queries:
+        assert owner.surviving_output_locations(values.manifest, 0, unavailable_nodes=unavailable) == expected
         assert _owner_state(owner, values) == before
+    with pytest.raises(OutputOwnerPublicationConflictError, match="outside the manifest"):
+        owner.surviving_output_locations(values.manifest, 1)
+    inline_values, inline_owner, _ = _case(all_stored=False)
+    inline_before = _owner_state(inline_owner, inline_values)
+    assert inline_owner.surviving_output_locations(inline_values.manifest, 0) == ()
+    assert _owner_state(inline_owner, inline_values) == inline_before
+
 
 
 @pytest.mark.parametrize("fence", (
@@ -166,7 +169,7 @@ def test_survivor_query_filters_publisher_and_unavailable_nodes_without_mutation
 def test_survivor_query_never_authorizes_keep_from_fenced_metadata(fence):
     values, owner, secondary = _case()
     _advertise(owner, values, secondary)
-    output = values.publication_id.output_ids[1]
+    output = values.publication_id.output_ids[0]
     entry = owner._entries[output]
     # Deliberate negative metadata injection: a usable-looking secondary must
     # not bypass the exact commit receipt, any replica epoch, or lifecycle fence.
@@ -193,11 +196,11 @@ def test_survivor_query_never_authorizes_keep_from_fenced_metadata(fence):
     before = _owner_state(owner, values)
 
     for _ in range(2):
-        assert owner.surviving_output_locations(values.manifest, 1) == ()
+        assert owner.surviving_output_locations(values.manifest, 0) == ()
         assert _owner_state(owner, values) == before
 
 
-def test_mixed_keep_preserves_survivor_metadata_and_all_reference_lifetimes():
+def test_stored_keep_preserves_survivor_metadata_and_all_reference_lifetimes():
     values, owner, secondary = _case()
     unavailable = NodeID(bytes(value ^ 2 for value in values.node.value))
     _advertise(owner, values, secondary)
@@ -205,20 +208,20 @@ def test_mixed_keep_preserves_survivor_metadata_and_all_reference_lifetimes():
     resolution = _resolution(values)
     before = _snapshots(owner, values)
     lineage = deepcopy(owner._task_lineage)
-    assert before[1].locations == frozenset((values.node, secondary, unavailable))
+    assert before[0].locations == frozenset((values.node, secondary, unavailable))
 
     assert owner.resolve_output_node_loss(
         values.manifest, resolution, values.envelope, unavailable_nodes=(unavailable,),
     )
 
     assert _snapshots(owner, values) == (
-        before[0], replace(before[1], locations=frozenset((secondary,))), before[2],
+        replace(before[0], locations=frozenset((secondary,))),
     )
     assert owner._output_loss_receipts == {values.publication_id: resolution}
     _assert_kept_identity(owner, values, lineage)
 
 
-def test_all_stored_keep_needs_adopted_identity_but_no_retained_envelope():
+def test_stored_keep_needs_adopted_identity_but_no_retained_envelope():
     values, owner, secondary = _case(all_stored=True)
     _advertise(owner, values, secondary)
     resolution = _resolution(values)
@@ -263,7 +266,7 @@ def test_stored_keep_loses_last_secondary_after_decision_without_retiring_member
         replace(snapshot, state=ObjectState.LOST, locations=frozenset())
         for snapshot in before
     )
-    assert owner._output_loss_receipts[values.publication_id].kept_slots == (0, 1, 2)
+    assert owner._output_loss_receipts[values.publication_id].keep is True
     _assert_kept_identity(owner, values, lineage)
 
 
@@ -294,7 +297,7 @@ def test_resolution_replay_cannot_resurrect_a_subsequently_lost_secondary(loss):
     _advertise(owner, values, secondary)
     resolution = _resolution(values)
     assert owner.resolve_output_node_loss(values.manifest, resolution)
-    target = values.publication_id.output_ids[1]
+    target = values.publication_id.output_ids[0]
     if loss == "one-slot":
         assert owner.remove_location(target, values.attempt, secondary)
     else:
@@ -306,14 +309,14 @@ def test_resolution_replay_cannot_resurrect_a_subsequently_lost_secondary(loss):
         assert not owner.resolve_output_node_loss(values.manifest, resolution)
         assert _owner_state(owner, values) == before
     assert not owner.snapshot(target).locations
-    assert owner.output_owner_result(target) == values.envelope.results[1]
+    assert owner.output_owner_result(target) == values.envelope.results[0]
     assert owner.snapshot(target).output_publication is not None
 
 
 def test_unadopted_stored_keep_rejects_even_an_exact_complete_envelope_atomically():
     values, owner, _secondary = _case(adopted=False)
-    # This deliberately invalid KEEP has bytes/witness but no adopted STORED
-    # membership. It must not even publish the valid earlier INLINE candidate.
+    # This deliberately invalid KEEP has a valid descriptor/witness but no
+    # adopted STORED membership; it cannot create owner publication state.
     resolution = _resolution(values)
     before = _owner_state(owner, values)
     assert all(snapshot.state is ObjectState.PENDING for snapshot in _snapshots(owner, values))
@@ -325,25 +328,25 @@ def test_unadopted_stored_keep_rejects_even_an_exact_complete_envelope_atomicall
     assert owner._output_publication_receipts == owner._output_loss_receipts == {}
 
 
-def test_inline_keep_still_requires_bytes_even_when_stored_membership_is_adopted():
-    values, owner, secondary = _case()
-    _advertise(owner, values, secondary)
+def test_inline_keep_still_requires_bytes_with_adopted_owner_membership():
+    values, owner, _secondary = _case(all_stored=False)
     resolution = _resolution(values)
     before = _owner_state(owner, values)
-
-    with pytest.raises(OutputOwnerPublicationConflictError):
+    # The owner reducer requires its caller to supply a separately rebuilt
+    # INLINE envelope; a metadata-only KEEP receipt is never itself bytes.
+    with pytest.raises(OutputOwnerPublicationConflictError, match="locally retained output bytes"):
         owner.resolve_output_node_loss(values.manifest, resolution)
-
     assert _owner_state(owner, values) == before
+
 
 
 @pytest.mark.parametrize("corruption", (
     "canonical-checksum", "canonical-publisher", "producer-epoch",
     "replica-epoch", "different-membership", "missing-membership",
-    "collection-pending", "different-lineage", "lost-with-locations",
+    "collection-pending", "different-lineage-job", "lost-with-locations",
     "ready-without-locations",
 ))
-def test_bad_last_stored_slot_cannot_partially_apply_a_keep_batch(corruption):
+def test_bad_stored_metadata_cannot_apply_keep_or_mutate_receipts(corruption):
     values, owner, secondary = _case(all_stored=True)
     _advertise(owner, values, secondary)
     resolution = _resolution(values)
@@ -360,13 +363,21 @@ def test_bad_last_stored_slot_cannot_partially_apply_a_keep_batch(corruption):
     elif corruption == "replica-epoch":
         entry.location_attempts[secondary] = values.attempt.next()
     elif corruption == "different-membership":
-        entry.output_publication = replace(entry.output_publication, slot_index=0)
+        header = replace(values.header, publication_id=replace(values.publication_id, lease_id=LeaseID.random()))
+        manifest = OutputPublicationManifest.create(header, values.manifest.slots)
+        entry.output_publication = replace(entry.output_publication, manifest=manifest)
     elif corruption == "missing-membership":
         entry.output_publication = None
     elif corruption == "collection-pending":
         entry.collection_pending = True
-    elif corruption == "different-lineage":
-        entry.producer_task_spec = replace(values.spec, args=(protocol.InlineArg(b"changed-lineage"),))
+    elif corruption == "different-lineage-job":
+        # One output has one canonical TaskSpec. Its job is independently
+        # bound by the admitted publication header; cross-slot args equality
+        # has no supported single-output counterpart.
+        job = JobID.random()
+        entry.producer_task_spec = replace(
+            values.spec, job_id=job, function=replace(values.spec.function, job_id=job),
+        )
     elif corruption == "lost-with-locations":
         entry.state = ObjectState.LOST
     else:
@@ -395,10 +406,10 @@ def test_wrong_publishing_node_death_identity_cannot_apply_stored_keep(field):
         changed = protocol.NodeDeathReason.EXPECTED
     else:
         changed = getattr(death, field) + 1
-    wrong = replace(resolution, node_death=replace(death, **{field: changed}))
     before = _owner_state(owner, values)
 
-    with pytest.raises(OutputOwnerPublicationConflictError):
+    with pytest.raises((OutputOwnerPublicationConflictError, OutputHandoffConflictError)):
+        wrong = replace(resolution, node_death=replace(death, **{field: changed}))
         owner.resolve_output_node_loss(values.manifest, wrong)
 
     assert _owner_state(owner, values) == before

@@ -1,0 +1,153 @@
+{
+  "plan_revision": "R2.2",
+  "status": "written_awaiting_root_bounded_validation",
+  "scope": "core Node-loss provider and receipt-loss caller migrated together; _no_runtime preserved for lease-domain legacy consumer; no old _fixture alias",
+  "files": [
+    {
+      "path": "tests/unit/test_core_output_node_loss.py",
+      "archived_sha256": {
+        "base": "89c9401c519f31f08665d4f3d117c00fb139bbfc58380c42873ed455c5f7e5d4",
+        "enhanced": "89c9401c519f31f08665d4f3d117c00fb139bbfc58380c42873ed455c5f7e5d4"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_core_output_node_loss.py::test_no_envelope_cleanup_ack_loss_fences_local_state_until_exact_replay",
+          "old_line": 145,
+          "base_replacements": [
+            "tests/unit/test_core_output_node_loss.py::test_no_envelope_cleanup_ack_loss_fences_local_state_until_exact_replay"
+          ],
+          "retained": "Actual child effect then ACK loss freezes owner/recovery, accepted count and finish barrier. Exact replay resolves known Complete to LOST or unknown to same logical task retry; old delayed replay cannot mutate successor.",
+          "retired_representation": "Old GCS final cleanup receipt/query sequence and two slots retire. B maps custody ambiguity to actual child Release effect; it does not claim the old central ack schedule.",
+          "enhanced_pending": "K8 current enhanced single-output final cleanup/record ACK loss before Core apply, exact query/replay and known-versus-unknown finish/reconstruction budget remains required."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_node_loss.py::test_old_delayed_completion_cannot_release_current_attempt_input_hold",
+          "old_line": 246,
+          "base_replacements": [
+            "tests/unit/test_core_output_node_loss.py::test_old_delayed_completion_cannot_release_current_attempt_input_hold"
+          ],
+          "retained": "Actual Core.put input and Core._register_submission own real submitted/lineage holds. Known Complete reconstruction renews hold, system retry retains it; old finalizer and two delayed receipts preserve successor. Only successor terminal/finish releases its hold.",
+          "retired_representation": "Two-output fixture and handcrafted legacy input lineage removed. One current output preserves exact logical hold distinctions.",
+          "enhanced_pending": "Inherit and revalidate common test on E; adapt publication cleanup receipts only if needed."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_node_loss.py::test_envelope_arriving_during_query_is_seen_before_immutable_keep_drop",
+          "old_line": 320,
+          "base_replacements": [
+            "tests/unit/test_core_output_node_loss.py::test_envelope_before_loss_choice_preserves_actual_inline_custody"
+          ],
+          "retained": "Actual envelope presented before current locked loss choice keeps INLINE bytes/child holds and records success whether owner Complete was reported or not.",
+          "retired_representation": "B has no remote query inside the locked custody-selection cut; old query reentry is E-only. Do not invent a lock reentry with no current callback. Stored sibling projection retires.",
+          "enhanced_pending": "K8 current enhanced query callback receives real envelope before immutable current single-output decision; frozen GCS history remains separate from owner custody witness."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_node_loss.py::test_late_envelope_cannot_reverse_a_latched_drop",
+          "old_line": 361,
+          "base_replacements": [
+            "tests/unit/test_core_output_node_loss.py::test_late_envelope_cannot_reverse_a_latched_drop"
+          ],
+          "retained": "Actual synchronous child Release callback delivers an adoption envelope after DROP is latched. Core rejects competing driver, never recaptures discarded bytes, known remains LOST/unknown starts one retry; terminal old adoption is no-op.",
+          "retired_representation": "Two-slot KEEP/DROP record replaced by current single-output boolean choice.",
+          "enhanced_pending": "Inherit shared latch invariant and adapt E final graph cleanup; old global vector not restored."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_node_loss.py::test_adoption_rpc_error_after_other_lane_finished_cannot_reinsert_old_work",
+          "old_line": 407,
+          "base_replacements": [
+            "tests/unit/test_core_output_node_loss.py::test_adoption_rpc_error_after_other_lane_finished_cannot_reinsert_old_work"
+          ],
+          "retained": "Real Node adoption-retirement effect callback installs a Node death, completes current Core loss+finish, then returns an ACK timeout to earlier lane. Old lane must not reinsert unresolved work/delayed replay and keeps ready INLINE custody.",
+          "retired_representation": "Old GCS terminal report RPC replaced by actual Node retirement ACK boundary; old mixed storage sibling retires.",
+          "enhanced_pending": "K8 same late-error versus finish ordering on current enhanced post-CAS RPC stages; no duplicate success or successor mutation."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_node_loss.py::test_task_attempt_fences_old_target_receipt_even_when_its_slots_are_unchanged",
+          "old_line": 436,
+          "base_replacements": [
+            "tests/unit/test_core_output_node_loss.py::test_no_envelope_cleanup_ack_loss_fences_local_state_until_exact_replay",
+            "tests/unit/test_core_output_node_loss.py::test_old_delayed_completion_cannot_release_current_attempt_input_hold"
+          ],
+          "retained": "Current same TaskID old delayed receipts/finalizer cannot change successor output epoch, input holds, recovery or accepted count.",
+          "retired_representation": "Targeted disjoint output epochs with global task epoch ahead retire in both versions; no single-output reachable equivalent of unchanged selected slots beside a newer sibling exists.",
+          "enhanced_pending": "Revalidate common old-attempt fence; no targeted or multi-output compatibility required."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_node_loss.py::test_new_sibling_attempt_does_not_abandon_committed_batch_adoption_tail",
+          "old_line": 474,
+          "base_replacements": [
+            "tests/unit/test_core_output_publication.py::test_lost_adoption_ack_keeps_finish_barrier_and_replays_without_second_cas",
+            "tests/unit/test_core_output_node_loss.py::test_adoption_rpc_error_after_other_lane_finished_cannot_reinsert_old_work"
+          ],
+          "retained": "Current committed owner CAS with pending Node ACK retains finish barrier and exact metadata tail; completed old work does not reopen.",
+          "retired_representation": "Same TaskID concurrent sibling reconstruction while old selected batch tail pending is retired. B/E support single output; do not recreate multi-target tail authority.",
+          "enhanced_pending": "Current E owner-ready/unknown C7 ACK case test_enhanced_owner_client::test_w3_owner_ready_and_actual_adoption_survive_unknown_c7_ack_and_early_close remains shared-tail reference, not old sibling guarantee."
+        }
+      ]
+    },
+    {
+      "path": "tests/unit/test_core_output_receipt_loss.py",
+      "archived_sha256": {
+        "base": "5d032ae6900a0c647deaa2575bd6efe300d0c11b9149cd62f9d8fe442e29d07f",
+        "enhanced": "5d032ae6900a0c647deaa2575bd6efe300d0c11b9149cd62f9d8fe442e29d07f"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_core_output_receipt_loss.py::test_owner_cas_receipt_restores_inline_custody_for_node_loss_after_scratch_cache_disappears",
+          "old_line": 30,
+          "base_replacements": [
+            "tests/unit/test_core_output_receipt_loss.py::test_owner_cas_receipt_restores_inline_custody_for_node_loss_after_scratch_cache_disappears"
+          ],
+          "retained": "Real owner CAS commits INLINE bytes/membership; injected local error retains unfinished task. Only transient envelope scratch is cleared, while CAS receipt, authoritative bytes, handoff and finish marker remain. Dead-Node resolution must rebuild available owner bytes and retain READY.",
+          "retired_representation": "Old GCS GET/DECIDE/PROGRESS and stored sibling retire; no authority/hold is fabricated or erased. This current single-output common counterexample is expected to expose a source defect and must not be weakened.",
+          "enhanced_pending": "Apply validated common fix B first then E; keep independent owner receipt source when enhanced GCS/Node metadata is absent."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_receipt_loss.py::test_known_complete_cannot_be_erased_by_absent_or_precomplete_recovery_reply",
+          "old_line": 91,
+          "base_replacements": [
+            "tests/unit/test_core_output_receipt_loss.py::test_actual_complete_envelope_survives_missing_owner_terminal_report",
+            "tests/unit/test_output_handoff.py::test_abort_preserves_known_complete_and_exact_replay_without_forward_progress"
+          ],
+          "retained": "Current real Node Complete envelope remains successful when its owner report is missing; actual bytes determine KEEP and no retry is allowed. Known owner Complete is never erased by cleanup history.",
+          "retired_representation": "GCS absent/precomplete reply contradiction is E-only because B has no ordinary result query to GCS; no fake contradictory owner response invented.",
+          "enhanced_pending": "K8 preserve exact known envelope+absent/precomplete enhanced authoritative reply: retain unresolved custody, no downgrade, no retry, no partial owner mutation. New B case is common projection only."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_receipt_loss.py::test_node_loss_owner_cas_effect_then_error_reuses_resolution_without_second_cleanup",
+          "old_line": 124,
+          "base_replacements": [
+            "tests/unit/test_core_output_receipt_loss.py::test_node_loss_owner_cas_effect_then_error_reuses_resolution_without_second_cleanup"
+          ],
+          "retained": "Real child final/provisional releases complete once; owner resolution CAS takes effect before injected error. Exact replay repairs task success without repeating child effects or spending retry.",
+          "retired_representation": "Old _fixture service tuple and GCS progress count retire; current _LossFixture holds actual Core/child state.",
+          "enhanced_pending": "Current E cleanup/resolve ACK and owner CAS boundary must preserve analogous replay. Do not claim B child count equals global-stage coverage."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_receipt_loss.py::test_owner_retirement_is_an_independent_shutdown_fence_without_protocol_marker",
+          "old_line": 153,
+          "base_replacements": [
+            "tests/unit/test_core_output_receipt_loss.py::test_owner_retirement_is_an_independent_shutdown_fence_without_protocol_marker"
+          ],
+          "retained": "A real adopted stored output finishes task, then independent owner retirement blocks finalization even with no unresolved marker or task finish barrier.",
+          "retired_representation": "Two-output index 1 and mailbox closure scaffolding retire; current one membership/replica inventory.",
+          "enhanced_pending": "Inherit common owner barrier; enhanced graph retirement is an additional E obligation."
+        },
+        {
+          "old_selector": "tests/unit/test_core_output_receipt_loss.py::test_owner_routed_targeted_retirement_never_holds_core_lock_across_rpc",
+          "old_line": 175,
+          "base_replacements": [
+            "tests/unit/test_core_output_receipt_loss.py::test_owner_routed_single_output_retirement_never_holds_core_lock_across_rpc"
+          ],
+          "retained": "Real one-output reconstruction releases exact two final child holds and drops actual Node replica with Core state lock released at every RPC; only then advances epoch.",
+          "retired_representation": "Targeted reconstruction and healthy sibling preservation retire. Independent-output preservation covered separately, not claimed here.",
+          "enhanced_pending": "Inherit shared no-lock-across-RPC and add current enhanced graph cleanup binding without restoring targeted API."
+        }
+      ]
+    }
+  ],
+  "cases": {
+    "test_core_output_node_loss.py": 9,
+    "test_core_output_receipt_loss.py": 6
+  },
+  "limits": "No pytest by this subtask. Pure actual local effects do not claim producer execution, detector behavior or E GCS transaction coverage."
+}

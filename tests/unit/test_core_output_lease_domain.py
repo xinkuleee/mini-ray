@@ -1,280 +1,268 @@
-"""Pure proof that pre-Push Node loss uses the unified publication domain.
+"""Pure pre-Push loss uses the current owner-local output handoff domain.
 
-One task, at most four result identities, fake lease RPCs and an in-memory
-owner/recovery Core. The targeted cases select noncontiguous slots 1/3, use
-four one-byte descriptor payloads, and spend at most two retry-budget entries
-(initial reconstruction START plus one system retry). No function execution,
-thread, process, socket, timer, polling, or wait. Finalizers run synchronously.
+Four synchronous cases each admit one ordinary task and one output. A real
+NodeRegistry commits death and Core installs its complete survivor snapshot.
+Lease replies are boundary doubles; no Worker executes and no runtime starts.
+One retry is allowed, followed by one explicit stale-obligation replay.
 """
 
 from dataclasses import replace
-import hashlib
 import queue
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import protocol
+from miniray.control import NodeRegistry
 from miniray.core import (
-    _HomeRoute, _LocationReportState, _LeaseCancellationState, _WAKE_COORDINATOR,
+    _HomeRoute, _LeaseCancellationState, _LocationReportState,
+    _NodeDeathObserved, _WAKE_COORDINATOR,
 )
-from miniray.ids import LeaseID, NodeID, WorkerID
+from miniray.ids import LeaseID, WorkerID
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.output_publication import OutputPublicationID
 from miniray.ownership import ObjectState
 from miniray.recovery import TaskState
 from miniray.resources import AllocationToken, ResourceVector
-from miniray.targeted_reconstruction import TargetedSessionPhase
-from miniray.task_outputs import TargetExecutionKey
-from tests.unit._pure_core import make_pure_core, close_pure_core
-from tests.unit.test_core_output_node_loss import _no_runtime
+from tests.unit._pure_core import close_pure_core, make_pure_core
 
 
 pytestmark = pytest.mark.unit
 
 
-def _fixture(count, *, target=False):
-    assert count in (1, 4) and (not target or count == 4)
+@pytest.fixture(autouse=True)
+def _no_runtime(monkeypatch):
+    import multiprocessing.process
+    import socket
+    import subprocess
+    import threading
+    import time
+    from miniray import control, core as core_module, transport
+    from miniray.core import CoreWorker
+    from miniray.node import NodeServer
+    from miniray.worker import WorkerServer
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("pure lease-domain test attempted runtime or unmodelled work")
+
+    for kind, method in ((CoreWorker, "__init__"), (NodeServer, "__init__"),
+                         (WorkerServer, "__init__"), (control.GCSLite, "__init__"),
+                         (threading.Thread, "start"), (threading.Thread, "join"),
+                         (threading.Condition, "wait"),
+                         (threading.Condition, "wait_for"), (threading.Barrier, "wait"),
+                         (multiprocessing.process.BaseProcess, "start"),
+                         (multiprocessing.process.BaseProcess, "join")):
+        monkeypatch.setattr(kind, method, forbidden)
+    for name in ("socket", "socketpair", "create_connection"):
+        monkeypatch.setattr(socket, name, forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(time, "sleep", forbidden)
+    monkeypatch.setattr(core_module, "rpc_request", forbidden)
+    monkeypatch.setattr(transport, "request", forbidden)
+
+    def settled_receipt_only(event, timeout=None):
+        # The actual synchronous release must settle before close inspects it.
+        assert event.is_set(), "pure release receipt attempted a blocking wait"
+        return True
+
+    monkeypatch.setattr(threading.Event, "wait", settled_receipt_only)
+
+
+def _fixture():
     core = make_pure_core()
-    core.gcs_address = ("gcs.invalid", 1)
     core._ready_tasks = queue.Queue()
     core._registered_functions = set()
-    core._home_route = _HomeRoute(core.node_id, core.node_address, 1)
-    definition = core.define_remote_function(lambda: 7)
-    pending, handles = core._register_submission(
-        definition, (), {}, ResourceVector({"CPU": 1}),
-        num_returns=count, max_retries=2 if target else 1,
+    nodes = NodeRegistry()
+    registration = nodes.register_message(protocol.RegisterNode(
+        core.node_id, 1201, core.node_address,
+        ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1}),
+    ))
+    assert registration.accepted
+    epoch, live = nodes.live_snapshot()
+    core._membership_epoch = epoch
+    core._installed_cluster_snapshot = protocol.InstallClusterSnapshot(
+        epoch, "pre-push-live", live,
     )
-    refs = handles if isinstance(handles, tuple) else (handles,)
-    if target:
-        # Initial publication and completion go through real owner/recovery
-        # authorities; only the physical stored bytes are descriptor metadata.
-        original = pending
-        surviving_node = NodeID(bytes.fromhex("e2" * 16))
-        descriptors = tuple(
-            protocol.ResultDescriptor(
-                output_id, protocol.ResultStorage.OBJECT_STORE, 1,
-                core.worker_id, surviving_node,
-                hashlib.sha256(bytes((index,))).hexdigest(),
-            )
-            for index, output_id in enumerate(original.output_ids)
-        )
-        assert core.owner_table.publish_task_outputs(original.execution, descriptors)
-        core._stored_descriptors.update({item.object_id: item for item in descriptors})
-        core._recovery.record_task_success(original.task_id, original.spec.attempt_id)
-        for output in original.output_ids:
-            core._wake_object(output)
-        for _ in original.output_ids:
-            assert core._submissions.get_nowait() is _WAKE_COORDINATOR
-            core._submissions.task_done()
-        # _register_submission returns the value; submit(), not this pure
-        # registration helper, owns enqueueing it for dispatch.
-        assert core._submissions.empty()
-        assert core._finish_pending_task(original)
-        assert core._submissions.get_nowait() is _WAKE_COORDINATOR
-        core._submissions.task_done()
-        assert core._submissions.empty()
-        coordinator = core._targeted_reconstruction_coordinator()
-        for output_id in (original.output_ids[1], original.output_ids[3]):
-            assert core.owner_table.mark_lost(output_id, original.spec.attempt_id)
-            coordinator.request(output_id, original.spec.attempt_id)
-        assert core._recovery.task_record(original.task_id).retries_started == 0
-        core._start_open_targeted_reconstruction(original.task_id)
-        pending = core._submissions.get_nowait()
-        core._submissions.task_done()
-        assert core._submissions.empty()
-        assert pending.output_ids == (refs[1].object_id, refs[3].object_id)
-        assert pending.full_output_ids == original.output_ids
-        assert pending.spec.attempt_id == original.spec.attempt_id.next()
-        assert coordinator.current_session(original.task_id).execution == pending.execution
-    death = protocol.NodeDeathRecord(
-        "pre-push-exit", core.node_id, 1201, 1, 2, 5,
+    core._home_route = _HomeRoute(core.node_id, core.node_address, epoch)
+    pending, ref = core._register_submission(
+        core.define_remote_function(lambda: 7), (), {},
+        ResourceVector({"CPU": 1}), max_retries=1, _enqueue=True,
+    )
+    assert core._submissions.get_nowait() is pending
+    core._submissions.task_done()
+    assert core._submissions.empty()
+    assert core._accepted_task_count == 1
+    assert core._task_finish_barriers == {ref.object_id: pending}
+    return core, pending, ref, nodes, registration
+
+
+def _install_death(core, nodes, registration):
+    reply = nodes.report_death(protocol.ReportNodeDeath(
+        "pre-push-exit", registration.node_id, registration.node_pid,
+        registration.registration_epoch, 5,
         protocol.NodeDeathReason.PROCESS_EXIT, "confirmed Node exit",
-    )
-    return core, pending, refs, death
+    ))
+    assert reply.disposition is protocol.NodeDeathDisposition.APPLIED
+    assert nodes.get(registration.node_id).death == reply.death
+    epoch, live = nodes.live_snapshot()
+    snapshot = protocol.InstallClusterSnapshot(epoch, "pre-push-dead", live)
+    assert live == () and epoch == reply.membership_epoch
+    removal = core.handle_node_death(reply.death, snapshot)
+    assert removal.lost == removal.surviving == removal.collecting == ()
+    observed = core._submissions.get_nowait()
+    core._submissions.task_done()
+    assert observed == _NodeDeathObserved(reply.death, epoch)
+    assert core._submissions.empty()
+    core._classify_node_death(observed)
+    assert core._submissions.get_nowait() is _WAKE_COORDINATOR
+    core._submissions.task_done()
+    assert core._submissions.empty()
+    assert core._dead_nodes == {registration.node_id: reply.death}
+    assert core._home_route is None
+    return reply.death
 
 
-def _finish_fixture(core, refs):
-    for ref in refs:
-        ref._closed = True
-        ref._finalizer()
-        assert ref._release_done.is_set()
-    close_pure_core(core)
-
-
-@pytest.mark.parametrize("count", (1, 4))
-@pytest.mark.parametrize("phase", ("lease-send", "grant-before-push", "location-replay", "cancel"))
-def test_pre_push_loss_queries_one_output_domain_before_budgeted_retry(count, phase):
-    _assert_pre_push_loss(count, phase)
-
-
-@pytest.mark.parametrize("phase", ("lease-send", "grant-before-push", "location-replay", "cancel"))
-def test_targeted_pre_push_loss_preserves_exact_subset_and_healthy_siblings(phase):
-    _assert_pre_push_loss(4, phase, target=True)
-
-
-def _assert_pre_push_loss(count, phase, *, target=False):
-    core, pending, refs, death = _fixture(count, target=target)
-    calls = []
-    healthy = tuple(ref.object_id for ref in refs if ref.object_id not in pending.output_ids)
-    healthy_before = tuple(core.owner_table.snapshot(output) for output in healthy)
-    healthy_routes = tuple(core._stored_descriptors[output] for output in healthy)
-    before_owner = tuple(core.owner_table.snapshot(ref.object_id) for ref in refs)
+@pytest.mark.parametrize(
+    "phase", ("lease-send", "grant-before-push", "location-replay", "cancel"),
+)
+def test_pre_push_loss_queries_one_output_domain_before_budgeted_retry(phase, monkeypatch):
+    core, pending, ref, nodes, registration = _fixture()
+    before_owner = core.owner_table.snapshot(ref.object_id)
     before_record = replace(core._recovery.task_record(pending.task_id))
-    coordinator = core._targeted_reconstruction_coordinator()
-    before_session = coordinator.current_session(pending.task_id)
-    if target:
-        assert isinstance(pending.execution, TargetExecutionKey)
-        assert pending.target_execution == pending.execution
-        assert pending.execution.target_output_ids == (refs[1].object_id, refs[3].object_id)
-        assert pending.execution.full_output_ids == tuple(ref.object_id for ref in refs)
-        assert before_record.state is TaskState.RETRY_PENDING and before_record.retries_started == 1
-        assert before_record.retries_remaining == 1
-        assert before_session.phase is TargetedSessionPhase.STARTED
     lease = LeaseID.random()
-    worker = WorkerID.random()
     request = protocol.RequestWorkerLease(
         lease, pending.task_id, pending.spec.attempt_id, pending.spec.resources,
-        core.node_id, core.worker_id, return_ids=pending.output_ids,
-        target_execution=pending.target_execution,
+        core.node_id, core.worker_id, preferred_node_id=core.node_id,
+        return_ids=pending.output_ids, requester_owner_address=core.owner_address,
     )
     grant = protocol.GrantWorkerLease(
-        lease, pending.task_id, pending.spec.attempt_id, core.node_id, worker,
-        ("worker.invalid", 1), AllocationToken("pre-push-test-grant"),
-        target_execution=pending.target_execution,
+        lease, pending.task_id, pending.spec.attempt_id, core.node_id,
+        WorkerID.random(), ("worker.invalid", 1), AllocationToken("pre-push-grant"),
     )
-    assert request.return_ids == pending.output_ids
-    assert request.target_execution == grant.target_execution == pending.target_execution
+    table = core._output_handoff_table()
+    real_query = table.query
+    queries, received_leases, deaths = [], [], []
 
-    def rpc(_address, handler, message):
-        calls.append((handler, message))
-        assert _address == core.gcs_address
-        assert handler == wire.GET_OUTPUT_NODE_LOSS_HANDLER
-        assert type(message) is wire.GetOutputNodeLoss
-        assert message.owner_worker_id == core.worker_id and message.node_death == death
-        expected_lease = received_lease[0].lease_id if received_lease else lease
-        assert message.publication_id == OutputPublicationID(expected_lease, pending.execution)
-        assert message.publication_id.execution == pending.execution
-        assert message.publication_id.output_ids == pending.output_ids
-        assert message.publication_id.full_output_ids == tuple(ref.object_id for ref in refs)
-        assert tuple(core.owner_table.snapshot(ref.object_id) for ref in refs) == before_owner
+    def query(identity):
+        queries.append(identity)
+        expected_lease = received_leases[0].lease_id if received_leases else lease
+        assert identity == OutputPublicationID(expected_lease, pending.execution)
+        assert identity.output_ids == (ref.object_id,)
+        assert core.owner_table.snapshot(ref.object_id) == before_owner
         assert core._recovery.task_record(pending.task_id) == before_record
-        assert coordinator.current_session(pending.task_id) == before_session
-        # No Worker was pushed, so the frozen registry is precisely absent.
-        return wire.GetOutputNodeLossReply(message, False)
+        assert core._task_finish_barriers == {ref.object_id: pending}
+        assert core._accepted_task_count == 1 and len(queries) == 1
+        result = real_query(identity)
+        assert result is None  # No owner registration can authorize child effects.
+        return result
 
-    core._rpc = rpc
-    received_lease = []
+    monkeypatch.setattr(table, "query", query)
 
     def lease_rpc(state):
-        received_lease.append(state.request)
-        assert type(state.request) is protocol.RequestWorkerLease
-        assert state.request.return_ids == pending.output_ids
-        assert state.request.target_execution == pending.target_execution
-        assert state.request.task_id == pending.task_id
-        assert state.request.attempt_id == pending.spec.attempt_id
-        if target:
-            assert state.request.target_execution.full_output_ids == tuple(ref.object_id for ref in refs)
-            assert state.request.target_execution.target_output_ids == pending.output_ids
+        received_leases.append(state.request)
+        assert len(received_leases) == 1
+        assert state.request == replace(request, lease_id=state.request.lease_id)
+        assert state.expected_node_id == core.node_id
+        assert state.address == core.node_address and state.allow_spillback
         marker = core._protocol_unresolved[pending.task_key]
         assert marker.output_candidate == OutputPublicationID(state.request.lease_id, pending.execution)
-        assert not hasattr(marker, "inline_candidate") and not hasattr(marker, "stored_candidate")
-        core._dead_nodes[core.node_id] = death
+        assert marker.phase == "lease_send"
+        deaths.append(_install_death(core, nodes, registration))
+        assert core.owner_table.snapshot(ref.object_id) == before_owner
+        assert core._recovery.task_record(pending.task_id) == before_record
         if phase == "lease-send":
-            raise TimeoutError("lease reply lost after Node exit")
-        reply = replace(grant, lease_id=state.request.lease_id)
-        assert reply.target_execution == state.request.target_execution
-        return reply
+            raise TimeoutError("lease reply lost after committed Node exit")
+        return replace(grant, lease_id=state.request.lease_id)
 
     core._request_lease_hop = lease_rpc
-    location = None
-    if phase in ("location-replay", "cancel"):
-        core._dead_nodes[core.node_id] = death
-        location = _LocationReportState(grant, core.node_address, (), lease_request=request)
     try:
+        if phase in ("location-replay", "cancel"):
+            deaths.append(_install_death(core, nodes, registration))
         if phase == "cancel":
+            terminal_error = RuntimeError("unresolved lease was already cancelled")
             cancellation = _LeaseCancellationState(
-                protocol.CancelWorkerLease(lease, pending.task_id, pending.spec.attempt_id, core.node_id, core.worker_id),
-                core.node_address, RuntimeError("unresolved lease"), target_node_id=core.node_id,
+                protocol.CancelWorkerLease(lease, pending.task_id, pending.spec.attempt_id,
+                                           core.node_id, core.worker_id),
+                core.node_address, terminal_error, target_node_id=core.node_id,
                 lease_request=request, known_grant=grant,
             )
-            # Cancellation has already selected a terminal error. Node death
-            # discharges that exact pre-Push obligation; it is not permission
-            # to start a new attempt merely because no cancel ACK could arrive.
+            # Death discharges this exact cancellation; it cannot rerun user code.
             assert core._resolve_lease_cancellation(pending, pending.spec, (), cancellation)
-            assert not calls and not core._protocol_unresolved and core._ready_tasks.empty()
+            owner = core.owner_table.snapshot(ref.object_id)
             record = core._recovery.task_record(pending.task_id)
+            assert owner.state is ObjectState.ERROR and owner.error is terminal_error
+            assert owner.current_attempt == pending.spec.attempt_id
+            assert owner.local_tokens == before_owner.local_tokens
             assert record.current_attempt == before_record.current_attempt
-            assert record.retries_started == before_record.retries_started
-            for output in pending.output_ids:
-                snapshot = core.owner_table.snapshot(output)
-                assert snapshot.current_attempt == pending.spec.attempt_id
-                assert snapshot.state is ObjectState.ERROR and snapshot.error is cancellation.terminal_error
-            assert tuple(core.owner_table.snapshot(output) for output in healthy) == healthy_before
-            assert tuple(core._stored_descriptors[output] for output in healthy) == healthy_routes
-            assert not received_lease
+            assert record.retries_started == 0 and record.retries_remaining == 1
+            assert record.state is TaskState.SYSTEM_FAILED
+            assert not queries and not received_leases and table.snapshots() == ()
+            assert not core._protocol_unresolved and core._ready_tasks.empty()
+            assert core._submissions.get_nowait() is _WAKE_COORDINATOR
+            core._submissions.task_done()
+            assert core._submissions.empty()
+            assert core._finish_pending_task(pending)
+            assert core._accepted_task_count == 0 and not core._task_finish_barriers
+            assert core._submissions.get_nowait() is _WAKE_COORDINATOR
+            core._submissions.task_done()
+            assert core._submissions.empty()
             return
-        else:
-            assert not core._execute(pending, pending.spec, location_state=location)
+
+        location = (_LocationReportState(grant, core.node_address, (), lease_request=request)
+                    if phase == "location-replay" else None)
+        assert not core._execute(pending, pending.spec, location_state=location)
         marker = core._protocol_unresolved[pending.task_key]
-        expected_lease = received_lease[0].lease_id if received_lease else lease
-        assert marker.output_candidate == OutputPublicationID(expected_lease, pending.execution)
+        expected_lease = received_leases[0].lease_id if received_leases else lease
+        identity = OutputPublicationID(expected_lease, pending.execution)
+        assert marker.output_candidate == identity and marker.phase == "output_node_loss"
         assert not hasattr(marker, "inline_candidate") and not hasattr(marker, "stored_candidate")
         ready = core._ready_tasks.get_nowait()
         core._ready_tasks.task_done()
-        assert ready.output_node_loss is not None
-        assert ready.output_node_loss.publication_id == marker.output_candidate
-        assert ready.output_node_loss.node_death == death
-        assert not hasattr(ready, "inline_node_loss") and not hasattr(ready, "stored_node_loss")
-        assert calls == []
-        assert tuple(core.owner_table.snapshot(ref.object_id) for ref in refs) == before_owner
+        assert core._ready_tasks.empty()
+        assert ready.output_node_loss is marker.obligation
+        assert ready.output_node_loss.publication_id == identity
+        assert ready.output_node_loss.node_death == deaths[0]
+        assert ready.output_node_loss.envelope is None
+        assert not queries and table.snapshots() == ()
+        assert core.owner_table.snapshot(ref.object_id) == before_owner
         assert core._recovery.task_record(pending.task_id) == before_record
+        assert not core._finish_pending_task(pending)
+        assert core._accepted_task_count == 1 and core._submissions.empty()
+
         assert not core._execute(pending, pending.spec, output_node_loss=ready.output_node_loss)
-        assert [handler for handler, _request in calls] == [wire.GET_OUTPUT_NODE_LOSS_HANDLER]
+        assert queries == [identity]
+        aborted = real_query(identity)
+        assert aborted.phase is OutputHandoffPhase.ABORTED
+        assert aborted.manifest is aborted.complete is aborted.adoption is None
         assert not core._protocol_unresolved
         record = core._recovery.task_record(pending.task_id)
         assert record.current_attempt == pending.spec.attempt_id.next()
-        assert record.retries_started == before_record.retries_started + 1
-        assert record.retries_remaining == 0
+        assert record.retries_started == 1 and record.retries_remaining == 0
         assert record.state is TaskState.RETRY_PENDING
-        assert all(core.owner_table.snapshot(output).current_attempt == record.current_attempt for output in pending.output_ids)
-        assert tuple(core.owner_table.snapshot(output) for output in healthy) == healthy_before
-        assert tuple(core._stored_descriptors[output] for output in healthy) == healthy_routes
-        if target:
-            assert tuple(item.current_attempt for item in healthy_before) == (
-                before_session.losses[0].expected_attempt,
-            ) * 2
-            assert all(item.state is ObjectState.READY_STORED for item in healthy_before)
-            assert all(core._objects[output].event.is_set() for output in healthy)
-            retry_session = coordinator.current_session(pending.task_id)
-            assert retry_session.phase is TargetedSessionPhase.STARTED
-            assert retry_session.losses == before_session.losses
-            assert retry_session.execution == pending.execution.for_attempt(record.current_attempt)
-            assert coordinator.queued_losses(pending.task_id) == ()
-            assert core._recovery.active_recovery(pending.task_id) == record.current_attempt
-            retried = core._submissions.get_nowait()
-            core._submissions.task_done()
-            assert core._submissions.empty()
-            assert retried.target_execution == retry_session.execution
-            assert retried.output_ids == pending.output_ids
-            assert retried.full_output_ids == pending.full_output_ids
-            assert retried.task_key == pending.task_key
-            assert retried.reconstruction_origin_attempt == pending.reconstruction_origin_attempt
-            assert all(core._task_finish_barriers[output] is retried for output in pending.output_ids)
-            assert all(output not in core._task_finish_barriers for output in healthy)
-            assert all(core.owner_table.snapshot(output).state is ObjectState.PENDING for output in pending.output_ids)
-            assert all(output not in core._stored_descriptors for output in pending.output_ids)
-            assert retried.execution.manifest == marker.output_candidate.execution.manifest
-            assert retried.execution.attempt_id != marker.output_candidate.attempt_id
-            before_replay = replace(record)
-            before_replay_owner = tuple(core.owner_table.snapshot(ref.object_id) for ref in refs)
-            before_calls = tuple(calls)
-            # Duplicate old pre-Push loss is now obsolete: no second query or
-            # budget charge may disturb the already queued targeted retry.
-            assert core._execute(pending, pending.spec, output_node_loss=ready.output_node_loss)
-            assert tuple(calls) == before_calls
-            assert core._recovery.task_record(pending.task_id) == before_replay
-            assert tuple(core.owner_table.snapshot(ref.object_id) for ref in refs) == before_replay_owner
-            assert coordinator.current_session(pending.task_id) is retry_session
-            assert not core._protocol_unresolved and core._submissions.empty()
-        assert bool(received_lease) is (phase not in ("location-replay", "cancel"))
+        owner = core.owner_table.snapshot(ref.object_id)
+        assert owner.current_attempt == record.current_attempt
+        assert owner.state is ObjectState.PENDING and owner.local_tokens == before_owner.local_tokens
+        retried = core._submissions.get_nowait()
+        core._submissions.task_done()
+        assert core._submissions.empty()
+        assert retried.spec == replace(pending.spec, attempt_id=record.current_attempt)
+        assert retried.execution.manifest == pending.execution.manifest
+        assert retried.dependency_hold == pending.dependency_hold
+        assert core._task_finish_barriers == {ref.object_id: retried}
+        assert core._accepted_task_count == 1 and not core._finish_pending_task(pending)
+
+        # An old loss replay must not query, charge again, or clear a successor.
+        successor_id = OutputPublicationID(LeaseID.random(), retried.execution)
+        core._mark_protocol_unresolved(retried, "lease_send", output_candidate=successor_id)
+        successor = core._protocol_unresolved[retried.task_key]
+        before_replay = replace(record)
+        assert core._execute(pending, pending.spec, output_node_loss=ready.output_node_loss)
+        assert queries == [identity] and real_query(identity) == aborted
+        assert core._recovery.task_record(pending.task_id) == before_replay
+        assert core.owner_table.snapshot(ref.object_id) == owner
+        assert core._protocol_unresolved[retried.task_key] is successor
+        assert core._task_finish_barriers == {ref.object_id: retried}
+        assert core._accepted_task_count == 1 and core._submissions.empty()
+        assert bool(received_leases) is (phase != "location-replay")
     finally:
-        _finish_fixture(core, refs)
+        ref.close(timeout=0)
+        close_pure_core(core)

@@ -1,0 +1,8 @@
+{
+  "fix": "Recover exact owner-held INLINE envelope before first Node-loss choice when transient scratch custody has disappeared",
+  "evidence_before": "artifacts/cleanup-base/k3d/008-case.log",
+  "evidence_after": "000-case.log",
+  "regression": "001-case.log and002-case.log preserve latched UNKNOWN and shared cleanup",
+  "boundary": "Uses existing owner receipt/membership/result plus exact handoff Complete; never invent bytes from GCS, never reverse a prior DISCARD",
+  "enhanced_requirement": "Enhanced successor inherits this common fix from teaching-base"
+}

@@ -1,8 +1,8 @@
-"""Pure submitting-Core adoption/GC contracts for unified output batches.
+"""Pure submitting-Core adoption/GC contracts for one stored output.
 
-The historical filename retains no legacy claim/promotion protocol. Existing
-fixtures compose actual Core, Node journal/store, GCS recovery and child-owner
-reducers synchronously: two tiny output slots and at most four child holds.
+The historical filename retains no legacy claim/promotion protocol. Fixtures
+compose actual Core handoff, Node journal/store and child-owner reducers
+synchronously: one tiny output, one 1 KiB store and two child holds.
 All RPC is in-memory; no Core/server constructor, process, thread, timer,
 socket or blocking wait is allowed. Faults are exact callback boundaries.
 """
@@ -20,8 +20,7 @@ import time
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
-from miniray.contained_cycle import ContainedGraphTransactionState
+from miniray import control, output_protocol as wire, protocol
 from miniray.core import _DelayedReadyTask, _OutputAdoptionObligation, _PushRequestState
 from miniray.errors import ProtocolError, SystemTaskError
 from miniray.ids import JobID, LeaseID, NodeID, WorkerID
@@ -32,7 +31,7 @@ from miniray.ownership import ObjectState, OutputOwnerPublicationDisposition
 from miniray.recovery import FailureKind, RecoveryAction, TaskState
 from miniray.transport import TransportTimeout
 from tests.unit._pure_core import close_pure_core
-from tests.unit.test_core_output_publication import _fixture
+from tests.unit.test_core_output_publication import _fixture, _take_adoption
 
 
 pytestmark = pytest.mark.unit
@@ -64,8 +63,8 @@ def _no_runtime(monkeypatch):
 
 
 @contextmanager
-def _case(*, refs=True):
-    values = _fixture(refs=refs)
+def _case(*, refs=True, report_complete=True):
+    values = _fixture(refs=refs, stored=True, report_complete=report_complete)
     core = values[2]
     try:
         yield values
@@ -77,22 +76,6 @@ def _case(*, refs=True):
                 for token in tuple(core.owner_table.snapshot(object_id).local_tokens):
                     core.owner_table.release_local_reference(object_id, token)
         close_pure_core(core)
-
-
-def _stage(handler, request):
-    if handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER:
-        if type(request) is wire.ReportOutputPublicationTerminal:
-            return "terminal"
-        if type(request) is wire.ReportOutputPublicationAdopted:
-            return "adopted"
-        if type(request) is wire.ReportOutputPublicationSlotCollected:
-            return "collected"
-    return {
-        "commit_contained_graph": "graph",
-        "release_contained_graph_container": "graph-release",
-        "drop_object_replica": "drop",
-        wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER: "node-retired",
-    }.get(handler, handler)
 
 
 def _publish(core, pending, reply, node, fixture):
@@ -117,68 +100,79 @@ def _push_state(fixture, node, core, pending):
 
 
 def _assert_published(fixture, core, pending):
-    for index, object_id in enumerate(pending.output_ids):
-        snapshot = core.owner_table.snapshot(object_id)
-        assert snapshot.state is (ObjectState.READY_INLINE if index == 0 else ObjectState.READY_STORED)
-        assert snapshot.output_publication.manifest == fixture.manifest
-        assert snapshot.outgoing_contained_edges == frozenset(fixture.manifest.slots[index].edges)
-        assert core._objects[object_id].event.is_set()
-    assert core._stored_descriptors[pending.output_ids[1]] == fixture.values.results[1]
+    snapshot = core.owner_table.snapshot(pending.object_id)
+    assert snapshot.state is ObjectState.READY_STORED
+    assert snapshot.output_publication.manifest == fixture.manifest
+    assert snapshot.outgoing_contained_edges == frozenset(fixture.manifest.slots[0].edges)
+    assert core._objects[pending.object_id].event.is_set()
+    assert core._stored_descriptors[pending.object_id] == fixture.values.results[0]
     assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
     assert core._recovery.task_record(pending.task_id).retries_started == 0
 
 
-def test_adoption_orders_terminal_graph_atomic_owner_ready_and_metadata_acks(monkeypatch):
-    with _case() as (fixture, node, core, pending, reply, _calls, rpc):
+def test_adoption_orders_complete_atomic_owner_ready_and_payload_ack(monkeypatch):
+    with _case(report_complete=False) as (fixture, node, core, pending, reply, _calls, rpc):
         events = []
+        original_complete = fixture.handoffs.record_complete
         original_commit, original_wake = core.owner_table.commit_output_publication, core._wake_object
+        original_adopt = fixture.handoffs.adopt
 
-        def observe_rpc(address, handler, request):
-            stage = _stage(handler, request)
-            marker = core._protocol_unresolved[pending.task_key]
-            assert isinstance(marker.obligation, _OutputAdoptionObligation)
-            assert marker.output_candidate == fixture.id
-            if stage in ("terminal", "graph"):
-                assert all(core.owner_table.snapshot(output).state is ObjectState.PENDING
-                           for output in pending.output_ids)
-                assert not any(core._objects[output].event.is_set() for output in pending.output_ids)
-            else:
-                _assert_published(fixture, core, pending)
-            events.append(stage)
-            return rpc(address, handler, request)
+        def complete(witness):
+            assert core._state_lock._is_owned()
+            assert core.owner_table.snapshot(pending.object_id).state is ObjectState.PENDING
+            assert not core._objects[pending.object_id].event.is_set()
+            events.append("complete")
+            return original_complete(witness)
 
         def commit(plan):
             events.append("owner")
-            assert fixture.graph.snapshot().manifests[0].state is ContainedGraphTransactionState.COMMITTED
+            assert fixture.handoffs.query(fixture.id).complete == reply.output_publication.complete
             receipt = original_commit(plan)
             assert receipt.disposition is OutputOwnerPublicationDisposition.APPLIED
-            assert all(core.owner_table.snapshot(output).is_ready for output in pending.output_ids)
-            assert not any(core._objects[output].event.is_set() for output in pending.output_ids)
+            assert core.owner_table.snapshot(pending.object_id).is_ready
+            assert not core._objects[pending.object_id].event.is_set()
             return receipt
 
         def wake(object_id):
-            assert all(core.owner_table.snapshot(output).is_ready for output in pending.output_ids)
+            assert object_id == pending.object_id
+            assert core.owner_table.snapshot(object_id).is_ready
             assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
-            events.append("wake:{}".format(object_id.return_index))
+            events.append("wake")
             original_wake(object_id)
 
-        monkeypatch.setattr(core, "_rpc", observe_rpc)
+        def adopt(proof):
+            _assert_published(fixture, core, pending)
+            events.append("adopted")
+            return original_adopt(proof)
+
+        def observe_rpc(address, handler, request):
+            assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
+            marker = core._protocol_unresolved[pending.task_key]
+            assert isinstance(marker.obligation, _OutputAdoptionObligation)
+            assert marker.output_candidate == fixture.id
+            assert core._task_finish_barriers[pending.object_id] is pending
+            _assert_published(fixture, core, pending)
+            events.append("node-retired")
+            return rpc(address, handler, request)
+
+        monkeypatch.setattr(fixture.handoffs, "record_complete", complete)
         monkeypatch.setattr(core.owner_table, "commit_output_publication", commit)
         monkeypatch.setattr(core, "_wake_object", wake)
+        monkeypatch.setattr(fixture.handoffs, "adopt", adopt)
+        monkeypatch.setattr(core, "_rpc", observe_rpc)
         assert _publish(core, pending, reply, node, fixture)
-        assert events == ["terminal", "graph", "owner", "wake:0", "wake:1", "adopted", "node-retired"]
+        assert events == ["complete", "owner", "wake", "adopted", "node-retired"]
         assert not core._protocol_unresolved
         assert not fixture.journal.snapshot(fixture.id).retained_result_slots
         assert fixture.store.used_bytes > 0
         assert core._finish_pending_task(pending) and core._accepted_task_count == 0
 
 
-@pytest.mark.parametrize("lost_effect", ("terminal", "graph", "owner", "wake", "adopted", "node-retired"))
-def test_effect_then_lost_ack_replays_exact_batch_without_second_owner_cas(monkeypatch, lost_effect):
-    with _case() as (fixture, node, core, pending, reply, _calls, rpc):
-        injected = []
-        remote_requests, wakes = defaultdict(list), defaultdict(list)
-        dispositions = []
+@pytest.mark.parametrize("lost_effect", ("complete", "owner", "wake", "adopted", "node-retired"))
+def test_effect_then_error_replays_exact_output_without_second_owner_cas(monkeypatch, lost_effect):
+    with _case(report_complete=False) as (fixture, node, core, pending, reply, _calls, rpc):
+        injected, dispositions, requests, wakes = [], [], [], []
+        original_complete, original_adopt = fixture.handoffs.record_complete, fixture.handoffs.adopt
         original_commit, original_wake = core.owner_table.commit_output_publication, core._wake_object
 
         def lose_once(stage):
@@ -186,11 +180,9 @@ def test_effect_then_lost_ack_replays_exact_batch_without_second_owner_cas(monke
                 injected.append(stage)
                 raise TransportTimeout("effect committed; exact acknowledgement lost")
 
-        def observe_rpc(address, handler, request):
-            stage = _stage(handler, request)
-            remote_requests[stage].append(request)
-            result = rpc(address, handler, request)
-            lose_once(stage)
+        def complete(witness):
+            result = original_complete(witness)
+            lose_once("complete")
             return result
 
         def commit(plan):
@@ -202,12 +194,26 @@ def test_effect_then_lost_ack_replays_exact_batch_without_second_owner_cas(monke
         def wake(object_id):
             was_ready = core._objects[object_id].event.is_set()
             original_wake(object_id)
-            wakes[object_id].append(not was_ready)
+            wakes.append(not was_ready)
             lose_once("wake")
 
-        monkeypatch.setattr(core, "_rpc", observe_rpc)
+        def adopt(proof):
+            result = original_adopt(proof)
+            lose_once("adopted")
+            return result
+
+        def observe_rpc(address, handler, request):
+            assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
+            requests.append(request)
+            result = rpc(address, handler, request)
+            lose_once("node-retired")
+            return result
+
+        monkeypatch.setattr(fixture.handoffs, "record_complete", complete)
         monkeypatch.setattr(core.owner_table, "commit_output_publication", commit)
         monkeypatch.setattr(core, "_wake_object", wake)
+        monkeypatch.setattr(fixture.handoffs, "adopt", adopt)
+        monkeypatch.setattr(core, "_rpc", observe_rpc)
         assert not _publish(core, pending, reply, node, fixture)
         assert injected == [lost_effect]
         marker = core._protocol_unresolved[pending.task_key]
@@ -216,61 +222,81 @@ def test_effect_then_lost_ack_replays_exact_batch_without_second_owner_cas(monke
         assert marker.obligation.envelope == reply.output_publication
         assert core._output_result_custody[fixture.id] == reply.output_publication
         assert not core._finish_pending_task(pending)
-        assert all(core.owner_table.snapshot(output).state is not ObjectState.ERROR for output in pending.output_ids)
+        assert core.owner_table.snapshot(pending.object_id).state is not ObjectState.ERROR
         if lost_effect == "node-retired":
             assert not fixture.journal.snapshot(fixture.id).retained_result_slots
-        assert core._execute(pending, pending.spec, output_adoption=_delayed_adoption(core))
+        assert core._execute(pending, pending.spec, output_adoption=_take_adoption(core))
         _assert_published(fixture, core, pending)
         assert dispositions == [OutputOwnerPublicationDisposition.APPLIED]
-        assert all(transitions.count(True) == 1 for transitions in wakes.values())
-        assert set(wakes) == set(pending.output_ids)
-        assert all(all(request == requests[0] for request in requests) for requests in remote_requests.values())
-        if lost_effect in remote_requests:
-            assert len(remote_requests[lost_effect]) == 2
-        if lost_effect in ("owner", "wake", "adopted", "node-retired"):
-            assert len(remote_requests["terminal"]) == len(remote_requests["graph"]) == 1
+        assert wakes.count(True) == 1
+        assert requests == [requests[0]] * (2 if lost_effect == "node-retired" else 1)
         assert not core._protocol_unresolved and fixture.id not in core._output_result_custody
         assert core._finish_pending_task(pending) and core._accepted_task_count == 0
 
 
-@pytest.mark.parametrize("wrong_stage", ("terminal", "graph", "adopted", "node-retired"))
-def test_rebound_remote_ack_preserves_obligation_before_following_effect(monkeypatch, wrong_stage):
+@pytest.mark.parametrize("wrong_kind", ("rebound", "corrupt", "rejected"))
+def test_rebound_payload_ack_preserves_finish_obligation(monkeypatch, wrong_kind):
     with _case() as (fixture, node, core, pending, reply, _calls, rpc):
-        seen, wrong = [], []
-
+        requests = []
         def wrong_once(address, handler, request):
-            stage = _stage(handler, request)
+            assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
             result = rpc(address, handler, request)
-            seen.append(stage)
-            if stage == wrong_stage and not wrong:
-                wrong.append(request)
-                if stage == "graph":
-                    return protocol.ContainedGraphReply(
-                        protocol.PrepareContainedGraph(request.manifest), result.receipt,
-                    )
-                if stage == "node-retired":
+            requests.append(request)
+            if len(requests) == 1:
+                if wrong_kind == "rebound":
                     changed = wire.AckOutputPublicationAdopted(replace(request.proof, owner_commit_id="another-cas"))
                     return wire.AckOutputPublicationAdoptedReply(changed, True)
-                # Rebuilding the reply inside Core must reject even an instance
-                # whose frozen wire fields were corrupted after construction.
-                object.__setattr__(result, "request", object())
+                if wrong_kind == "corrupt":
+                    object.__setattr__(result, "request", object())
+                    return result
+                return wire.AckOutputPublicationAdoptedReply(
+                    request, False, wire.OutputPublicationRPCErrorKind.INVALID_STATE, "injected rejection",
+                )
             return result
-
         monkeypatch.setattr(core, "_rpc", wrong_once)
         assert not _publish(core, pending, reply, node, fixture)
-        assert wrong and pending.task_key in core._protocol_unresolved
-        assert seen[-1] == wrong_stage
+        assert pending.task_key in core._protocol_unresolved
         assert not core._finish_pending_task(pending)
-        if wrong_stage in ("terminal", "graph"):
-            assert all(core.owner_table.snapshot(output).state is ObjectState.PENDING for output in pending.output_ids)
-            assert not any(core._objects[output].event.is_set() for output in pending.output_ids)
-        assert core._execute(pending, pending.spec, output_adoption=_delayed_adoption(core))
         _assert_published(fixture, core, pending)
+        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
+        assert core._execute(pending, pending.spec, output_adoption=_take_adoption(core))
+        assert requests == [requests[0]] * 2
+        assert core._finish_pending_task(pending)
+
+
+@pytest.mark.parametrize("fault", ("lost", "rebound", "corrupt"))
+def test_owner_complete_report_unknown_ack_preserves_node_outbox(monkeypatch, fault):
+    with _case(report_complete=False) as (fixture, node, core, pending, reply, _calls, _rpc):
+        original = node._background_rpc
+        requests = []
+        def unknown_ack(address, handler, request):
+            result = original(address, handler, request)
+            assert handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER
+            requests.append(request)
+            if len(requests) == 1:
+                if fault == "lost":
+                    raise TransportTimeout("owner Complete applied; ACK lost")
+                if fault == "rebound":
+                    return wire.OutputHandoffReply(wire.GetOutputHandoff(fixture.id), True, result.snapshot)
+                object.__setattr__(result, "request", object())
+            return result
+        monkeypatch.setattr(node, "_background_rpc", unknown_ack)
+        assert not node._drive_output_publications()
+        assert fixture.handoffs.query(fixture.id).complete == reply.output_publication.complete
+        assert fixture.adapter.pending_terminal_reports() == (reply.output_publication.complete,)
+        assert core.owner_table.snapshot(pending.object_id).state is ObjectState.PENDING
+        assert not core._objects[pending.object_id].event.is_set()
+        assert core._accepted_task_count == 1
+        assert core._task_finish_barriers[pending.object_id] is pending
+        assert node._drive_output_publications()
+        assert requests == [requests[0]] * 2
+        assert fixture.adapter.pending_terminal_reports() == ()
+        assert _publish(core, pending, reply, node, fixture)
         assert core._finish_pending_task(pending)
 
 
 @pytest.mark.parametrize("field", ("lease", "owner", "job", "executor", "node"))
-def test_success_envelope_identity_is_checked_before_any_owner_or_gcs_effect(monkeypatch, field):
+def test_success_envelope_identity_is_checked_before_any_owner_or_node_effect(monkeypatch, field):
     with _case(refs=False) as (fixture, node, core, pending, reply, calls, _rpc):
         envelope = reply.output_publication
         header = envelope.manifest.header
@@ -322,37 +348,34 @@ def test_live_executor_does_not_mask_completed_output_outcome(monkeypatch):
         assert core._finish_pending_task(pending)
 
 
-def test_first_terminal_report_observes_continuous_push_and_finish_fences(monkeypatch):
-    with _case() as (fixture, node, core, pending, reply, _calls, rpc):
+def test_first_complete_record_observes_continuous_push_and_finish_fences(monkeypatch):
+    with _case(report_complete=False) as (fixture, node, core, pending, reply, _calls, _rpc):
         state = _push_state(fixture, node, core, pending)
         observed = []
-
-        def observe(address, handler, request):
-            if type(request) is wire.ReportOutputPublicationTerminal:
-                marker = core._protocol_unresolved[pending.task_key]
-                assert marker.output_candidate == fixture.id
-                assert isinstance(marker.obligation, _OutputAdoptionObligation)
-                assert marker.obligation.envelope == reply.output_publication
-                assert all(core._task_finish_barriers[output].execution == pending.execution
-                           for output in pending.output_ids)
-                observed.append(request)
-            return rpc(address, handler, request)
-
-        monkeypatch.setattr(core, "_rpc", observe)
+        original = fixture.handoffs.record_complete
+        def observe(witness):
+            marker = core._protocol_unresolved[pending.task_key]
+            assert marker.output_candidate == fixture.id
+            assert isinstance(marker.obligation, _OutputAdoptionObligation)
+            assert marker.obligation.envelope == reply.output_publication
+            assert core._task_finish_barriers[pending.object_id].execution == pending.execution
+            observed.append(witness)
+            return original(witness)
+        monkeypatch.setattr(fixture.handoffs, "record_complete", observe)
         monkeypatch.setattr(core, "_push_task_rpc", lambda *_: reply)
         core._mark_protocol_unresolved(pending, "push-replay", output_candidate=fixture.id)
         assert core._replay_push(pending, state)
-        assert len(observed) == 1 and not core._protocol_unresolved
+        assert observed == [reply.output_publication.complete] and not core._protocol_unresolved
         assert core._finish_pending_task(pending)
 
 
-def test_attempt_replaced_during_graph_ack_never_overwrites_successor(monkeypatch):
-    with _case() as (fixture, node, core, pending, reply, _calls, rpc):
+def test_attempt_replaced_at_complete_boundary_never_overwrites_successor(monkeypatch):
+    with _case(report_complete=False) as (fixture, node, core, pending, reply, _calls, _rpc):
         successor = []
-
-        def advance(address, handler, request):
-            result = rpc(address, handler, request)
-            if handler == "commit_contained_graph" and not successor:
+        original = fixture.handoffs.record_complete
+        def advance(witness):
+            result = original(witness)
+            if not successor:
                 with core._state_lock:
                     transition = core._recovery.validate_task_failure(
                         pending.task_id, pending.spec.attempt_id, FailureKind.SYSTEM,
@@ -366,144 +389,136 @@ def test_attempt_replaced_during_graph_ack_never_overwrites_successor(monkeypatc
                     newer = replace(pending, spec=replace(pending.spec, attempt_id=transition.decision.attempt_id))
                     core._clear_protocol_unresolved(pending)
                     core._install_task_finish_barrier_locked(newer)
+                    core._enqueue_reconstruction_task(newer)
                     core._mark_protocol_unresolved(newer, "successor-admitted")
                     successor.append((newer, core._protocol_unresolved[newer.task_key]))
             return result
-
-        monkeypatch.setattr(core, "_rpc", advance)
+        monkeypatch.setattr(fixture.handoffs, "record_complete", advance)
         monkeypatch.setattr(core.owner_table, "commit_output_publication", lambda *_: pytest.fail("stale owner CAS"))
         monkeypatch.setattr(core, "_wake_object", lambda *_: pytest.fail("stale result wake"))
         assert _publish(core, pending, reply, node, fixture)
         newer, marker = successor[0]
         assert core._protocol_unresolved[newer.task_key] is marker
         assert not _publish(core, pending, reply, node, fixture)
-        assert not core._stored_descriptors
-        for output in pending.output_ids:
-            snapshot = core.owner_table.snapshot(output)
-            assert snapshot.current_attempt == newer.spec.attempt_id and snapshot.state is ObjectState.PENDING
-            assert snapshot.output_publication is None and not core._objects[output].event.is_set()
-        assert not any(isinstance(item, _DelayedReadyTask) for item in tuple(core._submissions.queue))
+        assert core._submissions.get_nowait() is newer
+        core._submissions.task_done()
+        assert not core._stored_descriptors and core._submissions.empty()
+        snapshot = core.owner_table.snapshot(pending.object_id)
+        assert snapshot.current_attempt == newer.spec.attempt_id and snapshot.state is ObjectState.PENDING
+        assert snapshot.output_publication is None and not core._objects[pending.object_id].event.is_set()
+        assert core._task_finish_barriers[pending.object_id] is newer
+        assert core._accepted_task_count == 1
 
 
-def test_publisher_death_after_graph_ack_keeps_exact_output_takeover(monkeypatch):
-    with _case() as (fixture, node, core, pending, reply, _calls, rpc):
+def test_publisher_death_at_complete_boundary_keeps_exact_output_takeover(monkeypatch):
+    with _case(report_complete=False) as (fixture, node, core, pending, reply, _calls, _rpc):
         incarnation = fixture.manifest.header.node_incarnation
-        death = protocol.NodeDeathRecord(
-            "publisher-after-graph", incarnation.node_id, incarnation.node_pid,
-            incarnation.registration_epoch, 1, -9, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed",
-        )
-        events, frozen = [], []
-
-        def observe(address, handler, request):
-            events.append(_stage(handler, request))
-            result = rpc(address, handler, request)
-            if handler == "commit_contained_graph":
-                frozen.extend(fixture.recovery.freeze_node_death(death))
-                with core._state_lock:
-                    core._dead_nodes[node.node_id] = death
+        registry = control.NodeRegistry()
+        survivor = NodeID(bytes(value ^ 1 for value in node.node_id.value))
+        assert registry.register(survivor, ("survivor.invalid", 2), pending.spec.resources, node_pid=1702)
+        assert registry.register(node.node_id, core.node_address, pending.spec.resources, node_pid=incarnation.node_pid)
+        assert registry.get(node.node_id).registration_epoch == incarnation.registration_epoch
+        before_epoch, before_nodes = registry.live_snapshot()
+        core._membership_epoch = before_epoch
+        core._installed_cluster_snapshot = protocol.InstallClusterSnapshot(before_epoch, "before-publisher-loss", before_nodes)
+        original = fixture.handoffs.record_complete
+        observed = []
+        def complete_then_death(witness):
+            result = original(witness)
+            report = registry.report_death(protocol.ReportNodeDeath(
+                "publisher-at-complete", node.node_id, incarnation.node_pid,
+                incarnation.registration_epoch, -9, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed",
+            ))
+            assert report.disposition is protocol.NodeDeathDisposition.APPLIED
+            epoch, live = registry.live_snapshot()
+            core.handle_node_death(report.death, protocol.InstallClusterSnapshot(epoch, "after-publisher-loss", live))
+            observed.append(report.death)
             return result
-
-        monkeypatch.setattr(core, "_rpc", observe)
+        monkeypatch.setattr(fixture.handoffs, "record_complete", complete_then_death)
         monkeypatch.setattr(core.owner_table, "commit_output_publication", lambda *_: pytest.fail("dead publisher owner CAS"))
         monkeypatch.setattr(core, "_wake_object", lambda *_: pytest.fail("dead publisher normal wake"))
         assert not _publish(core, pending, reply, node, fixture)
-        assert events == ["terminal", "graph"] and len(frozen) == 1
+        assert len(observed) == 1 and core._dead_nodes[node.node_id] == observed[0]
         marker = core._protocol_unresolved[pending.task_key]
         assert marker.output_candidate == fixture.id and marker.obligation.envelope == reply.output_publication
         assert _delayed_adoption(core) == marker.obligation
         assert core._output_result_custody[fixture.id] == reply.output_publication
         assert not core._finish_pending_task(pending)
-        for output in pending.output_ids:
-            snapshot = core.owner_table.snapshot(output)
-            assert snapshot.state is ObjectState.PENDING and snapshot.output_publication is None
-            assert not core._objects[output].event.is_set()
+        snapshot = core.owner_table.snapshot(pending.object_id)
+        assert snapshot.state is ObjectState.PENDING and snapshot.output_publication is None
+        assert not core._objects[pending.object_id].event.is_set()
         assert core._recovery.task_record(pending.task_id).retries_started == 0
 
 
-def test_reverse_gc_orders_children_graph_drop_report_and_metadata_without_touching_sibling(monkeypatch):
+def test_reverse_gc_orders_children_drop_then_metadata_and_preserves_sources(monkeypatch):
     with _case() as (fixture, node, core, pending, reply, _calls, rpc):
         assert _publish(core, pending, reply, node, fixture)
         assert core._finish_pending_task(pending)
-        stored, sibling = pending.output_ids[1], pending.output_ids[0]
-        before_sibling = core.owner_table.snapshot(sibling)
         events = []
         original_borrow = core._borrow_rpc
         original_complete = core.owner_table.complete_output_publication_collection
-
         def release_child(address, handler, request):
             events.append("child")
             return original_borrow(address, handler, request)
-
         def observe(address, handler, request):
-            events.append(_stage(handler, request))
+            assert handler == "drop_object_replica"
+            events.append("drop")
             return rpc(address, handler, request)
-
-        def metadata(plan, receipt):
+        def metadata(plan):
             events.append("metadata")
-            return original_complete(plan, receipt)
-
+            return original_complete(plan)
         monkeypatch.setattr(core, "_borrow_rpc", release_child)
         monkeypatch.setattr(core, "_rpc", observe)
         monkeypatch.setattr(core.owner_table, "complete_output_publication_collection", metadata)
-        assert core.owner_table.release_local_reference(stored, "outer1")
-        core._reference_released(stored)
-        assert events == ["child", "child", "graph-release", "drop", "collected", "metadata"]
-        assert stored not in core._object_gc_obligations and not core.owner_table.contains(stored)
-        assert stored not in core._stored_descriptors and fixture.store.used_bytes == 0
-        assert core.owner_table.snapshot(sibling) == before_sibling
-        graph = fixture.graph.snapshot()
-        assert set(graph.committed_edges) == set(fixture.manifest.slots[0].edges)
+        assert core.owner_table.release_local_reference(pending.object_id, "outer0")
+        core._reference_released(pending.object_id)
+        assert events == ["child", "child", "drop", "metadata"]
+        assert not core._object_gc_obligations and not core.owner_table.contains(pending.object_id)
+        assert not core._stored_descriptors and fixture.store.used_bytes == 0
+        assert core._recovery.lineage_for_object(pending.object_id) is None
+        fixture.assert_no_pins_or_bytes()
         for transfer in fixture.manifest.slots[0].transfers:
-            holds = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
-            assert transfer.final_hold in holds
+            assert fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
+                transfer.contained_object_id).local_tokens == frozenset(("source-live",))
 
 
-@pytest.mark.parametrize("failed_stage", ("child", "graph-release", "drop", "collected", "metadata"))
+@pytest.mark.parametrize("failed_stage", ("child", "drop", "metadata"))
 def test_reverse_gc_ack_loss_retains_exact_obligation_and_skips_finished_effects(monkeypatch, failed_stage):
     with _case() as (fixture, node, core, pending, reply, _calls, rpc):
         assert _publish(core, pending, reply, node, fixture)
         assert core._finish_pending_task(pending)
-        stored, sibling = pending.output_ids[1], pending.output_ids[0]
-        before_sibling = core.owner_table.snapshot(sibling)
+        stored = pending.object_id
         calls, scheduled, injected = defaultdict(list), [], []
         original_borrow = core._borrow_rpc
         original_complete = core.owner_table.complete_output_publication_collection
-
         def lose_once(stage):
             if stage == failed_stage and not injected:
                 injected.append(stage)
                 raise TransportTimeout("exact cleanup ACK lost")
-
         def release_child(address, handler, request):
             calls["child"].append(request)
             result = original_borrow(address, handler, request)
             lose_once("child")
             return result
-
         def observe(address, handler, request):
-            stage = _stage(handler, request)
-            calls[stage].append(request)
+            assert handler == "drop_object_replica"
+            calls["drop"].append(request)
             result = rpc(address, handler, request)
-            lose_once(stage)
+            lose_once("drop")
             return result
-
-        def metadata(plan, receipt):
-            calls["metadata"].append((plan, receipt))
-            # Preserve the old metadata failure contract: fail before local
-            # collection, after all remote effects have exact acknowledgements.
+        def metadata(plan):
+            calls["metadata"].append(plan)
             lose_once("metadata")
-            return original_complete(plan, receipt)
-
+            return original_complete(plan)
         def queue_retry(mailbox, event, delay):
             assert mailbox is core._reference_mailbox and event.object_id == stored
             assert 0 < delay <= 0.25
             scheduled.append(event)
-
         monkeypatch.setattr(core, "_borrow_rpc", release_child)
         monkeypatch.setattr(core, "_rpc", observe)
         monkeypatch.setattr(core.owner_table, "complete_output_publication_collection", metadata)
         monkeypatch.setattr(core, "_schedule_reference_event", queue_retry)
-        assert core.owner_table.release_local_reference(stored, "outer1")
+        assert core.owner_table.release_local_reference(stored, "outer0")
         if failed_stage == "metadata":
             with pytest.raises(TransportTimeout, match="cleanup ACK"):
                 core._reference_released(stored)
@@ -513,62 +528,53 @@ def test_reverse_gc_ack_loss_retains_exact_obligation_and_skips_finished_effects
         obligation = core._object_gc_obligations[stored]
         plan = obligation.output_plan
         assert core.owner_table.contains(stored)
-        assert core.owner_table.snapshot(sibling) == before_sibling
-        if failed_stage in ("child", "graph-release"):
-            assert obligation.graph_release_receipt is None and obligation.pending_drops
-            assert calls["drop"] == calls["collected"] == calls["metadata"] == []
+        if failed_stage == "child":
+            assert obligation.pending_edges and obligation.pending_drops
+            assert calls["drop"] == calls["metadata"] == []
         elif failed_stage == "drop":
-            assert obligation.graph_release_receipt is not None and obligation.pending_drops
-            assert calls["collected"] == calls["metadata"] == []
+            assert not obligation.pending_edges and obligation.pending_drops
+            assert calls["metadata"] == []
         else:
             assert not obligation.pending_edges and not obligation.pending_drops
-            assert obligation.output_cleanup_reported is (failed_stage == "metadata")
-        if failed_stage == "graph-release":
-            assert not obligation.pending_edges and len(calls["child"]) == 2
         assert core._retry_gc_obligations_for_shutdown()
         assert not core.owner_table.contains(stored) and stored not in core._object_gc_obligations
-        assert stored not in core._stored_descriptors and fixture.store.used_bytes == 0
-        assert core.owner_table.snapshot(sibling) == before_sibling
+        assert not core._stored_descriptors and fixture.store.used_bytes == 0
         assert core.owner_table.output_publication_collection_receipt(plan) is not None
+        fixture.assert_no_pins_or_bytes()
         if failed_stage == "child":
-            assert len(calls["child"]) == 3
-            assert calls["child"][0] == calls["child"][2]
+            assert len(calls["child"]) == 3 and calls["child"][0] == calls["child"][2]
         else:
             assert len(calls["child"]) == 2
-            assert len(calls[failed_stage]) == 2 and calls[failed_stage][0] == calls[failed_stage][1]
-        for stage in ("graph-release", "drop", "collected", "metadata"):
+        for stage in ("drop", "metadata"):
             assert len(calls[stage]) == (2 if stage == failed_stage else 1)
+            assert all(value == calls[stage][0] for value in calls[stage])
         assert len(scheduled) == (0 if failed_stage == "metadata" else 1)
 
 
-def test_release_graph_wrong_ack_cannot_admit_replica_drop(monkeypatch):
+def test_wrong_child_ack_cannot_admit_replica_drop(monkeypatch):
     with _case() as (fixture, node, core, pending, reply, _calls, rpc):
         assert _publish(core, pending, reply, node, fixture)
         assert core._finish_pending_task(pending)
-        stored = pending.output_ids[1]
+        stored = pending.object_id
         calls, released = [], []
         original_borrow = core._borrow_rpc
-
         def release_child(address, handler, request):
+            result = original_borrow(address, handler, request)
             released.append(request)
-            return original_borrow(address, handler, request)
-
-        def wrong_graph_ack(address, handler, request):
+            return object() if len(released) == 1 else result
+        def observe(address, handler, request):
             calls.append(handler)
-            result = rpc(address, handler, request)
-            if handler == "release_contained_graph_container":
-                return object()
-            return result
-
+            return rpc(address, handler, request)
         monkeypatch.setattr(core, "_borrow_rpc", release_child)
-        monkeypatch.setattr(core, "_rpc", wrong_graph_ack)
+        monkeypatch.setattr(core, "_rpc", observe)
         monkeypatch.setattr(core, "_schedule_reference_event", lambda *_: None)
-        core.owner_table.release_local_reference(stored, "outer1")
+        assert core.owner_table.release_local_reference(stored, "outer0")
         core._reference_released(stored)
         obligation = core._object_gc_obligations[stored]
-        assert not obligation.pending_edges and obligation.graph_release_receipt is None
-        assert obligation.pending_drops and core.owner_table.contains(stored)
-        assert calls == ["release_contained_graph_container"] and len(released) == 2
-        monkeypatch.setattr(core, "_rpc", rpc)
+        assert len(obligation.pending_edges) == 1 and obligation.pending_drops
+        assert core.owner_table.contains(stored) and fixture.store.used_bytes > 0
+        assert calls == [] and len(released) == 2
         assert core._retry_gc_obligations_for_shutdown()
-        assert len(released) == 2 and not core.owner_table.contains(stored)
+        assert released == [released[0], released[1], released[0]]
+        assert calls == ["drop_object_replica"] and not core.owner_table.contains(stored)
+        fixture.assert_no_pins_or_bytes()

@@ -1,0 +1,53 @@
+{
+  "path": "tests/unit/test_output_owner_retired_fencing.py",
+  "plan_revision": "R2.2",
+  "status": "written_awaiting_root_bounded_validation",
+  "fixed_sha256": {
+    "base": "467c17955761e5024b81a4fbfa5c4214a26fe80694f8ae5ded834fd4da2d8e17",
+    "enhanced": "467c17955761e5024b81a4fbfa5c4214a26fe80694f8ae5ded834fd4da2d8e17"
+  },
+  "case_count": 13,
+  "cost": "5 pure functions/13 cases, at most one ObjectOwnerTable and two publication attempts; Complete/death are explicit validated metadata inputs, no bytes/store/RPC/runtime constructor/thread/wait",
+  "functions": [
+    {
+      "old_selector": "tests/unit/test_output_owner_retired_fencing.py::test_retired_attempt_is_fenced_across_plain_and_cross_tier_unified_publication",
+      "old_line": 160,
+      "base_replacement": "tests/unit/test_output_owner_retired_fencing.py::test_retired_attempt_is_fenced_across_plain_and_cross_tier_unified_publication",
+      "retained": "Exact retired epoch fences descriptor/metadata-only stored publication, plain task publication, same unified identity, fresh lease stored and inline; full owner state unchanged. Shared plain-task/actor owner boundary uses validate_publish_task_outputs and commit_validated_publish_task_outputs under the same owner lock, not retired publish_task_outputs convenience.",
+      "retired_representation": "Old seventh fresh-lease-mixed parameter is impossible with one output; both its storage alternatives survive as separate supported fresh-lease-stored/inline cases. No multi-output guarantee added.",
+      "enhanced_action": "Inherit owner-local regression and revalidate in E. Add current enhanced publication receipt binding where required; no output_recovery/contained_cycle or multi-target APIs restored."
+    },
+    {
+      "old_selector": "tests/unit/test_output_owner_retired_fencing.py::test_next_attempt_accepts_fresh_cross_tier_publication_without_replaying_old_retirement",
+      "old_line": 191,
+      "base_replacement": "tests/unit/test_output_owner_retired_fencing.py::test_next_attempt_accepts_fresh_cross_tier_publication_without_replaying_old_retirement",
+      "retained": "Next attempt accepts a new stored publication after original inline loss, exact old resolution/old commit replay cannot mutate new pending/ready state, original tombstones remain.",
+      "retired_representation": "Old simultaneous mixed-tier two slots become real cross-tier transition of one output; no healthy sibling contract invented.",
+      "enhanced_action": "Inherit owner-local regression and revalidate in E. Add current enhanced publication receipt binding where required; no output_recovery/contained_cycle or multi-target APIs restored."
+    },
+    {
+      "old_selector": "tests/unit/test_output_owner_retired_fencing.py::test_old_epoch_tombstone_does_not_waive_new_lost_replica_canonical_gc_identity",
+      "old_line": 222,
+      "base_replacement": "tests/unit/test_output_owner_retired_fencing.py::test_old_epoch_tombstone_does_not_waive_new_lost_replica_canonical_gc_identity",
+      "retained": "Old epoch retirement cannot exempt newer location-only LOST replica from canonical checksum/size GC requirement; rejection and replay leave full owner state unchanged.",
+      "retired_representation": "Only old unrelated sibling-PENDING assertion retires with multi-output representation.",
+      "enhanced_action": "Inherit owner-local regression and revalidate in E. Add current enhanced publication receipt binding where required; no output_recovery/contained_cycle or multi-target APIs restored."
+    },
+    {
+      "old_selector": "tests/unit/test_output_owner_retired_fencing.py::test_contaminated_retired_metadata_cannot_be_collected_or_silently_repaired",
+      "old_line": 248,
+      "base_replacement": "tests/unit/test_output_owner_retired_fencing.py::test_contaminated_retired_metadata_cannot_be_collected_or_silently_repaired",
+      "retained": "Actual retirement followed by injected payload/canonical/locations/edge contamination is rejected by collection without silently clearing or repairing state; exact loss replay no-op.",
+      "retired_representation": "Global registry supplied no independent behavior in the negative; current exact NodeLostOutputResolution establishes owner retirement directly.",
+      "enhanced_action": "Inherit owner-local regression and revalidate in E. Add current enhanced publication receipt binding where required; no output_recovery/contained_cycle or multi-target APIs restored."
+    },
+    {
+      "old_selector": "tests/unit/test_output_owner_retired_fencing.py::test_exact_retired_epoch_without_contamination_remains_metadata_only_collectible",
+      "old_line": 277,
+      "base_replacement": "tests/unit/test_output_owner_retired_fencing.py::test_exact_retired_epoch_without_contamination_remains_metadata_only_collectible",
+      "retained": "Exact retired metadata with no bytes/locations/children remains collectable, its source lineage remains in caller plan and old publication cannot revive it.",
+      "retired_representation": "Two collected outputs collapse to one valid current output; no graph cleanup requested for empty child effects.",
+      "enhanced_action": "Inherit owner-local regression and revalidate in E. Add current enhanced publication receipt binding where required; no output_recovery/contained_cycle or multi-target APIs restored."
+    }
+  ]
+}
