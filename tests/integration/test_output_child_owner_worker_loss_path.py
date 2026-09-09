@@ -9,12 +9,12 @@ listener, no blocker, extra test thread, tracing, Actor, PG or fake RPC.
 The existing AFTER_PROMOTIONS_ACK gate selects only attempt zero.  Registered
 Worker identity is cross-checked before SIGKILL; Node remains live to report
 PROCESS_EXIT, roll back the dead owner's contained hold and replace its Worker.
-Gate release may allow a late ARM report, never Complete.  Exact compensation
+Gate release may finish acknowledged preparation, never a dead Worker Complete.  Exact compensation
 must precede retry.  Observers forward real Core RPCs and never change replies.
 
 Work shares a 10 s monotonic deadline.  Reference/gate cleanup shares 3 s;
 runtime shutdown always runs, including partial init.  Run this exact node ID
-only through scripts/run_bounded_test.py with its external 30 s process bound.
+only through scripts/run_baseline.py --case with its external 30 s process bound.
 """
 
 from __future__ import annotations
@@ -33,7 +33,9 @@ import pytest
 import miniray as ray
 from miniray import output_protocol as wire, protocol
 from miniray.api import _get_runtime
-from miniray.control import GET_CONTAINED_GRAPH_HANDLER, GET_NODE_STATE_HANDLER, GET_WORKER_STATE_HANDLER
+from miniray.control import GET_NODE_STATE_HANDLER, GET_WORKER_STATE_HANDLER
+from miniray.core import CoreWorker
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.ids import AttemptID
 from miniray.node import GET_OBJECT_HANDLER, GET_WORKER_LEASE_OUTCOME_HANDLER, REQUEST_LEASE_HANDLER
 from miniray.output_publication import OutputPublicationID
@@ -94,11 +96,11 @@ def _worker_state(context, worker_id, deadline):
     return replace(reply)
 
 
-def _recovery(context, publication_id, deadline):
-    request = wire.GetOutputPublicationRecovery(publication_id)
-    reply = _query(context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER, request, deadline)
-    assert type(reply) is wire.GetOutputPublicationRecoveryReply and reply.request == request
-    assert reply.found and reply.snapshot is not None
+def _handoff(owner_address, publication_id, deadline):
+    request = wire.GetOutputHandoff(publication_id)
+    reply = _query(owner_address, wire.GET_OUTPUT_HANDOFF_HANDLER, request, deadline)
+    assert type(reply) is wire.OutputHandoffReply and reply.request == request
+    assert reply.accepted and reply.snapshot is not None
     return replace(reply.snapshot)
 
 
@@ -130,7 +132,7 @@ def _close_reference(reference, deadline):
         assert reference._release_done.wait(max(0.0, deadline - time.monotonic())), "reference cleanup timed out"
 
 
-def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node():
+def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node(monkeypatch):
     listener = connection = None
     context = runtime = core = report = death = None
     outer = child = None
@@ -142,6 +144,19 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node():
     grants, node_outcomes, retry_samples = {}, [], []
     grant_conflicts = []
     target = {}
+    rollback_reports = []
+    actual_report = CoreWorker.report_output_handoff_rollback
+
+    def report_rollback(owner, request):
+        reply = actual_report(owner, request)
+        if core is owner:
+            with observations:
+                assert len(rollback_reports) < 4
+                rollback_reports.append((request, reply))
+                observations.notify_all()
+        return reply
+
+    monkeypatch.setattr(CoreWorker, "report_output_handoff_rollback", report_rollback)
     try:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -192,7 +207,7 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node():
                 # Read-only snapshots at the actual retry boundary, before the
                 # original method advances either attempt authority or budget.
                 assert not core._state_lock._is_owned(), "retry observer cannot make RPC while holding Core state lock"
-                proof = _recovery(context, target["publication"], deadline)
+                proof = _handoff(runtime.owner_service.address, target["publication"], deadline)
                 with core._state_lock:
                     recovery = core._recovery.task_record(pending.task_id)
                     owner = core.owner_table.snapshot(pending.object_id)
@@ -219,13 +234,13 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node():
         assert publication.output_ids == publication.full_output_ids == (object_id,)
         assert publication.attempt_id == AttemptID(object_id.task_id, 0)
         target.update(task_id=object_id.task_id, publication=publication)
-        before = _recovery(context, publication, deadline)
+        before = _handoff(runtime.owner_service.address, publication, deadline)
         manifest = before.manifest
         assert manifest.manifest_digest == arrival.manifest_digest
         assert manifest.header.executor_worker_id == node.worker_id
         assert manifest.header.owner_worker_id == core.worker_id
-        assert not before.armed and before.complete is None and before.rollback is None
-        assert before.owner_death is None and before.frozen_node_death is None
+        assert before.phase is OutputHandoffPhase.PENDING and before.complete is None and before.adoption is None
+        assert not rollback_reports
         assert len(manifest.slots) == 1
         slot = manifest.slots[0]
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE
@@ -268,7 +283,8 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node():
                 observations.wait(_remaining(deadline))
             assert not retry_samples
             assert set(attempt for task, attempt in grants if task == object_id.task_id) == {0}
-        assert _recovery(context, publication, deadline).rollback is None
+        assert _handoff(runtime.owner_service.address, publication, deadline).complete is None
+        assert not rollback_reports
         connection.settimeout(_remaining(deadline))
         connection.sendall(OUTPUT_PUBLICATION_GATE_RELEASE)
         connection.close()
@@ -289,22 +305,24 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node():
         _node_alive(context, node, epoch, deadline)
         assert not _pid_exists(node.worker_pid)
 
-        resolved = _recovery(context, publication, deadline)
+        resolved = _handoff(runtime.owner_service.address, publication, deadline)
         assert resolved.manifest == manifest and resolved.complete is None
-        assert resolved.rollback is not None
-        assert resolved.owner_death is None and resolved.frozen_node_death is None
-        assert resolved.adopted is None and resolved.owner_decision is None and resolved.resolution is None
-        tombstone = resolved.rollback
+        assert resolved.phase is OutputHandoffPhase.ABORTED and resolved.adoption is None
+        with observations:
+            reports = [(request, reply) for request, reply in rollback_reports
+                       if request.manifest.publication_id == publication]
+        assert reports
+        actual_rollback, actual_reply = reports[0]
+        assert actual_reply.request == actual_rollback and actual_reply.accepted
+        assert all(request == actual_rollback and reply.accepted for request, reply in reports)
+        assert actual_rollback.manifest == manifest
+        tombstone = actual_rollback.tombstone
         assert tombstone.plan.publication_id == publication and tombstone.plan.manifest_digest == arrival.manifest_digest
         assert tuple((effect.stage, effect.slot_index, effect.transfer_index) for effect in tombstone.plan.effects) == (
-            (Stage.GRAPH_ABORT, None, None), (Stage.SLOT_DROP, 0, None),
+            (Stage.SLOT_DROP, 0, None),
             (Stage.FINAL_RELEASE, 0, 0), (Stage.PROVISIONAL_RELEASE, 0, 0),
         )
         assert tuple(ack.effect for ack in tombstone.acknowledgements) == tombstone.plan.effects
-        graph_request = protocol.GetContainedGraph(publication.graph_transaction_id)
-        graph_reply = _query(context.gcs_address, GET_CONTAINED_GRAPH_HANDLER, graph_request, deadline)
-        assert type(graph_reply) is protocol.GetContainedGraphReply and graph_reply.request == graph_request
-        assert graph_reply.manifest == manifest.to_graph_manifest()
         with observations:
             assert not grant_conflicts and len(retry_samples) == 1
             prior_attempt, current_attempt, retries_started, old_owner, retry_proof = retry_samples[0]

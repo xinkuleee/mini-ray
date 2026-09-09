@@ -1,13 +1,15 @@
-"""ARM-UNKNOWN publisher loss releases a live owner's contained holds.
+"""Preparation-complete publisher loss releases a live owner's contained holds.
 
 Five startup children: one GCS, two Nodes and one ordinary Worker per Node.
 A survivor blocker occupies the only other CPU while a producer returns one
-stored slot containing a borrowed Driver-owned child. The existing AFTER_ARM
-gate proves real promotions and physical bytes but no Complete. Exactly one
+stored output containing a borrowed Driver-owned child. The finite prepared
+fixture waits after the real Node preparation handler succeeds but before its
+reply, proving all promotions and bytes while Complete is still absent. Base
+has no central ARM; the old selector name remains for runner continuity. Exactly one
 managed Node crash and at most one SYSTEM retry occur; no synthetic death,
 child-release ACK, recovery resolution or test-side cleanup is used.
 
-The actual Core RPC/ retry boundary records both old contained holds retired
+The actual owner CAS / retry boundary records both old contained holds retired
 before retry. Dead-executor borrower cleanup is a distinct lifetime: it must
 converge through the ordinary death consumer before the blocker is released,
 not satisfy an invented ordering against SYSTEM-retry admission.
@@ -22,6 +24,7 @@ the external execution bound and bounded TERM/KILL/reap grace.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 import hashlib
 import multiprocessing as mp
 import os
@@ -33,25 +36,28 @@ import time
 import pytest
 
 import miniray as ray
-from miniray import output_protocol as wire, protocol
+from miniray import api as api_module, protocol
 from miniray.api import _get_runtime, _test_crash_node
 from miniray.control import GET_WORKER_STATE_HANDLER
 from miniray.core import _worker_death_reference_id
 from miniray.ids import AttemptID
 from miniray.node import GET_OBJECT_HANDLER, REQUEST_LEASE_HANDLER, SHUTDOWN_STATUS_HANDLER
-from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryOwnerDecision
+from miniray.output_handoff import NodeLostOutputResolution, OutputHandoffPhase
 from miniray.ownership import ObjectCollectionState, ObjectOwnerSnapshot, ObjectState
 from miniray.publication_gate import (
-    OUTPUT_PUBLICATION_GATE_RELEASE, OutputPublicationGateConfig,
+    OUTPUT_PUBLICATION_GATE_RELEASE,
     OutputPublicationGatePhase, recv_output_publication_gate_arrival,
 )
 from miniray.publication_sources import BorrowedContainedSource
 from miniray.recovery import TaskState
 from tests.support._legacy_reference_cleanup import _close_local
 from tests.integration.test_stored_outer_node_loss_path import (
-    _BLOCKER_RELEASE, _SURVIVOR_RESOURCE, _assert_metadata_only, _graph,
-    _node_loss, _occupy_survivor, _pid_exists, _poll_until, _query,
-    _recovery, _recv_exact, _release_connection, _remaining,
+    _BLOCKER_RELEASE, _SURVIVOR_RESOURCE, _assert_metadata_only, _handoff,
+    _loss_receipt, _occupy_survivor, _pid_exists, _poll_until, _query,
+    _recv_exact, _release_connection, _remaining,
+)
+from tests.integration._publisher_precomplete_fixture import (
+    PREPARED_FRAME_PREFIX, node_process_with_prepared_checkpoint,
 )
 
 
@@ -79,6 +85,7 @@ class _RetryCut:
     dependency_hold: protocol.TaskReferenceHold
     release_seen: tuple[bool, bool]
     executor_death: object
+    cleanup_completed: bool = False
 
 
 def _wait(core, predicate, deadline):
@@ -102,13 +109,14 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
     source = blocker = outer = restored_child = None
     transfer = publication = None
     original_rpc = original_retry = None
+    original_entry = api_module._node_process_main
     managed_pids, managed_addresses = set(), set()
     observation_lock = threading.Lock()
-    requests, grants, cleanup_acks, retry_cuts = {}, {}, {}, {}
+    requests, grants, retry_cuts = {}, {}, {}
     conflicts = set()
     overflow = threading.Event()
     close_errors = []
-    phase = OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE
+    phase = OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK
     try:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -116,11 +124,13 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         listener.listen(2)
         address = listener.getsockname()
         managed_addresses.add(address)
+        api_module._node_process_main = partial(
+            node_process_with_prepared_checkpoint, address, _SURVIVOR_RESOURCE,
+        )
         context = ray.init(
             num_nodes=2, num_workers_per_node=1,
             node_resources=({"CPU": 1, _SURVIVOR_RESOURCE: 1}, {"CPU": 1}),
             inline_threshold=1024, object_store_bytes=1024 * 1024,
-            _test_output_publication_gate=OutputPublicationGateConfig(1, address, phase, _WORK_SECONDS),
             enable_tracing=False,
         )
         deadline = time.monotonic() + _WORK_SECONDS
@@ -153,16 +163,6 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
                         if type(reply) is protocol.GrantWorkerLease:
                             if grants.setdefault(key, (message, reply)) != (message, reply):
                                 conflicts.add(key)
-                snapshot = (reply.snapshot if type(reply) is wire.OutputNodeLossReply
-                            else reply.snapshot if type(reply) is wire.GetOutputNodeLossReply and reply.found else None)
-                if snapshot is not None and snapshot.resolution is not None:
-                    identity = snapshot.publication_id
-                    if identity not in cleanup_acks and len(cleanup_acks) >= 2:
-                        overflow.set()
-                    else:
-                        prior = cleanup_acks.setdefault(identity, snapshot.resolution)
-                        if prior != snapshot.resolution:
-                            conflicts.add((identity.task_id, identity.attempt_id.attempt_number))
             return reply
 
         def inspect_retry(pending, error, **kwargs):
@@ -174,14 +174,19 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
                     released = tuple(core.owner_table.contained_release_was_seen(source_id, hold)
                                      for hold in (transfer.final_hold, transfer.provisional_hold))
                     executor_death = core.owner_table.dead_worker_record(victim.worker_id)
+                    receipt = core.owner_table._output_loss_receipts.get(publication)
+                    if receipt is not None:
+                        receipt = replace(receipt)
+                    cleanup_completed = publication in getattr(core, "_output_loss_completed", set())
                     with observation_lock:
                         key = pending.task_id, pending.spec.attempt_id
                         if key not in retry_cuts and len(retry_cuts) >= 2:
                             overflow.set()
                         else:
                             retry_cuts.setdefault(key, _RetryCut(
-                                cleanup_acks.get(publication), record.current_attempt, record.retries_started,
+                                receipt, record.current_attempt, record.retries_started,
                                 record.state, owner, child, pending.dependency_hold, released, executor_death,
+                                cleanup_completed,
                             ))
             return original_retry(pending, error, **kwargs)
 
@@ -195,6 +200,7 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         listener.settimeout(_remaining(deadline))
         publication_connection, _ = listener.accept()
         publication_connection.settimeout(_remaining(deadline))
+        assert _recv_exact(publication_connection, len(PREPARED_FRAME_PREFIX), deadline) == PREPARED_FRAME_PREFIX
         arrival = recv_output_publication_gate_arrival(publication_connection)
         publication = arrival.publication_id
         assert arrival.phase is phase
@@ -204,15 +210,17 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         assert publication.task_id == object_id.task_id and publication.output_ids == (object_id,)
         assert publication.full_output_ids == (object_id,) and publication.attempt_id == AttemptID(object_id.task_id, 0)
         _assert_metadata_only(arrival)
-        before = _recovery(context, publication, deadline)
+        before = _handoff(runtime.owner_service.address, publication, deadline)
         manifest = before.manifest
         assert manifest.manifest_digest == arrival.manifest_digest
         assert manifest.header.owner_worker_id == core.worker_id
         assert manifest.header.executor_worker_id == victim.worker_id
-        assert before.armed and before.complete is None
-        assert before.recovery_action is OutputRecoveryAction.COMPLETION_UNKNOWN
-        assert before.adopted is before.rollback is before.owner_decision is before.resolution is None
-        assert before.frozen_node_death is before.owner_death is None and before.slot_collections == ()
+        assert before.phase is OutputHandoffPhase.PENDING and before.complete is None
+        assert before.adoption is None and before.abort_reason is None
+        assert (manifest.header.node_incarnation.node_id, manifest.header.node_incarnation.node_pid,
+                manifest.header.node_incarnation.registration_epoch) == (
+            victim.node_id, victim.node_pid, arrival.registration_epoch,
+        )
         slot, = manifest.slots
         assert slot.object_id == object_id and slot.tier is protocol.ResultStorage.OBJECT_STORE
         assert len(_PADDING) < slot.size_bytes < 32 * 1024
@@ -243,12 +251,12 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         # executor death because its container owner is the live Driver.
         assert core.owner_table.contained_release_was_seen(source_id, transfer.provisional_hold)
         assert not core.owner_table.contained_release_was_seen(source_id, transfer.final_hold)
-        assert _graph(context, publication, deadline).manifest == manifest.to_graph_manifest()
         physical = _physical(victim, object_id, deadline)
         assert physical.found and physical.sealed and physical.producer_attempt_id == publication.attempt_id
         assert physical.owner_worker_id == core.worker_id and physical.size_bytes == slot.size_bytes
         assert physical.checksum == slot.checksum == hashlib.sha256(physical.data).hexdigest()
         assert len(physical.data) == slot.size_bytes
+        del physical  # Diagnostic bytes never become owner result custody.
         pending_owner = core.owner_table.snapshot(object_id)
         assert pending_owner.state is ObjectState.PENDING and pending_owner.output_publication is None
         assert pending_owner.current_attempt == publication.attempt_id and not pending_owner.locations
@@ -270,10 +278,18 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         assert cut.current_attempt == publication.attempt_id and cut.retries_started == 0
         assert cut.outer.state is ObjectState.PENDING and cut.outer.current_attempt == publication.attempt_id
         assert cut.outer.output_publication is None and not cut.outer.locations
-        assert cut.resolution is not None and cut.resolution.publication_id == publication
-        assert cut.resolution.complete is None and cut.resolution.kept_slots == ()
+        assert type(cut.resolution) is NodeLostOutputResolution and cut.cleanup_completed
+        assert cut.resolution.publication_id == publication
+        assert cut.resolution.complete is None and not cut.resolution.keep
         assert cut.resolution.manifest_digest == manifest.manifest_digest and cut.resolution.owner_worker_id == core.worker_id
         assert cut.resolution.node_death == death and cut.release_seen == (True, True)
+        cut.resolution.validate_manifest(manifest)
+        assert all(type(reply) is protocol.ReleaseContainedReferenceReply and reply.accepted
+                   for reply in cut.resolution.cleanup)
+        assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in cut.resolution.cleanup} == {
+            (source_id, core.worker_id, transfer.final_hold),
+            (source_id, core.worker_id, transfer.provisional_hold),
+        }
         assert cut.dependency_hold == hold and cut.source.submitted_tokens == at_arm.submitted_tokens
         assert cut.source.lineage_tokens == at_arm.lineage_tokens
         assert cut.source.state is ObjectState.READY_INLINE and cut.source.inline_data == at_arm.inline_data
@@ -282,19 +298,13 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         # No assertion couples cut.executor_death / cut.source.borrowed_tokens
         # to retry admission: the independent ordered consumer owns that tail.
 
-        terminal = _node_loss(context, publication, core.worker_id, death, deadline)
-        assert terminal.work.action is OutputRecoveryAction.COMPLETION_UNKNOWN
-        assert terminal.work.snapshot == replace(before, frozen_node_death=death)
-        resolved = terminal.snapshot
-        assert resolved.manifest == manifest and resolved.resolution == cut.resolution
-        assert resolved.complete is None and resolved.armed and resolved.frozen_node_death == death
-        assert resolved.owner_decision.complete is None
-        decision, = resolved.owner_decision.slots
-        assert decision.object_id == object_id and decision.slot_index == 0
-        assert decision.decision is OutputRecoveryOwnerDecision.DROP
-        assert resolved.adopted is resolved.rollback is resolved.owner_death is resolved.owner_cleaned is None
-        assert not resolved.terminal_report_allowed
-        assert _recovery(context, publication, deadline) == resolved
+        resolved = _handoff(runtime.owner_service.address, publication, deadline)
+        assert resolved.manifest == manifest and resolved.complete is None
+        assert resolved.phase is OutputHandoffPhase.ABORTED and resolved.adoption is None
+        assert _loss_receipt(core, publication) == cut.resolution
+        with core._state_lock:
+            assert publication not in getattr(core, "_output_node_cleanup", {})
+            assert publication not in getattr(core, "_output_result_custody", {})
 
         def retry_admitted():
             record = core._recovery.task_record(object_id.task_id)
@@ -363,8 +373,8 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         record = core._recovery.task_record(object_id.task_id)
         assert record.state is TaskState.SUCCEEDED and record.retries_started == 1 and record.retries_remaining == 0
         assert record.current_attempt == completed.current_attempt and core._recovery.active_recovery(object_id.task_id) is None
-        assert _recovery(context, publication, deadline) == resolved
-        assert _node_loss(context, publication, core.worker_id, death, deadline).work == terminal.work
+        assert _handoff(runtime.owner_service.address, publication, deadline) == resolved
+        assert _loss_receipt(core, publication) == cut.resolution
         with observation_lock:
             task_grants = {attempt: pair for (task, attempt), pair in grants.items() if task == object_id.task_id}
             assert set(task_grants) == {0, 1} and len(retry_cuts) == 1
@@ -411,6 +421,7 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         finally:
             if core is not None and original_rpc is not None:
                 core._rpc, core._retry_system_failure = original_rpc, original_retry
+            api_module._node_process_main = original_entry
             report = ray.shutdown()
 
     assert not close_errors and context is not None and death is not None and report is not None

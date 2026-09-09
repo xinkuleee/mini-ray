@@ -53,3 +53,5 @@ K3i/k：readiness trace4、public values修后24、typed-source7/contained ident
 K3l：PGdispatch2/普通结果knowledge5/containedGC失败ACK2修后通过；INLINE/STORED Node server原44函数全部pure+原L1通过，保重放/锁/实际写入/Complete不重复清账。3个未登记selector拒绝不计测试失败，已在下一冻结补登记。
 
 K3m：inlinegate33/NodeDeathGC2/foreignstored13/trace52/traceobservation6/Nodeadapter28通过，foreigninline12pure函数13case+2原race L1全部通过；preflight未知分支1处错要求successreceipt已定位修测试，25其它通过。
+
+K3n：collection通用guard17通过并退出旧7个硬编码锁；14个原集成迁移全部通过，覆盖回收收据重放/PG peer loss两个窗口/route与multiowner/child Worker death/INLINE已收未收/存活副本KEEP/unreported/embedded owner证书/borrowedunknown。

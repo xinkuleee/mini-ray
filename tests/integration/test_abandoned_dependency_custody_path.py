@@ -276,13 +276,13 @@ def test_dead_submitter_hands_granted_input_back_to_live_owner_without_child_exe
         assert not core.owner_table.dead_worker_record(core.worker_id)
 
         outcome_request = protocol.GetWorkerLeaseOutcome(child_request.lease_id, child_request.task_id, child_request.attempt_id,
-            node_b.worker_id, node_a.worker_id, child_request.return_ids, child_request.scheduling_key, child_request.target_execution)
+            node_b.worker_id, node_a.worker_id, child_request.return_ids, child_request.scheduling_key)
         outcome = _rpc(node_b.node_address, GET_WORKER_LEASE_OUTCOME_HANDLER, outcome_request, deadline)
         assert type(outcome) is protocol.GetWorkerLeaseOutcomeReply and outcome.found and outcome.worker_alive
         assert (outcome.lease_id, outcome.task_id, outcome.attempt_id, outcome.executor_worker_id, outcome.owner_worker_id,
-                outcome.object_ids, outcome.node_id, outcome.scheduling_key, outcome.target_execution) == (
+                outcome.object_ids, outcome.node_id, outcome.scheduling_key) == (
             child_request.lease_id, expected_child, child_request.attempt_id, node_b.worker_id, node_a.worker_id,
-            child_request.return_ids, node_b.node_id, child_request.scheduling_key, child_request.target_execution)
+            child_request.return_ids, node_b.node_id, child_request.scheduling_key)
         assert outcome.state is protocol.LeaseExecutionState.ABANDONED and outcome.completion_status is None
         assert not outcome.descriptors and not outcome.orphan_descriptors and not outcome.cleanup_pending
         assert outcome.output_publication is None and outcome.output_completion is None
@@ -323,8 +323,8 @@ def test_dead_submitter_hands_granted_input_back_to_live_owner_without_child_exe
         def acquire_probe():
             candidate = _rpc(probe_address, REQUEST_LEASE_HANDLER, probe, deadline)
             assert type(candidate) in (protocol.RejectWorkerLease, protocol.GrantWorkerLease)
-            assert (candidate.lease_id, candidate.task_id, candidate.attempt_id, candidate.scheduling_key, candidate.target_execution) == (
-                probe.lease_id, probe.task_id, probe.attempt_id, probe.scheduling_key, probe.target_execution)
+            assert (candidate.lease_id, candidate.task_id, candidate.attempt_id, candidate.scheduling_key) == (
+                probe.lease_id, probe.task_id, probe.attempt_id, probe.scheduling_key)
             if type(candidate) is protocol.RejectWorkerLease:
                 assert candidate.reason is protocol.LeaseRejectReason.PENDING_CAPACITY
                 return None

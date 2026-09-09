@@ -31,7 +31,7 @@ from miniray import protocol
 from miniray.api import _get_runtime
 from miniray.control import (
     GET_NODES_HANDLER, GET_NODE_STATE_HANDLER, GET_WORKER_STATE_HANDLER,
-    PROGRESS_PUBLICATION_OWNER_DEATH_HANDLER,
+    DRAIN_OWNER_DEATH_FENCES_HANDLER,
 )
 from miniray.core import _worker_death_reference_id
 from miniray.errors import OwnerDiedError
@@ -338,12 +338,15 @@ def test_dead_first_owner_cancels_grant_but_hands_off_second_foreign_replica():
             return all(not _replica(node, ref_a.object_id, deadline).found for node in (node_a, node_b))
 
         _poll(dead_owner_copies_absent, deadline, "owner-wide sweep left an old owner replica")
-        # This existing progress operation is owner-scoped, not BeginDrain: it
-        # confirms the GCS outbox barrier without closing healthy admission.
+        # This existing bounded member-fence driver advances cleanup without
+        # closing admission. There is one dead owner in this exact experiment;
+        # the global pending-fence count must reach zero after its real copies
+        # disappear. It is not an enhanced publication-progress endpoint.
+        fence_request = protocol.DrainOwnerDeathFences("multi-owner-real-fence-cleanup")
         def owner_cleanup_complete():
-            reply = _rpc(context.gcs_address, PROGRESS_PUBLICATION_OWNER_DEATH_HANDLER,
-                         protocol.ProgressPublicationOwnerDeath(node_a.worker_id), deadline)
-            assert type(reply) is protocol.ProgressPublicationOwnerDeathReply and reply.owner_worker_id == node_a.worker_id
+            reply = _rpc(context.gcs_address, DRAIN_OWNER_DEATH_FENCES_HANDLER, fence_request, deadline)
+            assert type(reply) is protocol.DrainOwnerDeathFencesReply and reply.request_id == fence_request.request_id
+            assert reply.clean == (reply.active_fences == 0)
             return reply.clean
 
         _poll(owner_cleanup_complete, deadline, "GCS owner cleanup did not converge")
@@ -382,8 +385,8 @@ def test_dead_first_owner_cancels_grant_but_hands_off_second_foreign_replica():
             candidate = _rpc(probe_address, REQUEST_LEASE_HANDLER, probe, deadline)
             assert type(candidate) in (protocol.RejectWorkerLease, protocol.GrantWorkerLease)
             assert (candidate.lease_id, candidate.task_id, candidate.attempt_id,
-                    candidate.scheduling_key, candidate.target_execution) == (
-                probe.lease_id, probe.task_id, probe.attempt_id, probe.scheduling_key, probe.target_execution,
+                    candidate.scheduling_key) == (
+                probe.lease_id, probe.task_id, probe.attempt_id, probe.scheduling_key,
             )
             if type(candidate) is protocol.RejectWorkerLease:
                 assert candidate.reason is protocol.LeaseRejectReason.PENDING_CAPACITY

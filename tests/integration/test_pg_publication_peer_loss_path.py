@@ -5,10 +5,11 @@ Worker per Node, with 1 MiB per store and no tracing. One two-bundle
 STRICT_SPREAD PG runs one tiny, single-return Task on the Driver-local Node.
 The other Node is idle and is the only permitted crash target.
 
-Two controlled events are ordered in the original dispatcher: the real GCS
-Terminal/Adopted report accepts the completed Task, the managed peer Node
-crashes through the complete GCS/survivor/Core barrier, then that one real
-metadata ACK is discarded. No fake ACK, test-owned thread/listener, sleep,
+Two separate base-version windows use the original dispatcher: either a real
+successful Push reply is withheld after Node Complete, or the real Node
+payload-retirement ACK is withheld after owner CAS. The managed peer Node
+crashes through the actual membership/survivor/Core barrier before that one
+reply is discarded. No fake ACK, test-owned thread/listener, sleep,
 replacement ReadyTask or direct adoption call is used. The queued retry must
 finish the existing publication even though its PG capability is now LOST.
 
@@ -37,6 +38,7 @@ from miniray.api import _get_runtime, _test_crash_node
 from miniray.control import GET_PLACEMENT_GROUP_HANDLER
 from miniray.node import GET_WORKER_LEASE_OUTCOME_HANDLER
 from miniray.ownership import ObjectState
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.recovery import TaskState
 from miniray.transport import TransportTimeout, request as rpc_request
 from tests.integration.test_task_path import _close_reference, _pid_exists
@@ -68,7 +70,7 @@ def _query(address, handler, request, deadline):
     )
 
 
-@pytest.mark.parametrize("lost_ack", ("terminal", "adopted"))
+@pytest.mark.parametrize("lost_ack", ("push-reply", "retirement-ack"))
 def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
     context = runtime = core = group = reference = report = None
     original_rpc = original_push = None
@@ -80,10 +82,6 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
     cut_claimed = False
     cut = {}
     calls, pushes, push_replies = [], [], []
-    selected_report = (
-        wire.ReportOutputPublicationTerminal if lost_ack == "terminal"
-        else wire.ReportOutputPublicationAdopted
-    )
 
     try:
         context = ray.init(
@@ -122,6 +120,49 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
         group_identity = group.placement_group_id, group.attempt
         original_rpc, original_push = core._rpc, core._push_task_rpc
 
+        def crash_peer_after_real_reply(request, reply, *, envelope):
+            nonlocal cut_claimed
+            with observation_lock:
+                if cut_claimed:
+                    return
+                cut_claimed = True
+            try:
+                assert threading.current_thread() in core._dispatchers
+                assert not core._state_lock._is_owned()
+                identity = envelope.publication_id
+                assert envelope.manifest.header.node_incarnation.node_id == survivor.node_id
+                assert envelope.manifest.header.executor_worker_id == survivor.worker_id
+                assert envelope.manifest.header.owner_worker_id == core.worker_id
+                slot, = envelope.manifest.slots
+                assert slot.tier is protocol.ResultStorage.INLINE and slot.size_bytes < 1024 and not slot.transfers
+                with core._state_lock:
+                    pending = core._task_finish_barriers[identity.output_ids[0]]
+                    before = core.owner_table.snapshot(identity.output_ids[0])
+                    assert pending.execution == identity.execution and core._accepted_task_count == 1
+                    assert core._placement_group_states[group_identity] is protocol.PlacementGroupPhaseStatus.CREATED
+                    history = core._output_handoff_table().query(identity)
+                assert before.state is (ObjectState.PENDING if lost_ack == "push-reply" else ObjectState.READY_INLINE)
+                assert before.error is None
+                assert (history.adoption is not None) is (lost_ack == "retirement-ack")
+                cut["ack"], cut["pending"], cut["envelope"] = (request, reply), pending, envelope
+                death = _test_crash_node(victim.node_id, timeout=_remaining(deadline))
+                cut["death"] = death
+                with core._state_lock:
+                    assert core._dead_nodes == {victim.node_id: death}
+                    installed = core._installed_cluster_snapshot
+                    assert installed.membership_epoch >= death.death_epoch
+                    assert tuple(node.node_id for node in installed.nodes) == (survivor.node_id,)
+                    assert core._placement_group_states[group_identity] is protocol.PlacementGroupPhaseStatus.LOST
+                    assert core.owner_table.snapshot(identity.output_ids[0]) == before
+                    assert core._task_finish_barriers[identity.output_ids[0]] is pending
+                    assert pending.task_key in core._protocol_unresolved and core._accepted_task_count == 1
+            except Exception as exc:
+                cut["error"] = exc
+                raise
+            finally:
+                cut_done.set()
+            raise TransportTimeout("actual base publication reply lost after peer PG Node death")
+
         def observe_push(address, handler, request):
             with observation_lock:
                 if len(pushes) < _MAX_OBSERVATIONS:
@@ -134,97 +175,24 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
                     push_replies.append(reply)
                 else:
                     overflow.set()
+            assert type(reply) is protocol.TaskReply and reply.status is protocol.TaskReplyStatus.SUCCEEDED
+            if lost_ack == "push-reply" and not cut_claimed:
+                crash_peer_after_real_reply(request, reply, envelope=reply.output_publication)
             return reply
 
         def observe_rpc(address, handler, request):
-            nonlocal cut_claimed
-            # The actual receiver applies every operation before observation.
-            # Overflow never changes its response, timeout or retry behavior.
             reply = original_rpc(address, handler, request)
-            should_cut = False
-            with observation_lock:
-                if type(request) in (
-                    wire.ReportOutputPublicationTerminal,
-                    wire.ReportOutputPublicationAdopted,
-                    wire.AckOutputPublicationAdopted,
-                ):
+            if type(request) is wire.AckOutputPublicationAdopted:
+                assert address == survivor.node_address and handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
+                assert type(reply) is wire.AckOutputPublicationAdoptedReply and reply.request == request and reply.accepted
+                with observation_lock:
                     if len(calls) < _MAX_OBSERVATIONS:
                         calls.append((address, handler, request, reply))
                     else:
                         overflow.set()
-                if (type(request) is selected_report and not cut_claimed
-                        and pushes and type(pushes[0][2]) is protocol.PushTask
-                        and request.request_identity.publication_id.task_id
-                        == pushes[0][2].spec.task_id):
-                    cut_claimed = should_cut = True
-
-            if should_cut:
-                try:
-                    assert threading.current_thread() in core._dispatchers
-                    assert not core._state_lock._is_owned()
-                    assert address == context.gcs_address
-                    assert handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-                    assert type(reply) is wire.OutputRecoveryReply
-                    assert reply.request == request and reply.accepted
-                    history = reply.ack.snapshot
-                    identity = request.request_identity.publication_id
-                    assert history.publication_id == identity
-                    assert history.armed and history.complete is not None
-                    assert history.manifest.header.node_incarnation.node_id == survivor.node_id
-                    assert history.manifest.header.executor_worker_id == survivor.worker_id
-                    assert history.manifest.header.owner_worker_id == core.worker_id
-                    assert len(history.manifest.slots) == 1
-                    assert history.manifest.slots[0].tier is protocol.ResultStorage.INLINE
-                    assert history.manifest.slots[0].size_bytes < 1024
-                    assert history.manifest.slots[0].transfers == ()
-                    with observation_lock:
-                        assert len(pushes) == len(push_replies) == 1
-                        push_address, _push_handler, push = pushes[0]
-                        completed = push_replies[0]
-                    assert push_address == survivor.worker_address
-                    assert push.spec.scheduling_key == survivor_key
-                    assert push.lease_id == identity.lease_id
-                    assert type(completed) is protocol.TaskReply
-                    assert completed.status is protocol.TaskReplyStatus.SUCCEEDED
-                    assert completed.output_publication.manifest == history.manifest
-                    assert completed.output_publication.complete == history.complete
-                    with core._state_lock:
-                        pending = core._task_finish_barriers[identity.output_ids[0]]
-                        before = core.owner_table.snapshot(identity.output_ids[0])
-                        assert pending.execution == identity.execution
-                        assert core._accepted_task_count == 1
-                        assert core._placement_group_states[group_identity] is protocol.PlacementGroupPhaseStatus.CREATED
-                    assert before.state is (
-                        ObjectState.PENDING if lost_ack == "terminal"
-                        else ObjectState.READY_INLINE
-                    )
-                    assert before.error is None
-                    assert (history.adopted is not None) is (lost_ack == "adopted")
-                    cut["ack"], cut["pending"] = (request, reply), pending
-
-                    # No Core/recorder lock is held across this wait. The
-                    # existing Node observer installs local Core truth and
-                    # sets its event without waiting for this dispatch lane.
-                    death = _test_crash_node(victim.node_id, timeout=_remaining(deadline))
-                    cut["death"] = death
-                    with core._state_lock:
-                        assert core._dead_nodes == {victim.node_id: death}
-                        installed = core._installed_cluster_snapshot
-                        assert installed.membership_epoch >= death.death_epoch
-                        assert tuple(node.node_id for node in installed.nodes) == (survivor.node_id,)
-                        assert core._placement_group_states[group_identity] is protocol.PlacementGroupPhaseStatus.LOST
-                        assert core.owner_table.snapshot(identity.output_ids[0]) == before
-                        assert core._task_finish_barriers[identity.output_ids[0]] is pending
-                        assert pending.task_key in core._protocol_unresolved
-                        assert core._accepted_task_count == 1
-                except Exception as exc:
-                    # Adoption catches RPC exceptions into its retry path.
-                    # Preserve observer failures for the main test thread.
-                    cut["error"] = exc
-                    raise
-                finally:
-                    cut_done.set()
-                raise TransportTimeout("real publication ACK lost after peer PG Node death")
+                    envelope = push_replies[0].output_publication
+                if lost_ack == "retirement-ack" and not cut_claimed:
+                    crash_peer_after_real_reply(request, reply, envelope=envelope)
             return reply
 
         core._rpc, core._push_task_rpc = observe_rpc, observe_push
@@ -236,7 +204,7 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
         assert cut_claimed and not overflow.is_set()
         lost_request, lost_reply = cut["ack"]
         death, pending = cut["death"], cut["pending"]
-        identity = lost_request.request_identity.publication_id
+        identity = cut["envelope"].publication_id
         assert identity.task_id == reference.object_id.task_id
         assert identity.output_ids == (reference.object_id,)
         assert identity.attempt_id.attempt_number == 0
@@ -247,8 +215,8 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
         assert victim_runtime.process.exitcode == death.exit_code
         assert not victim_runtime.process.is_alive()
 
-        # READY may precede the Adopted cut. Wait for the real finish, then
-        # inspect the actual retirement ACK that had to precede that finish.
+        # Owner READY can precede the retirement ACK cut. Wait for its real
+        # finish before inspecting the exact Node retirement acknowledgement.
         with core._completion:
             while (reference.object_id in core._task_finish_barriers
                    or pending.task_key in core._protocol_unresolved
@@ -266,19 +234,18 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
 
         with observation_lock:
             assert not overflow.is_set()
-            assert len(pushes) == len(push_replies) == 1
+            assert 1 <= len(pushes) == len(push_replies) <= 2
+            assert all(push == pushes[0][2] for _address, _handler, push in pushes)
+            assert all(reply.output_publication == cut["envelope"] for reply in push_replies)
             metadata_calls = tuple(calls)
-        selected_calls = tuple(call for call in metadata_calls if type(call[2]) is selected_report)
-        assert len(selected_calls) == 2
-        assert all(call[2] == lost_request and call[3].accepted for call in selected_calls)
-        retirements = tuple(call for call in metadata_calls if type(call[2]) is wire.AckOutputPublicationAdopted)
-        assert len(retirements) == 1
-        retirement_address, retirement_handler, retirement_request, retirement_reply = retirements[0]
+        assert len(metadata_calls) == (2 if lost_ack == "retirement-ack" else 1)
+        assert all(call[2] == metadata_calls[0][2] and call[3].accepted for call in metadata_calls)
+        retirement_address, retirement_handler, retirement_request, retirement_reply = metadata_calls[-1]
         assert retirement_address == survivor.node_address
         assert retirement_handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
         assert type(retirement_reply) is wire.AckOutputPublicationAdoptedReply
         assert retirement_reply.request == retirement_request and retirement_reply.accepted
-        assert retirement_request.proof.complete == lost_reply.ack.snapshot.complete
+        assert retirement_request.proof.complete == cut["envelope"].complete
         assert ray.get(reference, timeout=_remaining(deadline)) == (survivor.worker_pid, 42)
 
         # Observe the real Node journal after its recorded ACK, without
@@ -301,19 +268,16 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
         assert outcome.completion_status is protocol.TaskReplyStatus.SUCCEEDED
         assert outcome.output_publication is None and outcome.descriptors == ()
         assert outcome.output_completion == retirement_request.proof.complete
-        assert outcome.orphan_descriptors == () and outcome.target_execution is None
-        history_request = wire.GetOutputPublicationRecovery(identity)
-        history_reply = _query(
-            context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER, history_request, deadline,
-        )
-        assert type(history_reply) is wire.GetOutputPublicationRecoveryReply
-        assert history_reply.request == history_request and history_reply.found
+        assert outcome.orphan_descriptors == ()
+        history_request = wire.GetOutputHandoff(identity)
+        history_reply = _query(runtime.owner_service.address, wire.GET_OUTPUT_HANDOFF_HANDLER,
+                               history_request, deadline)
+        assert type(history_reply) is wire.OutputHandoffReply and history_reply.accepted
+        assert history_reply.request == history_request
         history = history_reply.snapshot
-        assert history.manifest == lost_reply.ack.snapshot.manifest
+        assert history.manifest == cut["envelope"].manifest
         assert history.complete == retirement_request.proof.complete
-        assert history.adopted == retirement_request.proof
-        assert history.frozen_node_death is None and history.rollback is None
-        assert history.slot_collections == ()
+        assert history.adoption == retirement_request.proof and history.phase is OutputHandoffPhase.ADOPTED
 
         pg_reply = _query(
             context.gcs_address, GET_PLACEMENT_GROUP_HANDLER,

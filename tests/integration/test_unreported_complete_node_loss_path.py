@@ -12,12 +12,12 @@ The common Complete/outcome checkpoint first verifies the actual journal
 Complete, completed lease, and released CPU. Its metadata-only frame is sent
 only after a matching real terminal-send attempt was suppressed. The ordinary
 configured output gate is deliberately absent: its AFTER_COMPLETE phase forces
-a GCS terminal ACK and would test the wrong window.
+an owner terminal ACK and would test the wrong window.
 
 The test-local frame prefix means LOCAL_COMPLETE_UNREPORTED; the existing
 arrival encoding supplies exact incarnation/publication/digest only. Neither
-the observer's witness nor any envelope is installed into Core custody. GCS
-must still be ARM-only when the Node dies, so real recovery freezes UNKNOWN,
+the observer's witness nor any envelope is installed into Core custody. The
+owner must still have registration only when the Node dies, so recovery remains UNKNOWN,
 cleans old live-child holds, and then retries. Test and gate work each share a
 ten-second deadline; gate/refs cleanup gets three seconds. Run only this exact
 ID through the 30-second process-tree runner, plus its bounded cleanup grace.
@@ -25,7 +25,7 @@ ID through the 30-second process-tree runner, plus its bounded cleanup grace.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 import hashlib
 import multiprocessing as mp
@@ -45,29 +45,57 @@ from miniray.control import GET_WORKER_STATE_HANDLER
 from miniray.ids import AttemptID
 from miniray.output_publication import OutputPublicationCompleteWitness, OutputPublicationEnvelope
 from miniray.output_publication_journal import OutputPublicationJournalState
-from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryOwnerDecision
+from miniray.output_handoff import NodeLostOutputResolution, OutputHandoffPhase
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.publication_gate import OutputPublicationGateArrival, OutputPublicationGatePhase, recv_output_publication_gate_arrival
 from miniray.publication_sources import BorrowedContainedSource
 from miniray.recovery import TaskState
 from miniray.resources import AllocationState
 from miniray.transport import TransportTimeout
-from tests.integration.test_borrowed_output_unknown_path import _RetryCut, _physical, _wait
 from tests.support._legacy_reference_cleanup import _close_local
 from tests.integration.test_stored_outer_node_loss_path import (
-    _BLOCKER_RELEASE, _SURVIVOR_RESOURCE, _assert_metadata_only, _graph,
-    _node_loss, _occupy_survivor, _pid_exists, _poll_until, _query,
-    _recovery, _recv_exact, _release_connection, _remaining,
+    _BLOCKER_RELEASE, _SURVIVOR_RESOURCE, _assert_metadata_only, _handoff, _loss_receipt,
+    _occupy_survivor, _pid_exists, _poll_until, _query,
+    _recv_exact, _release_connection, _remaining,
 )
 
 
 pytestmark = pytest.mark.multiprocess_smoke
 _ACTUAL_NODE_PROCESS_MAIN = api_module._node_process_main
 _SECONDS = 10.0
-_FRAME_PREFIX = b"MRLCU001"  # LOCAL_COMPLETE_UNREPORTED, not a GCS terminal proof.
+_FRAME_PREFIX = b"MRLCU001"  # LOCAL_COMPLETE_UNREPORTED, not an owner terminal proof.
 _GATE_RELEASE = b"G"
 _SOURCE_VALUE = ("unreported-complete-live-child", 42)
 _PADDING = b"C" * (8 * 1024)
+
+
+@dataclass(frozen=True)
+class _RetryCut:
+    resolution: object
+    current_attempt: AttemptID
+    retries_started: int
+    task_state: TaskState
+    outer: object
+    source: object
+    dependency_hold: protocol.TaskReferenceHold
+    release_seen: tuple[bool, bool]
+    executor_death: object
+
+
+def _wait(core, predicate, deadline):
+    with core._completion:
+        while True:
+            result = predicate()
+            if result:
+                return result
+            core._completion.wait(_remaining(deadline))
+
+
+def _physical(node, object_id, deadline):
+    reply = _query(node.node_address, node_module.GET_OBJECT_HANDLER,
+                   protocol.GetObject(object_id, node.node_id), deadline)
+    assert type(reply) is protocol.GetObjectReply and reply.object_id == object_id and reply.node_id == node.node_id
+    return reply
 
 
 class _UnreportedCompleteGate:
@@ -177,11 +205,11 @@ def _node_process_with_unreported_complete(address, *args):
     gate = _UnreportedCompleteGate(address)
 
     def send(node, destination, handler, message, **options):
-        if (destination == node._gcs_address and handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-                and type(message) is wire.ReportOutputPublicationTerminal
+        if (handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER
+                and type(message) is wire.ReportOutputHandoffComplete
                 and gate.suppress_terminal(message.witness)):
             # Do not call original_rpc and then lose the ACK: that would make
-            # Complete KNOWN at GCS and invalidate this entire acceptance.
+            # Complete KNOWN at the owner and invalidate this acceptance.
             raise TransportTimeout("test partition withheld the actual terminal report before send")
         return original_rpc(node, destination, handler, message, **options)
 
@@ -212,7 +240,7 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
     original_entry = api_module._node_process_main
     pids, addresses, close_errors = set(), set(), []
     observations = threading.Lock()
-    grants, resolutions, cuts = {}, {}, {}
+    grants, cuts = {}, {}
     observation_errors = set()
     try:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -253,14 +281,6 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
                         observation_errors.add("grant inventory exceeded four identities")
                     elif grants.setdefault(key, (message, reply)) != (message, reply):
                         observation_errors.add("one grant identity was rebound")
-                snapshot = (reply.snapshot if type(reply) is wire.OutputNodeLossReply
-                            else reply.snapshot if type(reply) is wire.GetOutputNodeLossReply and reply.found else None)
-                if snapshot is not None and snapshot.resolution is not None:
-                    identity = snapshot.publication_id
-                    if identity not in resolutions and len(resolutions) >= 2:
-                        observation_errors.add("resolution inventory exceeded two publications")
-                    elif resolutions.setdefault(identity, snapshot.resolution) != snapshot.resolution:
-                        observation_errors.add("one cleanup resolution was rebound")
             return reply
 
         def inspect_retry(pending, error, **kwargs):
@@ -277,7 +297,7 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
                             observation_errors.add("more than one old attempt requested retry")
                         else:
                             cuts.setdefault(pending.spec.attempt_id, _RetryCut(
-                                resolutions.get(publication), record.current_attempt, record.retries_started,
+                                _loss_receipt(core, publication), record.current_attempt, record.retries_started,
                                 record.state, owner, child, pending.dependency_hold, released, installed,
                             ))
             return original_retry(pending, error, **kwargs)
@@ -302,15 +322,14 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
         assert publication.output_ids == publication.full_output_ids == (object_id,)
         assert publication.attempt_id == AttemptID(object_id.task_id, 0)
         _assert_metadata_only(arrival)
-        # Arrival proves LOCAL Complete and CPU release, not GCS knowledge.
+        # Arrival proves LOCAL Complete and CPU release, not owner knowledge.
         # This independent query is the defining F3 distinction from the
         # configured AFTER_COMPLETE gate and from the pre-Complete ARM gate.
-        before = _recovery(context, publication, deadline)
+        before = _handoff(runtime.owner_service.address, publication, deadline)
         manifest = before.manifest
         assert manifest.manifest_digest == arrival.manifest_digest
-        assert before.armed and before.complete is None and before.recovery_action is OutputRecoveryAction.COMPLETION_UNKNOWN
-        assert before.adopted is before.rollback is before.owner_decision is before.resolution is None
-        assert before.owner_death is before.frozen_node_death is None and not before.slot_collections
+        assert before.phase is OutputHandoffPhase.PENDING
+        assert before.complete is before.adoption is before.abort_reason is None
         assert manifest.header.owner_worker_id == core.worker_id and manifest.header.executor_worker_id == victim.worker_id
         (slot,) = manifest.slots
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE and len(_PADDING) < slot.size_bytes < 32 * 1024
@@ -329,7 +348,6 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
         assert not core.owner_table.contained_release_was_seen(source_id, transfer.final_hold)
         # Worker drains its import/source borrow BEFORE requesting Complete.
         # Do not claim this later window still has the ARM gate's active borrow.
-        assert _graph(context, publication, deadline).manifest == manifest.to_graph_manifest()
         physical = _physical(victim, object_id, deadline)
         assert physical.found and physical.sealed and physical.producer_attempt_id == publication.attempt_id
         assert physical.owner_worker_id == core.worker_id and physical.size_bytes == slot.size_bytes
@@ -355,21 +373,23 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
         assert cut.current_attempt == publication.attempt_id and cut.retries_started == 0
         assert cut.outer.state is ObjectState.PENDING and cut.outer.output_publication is None
         assert cut.outer.current_attempt == publication.attempt_id and not cut.outer.locations
-        assert cut.resolution is not None and cut.resolution.complete is None and cut.resolution.kept_slots == ()
+        assert type(cut.resolution) is NodeLostOutputResolution and cut.resolution.complete is None and not cut.resolution.keep
         assert cut.resolution.node_death == death and cut.resolution.publication_id == publication
         assert cut.resolution.manifest_digest == manifest.manifest_digest and cut.resolution.owner_worker_id == core.worker_id
         assert cut.release_seen == (True, True) and cut.dependency_hold == hold
         assert cut.source.submitted_tokens == at_complete.submitted_tokens and cut.source.lineage_tokens == at_complete.lineage_tokens
         assert not cut.source.contained_holds and cut.source.inline_data == initial_source.inline_data
-        terminal = _node_loss(context, publication, core.worker_id, death, deadline)
-        assert terminal.work.action is OutputRecoveryAction.COMPLETION_UNKNOWN
-        assert terminal.work.snapshot == replace(before, frozen_node_death=death)
-        resolved = terminal.snapshot
-        assert resolved.armed and resolved.complete is None and resolved.resolution == cut.resolution
-        assert resolved.owner_decision.complete is None
-        assert tuple(item.decision for item in resolved.owner_decision.slots) == (OutputRecoveryOwnerDecision.DROP,)
-        assert resolved.adopted is resolved.rollback is resolved.owner_death is None
-        assert not resolved.terminal_report_allowed and _recovery(context, publication, deadline) == resolved
+        cut.resolution.validate_manifest(manifest)
+        assert all(type(reply) is protocol.ReleaseContainedReferenceReply and reply.accepted
+                   for reply in cut.resolution.cleanup)
+        assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in cut.resolution.cleanup} == {
+            (source_id, core.worker_id, transfer.final_hold),
+            (source_id, core.worker_id, transfer.provisional_hold),
+        }
+        assert _loss_receipt(core, publication) == cut.resolution
+        resolved = _handoff(runtime.owner_service.address, publication, deadline)
+        assert resolved.manifest == manifest and resolved.complete is resolved.adoption is None
+        assert resolved.phase is OutputHandoffPhase.ABORTED and resolved.abort_reason is not None
         _wait(core, lambda: core._recovery.task_record(object_id.task_id).current_attempt == publication.attempt_id.next(), deadline)
         record = replace(core._recovery.task_record(object_id.task_id))
         assert record.state is TaskState.RETRY_PENDING and record.retries_started == 1
@@ -411,7 +431,8 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
         record = replace(core._recovery.task_record(object_id.task_id))
         assert record.state is TaskState.SUCCEEDED and record.retries_started == 1 and record.retries_remaining == 0
         assert core._recovery.active_recovery(object_id.task_id) is None
-        assert _recovery(context, publication, deadline) == resolved
+        assert _handoff(runtime.owner_service.address, publication, deadline) == resolved
+        assert _loss_receipt(core, publication) == cut.resolution
         with observations:
             assert {attempt for task, attempt in grants if task == object_id.task_id} == {publication.attempt_id, publication.attempt_id.next()}
             assert len(cuts) == 1 and not observation_errors

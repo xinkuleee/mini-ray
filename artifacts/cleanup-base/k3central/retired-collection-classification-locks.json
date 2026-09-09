@@ -1,0 +1,22 @@
+{
+  "retired_functions": [
+    "_classification_source",
+    "_mode_marker",
+    "test_mixed_classification_keeps_original_cases_without_inherited_unit",
+    "test_original_threaded_node_drain_cases_remain_nonunit_after_bounded_review",
+    "test_node_blocking_classification_preserves_six_unit_cases_and_one_bounded_race",
+    "test_core_blocking_original_six_functions_seven_cases_use_reviewed_pure_composition",
+    "test_base_python_cycle_contract_has_only_its_reviewed_pure_scope",
+    "test_node_death_api_runtime_keeps_two_real_thread_cases_out_of_unit",
+    "test_trace_export_keeps_four_real_filesystem_contracts_separate_from_pure_rejections"
+  ],
+  "reason": "Old hardcoded test-name/count/marker locks retired per plan; current finite manifest+reviewed hash and strict preimport guard preserve execution scope, not old file names.",
+  "retained_functions": [
+    "test_broad_or_missing_selection_fails_before_any_collection",
+    "test_explicit_relative_absolute_and_exact_scope_is_preserved",
+    "test_inspection_commands_do_not_require_collection_scope",
+    "test_marker_collection_probe_and_package_mode_do_not_bypass_guard",
+    "test_symlink_escape_is_not_an_explicit_project_test"
+  ],
+  "evidence": "K1 and33current runner cases, existing exact case execution per marker; no test directory discovery"
+}

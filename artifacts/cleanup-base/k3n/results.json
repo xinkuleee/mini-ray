@@ -1,0 +1,197 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_collection_safety.py",
+    "exit_code": 0,
+    "seconds": 2.426,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_collection_safety.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_cross_cleanup_receipt_path.py::test_publication_rollback_receipt_replays_after_same_object_retry_seals",
+    "exit_code": 0,
+    "seconds": 9.667,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_cross_cleanup_receipt_path.py::test_publication_rollback_receipt_replays_after_same_object_retry_seals"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_pg_publication_peer_loss_path.py::test_publication_replay_finishes_after_other_pg_bundle_node_loss[push-reply]",
+    "exit_code": 0,
+    "seconds": 14.346,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_pg_publication_peer_loss_path.py::test_publication_replay_finishes_after_other_pg_bundle_node_loss[push-reply]"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_pg_publication_peer_loss_path.py::test_publication_replay_finishes_after_other_pg_bundle_node_loss[retirement-ack]",
+    "exit_code": 0,
+    "seconds": 11.651,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_pg_publication_peer_loss_path.py::test_publication_replay_finishes_after_other_pg_bundle_node_loss[retirement-ack]"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_local_replica_handoff_failure_path.py::test_local_route_failure_replays_custody_without_executing_consumer",
+    "exit_code": 0,
+    "seconds": 12.802,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_local_replica_handoff_failure_path.py::test_local_route_failure_replays_custody_without_executing_consumer"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_local_replica_handoff_failure_path.py::test_exited_granted_executor_uses_outcome_fence_and_preserves_input_custody",
+    "exit_code": 0,
+    "seconds": 18.298,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_local_replica_handoff_failure_path.py::test_exited_granted_executor_uses_outcome_fence_and_preserves_input_custody"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_abandoned_dependency_custody_path.py::test_dead_submitter_hands_granted_input_back_to_live_owner_without_child_execution",
+    "exit_code": 0,
+    "seconds": 13.723,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_abandoned_dependency_custody_path.py::test_dead_submitter_hands_granted_input_back_to_live_owner_without_child_execution"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_multi_owner_handoff_failure_path.py::test_dead_first_owner_cancels_grant_but_hands_off_second_foreign_replica",
+    "exit_code": 0,
+    "seconds": 16.497,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_multi_owner_handoff_failure_path.py::test_dead_first_owner_cancels_grant_but_hands_off_second_foreign_replica"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_output_child_owner_worker_loss_path.py::test_dead_executor_child_cleanup_precedes_retry_on_same_live_node",
+    "exit_code": 0,
+    "seconds": 11.226,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_output_child_owner_worker_loss_path.py::test_dead_executor_child_cleanup_precedes_retry_on_same_live_node"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_inline_node_loss_path.py::test_received_inline_result_survives_publisher_node_loss",
+    "exit_code": 0,
+    "seconds": 11.412,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_inline_node_loss_path.py::test_received_inline_result_survives_publisher_node_loss"
+    ],
+    "log": "009-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_inline_node_loss_path.py::test_unreceived_inline_result_is_lost_until_explicit_get_reconstructs",
+    "exit_code": 0,
+    "seconds": 13.42,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_inline_node_loss_path.py::test_unreceived_inline_result_is_lost_until_explicit_get_reconstructs"
+    ],
+    "log": "010-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_output_surviving_replica_path.py::test_adopted_output_keeps_surviving_stored_replica_after_publisher_loss",
+    "exit_code": 0,
+    "seconds": 11.184,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_output_surviving_replica_path.py::test_adopted_output_keeps_surviving_stored_replica_after_publisher_loss"
+    ],
+    "log": "011-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_unreported_complete_node_loss_path.py::test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before_retry",
+    "exit_code": 0,
+    "seconds": 14.178,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_unreported_complete_node_loss_path.py::test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before_retry"
+    ],
+    "log": "012-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_worker_owner_node_loss_path.py::test_live_worker_owner_retries_armed_child_after_certified_remote_node_death",
+    "exit_code": 0,
+    "seconds": 12.228,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_worker_owner_node_loss_path.py::test_live_worker_owner_retries_armed_child_after_certified_remote_node_death"
+    ],
+    "log": "013-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_borrowed_output_unknown_path.py::test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_live_child",
+    "exit_code": 0,
+    "seconds": 12.437,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3n-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_borrowed_output_unknown_path.py::test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_live_child"
+    ],
+    "log": "014-case.log"
+  }
+]

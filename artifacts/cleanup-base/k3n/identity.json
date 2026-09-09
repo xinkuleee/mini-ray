@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "4d5d61a99626bdaba3f09b091fe832e026ef63d4",
+  "working_tree_status": " M docs/acceptance-baseline.md\n M scripts/baseline_manifest.json\n M tests/integration/test_abandoned_dependency_custody_path.py\n M tests/integration/test_borrowed_output_unknown_path.py\n M tests/integration/test_cross_cleanup_receipt_path.py\n M tests/integration/test_inline_node_loss_path.py\n M tests/integration/test_local_replica_handoff_failure_path.py\n M tests/integration/test_multi_owner_handoff_failure_path.py\n M tests/integration/test_output_child_owner_worker_loss_path.py\n M tests/integration/test_output_surviving_replica_path.py\n M tests/integration/test_pg_publication_peer_loss_path.py\n M tests/integration/test_unreported_complete_node_loss_path.py\n M tests/integration/test_worker_owner_node_loss_path.py\n M tests/unit/test_collection_safety.py\n M tests/unit/test_foreign_inline_task_dependencies.py\n M tests/unit/test_foreign_stored_object_refs.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_inline_publication_gate.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_output_publication_node.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_publication_trace_observation.py\n M tests/unit/test_stored_publication_node_death_gc.py\n M tests/unit/test_trace_contract.py\n M tests/unit/test_worker_nested_task_arguments.py\n?? artifacts/cleanup-base/k3central/retired-collection-classification-locks.json\n",
+  "archive_sha256": "d113ebe8c6ade9df385c09351370f16e9fe99749e1cecc6cc4174b9b46a17523",
+  "file_count": 432,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

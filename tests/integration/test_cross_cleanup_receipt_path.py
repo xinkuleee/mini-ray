@@ -17,7 +17,7 @@ No kill, Actor, dependency, reconstruction, tracing, extra process, test-owned
 thread, or listener. Work shares a 15-second post-init deadline; public reference
 close gets three seconds in cleanup and rechecks an earlier timed-out receipt.
 Observed PIDs/endpoints are checked after shutdown even if work or close failed.
-Run this exact node ID with run_bounded_test.py:
+Run this exact node ID with run_baseline.py --case:
 its 30-second execution deadline covers startup through shutdown, followed by
 the runner's existing bounded process-tree cleanup grace on failure.
 """
@@ -38,6 +38,8 @@ from miniray import api as api_module, node as node_module, output_protocol as w
 from miniray.api import _get_runtime
 from miniray.errors import ObjectStoreError
 from miniray.output_publication import OutputPublicationID
+from miniray.output_handoff import OutputHandoffPhase
+from miniray.core import CoreWorker
 from miniray.output_publication_journal import OutputPublicationJournalState, OutputPublicationStage
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.task_outputs import TaskExecutionKey
@@ -87,7 +89,7 @@ def _node_process_with_one_post_seal_failure(*args):
                   and prior.rollback_tombstone is not None and prior.complete is None,
                   "retry preceded the exact publication rollback tombstone")
             check(node._output_publications.rollback_reported(old_effect.publication_id),
-                  "retry preceded the real GCS rollback ACK")
+                  "retry preceded the real owner rollback ACK")
             check(not node._object_store.contains(descriptor.object_id, sealed_only=False),
                   "attempt zero bytes remained at retry admission")
             check(descriptor == old_descriptor and effect.publication_id.attempt_id
@@ -222,11 +224,11 @@ def _rpc(address, handler, request, deadline):
                        request_timeout=min(2.0, remaining / 2), deadline=deadline)
 
 
-def _recovery(context, publication_id, deadline):
-    request = wire.GetOutputPublicationRecovery(publication_id)
-    reply = _rpc(context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER, request, deadline)
-    assert type(reply) is wire.GetOutputPublicationRecoveryReply and reply.request == request
-    assert reply.found and reply.snapshot is not None
+def _handoff(owner_address, publication_id, deadline):
+    request = wire.GetOutputHandoff(publication_id)
+    reply = _rpc(owner_address, wire.GET_OUTPUT_HANDOFF_HANDLER, request, deadline)
+    assert type(reply) is wire.OutputHandoffReply and reply.request == request
+    assert reply.accepted and reply.snapshot is not None
     return reply.snapshot
 
 
@@ -249,11 +251,22 @@ def _pid_exists(pid):
         return True
 
 
-def test_publication_rollback_receipt_replays_after_same_object_retry_seals():
+def test_publication_rollback_receipt_replays_after_same_object_retry_seals(monkeypatch):
     context = report = core = reference = original_push = None
     original_entry = api_module._node_process_main
     pids, addresses, cleanup_errors, pushes, replies = set(), set(), [], [], []
     push_count = 0
+    rollback_reports = []
+    actual_report = CoreWorker.report_output_handoff_rollback
+
+    def observe_rollback(owner, request):
+        reply = actual_report(owner, request)
+        if core is owner:
+            assert len(rollback_reports) < 4
+            rollback_reports.append((request, reply))
+        return reply
+
+    monkeypatch.setattr(CoreWorker, "report_output_handoff_rollback", observe_rollback)
     try:
         api_module._node_process_main = _node_process_with_one_post_seal_failure
         context = ray.init(num_nodes=1, num_cpus=1, num_workers_per_node=1,
@@ -307,14 +320,21 @@ def test_publication_rollback_receipt_replays_after_same_object_retry_seals():
                    and reply.output_publication is None for reply in failed_replies)
         assert all(reply.status is protocol.TaskReplyStatus.SUCCEEDED for reply in successful_replies)
 
-        # Use the actual first Push's lease/spec, then the real GCS rollback
-        # manifest for its checksum. No old-epoch descriptor is guessed.
+        # Use the first Push identity and the actual owner rollback request.
+        # ABORTED alone is not cleanup proof: the request carries the exact
+        # Node journal tombstone and the original owner handler validates it.
         old_id = OutputPublicationID(first_push.lease_id, TaskExecutionKey.from_task_spec(first_push.spec))
-        rolled_back = _recovery(context, old_id, deadline)
-        old_manifest, tombstone = rolled_back.manifest, rolled_back.rollback
-        assert old_manifest.publication_id == old_id and tombstone is not None
-        assert rolled_back.complete is None and rolled_back.adopted is None and rolled_back.owner_death is None
-        assert not rolled_back.forward_allowed and tombstone.plan.publication_id == old_id
+        rolled_back = _handoff(runtime.owner_service.address, old_id, deadline)
+        old_reports = [(request, response) for request, response in rollback_reports
+                       if request.manifest.publication_id == old_id]
+        assert old_reports
+        rollback_request, rollback_reply = old_reports[0]
+        assert all(request == rollback_request and response.accepted for request, response in old_reports)
+        assert rollback_reply.request == rollback_request
+        old_manifest, tombstone = rollback_request.manifest, rollback_request.tombstone
+        assert rolled_back.manifest == old_manifest and old_manifest.publication_id == old_id
+        assert rolled_back.complete is None and rolled_back.adoption is None
+        assert rolled_back.phase is OutputHandoffPhase.ABORTED and tombstone.plan.publication_id == old_id
         assert tombstone.plan.manifest_digest == old_manifest.manifest_digest
         assert tuple((effect.stage, effect.slot_index) for effect in tombstone.plan.effects) == ((OutputPublicationStage.SLOT_DROP, 0),)
         assert tuple(ack.effect for ack in tombstone.acknowledgements) == tombstone.plan.effects
@@ -330,9 +350,9 @@ def test_publication_rollback_receipt_replays_after_same_object_retry_seals():
         assert member is not None and member.slot == old_slot
         assert member.publication_id == OutputPublicationID(retry_push.lease_id, TaskExecutionKey.from_task_spec(retry_push.spec))
         assert member.manifest.header.node_incarnation == old_manifest.header.node_incarnation
-        adopted = _recovery(context, member.publication_id, deadline)
-        assert adopted.complete is not None and adopted.adopted is not None and adopted.rollback is None
-        assert adopted.adopted.complete == adopted.complete and adopted.manifest == member.manifest
+        adopted = _handoff(runtime.owner_service.address, member.publication_id, deadline)
+        assert adopted.complete is not None and adopted.adoption is not None and adopted.phase is OutputHandoffPhase.ADOPTED
+        assert adopted.adoption.complete == adopted.complete and adopted.manifest == member.manifest
         # RecoveryManager returns a live mutable TaskRecord; snapshot it before
         # the late message so equality cannot compare a mutated object to itself.
         record = replace(core._recovery.task_record(reference.object_id.task_id))

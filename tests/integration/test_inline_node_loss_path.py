@@ -1,9 +1,9 @@
 """Bounded unified-output publishing-Node-loss acceptance for one INLINE slot.
 
 Both tests use a delivery gate after local Complete/resource release and the
-exact GCS terminal ACK, before any Complete/outcome envelope can leave that
-Node.  KEEP releases that gate and observes real owner custody before pausing
-the first graph COMMIT; DROP crashes the Node with the delivery gate unopened.
+exact owner terminal ACK, before any Complete/outcome envelope can leave that
+Node. KEEP releases that gate and pauses the real received envelope at the
+owner-adoption call boundary; DROP crashes with the delivery gate unopened.
 No Driver wrapper discards a result or fabricates a transport failure.
 
 Static bounds per exact invocation: spawn; one GCS, two Nodes, one Worker and
@@ -37,25 +37,19 @@ import pytest
 import miniray as ray
 from miniray import output_protocol as wire, protocol
 from miniray.api import _get_runtime, _test_crash_node
-from miniray.contained_cycle import (
-    ContainedGraphManifestDisposition, ContainedGraphTransactionState,
-)
-from miniray.control import (
-    COMMIT_CONTAINED_GRAPH_HANDLER, GET_CONTAINED_GRAPH_HANDLER,
-)
 from miniray.ids import (
     AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
 )
 from miniray.node import REQUEST_LEASE_HANDLER
 from miniray.output_publication import OutputPublicationEnvelope, OutputPublicationID
-from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryOwnerDecision
+from miniray.output_handoff import NodeLostOutputResolution, OutputHandoffPhase
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.publication_gate import (
     OUTPUT_PUBLICATION_GATE_RELEASE, OutputPublicationGateConfig,
     OutputPublicationGatePhase, recv_output_publication_gate_arrival,
 )
 from miniray.recovery import TaskState
-from miniray.stored_publication import BorrowedContainedSource
+from miniray.publication_sources import BorrowedContainedSource
 from miniray.transport import request as rpc_request
 from miniray.worker import PUSH_TASK_HANDLER
 
@@ -133,7 +127,7 @@ def _recv_exact(connection: socket.socket, size: int, deadline: float) -> bytes:
 
 
 def _assert_metadata_only(value: object) -> None:
-    """Walk actual GCS wire values without decoding any result payload.
+    """Walk actual owner/membership wire values without decoding any result payload.
 
     Opaque identity bytes are permitted.  Object bytes, ResultDescriptors and
     completed envelopes are not; checking the types catches payload custody
@@ -145,7 +139,7 @@ def _assert_metadata_only(value: object) -> None:
     assert not isinstance(value, (
         bytes, bytearray, memoryview, OutputPublicationEnvelope,
         protocol.ResultDescriptor, protocol.ObjectStoreDescriptor,
-    )), "GCS control value carries object data or a result descriptor"
+    )), "control value carries object data or a result descriptor"
     if is_dataclass(value) and not isinstance(value, type):
         for item in fields(value):
             assert item.name not in (
@@ -244,6 +238,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
     blocker = source = outer = first = second = None
     source_id = outer_id = None
     received_envelope = None
+    received_envelope_holder = []
     work_deadline = 0.0
     before_commit = threading.Event()
     allow_commit = threading.Event()
@@ -298,24 +293,13 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         original_rpc = core._rpc
         original_push = core._push_task_rpc
         original_retry = core._retry_system_failure
+        original_adoption = core._drive_output_publication_adoption
         original_finish = core._finish_pending_task
         original_emit = core._emit
 
         def inspect_rpc(address, handler, message):
             if address == context.gcs_address:
                 _assert_metadata_only(message)
-            if (
-                keep_received and handler == COMMIT_CONTAINED_GRAPH_HANDLER
-                and isinstance(message, protocol.CommitContainedGraph)
-                and arrival is not None
-                and message.manifest.publication_id == arrival.publication_id
-            ):
-                with observer_lock:
-                    pause = not before_commit.is_set()
-                    if pause:
-                        before_commit.set()
-                if pause and not allow_commit.wait(_remaining(work_deadline)):
-                    raise TimeoutError("owner graph COMMIT gate was not released")
             # No result bytes are replaced, dropped, or reconstructed here.
             reply = original_rpc(address, handler, message)
             if address == context.gcs_address:
@@ -342,10 +326,23 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
                     received_envelopes.append(envelope)
             return reply
 
-        def inspect_retry(pending, error):
+        def inspect_adoption(pending, obligation):
+            if (keep_received and arrival is not None
+                    and obligation.envelope.publication_id == arrival.publication_id
+                    and not before_commit.is_set()):
+                assert not core._state_lock._is_owned()
+                with observer_lock:
+                    assert not received_envelope_holder
+                    received_envelope_holder.append(obligation.envelope)
+                    before_commit.set()
+                if not allow_commit.wait(_remaining(work_deadline)):
+                    raise TimeoutError("received-envelope adoption boundary was not released")
+            return original_adoption(pending, obligation)
+
+        def inspect_retry(pending, error, **options):
             with observer_lock:
                 generic_retries.append(pending.task_id)
-            return original_retry(pending, error)
+            return original_retry(pending, error, **options)
 
         def inspect_finish(pending):
             finished = original_finish(pending)
@@ -367,6 +364,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         monkeypatch.setattr(core, "_rpc", inspect_rpc)
         monkeypatch.setattr(core, "_push_task_rpc", inspect_push)
         monkeypatch.setattr(core, "_retry_system_failure", inspect_retry)
+        monkeypatch.setattr(core, "_drive_output_publication_adoption", inspect_adoption)
         monkeypatch.setattr(core, "_finish_pending_task", inspect_finish)
         monkeypatch.setattr(core, "_emit", inspect_emit)
 
@@ -399,26 +397,23 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         assert publication.output_ids == publication.full_output_ids == (outer_id,)
         assert publication.attempt_id.attempt_number == 0
 
-        # The arrival is after the Node's real successful terminal ACK.  Query
-        # GCS directly for that byte-free fact while both delivery exits remain
-        # blocked; the test never invents completion or asks GCS for result bytes.
-        recovery_query = wire.GetOutputPublicationRecovery(publication)
+        # The actual Node reported Complete to this owner before opening its
+        # delivery gate. Query only that metadata, never reconstruct bytes.
+        recovery_query = wire.GetOutputHandoff(publication)
         recovered = _gcs_query(
-            context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER,
+            runtime.owner_service.address, wire.GET_OUTPUT_HANDOFF_HANDLER,
             recovery_query, work_deadline,
         )
-        assert type(recovered) is wire.GetOutputPublicationRecoveryReply
-        assert recovered.request == recovery_query and recovered.found
+        assert type(recovered) is wire.OutputHandoffReply
+        assert recovered.request == recovery_query and recovered.accepted
         prepared = recovered.snapshot
-        assert prepared is not None and prepared.armed and prepared.complete is not None
+        assert prepared is not None and prepared.phase is OutputHandoffPhase.PENDING and prepared.complete is not None
         assert prepared.publication_id == publication
-        assert prepared.manifest_digest == arrival.manifest_digest
+        assert prepared.manifest.manifest_digest == arrival.manifest_digest
         assert prepared.complete.publication_id == publication
         assert prepared.complete.manifest_digest == arrival.manifest_digest
         assert prepared.complete.status is protocol.TaskReplyStatus.SUCCEEDED
-        assert prepared.frozen_node_death is None and prepared.owner_death is None
-        assert prepared.owner_decision is None and prepared.resolution is None
-        assert prepared.adopted is None and prepared.rollback is None
+        assert prepared.adoption is None and prepared.abort_reason is None
         assert prepared.manifest.header.owner_worker_id == core.worker_id
         assert prepared.manifest.header.executor_worker_id == victim.worker_id
         node_incarnation = prepared.manifest.header.node_incarnation
@@ -430,19 +425,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         assert slot.object_id == outer_id and slot.tier is protocol.ResultStorage.INLINE
         assert 0 < slot.size_bytes <= _INLINE_THRESHOLD and len(slot.transfers) == 1
 
-        graph_reply = _gcs_query(
-            context.gcs_address, GET_CONTAINED_GRAPH_HANDLER,
-            protocol.GetContainedGraph(publication.graph_transaction_id), work_deadline,
-        )
-        assert isinstance(graph_reply, protocol.GetContainedGraphReply)
-        assert graph_reply.disposition is protocol.ContainedGraphQueryDisposition.FOUND
-        graph_manifest = graph_reply.manifest
-        assert graph_manifest is not None
-        assert graph_manifest.publication_id == publication
-        assert prepared.manifest.to_graph_manifest() == graph_manifest
-        assert graph_manifest.outer_owner_worker_id == core.worker_id
-        assert len(graph_manifest.ordered_edges) == 1
-        edge = graph_manifest.ordered_edges[0]
+        (edge,) = slot.edges
         assert edge.container_object_id == outer_id
         assert edge.contained_object_id == source_id
         assert edge.contained_owner_worker_id == core.worker_id
@@ -466,17 +449,16 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             publication_gate.sendall(OUTPUT_PUBLICATION_GATE_RELEASE)
             publication_gate.close()
             assert before_commit.wait(_remaining(work_deadline))
-            # _drive_output_publication_adoption retains the real TaskReply
-            # before its first COMMIT RPC.  The wrapper only pauses that RPC.
+            # The real received envelope is the argument to Core adoption.
+            # The wrapper pauses its call before any owner CAS or new RPC.
             with core._state_lock:
-                received_envelope = core._output_result_custody[publication]
+                (received_envelope,) = received_envelope_holder
                 assert type(received_envelope) is OutputPublicationEnvelope
                 assert publication not in getattr(core, "_output_loss_choices", {})
                 assert publication not in getattr(core, "_output_loss_completed", set())
                 assert received_envelope.publication_id == publication
                 assert received_envelope.manifest == prepared.manifest
                 assert received_envelope.complete == prepared.complete
-                assert received_envelope.manifest.to_graph_manifest() == graph_manifest
                 assert len(received_envelope.results) == 1
                 assert received_envelope.results[0].inline_data is not None
                 assert core.owner_table.snapshot(outer_id).state is ObjectState.PENDING
@@ -512,17 +494,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             assert publication not in core._output_result_custody
             assert publication in core._output_loss_completed
             decision = core._output_loss_choices[publication]
-            _assert_metadata_only(decision)
-            assert decision.publication_id == publication
-            assert decision.manifest_digest == arrival.manifest_digest
-            assert decision.owner_worker_id == core.worker_id
-            assert decision.complete == prepared.complete
-            assert len(decision.slots) == 1
-            assert decision.slots[0].slot_index == 0 and decision.slots[0].object_id == outer_id
-            assert decision.slots[0].decision is (
-                OutputRecoveryOwnerDecision.KEEP if keep_received
-                else OutputRecoveryOwnerDecision.DROP
-            )
+            assert decision is keep_received
         if keep_received:
             assert settled.state is ObjectState.READY_INLINE
             assert received_envelope is not None
@@ -547,34 +519,14 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             else frozenset()
         )
 
-        query = wire.GetOutputNodeLoss(publication, core.worker_id, death)
-        terminal = _gcs_query(
-            context.gcs_address, wire.GET_OUTPUT_NODE_LOSS_HANDLER, query, work_deadline,
-        )
-        assert type(terminal) is wire.GetOutputNodeLossReply
-        assert terminal.request == query and terminal.found
-        assert terminal.work is not None and terminal.snapshot is not None
-        assert terminal.work.publication_id == publication and terminal.work.death == death
-        assert terminal.work.action is OutputRecoveryAction.POSTCOMPLETE_RESOLVE
-        assert terminal.work.manifest == prepared.manifest
-        snapshot = terminal.snapshot
-        assert snapshot.publication_id == publication and snapshot.frozen_node_death == death
-        assert snapshot.manifest == prepared.manifest
-        assert snapshot.manifest_digest == arrival.manifest_digest
-        assert snapshot.armed and snapshot.complete == prepared.complete
-        assert snapshot.recovery_action is OutputRecoveryAction.POSTCOMPLETE_RESOLVE
-        assert snapshot.owner_decision == decision
-        assert snapshot.resolution is not None
-        assert snapshot.resolution.publication_id == publication
-        assert snapshot.resolution.manifest_digest == arrival.manifest_digest
-        assert snapshot.resolution.node_death == death
-        assert snapshot.resolution.owner_worker_id == core.worker_id
-        assert snapshot.resolution.kept_slots == ((0,) if keep_received else ())
-        assert snapshot.resolution.complete == prepared.complete
-        assert snapshot.owner_death is None and snapshot.owner_cleaned is None
-        assert snapshot.rollback is None
-        assert snapshot.manifest.to_graph_manifest() == graph_manifest
-        assert snapshot.manifest.slots[0] == slot
+        with core._state_lock:
+            resolution = core.owner_table._output_loss_receipts[publication]
+        assert type(resolution) is NodeLostOutputResolution
+        resolution.validate_manifest(prepared.manifest)
+        assert resolution.publication_id == publication
+        assert resolution.node_death == death and resolution.owner_worker_id == core.worker_id
+        assert resolution.manifest_digest == arrival.manifest_digest
+        assert resolution.complete == prepared.complete and resolution.keep is keep_received
         transfer = slot.transfers[0]
         assert isinstance(transfer.source, BorrowedContainedSource)
         assert transfer.source.borrower_worker_id == victim.worker_id
@@ -582,13 +534,24 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         original_hold = transfer.source.original_source.hold
         assert original_hold.origin_attempt_id == publication.attempt_id
         assert transfer.final_hold == edge.incoming_hold(core.worker_id)
-        assert _gcs_query(
-            context.gcs_address, wire.GET_OUTPUT_NODE_LOSS_HANDLER, query, work_deadline,
-        ) == terminal
-        assert _gcs_query(
-            context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER,
-            recovery_query, work_deadline,
-        ).snapshot == snapshot
+        if keep_received:
+            assert resolution.cleanup == ()
+        else:
+            assert all(type(reply) is protocol.ReleaseContainedReferenceReply and reply.accepted
+                       for reply in resolution.cleanup)
+            assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in resolution.cleanup} == {
+                (source_id, core.worker_id, transfer.final_hold),
+                (source_id, core.worker_id, transfer.provisional_hold),
+            }
+        terminal = _gcs_query(runtime.owner_service.address, wire.GET_OUTPUT_HANDOFF_HANDLER,
+                              recovery_query, work_deadline)
+        assert type(terminal) is wire.OutputHandoffReply and terminal.accepted
+        assert terminal.request == recovery_query and terminal.snapshot.manifest == prepared.manifest
+        assert terminal.snapshot.complete == prepared.complete
+        assert terminal.snapshot.phase is (OutputHandoffPhase.ADOPTED if keep_received else OutputHandoffPhase.ABORTED)
+        assert (terminal.snapshot.adoption is not None) is keep_received
+        assert _gcs_query(runtime.owner_service.address, wire.GET_OUTPUT_HANDOFF_HANDLER,
+                          recovery_query, work_deadline) == terminal
 
         with observer_lock:
             assert outer_id.task_id not in generic_retries
@@ -598,22 +561,8 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             )
             assert leases_before_get
             assert {request.attempt_id.attempt_number for request in leases_before_get} == {0}
-            calls_before_get = tuple(gcs_calls)
             if not keep_received:
                 assert not received_envelopes
-        decisions = tuple(
-            request for request, _reply in calls_before_get
-            if type(request) is wire.DecideOutputNodeLoss
-            and request.work.publication_id == publication
-        )
-        assert decisions and all(request.decision == decision for request in decisions)
-        if not keep_received:
-            assert not any(
-                isinstance(request, protocol.CommitContainedGraph)
-                and request.manifest.publication_id == publication
-                for request, _reply in calls_before_get
-            )
-
         # Public get on the unrelated blocker only frees survivor capacity;
         # neither it nor the metadata queries requests outer reconstruction.
         blocker_gate.settimeout(_remaining(work_deadline))
@@ -701,7 +650,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             assert not push.dependencies  # nested handle is not a readiness dependency
 
         # Independent local handles must outlive both the original source
-        # handle and the container.  Final close drains graph, holds and lineage.
+        # handle and the container.  Final close drains child holds and lineage.
         _close_with_deadline(outer, work_deadline)
         assert ray.get(first, timeout=_remaining(work_deadline)) == _CHILD_VALUE
         _close_with_deadline(first, work_deadline)
@@ -716,21 +665,9 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             assert object_id not in core._stored_descriptors
             assert object_id not in core._object_gc_obligations
             assert core._recovery.lineage_for_object(object_id) is None
-        with observer_lock:
-            graph_releases = tuple(
-                reply for request, reply in gcs_calls
-                if isinstance(request, protocol.ReleaseContainedGraphContainer)
-                and request.manifest.publication_id == final_publication
-            )
-        assert graph_releases
-        assert any(
-            reply.accepted and reply.receipt.state is ContainedGraphTransactionState.COMMITTED
-            and reply.receipt.disposition in (
-                ContainedGraphManifestDisposition.RELEASED,
-                ContainedGraphManifestDisposition.ALREADY_RELEASED,
-            )
-            for reply in graph_releases
-        )
+        assert core.owner_table._output_loss_receipts[publication] == resolution
+        final_handoff = core._output_handoff_table().query(final_publication)
+        assert final_handoff.adoption is not None and final_handoff.complete is not None
     finally:
         # Release all test gates even if a semantic assertion fails.  Restore
         # observers before real shutdown drains and joins its own threads.

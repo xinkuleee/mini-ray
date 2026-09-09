@@ -3,7 +3,7 @@
 Five startup children: one GCS, two Nodes, one Worker each. A resource-pinned
 factory occupies Node A's CPU and Worker; its unconstrained child must spill
 to B. The factory first opens a bounded socket handshake, then submits, making
-the same listener's second connection B's real AFTER_ARM publication gate.
+the same listener's second connection B's real prepared-before-Complete gate.
 After observing that gate the Driver lets the factory return an A-owned child
 ObjectRef, releases its outer result, and crashes the exact managed Node B.
 
@@ -22,6 +22,7 @@ Only this exact ID may run through the 30 s process-tree runner/reap grace.
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import partial
 import hashlib
 import multiprocessing as mp
 import os
@@ -32,28 +33,29 @@ import time
 import pytest
 
 import miniray as ray
-from miniray import output_protocol as wire, protocol
+from miniray import api as api_module, output_protocol as wire, protocol
 from miniray.api import _get_runtime, _test_crash_node
 from miniray.control import GET_WORKER_STATE_HANDLER
 from miniray.ids import AttemptID, TaskID
 from miniray.node import GET_OBJECT_HANDLER, SHUTDOWN_STATUS_HANDLER
 from miniray.node_death_view import GET_NODE_DEATH_VIEW, GetInstalledNodeDeaths, GetInstalledNodeDeathsReply
-from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryOwnerDecision
+from miniray.output_handoff import NodeLostOutputResolution, OutputHandoffPhase, OutputHandoffSnapshot
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.publication_gate import (
-    OUTPUT_PUBLICATION_GATE_RELEASE, OutputPublicationGateConfig,
+    OUTPUT_PUBLICATION_GATE_RELEASE,
     OutputPublicationGatePhase, recv_output_publication_gate_arrival,
 )
 from miniray.publication_sources import BorrowedContainedSource
-from miniray.runtime_binding import current_execution_context
+from miniray.runtime_binding import current_core_worker, current_execution_context
+from miniray.recovery import TaskState
+from miniray.transport import _receive, _send
 from miniray.worker import GET_OWNED_OBJECT_HANDLER
-from tests.integration.test_borrowed_output_unknown_path import _wait
 from tests.support._legacy_reference_cleanup import _close_local
 from tests.integration.test_stored_outer_node_loss_path import (
-    _assert_metadata_only, _node_loss, _pid_exists, _poll_until, _query,
-    _recovery, _recv_exact, _release_connection, _remaining,
+    _assert_metadata_only, _close_reference, _handoff, _pid_exists, _poll_until, _query,
+    _recv_exact, _release_connection, _remaining,
 )
-from tests.integration.test_stored_outer_publication_path import _close_reference
+from tests.integration._publisher_precomplete_fixture import PREPARED_FRAME_PREFIX, node_process_with_prepared_checkpoint
 
 
 pytestmark = pytest.mark.multiprocess_smoke
@@ -63,6 +65,7 @@ _PADDING = b"W" * (8 * 1024)
 _START_CHILD = b"S"
 _RELEASE_FACTORY = b"F"
 _WORK_SECONDS = 15.0
+_MAX_OBSERVATION_BYTES = 64 * 1024
 
 
 @ray.remote(num_cpus=1, max_retries=1)
@@ -81,7 +84,41 @@ def _stored_child_of_worker_owner(container):
 def _worker_owner_factory(container, gate_address, deadline):
     # CPU=1 matters: Hybrid placement reads the ledger, not Worker-slot count.
     # Ordinary socket waiting does not issue a blocking-get CPU yield.
-    with socket.create_connection(gate_address, timeout=_remaining(deadline)) as connection:
+    core = current_core_worker()
+    assert core is not None
+    original_retry = core._retry_system_failure
+    connection = socket.create_connection(gate_address, timeout=_remaining(deadline))
+    child = None
+    observed = []
+
+    def observe_retry(pending, error, **options):
+        if child is not None and pending.object_id == child.object_id:
+            with core._state_lock:
+                receipt = next((receipt for identity, receipt in core.owner_table._output_loss_receipts.items()
+                                if identity.task_id == pending.task_id and identity.attempt_id == pending.spec.attempt_id), None)
+                assert receipt is not None and receipt.publication_id in core._output_loss_completed
+                assert type(receipt) is NodeLostOutputResolution and receipt.complete is None and not receipt.keep
+                view = core._applied_node_death_view
+                assert view is not None and receipt.node_death in view.deaths
+                record = core._recovery.task_record(pending.task_id)
+                state = core.owner_table.snapshot(pending.object_id)
+                assert state.state is ObjectState.PENDING and state.current_attempt == pending.spec.attempt_id
+                observation = (receipt, core._output_handoff_table().query(receipt.publication_id),
+                               view.snapshot.snapshot_id, view.snapshot.membership_epoch,
+                               view.deaths, view.survivor_acks, record.state, record.current_attempt, record.retries_started)
+                assert not observed
+                observed.append(observation)
+            _assert_metadata_only(observation)
+            try:
+                connection.settimeout(_remaining(deadline))
+                _send(connection, observation, _MAX_OBSERVATION_BYTES)
+            finally:
+                connection.close()
+                core._retry_system_failure = original_retry
+        return original_retry(pending, error, **options)
+
+    core._retry_system_failure = observe_retry
+    try:
         connection.settimeout(_remaining(deadline))
         connection.sendall(os.getpid().to_bytes(8, "big"))
         if connection.recv(1) != _START_CHILD:
@@ -90,7 +127,11 @@ def _worker_owner_factory(container, gate_address, deadline):
         connection.settimeout(_remaining(deadline))
         if connection.recv(1) != _RELEASE_FACTORY:
             raise RuntimeError("Driver did not release the owner factory")
-    return child
+        return child
+    except BaseException:
+        core._retry_system_failure = original_retry
+        connection.close()
+        raise
 
 
 def _worker(context, worker_id, deadline):
@@ -105,13 +146,23 @@ def _physical(node, object_id, deadline):
     return reply
 
 
+def _wait(core, predicate, deadline):
+    with core._completion:
+        while True:
+            value = predicate()
+            if value:
+                return value
+            core._completion.wait(_remaining(deadline))
+
+
 def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death():
     listener = factory_connection = publication_connection = None
     context = core = report = death = None
     source = outer = foreign = restored_child = None
     pids, addresses = set(), set()
     close_errors = []
-    phase = OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE
+    phase = OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK
+    original_entry = api_module._node_process_main
     try:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -119,11 +170,11 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         listener.listen(2)
         address = listener.getsockname()
         addresses.add(address)
+        api_module._node_process_main = partial(node_process_with_prepared_checkpoint, address, _OWNER_RESOURCE)
         context = ray.init(
             num_nodes=2, num_workers_per_node=1,
             node_resources=({"CPU": 1, _OWNER_RESOURCE: 1}, {"CPU": 1}),
             inline_threshold=1024, object_store_bytes=1024 * 1024, enable_tracing=False,
-            _test_output_publication_gate=OutputPublicationGateConfig(1, address, phase, 10.0),
         )
         deadline = time.monotonic() + _WORK_SECONDS
         runtime = _get_runtime()
@@ -154,6 +205,7 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         listener.settimeout(_remaining(deadline))
         publication_connection, _ = listener.accept()
         publication_connection.settimeout(_remaining(deadline))
+        assert _recv_exact(publication_connection, len(PREPARED_FRAME_PREFIX), deadline) == PREPARED_FRAME_PREFIX
         arrival = recv_output_publication_gate_arrival(publication_connection)
         publication = arrival.publication_id
         assert arrival.phase is phase
@@ -166,13 +218,13 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         # The child belongs to the factory attempt's deterministic child namespace.
         expected_task = TaskID.derive(core.job_id, TaskID.derive(core.job_id, outer.object_id.task_id, 0), 0)
         assert output_id.task_id == expected_task
-        before = _recovery(context, publication, deadline)
+        before = _handoff(owner_node.worker_address, publication, deadline)
         manifest = before.manifest
         assert manifest.manifest_digest == arrival.manifest_digest
         assert manifest.header.owner_worker_id == owner_node.worker_id != core.worker_id
         assert manifest.header.executor_worker_id == publisher.worker_id
-        assert before.armed and before.complete is None and before.recovery_action is OutputRecoveryAction.COMPLETION_UNKNOWN
-        assert before.adopted is before.owner_decision is before.resolution is before.frozen_node_death is before.owner_death is None
+        assert before.phase is OutputHandoffPhase.PENDING
+        assert before.complete is before.adoption is before.abort_reason is None
         slot, = manifest.slots
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE and len(_PADDING) < slot.size_bytes < 32 * 1024
         transfer, = slot.transfers
@@ -200,8 +252,6 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         factory_connection.settimeout(_remaining(deadline))
         factory_connection.sendall(_RELEASE_FACTORY)
         foreign = ray.get(outer, timeout=_remaining(deadline))
-        factory_connection.close()
-        factory_connection = None
         assert isinstance(foreign, ray.ObjectRef) and foreign.object_id == output_id
         assert foreign.owner_worker_id == owner_node.worker_id and foreign.owner_address == owner_node.worker_address
         assert foreign.borrower_token is not None and not core.owner_table.contains(output_id)
@@ -239,20 +289,27 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         assert len(certified.view.survivor_acks) == 1 and certified.view.survivor_acks[0].installed is True
         assert certified.view.snapshot == runtime.latest_snapshot
 
-        def resolved_loss():
-            reply = _node_loss(context, publication, owner_node.worker_id, death, deadline)
-            return reply if reply.snapshot.resolution is not None else None
-
-        terminal = _poll_until(resolved_loss, deadline, "embedded owner never resolved certified publisher death")
-        assert terminal.work.snapshot == replace(before, frozen_node_death=death)
-        assert terminal.work.action is OutputRecoveryAction.COMPLETION_UNKNOWN
-        resolved = terminal.snapshot
-        assert resolved.complete is None and resolved.resolution.complete is None and resolved.resolution.kept_slots == ()
-        assert resolved.owner_decision.owner_worker_id == resolved.resolution.owner_worker_id == owner_node.worker_id
-        assert resolved.resolution.node_death == death and resolved.resolution.publication_id == publication
-        decision, = resolved.owner_decision.slots
-        assert (decision.slot_index, decision.object_id, decision.decision) == (0, output_id, OutputRecoveryOwnerDecision.DROP)
-        assert resolved.owner_death is resolved.owner_cleaned is None
+        observation = _receive(factory_connection, _MAX_OBSERVATION_BYTES, deadline=deadline)
+        _assert_metadata_only(observation)
+        assert type(observation) is tuple and len(observation) == 9
+        resolution, resolved, view_id, view_epoch, observed_deaths, observed_acks, state, attempt, retries = observation
+        assert type(resolution) is NodeLostOutputResolution and type(resolved) is OutputHandoffSnapshot
+        assert resolution.complete is None and not resolution.keep
+        assert resolution.owner_worker_id == owner_node.worker_id != core.worker_id
+        assert resolution.node_death == death and resolution.publication_id == publication
+        resolution.validate_manifest(manifest)
+        assert all(type(reply) is protocol.ReleaseContainedReferenceReply and reply.accepted for reply in resolution.cleanup)
+        assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in resolution.cleanup} == {
+            (source_id, core.worker_id, transfer.final_hold),
+            (source_id, core.worker_id, transfer.provisional_hold),
+        }
+        assert resolved.phase is OutputHandoffPhase.ABORTED and resolved.complete is resolved.adoption is None
+        assert resolved.manifest == manifest and resolved.abort_reason is not None
+        assert (view_id, view_epoch, observed_deaths, observed_acks) == (certified.view.snapshot.snapshot_id,
+            certified.view.snapshot.membership_epoch, certified.view.deaths, certified.view.survivor_acks)
+        assert state is not TaskState.SUCCEEDED and attempt == publication.attempt_id and retries == 0
+        factory_connection.close()
+        factory_connection = None
         assert all(core.owner_table.contained_release_was_seen(source_id, pin)
                    for pin in (transfer.final_hold, transfer.provisional_hold))
 
@@ -292,8 +349,7 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         (retry_hold,) = surviving_source.contained_holds
         assert retry_hold.container_object_id == output_id and retry_hold.container_owner_worker_id == owner_node.worker_id
         assert retry_hold != transfer.final_hold
-        assert _recovery(context, publication, deadline) == resolved
-        assert _node_loss(context, publication, owner_node.worker_id, death, deadline).work == terminal.work
+        assert _handoff(owner_node.worker_address, publication, deadline) == resolved
 
         _close_local(restored_child, deadline)
         _close_reference(foreign, deadline)
@@ -324,6 +380,7 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         assert not _pid_exists(publisher.node_pid) and not _pid_exists(publisher.worker_pid)
     finally:
         cleanup_deadline = time.monotonic() + 3.0
+        api_module._node_process_main = original_entry
         try:
             _release_connection(publication_connection, OUTPUT_PUBLICATION_GATE_RELEASE, cleanup_deadline)
             _release_connection(factory_connection, _RELEASE_FACTORY, cleanup_deadline)

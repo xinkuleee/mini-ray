@@ -336,7 +336,7 @@ def _run_local_route_handoff(*, executor_exits):
             assert checked.incarnation.worker_pid not in (os.getpid(), context.gcs_pid, *context.node_pids, node_a.worker_pid)
             query = protocol.GetWorkerLeaseOutcome(
                 grant.lease_id, grant.task_id, grant.attempt_id, grant.worker_id, core.worker_id,
-                (consumer.object_id,), grant.scheduling_key, grant.target_execution,
+                (consumer.object_id,), grant.scheduling_key,
             )
             before = _rpc(node_b.node_address, GET_WORKER_LEASE_OUTCOME_HANDLER, query, gate_deadline)
             _assert_empty_outcome(before, query, node_b.node_id)
@@ -435,7 +435,7 @@ def _run_local_route_handoff(*, executor_exits):
 
         outcome_request = protocol.GetWorkerLeaseOutcome(
             grant.lease_id, grant.task_id, grant.attempt_id, grant.worker_id, core.worker_id, (consumer.object_id,),
-            grant.scheduling_key, grant.target_execution,
+            grant.scheduling_key,
         )
         outcome = _rpc(node_b.node_address, GET_WORKER_LEASE_OUTCOME_HANDLER, outcome_request, deadline)
         _assert_empty_outcome(outcome, outcome_request, node_b.node_id)
@@ -480,8 +480,8 @@ def _run_local_route_handoff(*, executor_exits):
             def acquire_probe():
                 candidate = _rpc(probe_address, REQUEST_LEASE_HANDLER, probe, deadline)
                 assert type(candidate) in (protocol.RejectWorkerLease, protocol.GrantWorkerLease)
-                assert (candidate.lease_id, candidate.task_id, candidate.attempt_id, candidate.scheduling_key, candidate.target_execution) == (
-                    probe.lease_id, probe.task_id, probe.attempt_id, probe.scheduling_key, probe.target_execution,
+                assert (candidate.lease_id, candidate.task_id, candidate.attempt_id, candidate.scheduling_key) == (
+                    probe.lease_id, probe.task_id, probe.attempt_id, probe.scheduling_key,
                 )
                 if type(candidate) is protocol.RejectWorkerLease:
                     assert candidate.reason is protocol.LeaseRejectReason.PENDING_CAPACITY
