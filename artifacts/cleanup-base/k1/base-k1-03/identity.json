@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "c490a652da42eef5ec4f5bdec4889f0639123daa",
+  "working_tree_status": " M scripts/baseline_manifest.json\n M scripts/run_baseline.py\n M tests/unit/test_baseline_runner.py\n",
+  "archive_sha256": "353e75cd10bf2934356f4f2b7acbddcf02b6d5576f4e6d53acfb22809d9f90e3",
+  "file_count": 485,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

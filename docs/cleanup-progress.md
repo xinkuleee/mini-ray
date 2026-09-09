@@ -7,3 +7,5 @@
 - K2进行中：确认残留/API清理；只有删除前提已满足条目才应用。
 - K3至K7未完成；teaching-enhanced尚未创建，须从K7已验收B派生后执行K8至K9。
 - 未运行远端Actions或发布清理分支。
+
+K1复现修正：registry文本身份只归一CRLF到LF，其它字节变化仍拒绝。新增工具回归31 passed；独立LF副本的两迁移闭包静态验证通过。原始测试artifact不改写。

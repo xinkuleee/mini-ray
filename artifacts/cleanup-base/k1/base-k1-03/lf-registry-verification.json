@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "kind": "static registry verification in separate LF checkout",
+  "converted_files": 472,
+  "verified_migrations": [
+    "tests/unit/test_cpu_yield_accounting.py",
+    "tests/integration/test_cross_process_trace.py::test_one_task_emits_cross_process_golden_trace_and_cleans_up"
+  ],
+  "raw_snapshot_unmodified": true
+}

@@ -159,12 +159,25 @@ def _tree_hash(files) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _review_input_hash(data: bytes) -> str:
+    """Schema2 review identity: SHA256 after replacing only CRLF with LF.
+
+    Git checkouts may change text line endings. Preserve every other byte,
+    including lone CR, BOM, whitespace, encoding and final-newline presence.
+    This applies only to reviewed text inputs (Python/config/golden JSON),
+    never to raw snapshot, artifact or evidence-file hashes.
+    """
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def review_inputs(selector: str, *, root: Path | None = None) -> dict[str, str]:
     """Return review inputs without granting review or changing the registry.
 
     The manifest cannot hash its own registry bytes; selection/marker and
-    metadata are validated separately. Dynamic imports and data files require
-    explicit extra reviewed_files. A frozen checkout needs no .git directory.
+    metadata are validated separately. Dynamic imports and text data files
+    require explicit extra reviewed_files, hashed with _review_input_hash.
+    A frozen checkout needs no .git directory. Schema2 has one normalized
+    text-input hash contract; raw-byte review hashes are not accepted instead.
     """
     root = (root or PROJECT_ROOT).resolve()
     relative = _selector(selector, root).split("::", 1)[0]
@@ -172,7 +185,7 @@ def review_inputs(selector: str, *, root: Path | None = None) -> dict[str, str]:
     for name in _CONFIG_INPUTS:
         if (root / name).is_file():
             paths.add(name)
-    return {name: hashlib.sha256(_path(name, root).read_bytes()).hexdigest() for name in sorted(paths)}
+    return {name: _review_input_hash(_path(name, root).read_bytes()) for name in sorted(paths)}
 
 
 def _migration(data, root: Path) -> ReviewedMigration:
@@ -207,7 +220,7 @@ def _verify_review(migration: ReviewedMigration, root: Path) -> None:
     if not discovered.keys() <= reviewed.keys():
         raise ValueError("migration import/config closure changed; re-review required")
     for name, digest in reviewed.items():
-        if hashlib.sha256(_path(name, root).read_bytes()).hexdigest() != digest:
+        if _review_input_hash(_path(name, root).read_bytes()) != digest:
             raise ValueError("migration input hash changed; re-review required: " + name)
 
 

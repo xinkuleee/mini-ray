@@ -132,6 +132,39 @@ def test_added_import_and_unreviewed_config_prevent_migration(tmp_path):
         runner._verify_review(migration, tmp_path)
 
 
+def test_review_identity_survives_only_checkout_crlf_to_lf_changes(tmp_path):
+    data, record = _review_tree(tmp_path)
+    golden = tmp_path / "golden.json"
+    golden.write_bytes(b'{"value": 1}\r\n')
+    record["reviewed_files"]["golden.json"] = runner._review_input_hash(golden.read_bytes())
+    record["reviewed_tree_hash"] = runner._tree_hash(record["reviewed_files"])
+    migration = runner._validate_manifest(data, root=tmp_path).reviewed_migrations[0]
+    before = dict(migration.reviewed_files)
+    for newline in (b"\r\n", b"\n"):
+        for relative in before:
+            path = tmp_path / relative
+            path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", newline))
+        runner._verify_review(migration, tmp_path)
+        assert runner._tree_hash(before) == migration.reviewed_tree_hash
+    golden.write_bytes(b'{"value": 2}\n')
+    with pytest.raises(ValueError, match="hash changed.*golden.json"):
+        runner._verify_review(migration, tmp_path)
+
+
+@pytest.mark.parametrize("changed", (
+    b"value = 1\r", b"value = 1", b"value = 1 \n", b"value = 2\n",
+    b"\xef\xbb\xbfvalue = 1\n", b"value = 1\n\n",
+))
+def test_review_hash_preserves_every_non_crlf_byte(changed):
+    import hashlib
+
+    original = b"value = 1\n"
+    expected = hashlib.sha256(original).hexdigest()
+    assert runner._review_input_hash(original) == expected
+    assert runner._review_input_hash(b"value = 1\r\n") == expected
+    assert runner._review_input_hash(changed) != expected
+
+
 def test_registry_duplicates_conflicting_marker_bad_hash_and_self_hash_reject(tmp_path):
     data, record = _review_tree(tmp_path)
     invalid = deepcopy(data)
