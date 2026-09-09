@@ -1,0 +1,346 @@
+[
+  {
+    "id": "SRC-001",
+    "path": "src/miniray/core.py",
+    "symbol": "CoreWorker._known_output_completion_locked",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-009",
+    "path": "src/miniray/core.py",
+    "symbol": "_ActorInflightCall",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-004",
+    "path": "src/miniray/core.py",
+    "symbol": "contextmanager",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-005",
+    "path": "src/miniray/core.py",
+    "symbol": "ContainedReferenceHold",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-006",
+    "path": "src/miniray/core.py",
+    "symbol": "OutputOwnerPublicationDisposition",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-007",
+    "path": "src/miniray/core.py",
+    "symbol": "OutputPublicationSlotCleanupProof",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-008",
+    "path": "src/miniray/core.py",
+    "symbol": "RecoveryDecision",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-004",
+    "path": "src/miniray/node.py",
+    "symbol": "NodeServer._start_worker_locked",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-006",
+    "path": "src/miniray/node.py",
+    "symbol": "NodeServer._drain_actor_workers_once",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-014",
+    "path": "src/miniray/node.py",
+    "symbol": "NodeServer._legacy_worker_compat initialization",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-015",
+    "path": "src/miniray/node.py",
+    "symbol": "NodeServer._legacy_worker_compat legacy assignment",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-010",
+    "path": "src/miniray/node.py",
+    "symbol": "PullState",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-011",
+    "path": "src/miniray/node.py",
+    "symbol": "UnknownPullError",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-012",
+    "path": "src/miniray/node.py",
+    "symbol": "TransportError",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-013",
+    "path": "src/miniray/node.py",
+    "symbol": "EventSink",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-014",
+    "path": "src/miniray/node.py",
+    "symbol": "causal_scope",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-015",
+    "path": "src/miniray/node.py",
+    "symbol": "current_cause_id",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-016",
+    "path": "src/miniray/node.py",
+    "symbol": "TaskExecutionKey",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-017",
+    "path": "src/miniray/node.py",
+    "symbol": "TaskOutputManifest",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-007",
+    "path": "src/miniray/worker.py",
+    "symbol": "WorkerServer._claim_system_error_failpoint",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-008",
+    "path": "src/miniray/worker.py",
+    "symbol": "WorkerServer._begin_drain",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-010",
+    "path": "src/miniray/dependency.py",
+    "symbol": "_deduplicate",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "SRC-016",
+    "path": "src/miniray/node_monitor.py",
+    "symbol": "ManagedNodeMonitor._processes",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-001",
+    "path": "src/miniray/actor_client.py",
+    "symbol": "Optional",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-002",
+    "path": "src/miniray/control.py",
+    "symbol": "Enum",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-003",
+    "path": "src/miniray/control.py",
+    "symbol": "NodeInfo",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-006",
+    "path": "src/miniray/control.py",
+    "symbol": "live_node_infos",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-009",
+    "path": "src/miniray/ids.py",
+    "symbol": "Optional",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-001",
+    "path": "src/miniray/ids.py",
+    "symbol": "derive_task_id",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-002",
+    "path": "src/miniray/ids.py",
+    "symbol": "derive_object_id",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-018",
+    "path": "src/miniray/output_protocol.py",
+    "symbol": "Union",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-019",
+    "path": "src/miniray/ownership.py",
+    "symbol": "TaskOutputManifest",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-012",
+    "path": "src/miniray/ownership.py",
+    "symbol": "abort_task_lineage_edges",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-020",
+    "path": "src/miniray/placement_group_runtime.py",
+    "symbol": "Mapping",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-021",
+    "path": "src/miniray/placement_group_runtime.py",
+    "symbol": "ResourceVector",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-022",
+    "path": "src/miniray/protocol.py",
+    "symbol": "ContainedReferenceEdge",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-023",
+    "path": "src/miniray/ref_transfer.py",
+    "symbol": "ContainedReferenceEdge",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "IMP-024",
+    "path": "src/miniray/ref_transfer.py",
+    "symbol": "IncomingContainedReferenceHold",
+    "action": "delete_binding_only",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-004",
+    "path": "src/miniray/recovery.py",
+    "symbol": "forget_collected_object",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-005",
+    "path": "src/miniray/recovery.py",
+    "symbol": "record_terminal_system_failure",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-010",
+    "path": "src/miniray/reconstruction_runtime.py",
+    "symbol": "lineage_inputs",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-011",
+    "path": "src/miniray/reconstruction_runtime.py",
+    "symbol": "rewrite_nested_holds",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  },
+  {
+    "id": "API-021",
+    "path": "src/miniray/owner_death_fence_registry.py",
+    "symbol": "from_node_info",
+    "action": "delete",
+    "authority": "R2.2 source_items; active definitions re-resolved by AST",
+    "status": "applied"
+  }
+]

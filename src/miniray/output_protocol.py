@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, replace
 from enum import Enum
 import hashlib
-from typing import Optional, Tuple, TYPE_CHECKING, Union
+from typing import Optional, Tuple, TYPE_CHECKING
 
 from .errors import ProtocolError
 

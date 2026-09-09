@@ -48,7 +48,7 @@ from .node_death_view import (
 )
 from .placement_group_runtime import PlacementGroupAttempt, participant_digest
 from .object_store import ObjectStore
-from .object_manager import ObjectManager, PullAction, PullState, UnknownPullError
+from .object_manager import ObjectManager, PullAction
 from .output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationConflictError,
     OutputPublicationEnvelope, OutputPublicationID, OutputPublicationManifest,
@@ -65,13 +65,7 @@ from .output_publication_journal import (
 from .output_publication_node import (
     OutputPublicationNodeAdapter, OutputPublicationBusy, OutputPublicationRemoteError,
 )
-from .transport import (
-    LOOPBACK_HOST,
-    Address,
-    TCPServer,
-    TransportError,
-    request as rpc_request,
-)
+from .transport import LOOPBACK_HOST, Address, TCPServer, request as rpc_request
 from .worker import (
     BEGIN_DRAIN_HANDLER as WORKER_BEGIN_DRAIN_HANDLER,
     DRAIN_STATUS_HANDLER as WORKER_DRAIN_STATUS_HANDLER,
@@ -80,9 +74,8 @@ from .worker import (
     WorkerFailpointConfig,
     worker_main,
 )
-from .trace import EventSink, TraceSinkConfig, causal_scope, current_cause_id
+from .trace import TraceSinkConfig
 from .trace_collector import sink_from_config
-from .task_outputs import TaskExecutionKey, TaskOutputManifest
 
 
 REQUEST_LEASE_HANDLER = "request_worker_lease"
@@ -380,7 +373,6 @@ class NodeServer:
         self._workers = {
             worker: _WorkerSlot(worker) for worker in worker_ids
         }
-        self._legacy_worker_compat = False
         self.num_workers_per_node = num_workers_per_node
         # Singular fields are compatibility mirrors for the first deterministic
         # slot.  Real pool scheduling and cleanup use ``_workers`` exclusively.
@@ -2152,7 +2144,6 @@ class NodeServer:
         self._worker_order = (worker_id,)
         self._workers = {worker_id: slot}
         self.num_workers_per_node = 1
-        self._legacy_worker_compat = True
 
     def _sync_first_worker_compat_locked(self) -> None:
         """Mirror the first slot for old diagnostics; never read it in pool mode."""
@@ -3364,11 +3355,6 @@ class NodeServer:
         # it cannot publish a replacement during cluster drain.
         self._sweep_exited_workers()
 
-    def _start_worker_locked(self) -> None:
-        """Compatibility wrapper for the original first-slot helper."""
-
-        self._ensure_worker_slots_locked()
-        self._start_worker_slot(self._worker_order[0])
 
     def _stop_worker_slot(self, worker_id: ids.WorkerID) -> _WorkerStopResult:
         with self._state_lock:
@@ -6754,77 +6740,6 @@ class NodeServer:
                 detail="lease is already terminal: {}".format(record.state.value),
             )
 
-    def _drain_actor_workers_once(self, request_id: str) -> bool:
-        """Drain committed Actors without force-clearing an unclean record."""
-
-        with self._state_lock:
-            creation_locks = tuple(self._actor_creation_locks.values())
-        acquired: list[threading.Lock] = []
-        for creation_lock in creation_locks:
-            if not creation_lock.acquire(blocking=False):
-                for held in reversed(acquired):
-                    held.release()
-                return False
-            acquired.append(creation_lock)
-        try:
-            with self._state_lock:
-                records = tuple(self._actor_workers.items())
-        finally:
-            for held in reversed(acquired):
-                held.release()
-
-        clean = True
-        released_any = False
-        for actor_id, record in records:
-            process = record.process
-            startup = record.startup
-            try:
-                alive = process.is_alive()
-            except (AssertionError, ValueError):
-                alive = False
-            ack = None
-            if alive:
-                try:
-                    candidate = self._background_rpc(
-                        startup.worker_address,
-                        SHUTDOWN_HANDLER,
-                        protocol.Shutdown(request_id, "cluster drain actor"),
-                        request_timeout=WORKER_STOP_TIMEOUT_SECONDS,
-                    )
-                    if (
-                        isinstance(candidate, protocol.ShutdownAck)
-                        and candidate.request_id == request_id
-                    ):
-                        ack = candidate
-                except Exception:
-                    pass
-                process.join(0.05)
-                try:
-                    alive = process.is_alive()
-                except (AssertionError, ValueError):
-                    alive = False
-            exitcode = getattr(process, "exitcode", None)
-            stopped_cleanly = (
-                not alive
-                and exitcode == 0
-                and (ack is None or ack.clean)
-            )
-            if not stopped_cleanly:
-                clean = False
-                continue
-            with self._state_lock:
-                if self._actor_workers.get(actor_id) is record:
-                    self._actor_workers.pop(actor_id, None)
-                    self._ledger.release(record.allocation_token)
-                    self._refresh_local_cached_availability_locked()
-                    released_any = True
-            try:
-                process.close()
-            except (AssertionError, ValueError):
-                pass
-        if released_any:
-            self._report_resources_to_gcs_best_effort()
-        return clean
 
     def _drain_workers_once(
         self, request: protocol.BeginDrain

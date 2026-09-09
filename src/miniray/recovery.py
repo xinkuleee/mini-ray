@@ -641,17 +641,6 @@ class RecoveryManager:
             self._tasks.pop(plan.task_id, None)
         return True
 
-    def forget_collected_object(
-        self, object_id: ObjectID, *, expected_task_spec: TaskSpec | None,
-        expected_attempt: AttemptID | None = None,
-    ) -> bool:
-        """Convenience wrapper for pure callers outside Core composition."""
-
-        plan = self.validate_forget_collected_object(
-            object_id, expected_task_spec=expected_task_spec,
-            expected_attempt=expected_attempt,
-        )
-        return self.commit_forget_collected_object(plan)
 
     def record_task_success(
         self, task_id: TaskID, attempt_id: AttemptID
@@ -725,23 +714,6 @@ class RecoveryManager:
             task_id, before, after, active_before, active_after, decision
         )
 
-    def record_terminal_system_failure(
-        self, task_id: TaskID, attempt_id: AttemptID, error: object
-    ) -> RecoveryDecision:
-        """Terminate a current attempt without admitting another retry.
-
-        Scheduling rejection, cancellation and other pre-execution terminal
-        paths have already decided that this logical attempt will not be
-        retried.  They still must update the same RecoveryManager authority so
-        an active reconstruction cannot remain RETRY_PENDING after its owner
-        object becomes ERROR.
-        """
-
-        return self.commit_transition(
-            self.validate_terminal_system_failure(
-                task_id, attempt_id, error
-            )
-        )
 
     def validate_terminal_system_failure(
         self, task_id: TaskID, attempt_id: AttemptID, error: object = None

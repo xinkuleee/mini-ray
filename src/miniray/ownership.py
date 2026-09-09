@@ -56,10 +56,7 @@ from .protocol import (
     WorkerDeathReason,
     WorkerDeathRecord,
 )
-from .task_outputs import (
-    TaskExecutionKey,
-    TaskOutputManifest,
-)
+from .task_outputs import TaskExecutionKey
 
 ReferenceToken = Hashable
 ObjectLocation = NodeID
@@ -3550,21 +3547,6 @@ class ObjectOwnerTable:
                 for obligation in authority.obligations
             )
 
-    def abort_task_lineage_edges(
-        self, task_id: TaskID,
-        expected_edges: tuple[LineageReferenceEdge, ...],
-    ) -> bool:
-        """CAS-remove exactly the unexposed task-level obligations."""
-
-        if not isinstance(task_id, TaskID):
-            raise TypeError("task_id must be a TaskID")
-        values = tuple(expected_edges)
-        if any(not isinstance(edge, LineageReferenceEdge) for edge in values):
-            raise TypeError(
-                "expected_edges must contain LineageReferenceEdge values"
-            )
-        with self._lock:
-            return self._abort_task_lineage_edges_locked(task_id, values)
 
     def _abort_task_lineage_edges_locked(
         self, task_id: TaskID,

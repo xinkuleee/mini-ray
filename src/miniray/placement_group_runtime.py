@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Mapping, Optional, Sequence, Union
+from typing import Optional, Sequence, Union
 
 from .ids import NodeID, PlacementGroupID
 from .placement import (
@@ -20,7 +20,7 @@ from .placement import (
     PlacementStrategy,
 )
 from .protocol import NodeDeathRecord
-from .resources import NodeSnapshot, ResourceVector
+from .resources import NodeSnapshot
 
 
 class PlacementGroupRuntimeError(RuntimeError):

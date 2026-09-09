@@ -605,15 +605,6 @@ def _validate_reference_owners(references: Iterable[ContainedRef]) -> None:
             )
 
 
-def _deduplicate(values: Iterable[ObjectIDLike]) -> tuple[ObjectIDLike, ...]:
-    result: list[ObjectIDLike] = []
-    seen: set[ObjectIDLike] = set()
-    for value in values:
-        _require_hashable(value, "object_id")
-        if value not in seen:
-            seen.add(value)
-            result.append(value)
-    return tuple(result)
 
 
 def _require_hashable(value: object, label: str) -> None:

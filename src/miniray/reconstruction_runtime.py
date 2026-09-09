@@ -506,19 +506,7 @@ class ReconstructionCoordinator:
             ),
         )
 
-    def lineage_inputs(
-        self, spec: TaskSpec
-    ) -> tuple[tuple[ObjectID, ...], tuple[ObjectID, ...]]:
-        """Public pure preflight for retained reconstruction inputs."""
 
-        return self._validate_lineage_inputs(spec)
-
-    def rewrite_nested_holds(
-        self, spec: TaskSpec, hold: TaskReferenceHold
-    ) -> TaskSpec:
-        """Rewrite nested holds for one whole-function replay."""
-
-        return self._rewrite_nested_holds(spec, hold)
 
     def prepare(self, object_id: ObjectID) -> PreparedReconstruction:
         """Construct a START/JOIN/failure outcome without local mutation."""

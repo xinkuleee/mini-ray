@@ -46,7 +46,6 @@ class ManagedNodeMonitor:
             sentinels[sentinel] = process
         if not callable(on_death):
             raise TypeError("on_death must be callable")
-        self._processes = process_tuple
         self._sentinels = sentinels
         self._on_death = on_death
         self._wait = wait_function

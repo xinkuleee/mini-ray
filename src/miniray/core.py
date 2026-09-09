@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 import weakref
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field, fields, replace
@@ -28,12 +28,7 @@ import cloudpickle
 from . import protocol
 from .output_handoff import OutputHandoffTable, OutputHandoffPhase
 from .actor_client import ActorCallFence, ActorClientTable
-from .contained_edges import (
-    ContainedReferenceEdge, ContainedReferenceHold,
-    IncomingContainedReferenceHold,
-    LineageReferenceEdge,
-    ObjectMetadataCollectionPlan,
-)
+from .contained_edges import ContainedReferenceEdge, IncomingContainedReferenceHold, LineageReferenceEdge, ObjectMetadataCollectionPlan
 from .dependency import (
     encode_task_argument,
     nested_references,
@@ -75,12 +70,9 @@ from .foreign_lineage_runtime import (
 from .ownership import (
     DeadWorkerReferenceRecord, NodeLocationRemoval, ObjectOwnerSnapshot, ObjectOwnerTable, ObjectState, UnknownObjectError,
 )
-from .ownership import (
-    OutputOwnerPublicationPlan, OutputOwnerPublicationDisposition,
-    OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError,
-)
+from .ownership import OutputOwnerPublicationPlan, OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError
 from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID
-from .output_publication_journal import OutputPublicationAdoptionProof, OutputPublicationSlotCleanupProof
+from .output_publication_journal import OutputPublicationAdoptionProof
 from .owner_service import (
     REPLACE_RETAINED_OBJECT_FOR_TASK_HANDLER,
     StoredContainedPinOwnerAdapter,
@@ -92,9 +84,7 @@ from .retained_replacement import (
     replace_retained_object_for_task as _replace_retained_object_for_task,
 )
 from .placement import PlacementStrategy
-from .recovery import (
-    FailureKind, RecoveryAction, RecoveryDecision, RecoveryManager, ReconstructionSnapshot,
-)
+from .recovery import FailureKind, RecoveryAction, RecoveryManager, ReconstructionSnapshot
 from .reconstruction_runtime import (
     ReconstructionCoordinator, ReconstructionDisposition, ReconstructionOutcome,
     ReconstructionRuntimeError,
@@ -1068,19 +1058,6 @@ class ActorEndpoint:
     worker_pid: Optional[int] = None
 
 
-@dataclass(frozen=True)
-class _ActorInflightCall:
-    """Owner-local publication fence for one physical Actor call.
-
-    The logical ActorID belongs to the public handle, while these fields bind
-    a call to one GCS-published route.  A later route snapshot may fail the
-    call, but must never replay it against a new in-memory Actor incarnation.
-    """
-
-    actor_id: ActorID
-    object_id: ObjectID
-    attempt_id: AttemptID
-    fence: ActorCallFence
 
 
 @dataclass(frozen=True)
@@ -11490,21 +11467,6 @@ class CoreWorker:
                    and self._owner_table.snapshot(output_id).current_attempt != pending.spec.attempt_id
                    for output_id in pending.output_ids)
 
-    def _known_output_completion_locked(self, pending, identity):
-        """Read exact committed owner membership, not Task-level success."""
-        manifests = []
-        for output_id in pending.output_ids:
-            if not self._owner_table.contains(output_id):
-                return None
-            snapshot = self._owner_table.snapshot(output_id)
-            membership = snapshot.output_publication
-            if (membership is None or membership.publication_id != identity
-                    or snapshot.current_attempt != pending.spec.attempt_id):
-                return None
-            manifests.append(membership.manifest)
-        if not manifests or any(value != manifests[0] for value in manifests):
-            return None
-        return OutputPublicationCompleteWitness.for_manifest(manifests[0])
 
     def _locally_retained_output_completion(self, pending, witness, *, allow_lost_stored=False):
         """Recover a handoff only from actual owner custody, never GCS bytes."""

@@ -15,11 +15,7 @@ import uuid
 from typing import Optional, Tuple, TYPE_CHECKING, Union
 
 from .errors import ProtocolError
-from .contained_edges import (
-    ContainedReferenceEdge,
-    ContainedReferenceHold,
-    IncomingContainedReferenceHold,
-)
+from .contained_edges import ContainedReferenceHold, IncomingContainedReferenceHold
 from .ids import (
     ActorID,
     ActorGeneration,

@@ -21,7 +21,6 @@ from __future__ import annotations
 import os
 import traceback
 from dataclasses import dataclass, replace
-from enum import Enum
 from multiprocessing.connection import Connection
 from threading import Event, RLock, Thread, current_thread
 from types import MappingProxyType
@@ -50,32 +49,7 @@ from .placement_group_runtime import (
     PrepareReservation,
     ReservationReply,
 )
-from .protocol import (
-    CreateActorReply,
-    CreateActorRequest,
-    FunctionDefinition,
-    FunctionKey,
-    FunctionRegistrationReply,
-    FunctionReply,
-    GCSStartup,
-    GetNodeAddress,
-    GetNodeAddressReply,
-    GetNodes,
-    GetNodesReply,
-    GetFunction,
-    NodeInfo,
-    RegisterNode,
-    RegisterNodeReply,
-    RegisterFunction,
-    ReserveActorWorkerReply,
-    ReserveActorWorkerRequest,
-    Shutdown,
-    ShutdownAck,
-    UnregisterNode,
-    UnregisterNodeReply,
-    UpdateNodeResources,
-    UpdateNodeResourcesReply,
-)
+from .protocol import CreateActorReply, CreateActorRequest, FunctionDefinition, FunctionKey, FunctionRegistrationReply, FunctionReply, GCSStartup, GetNodeAddress, GetNodeAddressReply, GetNodes, GetNodesReply, GetFunction, RegisterNode, RegisterNodeReply, RegisterFunction, ReserveActorWorkerReply, ReserveActorWorkerRequest, Shutdown, ShutdownAck, UnregisterNode, UnregisterNodeReply, UpdateNodeResources, UpdateNodeResourcesReply
 from .resources import (
     HybridPolicy,
     NodeSnapshot as SchedulingNodeSnapshot,
@@ -486,9 +460,6 @@ class NodeRegistry:
                 sorted(self._nodes.values(), key=lambda node: repr(node.node_id))
             )
 
-    def live_node_infos(self) -> Tuple[protocol.NodeInfo, ...]:
-        with self._lock:
-            return self._live_node_infos_locked()
 
     def live_snapshot(self) -> tuple[int, Tuple[protocol.NodeInfo, ...]]:
         with self._lock:

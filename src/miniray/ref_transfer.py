@@ -12,11 +12,7 @@ import threading
 from contextlib import contextmanager
 from typing import Callable, Iterator, Optional, Tuple, Union
 
-from .contained_edges import (
-    ContainedReferenceEdge,
-    ContainedReferenceHold,
-    IncomingContainedReferenceHold,
-)
+from .contained_edges import ContainedReferenceHold
 from .ids import ObjectID, WorkerID
 from .publication_sources import (
     BorrowedContainedSource, ContainedPublicationSource, OwnedContainedSource,

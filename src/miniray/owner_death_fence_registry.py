@@ -64,13 +64,6 @@ class OwnerFenceNodeIncarnation:
         _positive_int(self.node_pid, "node_pid")
         _positive_int(self.registration_epoch, "registration_epoch")
 
-    @classmethod
-    def from_node_info(
-        cls, node: protocol.NodeInfo
-    ) -> "OwnerFenceNodeIncarnation":
-        if not isinstance(node, protocol.NodeInfo):
-            raise TypeError("node must be a NodeInfo")
-        return cls(node.node_id, node.node_pid, node.registration_epoch)
 
 
 @dataclass(frozen=True, order=True)

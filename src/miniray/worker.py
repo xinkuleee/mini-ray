@@ -1052,13 +1052,6 @@ class WorkerServer:
         self._failpoint_triggers = triggers + 1
         return config.mode
 
-    def _claim_system_error_failpoint(self, attempt_id: ids.AttemptID) -> bool:
-        """Compatibility spelling retained for focused state fixtures."""
-
-        return (
-            self._claim_failpoint(attempt_id)
-            is WorkerFailpointMode.SYSTEM_ERROR
-        )
 
     def _start_worker_lease(
         self, request: protocol.PushTask,
@@ -1818,31 +1811,6 @@ class WorkerServer:
             )
         return core.request_drop_owned_object(request)
 
-    def _begin_drain(
-        self, request_id: str, *, timeout: Optional[float] = None
-    ) -> protocol.DrainStatus:
-        """Fence admission and retry Core cleanup, but keep TCP alive."""
-
-        condition = getattr(self, "_lifecycle", None)
-        if condition is None:
-            self._drain_request_id = request_id
-        else:
-            with condition:
-                previous = getattr(self, "_drain_request_id", None)
-                if previous is not None and previous != request_id:
-                    raise ValueError("worker drain already has a different request ID")
-                self._drain_request_id = request_id
-                self._accepting_tasks = False
-                self._owner_retain_admission_open = False
-                core = self._borrow_owner_core()
-                if core is not None:
-                    close_retain = getattr(
-                        core, "close_owner_retain_admission", None
-                    )
-                    if close_retain is not None:
-                        close_retain()
-                condition.notify_all()
-        return self._drain_status(request_id, timeout=timeout)
 
     def _handle_finalize_output_owner_death(self, request):
         """Retire accepted local custody after Node's exact owner-death cleanup."""

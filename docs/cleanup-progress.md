@@ -9,3 +9,5 @@
 - 未运行远端Actions或发布清理分支。
 
 K1复现修正：registry文本身份只归一CRLF到LF，其它字节变化仍拒绝。新增工具回归31 passed；独立LF副本的两迁移闭包静态验证通过。原始测试artifact不改写。
+
+K2a完成：43项确认无消费者的定义/字段/import/便利接口从16个源码文件移除，保留所有校验底层；341 passed/1 deselected，真实golden trace 1 passed。余下需迁移SRC/API项尚未删除；新替代反例在验证前不构成删除许可。

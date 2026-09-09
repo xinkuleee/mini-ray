@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import os
-from typing import Optional, Type, TypeVar
+from typing import Type, TypeVar
 
 from .errors import InvalidIDError
 
@@ -240,17 +240,3 @@ class PlacementGroupID(_OpaqueID):
 
 
 PGID = PlacementGroupID
-
-
-def derive_task_id(
-    job_id: JobID, parent_task_id: TaskID, submission_index: int
-) -> TaskID:
-    """Functional spelling of :meth:`TaskID.derive`."""
-
-    return TaskID.derive(job_id, parent_task_id, submission_index)
-
-
-def derive_object_id(task_id: TaskID, return_index: int = 0) -> ObjectID:
-    """Return the stable object identity for a task return slot."""
-
-    return ObjectID.for_task(task_id, return_index)
