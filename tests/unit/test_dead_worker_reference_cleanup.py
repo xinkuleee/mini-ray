@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import AttemptID, JobID, ObjectID, TaskID, WorkerID
 from miniray.ownership import (
     DeadWorkerReferenceConflictError,
@@ -72,10 +73,13 @@ def test_death_cleanup_is_narrow_and_only_reports_gc_candidates() -> None:
     # The dead Worker owns both a direct borrower and two Task holds.  Live
     # executor borrowers derived from those holds have already crossed the
     # acquire linearization point and are independent lifetime reasons.
-    table.add_contained_reference(guarded_id, "guarded-transfer")
+    guarded_transfer = ContainedReferenceHold(
+        ObjectID.for_task(TaskID.random()), other_worker, "guarded-transfer"
+    )
+    table.add_contained_reference(guarded_id, guarded_transfer)
     dead_parent = (dead, "retained-parent")
     assert table.acquire_exported_reference(
-        guarded_id, ContainedTransferSource("guarded-transfer"), dead_parent
+        guarded_id, ContainedTransferSource(guarded_transfer), dead_parent
     )
     submitted = _hold(TaskReferenceHoldKind.SUBMITTED, dead, 0)
     retained = _hold(TaskReferenceHoldKind.RETAINED, dead, 1)
@@ -92,16 +96,19 @@ def test_death_cleanup_is_narrow_and_only_reports_gc_candidates() -> None:
         guarded_id, TaskHoldSource(retained), retained_child
     )
 
-    table.add_contained_reference(candidate_id, "candidate-transfer")
+    candidate_transfer = ContainedReferenceHold(
+        ObjectID.for_task(TaskID.random()), other_worker, "candidate-transfer"
+    )
+    table.add_contained_reference(candidate_id, candidate_transfer)
     dead_candidate = (dead, "candidate-borrower")
     assert table.acquire_exported_reference(
         candidate_id,
-        ContainedTransferSource("candidate-transfer"),
+        ContainedTransferSource(candidate_transfer),
         dead_candidate,
     )
     # Leave no non-dead lifetime reason on this entry.
     assert table.release_contained_reference(
-        candidate_id, "candidate-transfer"
+        candidate_id, candidate_transfer
     )
 
     live_token = (other_worker, "unaffected-borrower")
@@ -130,7 +137,7 @@ def test_death_cleanup_is_narrow_and_only_reports_gc_candidates() -> None:
     assert {submitted_child, retained_child} <= guarded.borrowed_tokens
     assert dead_parent in guarded.released_borrowed_tokens
     assert (
-        dead_parent, ContainedTransferSource("guarded-transfer")
+        dead_parent, ContainedTransferSource(guarded_transfer)
     ) in guarded.borrowed_sources
     assert (retained, dead_parent) in guarded.retained_borrower_tokens
 
@@ -173,7 +180,10 @@ def test_dead_fence_rejects_unseen_late_adds_and_preserves_normal_cascade() -> N
     dead = WorkerID.random()
     live = WorkerID.random()
     table.register(object_id, current_attempt=attempt_id)
-    table.add_contained_reference(object_id, "transfer")
+    transfer = ContainedReferenceHold(
+        ObjectID.for_task(TaskID.random()), live, "transfer"
+    )
+    table.add_contained_reference(object_id, transfer)
 
     cleanup = table.install_dead_worker(dead, "death-before-reference")
     assert not cleanup.affected_object_ids
@@ -181,7 +191,7 @@ def test_dead_fence_rejects_unseen_late_adds_and_preserves_normal_cascade() -> N
     with pytest.raises(DeadWorkerReferenceError):
         table.acquire_exported_reference(
             object_id,
-            ContainedTransferSource("transfer"),
+            ContainedTransferSource(transfer),
             (dead, "unseen-acquire"),
         )
     with pytest.raises(DeadWorkerReferenceError):

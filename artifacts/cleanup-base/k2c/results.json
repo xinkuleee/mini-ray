@@ -1,0 +1,80 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_lineage_current_cleanup.py",
+    "exit_code": 0,
+    "seconds": 7.293,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_lineage_current_cleanup.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_current_owner_api_contracts.py",
+    "exit_code": 0,
+    "seconds": 5.193,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_current_owner_api_contracts.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_owned_drop_request_binding.py",
+    "exit_code": 0,
+    "seconds": 2.771,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_owned_drop_request_binding.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_owner_service.py",
+    "exit_code": 0,
+    "seconds": 6.52,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_owner_service.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_dead_worker_reference_cleanup.py",
+    "exit_code": 0,
+    "seconds": 7.507,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_dead_worker_reference_cleanup.py"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_task_finish_barrier.py",
+    "exit_code": 0,
+    "seconds": 8.384,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k2c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_task_finish_barrier.py"
+    ],
+    "log": "005-case.log"
+  }
+]

@@ -13,3 +13,5 @@ K1复现修正：registry文本身份只归一CRLF到LF，其它字节变化仍�
 K2a完成：43项确认无消费者的定义/字段/import/便利接口从16个源码文件移除，保留所有校验底层；341 passed/1 deselected，真实golden trace 1 passed。余下需迁移SRC/API项尚未删除；新替代反例在验证前不构成删除许可。
 
 K2b迁移前置：5个替代纯文件18case通过，Actor普通restart真实smoke通过。修复原合同要求的Actor结果Ref拒绝（含hidden reducer），未增加ActorRef支持；18个旧helper导入已提取。尚未据此批删旧测试。
+
+K2c迁移前置：foreign-lineage4、owner API10、owned-drop8、owner-service4、dead-worker3、foreign-finish14均通过。七个待迁API仍保留到旧消费者闭合；不以新case通过直接跳过原混合文件合同。

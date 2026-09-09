@@ -10,7 +10,7 @@ from miniray.ids import (
     JobID, ObjectID, TaskID, WorkerID,
 )
 from miniray.ownership import StoredContainedReferenceDisposition
-from miniray.stored_publication import (
+from miniray.publication_sources import (
     OwnedContainedSource, PreparedContainedTransfer,
 )
 

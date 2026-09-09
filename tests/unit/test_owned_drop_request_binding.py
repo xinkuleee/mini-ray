@@ -85,14 +85,19 @@ class _DropBoundary:
             self.source_container, current_attempt=AttemptID(container_task, 0),
             local_token="source-container-live",
         )
-        assert core.owner_table.add_outgoing_contained_edge(
-            self.source_container, ContainedReferenceEdge(
-                self.source_container, self.object_id, core.worker_id,
-                core.owner_address, self.source.hold.transfer_token,
-            ),
+        source_payload = b"source-container"
+        source_edge = ContainedReferenceEdge(
+            self.source_container, self.object_id, core.worker_id,
+            core.owner_address, self.source.hold.transfer_token,
         )
-        assert core.owner_table.publish_inline(
-            self.source_container, AttemptID(container_task, 0), b"source-container",
+        source_descriptor = protocol.ResultDescriptor(
+            self.source_container, protocol.ResultStorage.INLINE, len(source_payload),
+            core.worker_id, core.node_id, hashlib.sha256(source_payload).hexdigest(),
+            source_payload,
+        )
+        assert core.owner_table.publish_put_value(
+            self.source_container, AttemptID(container_task, 0),
+            source_descriptor, (source_edge,),
         )
         core.owner_table.register(
             self.object_id, current_attempt=self.attempt,

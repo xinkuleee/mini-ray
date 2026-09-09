@@ -11,6 +11,7 @@ import cloudpickle
 import pytest
 
 from miniray import core as core_module, protocol
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.core import CoreWorker, ObjectRef
 from miniray.errors import SystemTaskError, UnreconstructableObjectError
 from miniray.ids import AttemptID, NodeID, ObjectID, TaskID, WorkerID
@@ -185,8 +186,11 @@ def _borrower_fixture(monkeypatch, failure, *, eventually_ready):
     owner = WorkerID.random()
     ref = ObjectRef(object_id, owner, ("127.0.0.1", 39991))
     ref._borrower_token = "borrower-token"
+    source_hold = ContainedReferenceHold(
+        ObjectID.for_task(TaskID.random()), owner, "source"
+    )
     core._active_borrower_capability = lambda _ref: SimpleNamespace(
-        source=protocol.ContainedTransferSource("source")
+        source=protocol.ContainedTransferSource(source_hold)
     )
     core._loads_owned_value = cloudpickle.loads
     core._blocking_scope = _Composition
