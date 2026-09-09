@@ -1,133 +1,48 @@
-# mini-ray 基础版学习路径
+# 基础版学习路径
 
-日期：2026-09-09。**基础版已独立通过约定验收；本地固定标记为`teaching-base-v0.1`，第二阶段尚未实施**。
-固定同版证据及范围以 [验收账本](acceptance-baseline.md) 为准；本页是源码导读，不把旧 checkpoint 当作当前版本通过。
-七个示例和引用实验使用同一个真实后端，没有另一套演示运行时。
+从一次真实Task开始，再看引用和故障。本文链接当前 teaching-base 的源码；复现实验前以[状态页](current-status.md)的固定验收身份为准。[增强版合同](redesign-plan.md)的§10属于后续阅读，不能用于解释B的普通结果trace。
 
-## 先读清楚四个职责
+## 第一遍：提交、执行、交接
 
-| 组件 | 权威与职责 |
-|---|---|
-| CoreWorker / object owner | Task/ObjectID、依赖与直接提交；结果可见性、引用理由、lineage、待交接清单和精确收据 |
-| Node | 本地资源与 Worker lease、对象副本、pull、准确 Complete 和回复托管；不决定逻辑引用是否存活 |
-| Worker / ActorWorker | 执行用户函数或串行方法；保留返回值与源句柄直到真实交接或补偿完成 |
-| GCS-lite | 成员、死亡事实及 owner-wide Node fence、Actor 创建与 PG 协调；不保存普通结果发布清单或全局引用图 |
+先运行[README的example01精确smoke](../README.md)，读[01_task_path.py](../examples/01_task_path.py)。记录哪个PID执行函数、谁持有ObjectRef，以及为什么TaskID/ObjectID不会随一次重执行变化。
 
-普通结果使用 owner-led 交接。函数返回、Node Complete、owner READY、bytes 仍可用、回复托管退休、对象 GC 是不同事实。
-Node 释放 lease 不等于 owner 已接受结果；owner 已知成功也不能凭失效 descriptor 制造字节。
+| 阅读顺序 | 当前源码入口 | 要回答的问题 |
+|---|---|---|
+| API与同步准备 | [api.py](../src/miniray/api.py)的RemoteFunction.remote；[core.py](../src/miniray/core.py)的CoreWorker._register_submission | remote返回前准备哪些参数、身份与引用责任，哪些工作仍异步？ |
+| 等待与投递 | CoreWorker._prepare_task_dependencies、_execute；[dependency.py](../src/miniray/dependency.py)、[lease_dependencies.py](../src/miniray/lease_dependencies.py) | 为什么依赖pending时不能占住执行Worker？ |
+| 最终资源准入 | [node.py](../src/miniray/node.py)的_handle_request_lease、_handle_request_lease_serialized；[resources.py](../src/miniray/resources.py) | 调度建议与Node实际资源分配有什么区别？ |
+| 执行 | [worker.py](../src/miniray/worker.py)的_handle_push_task、_begin_task | lease/attempt如何绑定同一次执行，歧义回复为何不能当失败重来？ |
+| 结果交接 | [output_publication_node.py](../src/miniray/output_publication_node.py)的prepare/complete/report_terminal；[output_handoff.py](../src/miniray/output_handoff.py) | Node Complete、owner READY和回复托管退休为何是不同事实？ |
+| owner可见性 | CoreWorker._drive_output_publication_adoption；[ownership.py](../src/miniray/ownership.py)的ObjectOwnerTable | 身份、checksum、当前attempt与已有收据如何决定是否可提交？ |
 
-## 怎样运行
+B仍有GCS：[control.py](../src/miniray/control.py)的GCSLite、NodeRegistry、WorkerRegistry负责注册/成员和死亡事实，Actor/PG有各自协调器。普通Task结果没有GCS发布阶段或图门禁。
 
-先按 [验收账本的环境和精确入口](acceptance-baseline.md) 准备 Linux/WSL 与 Python 3.12。
-`scripts/run_baseline.py` 读取一份显式基础清单，复用已有 30 秒进程树边界。
-清单已纳入的真实进程实验逐个执行；新增 exact 先落实资源和清理边界，不并行 pytest、不跑整个目录。
-先`git switch --detach teaching-base-v0.1`；例如列出选择器、运行固定纯合同批次和第一条主线：
+## 七条示例主线
 
+全部示例保留原始main。使用 testing.md 中的同一smoke命令，将参数 example01 替换为对应编号，逐个运行。
 
-```bash
-python scripts/run_baseline.py --list
-python scripts/run_baseline.py --pure
-python scripts/run_baseline.py --smoke 'tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example01]'
-```
+| 示例 | 观察重点 | 下一份源码 |
+|---|---|---|
+| [01 Task路径](../examples/01_task_path.py) | TaskID/ObjectID、真实Worker、普通结果因果trace | api/core/node/worker、output_handoff |
+| [02 spillback](../examples/02_spillback_direct_submission.py) | 自定义资源使首选Node无法执行，投递仍Core→Worker | [lease_policy.py](../src/miniray/lease_policy.py)、Node lease处理 |
+| [03 跨Node pull](../examples/03_cross_node_object_pull.py) | metadata位置、sealed bytes、pin和分块传输 | [object_manager.py](../src/miniray/object_manager.py)、[object_store.py](../src/miniray/object_store.py) |
+| [04 Actor](../examples/04_actor_control_direct.py) | GCS创建、直接方法调用、串行执行 | [actor_client.py](../src/miniray/actor_client.py)、control中的Actor协调器 |
+| [05 nested get](../examples/05_nested_get_cpu_yield.py) | 等待子任务时释放CPU与恢复责任 | [blocking.py](../src/miniray/blocking.py)的BlockingNotifier、[resources.py](../src/miniray/resources.py)的ResourceLedger |
+| [06 lineage](../examples/06_lineage_reconstruction.py) | 删除物理副本后，同ObjectID的新attempt | [reconstruction_runtime.py](../src/miniray/reconstruction_runtime.py)、[owner_reconstruction.py](../src/miniray/owner_reconstruction.py) |
+| [07 PG](../examples/07_placement_group.py) | 两bundle约束、全ACK前不可见、资源归还 | [placement_group_runtime.py](../src/miniray/placement_group_runtime.py)、control/Node PG入口 |
 
-把完整 selector 的参数分别换成 example02 至 example07 可追踪其余主线。
-runner 超时表示实验失败，强制终止不证明 clean shutdown；get/close 的 timeout 也不自动取消分布式操作。
-当前历史 reviewed-pure manifest 含退役协议，不能作为基础版推荐集合。
-清单中的候选、实际已通过证据和仍缺的保留行为分开记录在验收账本，列入清单不代表封版。
+## 第二遍：引用、bytes与回收
 
-## 七条主线
+读[设计中的引用与GC](design.md)后，沿[ref_transfer.py](../src/miniray/ref_transfer.py)、[publication_sources.py](../src/miniray/publication_sources.py)、[transfer_pins.py](../src/miniray/transfer_pins.py)追踪source保活到实际交接。child owner的incoming hold与outer owner的outgoing关系不是同一个计数；独立borrower可以活过outer。
 
-### 1. Task、ObjectRef 与执行身份
+接着读CoreWorker._put_value与[put_handoff.py](../src/miniray/put_handoff.py)。put不产生Worker lease或Task lineage；含Ref put仍需要真实child交接。比较顶层Ref参数和容器内Ref的含义，理解为什么删除自动大参数lift不等于删除nested ref。
 
-入口：[01_task_path.py](../examples/01_task_path.py)。一次 remote 返回一个 ObjectRef；tuple/list 是其完整值，不拆成多个返回槽。
-调用 remote 在返回前完成参数序列化及持有准备，但不等待用户函数执行；get 读取结果，wait 只观察状态。
-源码顺序：[api.py](../src/miniray/api.py) → [core.py](../src/miniray/core.py) 的 submit → [ids.py](../src/miniray/ids.py) / [task_outputs.py](../src/miniray/task_outputs.py) → [worker.py](../src/miniray/worker.py)。
-观察稳定 TaskID/ObjectID 与不同执行 AttemptID；成功 trace 使用 [当前黄金合同](../src/miniray/golden_traces/ordinary_task_success.json)，不经过 GCS INTENT/ARM/terminal/adopted。
+最后对照[replica_cleanup.py](../src/miniray/replica_cleanup.py)、ObjectOwnerTable的collection/retirement和Node的owned drop入口。引用close、metadata删除、lineage释放和bytes回收分别观察；quarantine或诊断登记不能授权删除未知副本。
 
-### 2. Lease、spillback 与直接提交
+## 第三遍：历史事实与故障
 
-入口：[02_spillback_direct_submission.py](../examples/02_spillback_direct_submission.py)。自定义资源要求任务前往另一 Node；lease 回复提供 Worker endpoint，提交 Core 直接 PushTask。
-读 [resources.py](../src/miniray/resources.py) 的 HybridPolicy、[node.py](../src/miniray/node.py) 的 lease handler，再回 Core 的执行推进。
-区分 total feasible 与 available；集群摘要只提供提示，Node 最新账本才准许分配。
-可选读 [lease_policy.py](../src/miniray/lease_policy.py)：已有对象位置影响第一次向谁请求 lease，不取代 Node 的资源裁决。
+从[基础账本B04–B07](acceptance-baseline.md)选择一个已有有限场景，先写出owner、Node、child各自掌握什么事实，再读CoreWorker._drive_output_node_loss_once与owner reconstruction handle。
 
-### 3. Store、对象位置与跨 Node pull
+重点区分准确Complete、UNKNOWN、已知成功但bytes丢失的LOST；第一次准入与旧收据重放；未知RPC与未发生效果；已安装死亡事实与单纯timeout。旧epoch不能覆盖新执行，完整死亡proof只能解除对应死亡参与方的责任。
 
-入口：[03_cross_node_object_pull.py](../examples/03_cross_node_object_pull.py)。较大结果保存在 Node，依赖消费者通过描述符定位和拉取字节。
-读 [object_store.py](../src/miniray/object_store.py)、[object_manager.py](../src/miniray/object_manager.py)、[transfer_pins.py](../src/miniray/transfer_pins.py)。
-source pin 保护传输来源，完整校验并 seal 后目标才可见；lease/Push/GCS 控制消息不运送该大对象载荷。
-这是 Python bytes store，不是共享内存、Plasma、零拷贝或 spilling。
-
-### 4. Actor 控制路径与方法直达
-
-入口：[04_actor_control_direct.py](../examples/04_actor_control_direct.py)。创建由 GCS 协调，方法调用直达专属 ActorWorker。
-读 [control.py](../src/miniray/control.py) 的 ActorCoordinator、[actor_client.py](../src/miniray/actor_client.py)、[actor_state.py](../src/miniray/actor_state.py)、[actor_worker.py](../src/miniray/actor_worker.py)。
-每 caller FIFO 与同 generation 去重保持串行对象语义；普通方法结果仍是异步 ObjectRef。
-高级故障路径保同一存活 Node 内有限重启：ActorID 不变，generation/route 前进，构造器重跑，旧在途方法失败而不透明重放。
-Node 丢失则 Actor 终态失败，不跨 Node migration；constructor/method 的参数及结果值内 ObjectRef 明确不支持。
-
-### 5. 动态子任务与 blocking get 的 CPU yield
-
-入口：[05_nested_get_cpu_yield.py](../examples/05_nested_get_cpu_yield.py)。Worker 内嵌 Core 提交子任务，阻塞 get 时临时让出 CPU，让子任务能够运行。
-读 [blocking.py](../src/miniray/blocking.py)、Worker 通知与 Node [resources.py](../src/miniray/resources.py) 账本。
-只让出 CPU，其他资源与 lease 仍保留；unblock/Complete/Worker death 必须准确、一次清账。
-这与容器内的 nested ObjectRef 是两个问题；CPU reacquire 是逻辑账本恢复，不是等待物理 CPU 空闲的调度屏障。
-
-### 6. 单输出 lineage reconstruction
-
-入口：[06_lineage_reconstruction.py](../examples/06_lineage_reconstruction.py)。先取得结果，丢弃其副本，再通过 get 触发按 lineage 重算。
-读 [recovery.py](../src/miniray/recovery.py)、[reconstruction_runtime.py](../src/miniray/reconstruction_runtime.py)、[owner_reconstruction.py](../src/miniray/owner_reconstruction.py)。
-完整函数重执行，TaskID/ObjectID 保持、AttemptID 变化；应用异常默认终态，系统失败按预算处理。
-首次 START/JOIN ACK 依赖真实准入事实，不能用后来 READY/LOST 状态猜历史；精确重放不重复排队或扣预算。
-put 没有 producer lineage；owner 死亡不能切换副本接管其逻辑对象。
-
-### 7. Placement Group 的原子预留
-
-入口：[07_placement_group.py](../examples/07_placement_group.py)。两个 bundle 使用 STRICT_SPREAD，全部 commit 后才提供可用映射。
-每 Node 两 CPU，因此 STRICT_PACK 本可把两个单 CPU bundle 放在同一 Node；当前分散是硬策略要求，不是容量偶然结果。
-读 [placement.py](../src/miniray/placement.py) 的精确小规模 planner 与 child ledger，再读 [placement_group_runtime.py](../src/miniray/placement_group_runtime.py)、GCS/Node 2PC。
-本版最多两个 bundle，只支持 STRICT_PACK / STRICT_SPREAD；prepare 失败要准确 abort，participant Node 丢失进入 LOST，不重排。
-PG Task 使用已预留 child ledger，不再次扣 root；活跃零资源或 CPU-yielded lease 仍阻止提前释放 root reservation。
-
-## 第二遍：引用是数据，存活理由彼此独立
-
-[两 borrower 活过 outer](../tests/integration/test_contained_ref_lifecycle_path.py) 展示 Worker-owned child 返回 Driver 后 owner 不变。
-两次 get(outer) 可获得同一 child 的独立 borrower；关闭 outer 只释放其 contained hold，不能让其他 borrower 一起失效。
-[nested 参数保活](../tests/integration/test_nested_task_argument_path.py) 展示 sender 先 close 后已接受 Task 的 hold 仍保护引用。
-Task 顶层 Ref 参数进入 readiness gate；容器中的 Ref 仍是句柄，由用户显式 get。直接返回 child Ref 也是引用数据，不自动 get。
-读 [dependency.py](../src/miniray/dependency.py)、[ref_transfer.py](../src/miniray/ref_transfer.py)、[ownership.py](../src/miniray/ownership.py)、[owner_service.py](../src/miniray/owner_service.py)。
-
-显式 put 支持普通值和含有效 owned/borrowed Ref 的值；累计过大的按值参数必须先 put，不再自动 lift 成 StoredArg。
-读 [put_handoff.py](../src/miniray/put_handoff.py) 的单次 discovery 和 Core.put：put operation 负责完整清单、hold 获取、owner 安装与失败补偿，没有 Worker lease 或可重执行 Task lineage。
-[含 Ref put 实验](../tests/integration/test_put_contained_ref_path.py) 追踪 source close、top-level 参数物化、consumer whole reconstruction 与最终释放；其最新验收状态仍查账本。
-这个 put 由 Driver 拥有，consumer replay 保留 put 的原 attempt；它不证明 Task 产生 stored outer 后的
-foreign retained hold 换代。后一个交界已由[Task nested replay实验](../tests/integration/test_task_contained_reconstruction_path.py)在snapshot03同版复验，包含真实retained换代、导入及释放；固定同版证据见账本，不能因都包含引用而混称。
-[stored physical GC](../tests/integration/test_stored_physical_gc_path.py) 分别证明 metadata、source/target bytes 与 lineage 回收；shutdown clean 不替代它。
-
-引用协议只接受完整 typed hold/source；token 字符串是身份字段，不是独立凭证。
-普通 Python 容器自环与 ObjectID 间引用环不同；基础版没有全局防环或 tracing GC，不承诺强引用环自动回收。
-
-## 第三遍：交接与故障知识
-
-读 [output_handoff.py](../src/miniray/output_handoff.py)、[output_publication_node.py](../src/miniray/output_publication_node.py) 与 Core 的 adoption/退出入口。
-owner 先登记清单；child owner 确认保活、Node 完成物化及 Complete；owner 再原子安装结果与 outgoing edges；真实接管后才退休回复和来源托管。
-
-| 事实 | 能得出的结论 |
-|---|---|
-| 存活 Node 有准确 Complete | 继续交付原执行，不因回复丢失重跑用户函数 |
-| 已知成功但可用 bytes 全失 | 对象为 LOST；有 lineage 且 owner 活时 get 可请求重建，不能伪 READY |
-| Node 死、owner 未提交且无存活成功收据 | UNKNOWN；准确收口旧责任后按有限系统重试处理，不推断从未执行 |
-| owner 死亡 | 明确失败；存活方清理各自责任，不接管 owner |
-| RPC timeout | 保留未决效果或报 unavailable，不能直接推断死亡或 clean |
-
-旧 Complete/adoption/abort/release 收据必须与当前状态分开；迟到消息不能修改新 attempt、重建引用或重复消耗预算。
-Worker 在 Complete 后退出且 TaskReply 丢失的实验，证明从 Node 托管取得结果；它不证明 adoption ACK 丢失。
-[adoption ACK-loss实验](../tests/integration/test_output_retirement_ack_path.py)在snapshot03复验了owner READY、真实回复退休、精确ACK重放及GC屏障；该一次丢包切片通过，固定同版证据见验收账本。
-实际故障切片、纯组合证据与未证明交界只以 [验收账本](acceptance-baseline.md) 为准，不扩成全部交错矩阵。
-
-## 第二阶段的学习位置
-
-基础版封版并保存可检出的源码、环境、依赖和证据后，才实施两项已确定的增强：GCS 普通结果发布事务与全局 ObjectID 图防环。
-增强版研究多一个存活发布事实来源与全局图预留，以及它们的同步协调/补偿代价；它不比基础版“更像 Ray”。
-固定基础版仍是第一次学习入口，增强版另提供协议增量与语义差异；不长期维护双后端。
-完整职责对应见 [Ray 映射](production-ray-mapping.md)，阶段顺序见 [两阶段计划](redesign-plan.md)。
+需要实际测试时只用[测试指南](testing.md)中的有限入口。旧tests目录、[历史索引](history-index.md)和原计划里的旧函数名都不是当前整树执行许可；当前API不因旧夹具失败而恢复。

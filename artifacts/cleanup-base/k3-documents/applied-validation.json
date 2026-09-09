@@ -1,0 +1,48 @@
+{
+  "status": "PASS",
+  "local_markdown_links": "all_existing",
+  "retired_paths": 52,
+  "verified_historical_blobs": 57,
+  "machine_action_paths_preserved": 614,
+  "artifacts_exactly_unchanged_during_application": 372,
+  "tracked_artifacts_checked_against_HEAD": 396,
+  "tracked_artifacts_with_expected_CRLF_checkout_only": 126,
+  "mapped_design_contracts": [
+    "M03",
+    "M06",
+    "M07",
+    "M08",
+    "M09",
+    "M10",
+    "M11",
+    "M14"
+  ],
+  "documents": {
+    "README.md": {
+      "lines": 53,
+      "sha256": "9413d395f89577f2fa5922ff788d9bab9a81505d0f7f230c0258e5718cd2e611"
+    },
+    "docs/design.md": {
+      "lines": 239,
+      "sha256": "17507a6d1702da0a38cf324333931b106b1eb3b3a7885ab3dc6f1cd42ee5dd5a"
+    },
+    "docs/learning-path.md": {
+      "lines": 48,
+      "sha256": "f2ea35d3f5f5a133a72f9b2d6ba0588d8f22a1f4b01cd4dd0d5abb725b214bf3"
+    },
+    "docs/testing.md": {
+      "lines": 64,
+      "sha256": "6e591d55f1005ff6794073edb810ea128e2c9d347be4baef4d434224beb6970b"
+    },
+    "docs/current-status.md": {
+      "lines": 28,
+      "sha256": "e3491d15b181ee886c4d7b7626db2c460ef9cecb8a741e2718adedb1c72698ed"
+    },
+    "docs/history-index.md": {
+      "lines": 91,
+      "sha256": "e48126fe428b516ff45d31fd13538f405f361457deb5a64bc53052e7cf9d93ad"
+    }
+  },
+  "runtime_tests_run": false,
+  "git_commit": false
+}

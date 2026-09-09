@@ -18,7 +18,7 @@
 | SRC-008 | [worker.py](../src/miniray/worker.py):1825 | `WorkerServer._begin_drain` | 25/23 | 未发现仓库使用，仍需受影响回归 |
 | SRC-009 | [core.py](../src/miniray/core.py):1075 | `_ActorInflightCall` | 13/6 | 未发现仓库使用，仍需受影响回归 |
 | SRC-010 | [dependency.py](../src/miniray/dependency.py):608 | `_deduplicate` | 9/9 | 未发现仓库使用，仍需受影响回归 |
-| SRC-011 | [runtime_state.py](../src/miniray/runtime_state.py):1 | `runtime_state module` | 401/287 | 先迁移旧调用/断言；保留有效合同 |
+| SRC-011 | [runtime_state.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/src/miniray/runtime_state.py):1 | `runtime_state module` | 401/287 | 先迁移旧调用/断言；保留有效合同 |
 | SRC-012 | [recovery.py](../src/miniray/recovery.py):787 | `RecoveryManager.validate_terminal_reconstruction_failure` | 46/35 | 先迁移旧调用/断言；保留有效合同 |
 | SRC-013 | [recovery.py](../src/miniray/recovery.py):67 | `RecoveryAction.FAIL_RECONSTRUCTION_TARGETS` | 1/1 | 先迁移旧调用/断言；保留有效合同 |
 | SRC-014 | [node.py](../src/miniray/node.py):384 | `NodeServer._legacy_worker_compat initialization` | 1/1 | 未发现仓库使用，仍需受影响回归 |
@@ -44,25 +44,25 @@
 | [test_multi_return_partial_reconstruction_path.py](../tests/integration/test_multi_return_partial_reconstruction_path.py) | 332 | 1 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
 | [test_multi_return_path.py](../tests/integration/test_multi_return_path.py) | 407 | 1 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
 | [test_multi_return_reconstruction_path.py](../tests/integration/test_multi_return_reconstruction_path.py) | 388 | 1 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
-| [test_nested_large_argument_path.py](../tests/integration/test_nested_large_argument_path.py) | 741 | 1 | 已退出的自动StoredArg提升 | 0 |
+| [test_nested_large_argument_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_nested_large_argument_path.py) | 741 | 1 | 已退出的自动StoredArg提升 | 0 |
 | [test_targeted_borrowed_output_unknown_path.py](../tests/integration/test_targeted_borrowed_output_unknown_path.py) | 610 | 2 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
-| [test_actor_arguments.py](../tests/unit/test_actor_arguments.py) | 414 | 9 | 已退出的Actor Ref参数模型 | 0 |
-| [test_actor_safety_classification.py](../tests/unit/test_actor_safety_classification.py) | 126 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
-| [test_large_argument_lift.py](../tests/unit/test_large_argument_lift.py) | 946 | 18 | 已退出的自动StoredArg提升 | 0 |
-| [test_legacy_runtime_safety_classification.py](../tests/unit/test_legacy_runtime_safety_classification.py) | 355 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
-| [test_multi_return_partial_seal_cleanup.py](../tests/unit/test_multi_return_partial_seal_cleanup.py) | 472 | 1 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
-| [test_multi_return_submission_transaction.py](../tests/unit/test_multi_return_submission_transaction.py) | 323 | 6 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
+| [test_actor_arguments.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_actor_arguments.py) | 414 | 9 | 已退出的Actor Ref参数模型 | 0 |
+| [test_actor_safety_classification.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_actor_safety_classification.py) | 126 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
+| [test_large_argument_lift.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_large_argument_lift.py) | 946 | 18 | 已退出的自动StoredArg提升 | 0 |
+| [test_legacy_runtime_safety_classification.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_legacy_runtime_safety_classification.py) | 355 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
+| [test_multi_return_partial_seal_cleanup.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_multi_return_partial_seal_cleanup.py) | 472 | 1 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
+| [test_multi_return_submission_transaction.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_multi_return_submission_transaction.py) | 323 | 6 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
 | [test_node_actor_node_loss_migration.py](../tests/unit/test_node_actor_node_loss_migration.py) | 130 | 3 | 已退出的Actor跨Node迁移 | 0 |
-| [test_observability_safety_classification.py](../tests/unit/test_observability_safety_classification.py) | 140 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
-| [test_placement_node_safety_classification.py](../tests/unit/test_placement_node_safety_classification.py) | 379 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
-| [test_recovery_safety_classification.py](../tests/unit/test_recovery_safety_classification.py) | 79 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
-| [test_reference_safety_classification.py](../tests/unit/test_reference_safety_classification.py) | 379 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
-| [test_runtime_state.py](../tests/unit/test_runtime_state.py) | 135 | 5 | 非运行时RuntimeState旧教学facade | 0 |
+| [test_observability_safety_classification.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_observability_safety_classification.py) | 140 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
+| [test_placement_node_safety_classification.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_placement_node_safety_classification.py) | 379 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
+| [test_recovery_safety_classification.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_recovery_safety_classification.py) | 79 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
+| [test_reference_safety_classification.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_reference_safety_classification.py) | 379 | 1 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
+| [test_runtime_state.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_runtime_state.py) | 135 | 5 | 非运行时RuntimeState旧教学facade | 0 |
 | [test_targeted_reconstruction.py](../tests/unit/test_targeted_reconstruction.py) | 589 | 18 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
 | [test_targeted_reconstruction_protocol.py](../tests/unit/test_targeted_reconstruction_protocol.py) | 489 | 10 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
 | [test_targeted_worker_execution.py](../tests/unit/test_targeted_worker_execution.py) | 225 | 4 | 已退出的multi-return／targeted／sibling生命周期 | 0 |
-| [test_worker_export_pin_rollback.py](../tests/unit/test_worker_export_pin_rollback.py) | 1108 | 7 | 多槽/targeted及已删除generic export-pin协议 | 0 |
-| [test_worker_safety_classification.py](../tests/unit/test_worker_safety_classification.py) | 205 | 2 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
+| [test_worker_export_pin_rollback.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_worker_export_pin_rollback.py) | 1108 | 7 | 多槽/targeted及已删除generic export-pin协议 | 0 |
+| [test_worker_safety_classification.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_worker_safety_classification.py) | 205 | 2 | 只锁旧迁移轮名字、参数数量和marker名册；保留通用隔离规则 | 0 |
 
 特别注意：`test_multi_contained_output_path.py`的`_close_local`、`_pid_exists`被**18个文件**导入。
 其中很多仍测试依赖托管、late replica和owner死亡，不能连带删除。准确导入位置与名字见JSON的`imported_by`。
@@ -164,7 +164,7 @@
 
 ### tests/unit/test_contained_graph_manifest_boundaries.py
 
-文件：[test_contained_graph_manifest_boundaries.py](../tests/unit/test_contained_graph_manifest_boundaries.py)。当前验收未直接选择此文件。
+文件：[test_contained_graph_manifest_boundaries.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_contained_graph_manifest_boundaries.py)。当前验收未直接选择此文件。
 
 | 行 | 函数/参数 | 当前形态过期的原因 |
 |---:|---|---|
@@ -172,7 +172,7 @@
 
 ### tests/unit/test_contained_graph_protocol.py
 
-文件：[test_contained_graph_protocol.py](../tests/unit/test_contained_graph_protocol.py)。当前验收未直接选择此文件。
+文件：[test_contained_graph_protocol.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_contained_graph_protocol.py)。当前验收未直接选择此文件。
 
 | 行 | 函数/参数 | 当前形态过期的原因 |
 |---:|---|---|
@@ -517,7 +517,7 @@
 
 ### tests/unit/test_targeted_reconstruction_first_ack.py
 
-文件：[test_targeted_reconstruction_first_ack.py](../tests/unit/test_targeted_reconstruction_first_ack.py)。当前验收未直接选择此文件。
+文件：[test_targeted_reconstruction_first_ack.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_targeted_reconstruction_first_ack.py)。当前验收未直接选择此文件。
 
 | 行 | 函数/参数 | 当前形态过期的原因 |
 |---:|---|---|
@@ -625,8 +625,8 @@
 | [test_contained_cycle_policy.py](../tests/unit/test_contained_cycle_policy.py) | 混合：先提取有效合同 | 2 |
 | [test_contained_edge_gc.py](../tests/unit/test_contained_edge_gc.py) | 混合：先提取有效合同 | 2 |
 | [test_contained_edge_runtime.py](../tests/unit/test_contained_edge_runtime.py) | 混合：先提取有效合同 | 0 |
-| [test_contained_graph_manifest_boundaries.py](../tests/unit/test_contained_graph_manifest_boundaries.py) | 混合：先提取有效合同 | 1 |
-| [test_contained_graph_protocol.py](../tests/unit/test_contained_graph_protocol.py) | 混合：先提取有效合同 | 1 |
+| [test_contained_graph_manifest_boundaries.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_contained_graph_manifest_boundaries.py) | 混合：先提取有效合同 | 1 |
+| [test_contained_graph_protocol.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_contained_graph_protocol.py) | 混合：先提取有效合同 | 1 |
 | [test_contained_pin_owner_identity.py](../tests/unit/test_contained_pin_owner_identity.py) | 混合：先提取有效合同 | 2 |
 | [test_core_actor_restart.py](../tests/unit/test_core_actor_restart.py) | 仅指定函数过期 | 1 |
 | [test_core_lost_blocking_lock_order.py](../tests/unit/test_core_lost_blocking_lock_order.py) | 绑定失效：目标仍保留 | 0 |
@@ -703,7 +703,7 @@
 | [test_stored_publication_node_server.py](../tests/unit/test_stored_publication_node_server.py) | 混合：先提取有效合同 | 0 |
 | [test_targeted_output_publication.py](../tests/unit/test_targeted_output_publication.py) | 混合：先提取有效合同 | 2 |
 | [test_targeted_owner_defer.py](../tests/unit/test_targeted_owner_defer.py) | 混合：先提取有效合同 | 1 |
-| [test_targeted_reconstruction_first_ack.py](../tests/unit/test_targeted_reconstruction_first_ack.py) | 混合：先提取有效合同 | 1 |
+| [test_targeted_reconstruction_first_ack.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_targeted_reconstruction_first_ack.py) | 混合：先提取有效合同 | 1 |
 | [test_targeted_retirement_admission.py](../tests/unit/test_targeted_retirement_admission.py) | 混合：先提取有效合同 | 4 |
 | [test_task_finish_barrier.py](../tests/unit/test_task_finish_barrier.py) | 混合：先提取有效合同 | 1 |
 | [test_task_readiness_trace_contract.py](../tests/unit/test_task_readiness_trace_contract.py) | 混合：先提取有效合同 | 0 |
@@ -756,14 +756,14 @@
 | [test_unreported_complete_node_loss_path.py](../tests/integration/test_unreported_complete_node_loss_path.py) | 477 | `miniray.output_recovery`（:48） |
 | [test_worker_owner_node_loss_path.py](../tests/integration/test_worker_owner_node_loss_path.py) | 356 | `miniray.output_recovery`（:41） |
 | [_pure_node_output.py](../tests/unit/_pure_node_output.py) | 71 | `miniray.output_recovery`（:21） |
-| [test_actor_arguments.py](../tests/unit/test_actor_arguments.py) | 414 | `miniray.actor_arguments`（:8） |
+| [test_actor_arguments.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_actor_arguments.py) | 414 | `miniray.actor_arguments`（:8） |
 | [test_borrowed_object_refs.py](../tests/unit/test_borrowed_object_refs.py) | 1360 | `miniray.contained_cycle`（:29）；`miniray.output_recovery`（:45）；`miniray.ref_transfer.ReferenceExportSession`（:55） |
 | [test_cancelled_grant_inventory.py](../tests/unit/test_cancelled_grant_inventory.py) | 431 | `miniray.task_outputs.TargetExecutionKey`（:30）；`miniray.task_outputs.TargetOutputManifest`（:30） |
 | [test_contained_cycle_policy.py](../tests/unit/test_contained_cycle_policy.py) | 248 | `miniray.contained_cycle`（:15） |
 | [test_contained_edge_gc.py](../tests/unit/test_contained_edge_gc.py) | 241 | `miniray.ref_transfer.ReferenceExportSession`（:20） |
 | [test_contained_edge_runtime.py](../tests/unit/test_contained_edge_runtime.py) | 1329 | `miniray.contained_cycle`（:48）；`miniray.output_recovery`（:60） |
-| [test_contained_graph_manifest_boundaries.py](../tests/unit/test_contained_graph_manifest_boundaries.py) | 192 | `miniray.contained_cycle`（:18） |
-| [test_contained_graph_protocol.py](../tests/unit/test_contained_graph_protocol.py) | 214 | `miniray.contained_cycle`（:21） |
+| [test_contained_graph_manifest_boundaries.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_contained_graph_manifest_boundaries.py) | 192 | `miniray.contained_cycle`（:18） |
+| [test_contained_graph_protocol.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_contained_graph_protocol.py) | 214 | `miniray.contained_cycle`（:21） |
 | [test_contained_pin_owner_identity.py](../tests/unit/test_contained_pin_owner_identity.py) | 176 | `miniray.contained_edges.LegacyContainedReferenceHold`（:7） |
 | [test_core_output_lease_domain.py](../tests/unit/test_core_output_lease_domain.py) | 280 | `miniray.targeted_reconstruction`（:25）；`miniray.task_outputs.TargetExecutionKey`（:26） |
 | [test_core_output_node_loss.py](../tests/unit/test_core_output_node_loss.py) | 603 | `miniray.output_recovery`（:25） |
@@ -782,7 +782,7 @@
 | [test_lease_dependency_inventory.py](../tests/unit/test_lease_dependency_inventory.py) | 382 | `miniray.task_outputs.TargetExecutionKey`（:17）；`miniray.task_outputs.TargetOutputManifest`（:17） |
 | [test_location_report_custody.py](../tests/unit/test_location_report_custody.py) | 408 | `miniray.output_recovery`（:30） |
 | [test_multi_container_graph_protocol.py](../tests/unit/test_multi_container_graph_protocol.py) | 164 | `miniray.contained_cycle`（:12） |
-| [test_multi_return_partial_seal_cleanup.py](../tests/unit/test_multi_return_partial_seal_cleanup.py) | 472 | `miniray.output_recovery`（:34） |
+| [test_multi_return_partial_seal_cleanup.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_multi_return_partial_seal_cleanup.py) | 472 | `miniray.output_recovery`（:34） |
 | [test_nested_argument_manifest.py](../tests/unit/test_nested_argument_manifest.py) | 444 | `miniray.protocol.StoredArg`（:22） |
 | [test_node_lease_execution.py](../tests/unit/test_node_lease_execution.py) | 371 | `miniray.output_recovery`（:25） |
 | [test_output_control_shutdown.py](../tests/unit/test_output_control_shutdown.py) | 387 | `miniray.contained_cycle`（:20）；`miniray.output_recovery`（:28） |
@@ -815,14 +815,14 @@
 | [test_targeted_output_publication.py](../tests/unit/test_targeted_output_publication.py) | 374 | `miniray.output_recovery`（:28）；`miniray.targeted_reconstruction`（:34） |
 | [test_targeted_owner_defer.py](../tests/unit/test_targeted_owner_defer.py) | 437 | `miniray.targeted_reconstruction`（:35） |
 | [test_targeted_reconstruction.py](../tests/unit/test_targeted_reconstruction.py) | 589 | `miniray.targeted_reconstruction`（:18）；`miniray.task_outputs.TargetExecutionKey`（:22） |
-| [test_targeted_reconstruction_first_ack.py](../tests/unit/test_targeted_reconstruction_first_ack.py) | 571 | `miniray.core._StartTargetedReconstruction`（:40）；`miniray.targeted_reconstruction`（:51） |
+| [test_targeted_reconstruction_first_ack.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_targeted_reconstruction_first_ack.py) | 571 | `miniray.core._StartTargetedReconstruction`（:40）；`miniray.targeted_reconstruction`（:51） |
 | [test_targeted_reconstruction_protocol.py](../tests/unit/test_targeted_reconstruction_protocol.py) | 489 | `miniray.task_outputs.TargetExecutionKey`（:33） |
 | [test_targeted_retirement_admission.py](../tests/unit/test_targeted_retirement_admission.py) | 780 | `miniray.core._DelayedTargetedReconstruction`（:24）；`miniray.core._StartTargetedReconstruction`（:24）；`miniray.targeted_reconstruction`（:35） |
 | [test_targeted_worker_execution.py](../tests/unit/test_targeted_worker_execution.py) | 225 | `miniray.task_outputs.TargetExecutionKey`（:14） |
 | [test_task_finish_barrier.py](../tests/unit/test_task_finish_barrier.py) | 808 | `miniray.output_recovery`（:44） |
 | [test_task_readiness_trace_contract.py](../tests/unit/test_task_readiness_trace_contract.py) | 158 | `miniray.task_outputs.TargetExecutionKey`（:14） |
 | [test_worker_crash_supervisor.py](../tests/unit/test_worker_crash_supervisor.py) | 928 | `miniray.output_recovery`（:37） |
-| [test_worker_export_pin_rollback.py](../tests/unit/test_worker_export_pin_rollback.py) | 1108 | `miniray.task_outputs.TargetExecutionKey`（:24） |
+| [test_worker_export_pin_rollback.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_worker_export_pin_rollback.py) | 1108 | `miniray.task_outputs.TargetExecutionKey`（:24） |
 | [test_worker_side_core_contract.py](../tests/unit/test_worker_side_core_contract.py) | 1556 | `miniray.stored_publication`（:45） |
 | [test_worker_stored_publication.py](../tests/unit/test_worker_stored_publication.py) | 397 | `miniray.stored_publication`（:28） |
 | [test_worker_unified_output.py](../tests/unit/test_worker_unified_output.py) | 1134 | `miniray.task_outputs.TargetExecutionKey`（:28）；`miniray.task_outputs.TargetOutputManifest`（:28） |

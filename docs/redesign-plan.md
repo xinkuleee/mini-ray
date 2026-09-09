@@ -10,7 +10,7 @@
 
 第一阶段保持单输出、真实多进程、对象所有权与 nested refs，退出独立多返回槽与 targeted reconstruction 等范围；第二阶段只增加上述两项协议保证，不自动恢复其它退出或延期能力。原两阶段在同一仓库顺序演进；本次后继整理按上方计划交付两条实际分支。
 
-这是按用户最新决定修订的实施计划，第一阶段已按本计划独立完成约定行为验收；当前证据与剩余项见 [验收账本](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/acceptance-baseline.md)。下文状态表保留设计合同，不能替代实际测试；第二阶段两项机制已在增强snapshot03同版通过约定验收，固定标记为`teaching-enhanced-v0.2`。此前“仅文档、不改源码/测试、不提交”的限制属于计划修订轮，已由后续实施指令推进到实现阶段。旧 [correction-plan.md](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/correction-plan.md) 作为历史设计来源；其中等待确认的旧流程不覆盖本次已确定的两阶段顺序。下文 §1–9 说明第一阶段基础版本；§10 说明第二阶段增强版本及两阶段交付衔接。文中“本版”未另行限定时指第一阶段。
+这是按用户最新决定修订的实施计划，第一阶段已按本计划独立完成约定行为验收；当前证据与剩余项见 [验收账本](acceptance-baseline.md)。下文状态表保留设计合同，不能替代实际测试；第二阶段两项机制已在增强snapshot03同版通过约定验收，固定标记为`teaching-enhanced-v0.2`。此前“仅文档、不改源码/测试、不提交”的限制属于计划修订轮，已由后续实施指令推进到实现阶段。旧 [correction-plan.md](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/correction-plan.md) 作为历史设计来源；其中等待确认的旧流程不覆盖本次已确定的两阶段顺序。下文 §1–9 说明第一阶段基础版本；§10 说明第二阶段增强版本及两阶段交付衔接。文中“本版”未另行限定时指第一阶段。
 
 ## 0. 两阶段总览
 
@@ -188,7 +188,7 @@ PG 必须保留真正的全 ACK 前不可见、prepare 失败回滚及 bundle �
 5. 保无环引用关系的释放；ObjectID 环不承诺全局拒绝/回收，不新增 tracing GC。停止进程与对象已全部 GC 必须分别报告。
 6. owner identity 固定。Worker 创建的 ref 逃逸给 Driver，owner 仍是那个 Worker；其死亡不能通过切换 replica 伪造 owner 接管。
 
-现有可复用行为入口：[两 borrower 活过 outer](C:/Users/t-hdong/Desktop/gao/mini-ray/tests/integration/test_contained_ref_lifecycle_path.py:105)、[nested 参数保活](C:/Users/t-hdong/Desktop/gao/mini-ray/tests/integration/test_nested_task_argument_path.py:110)、[实体副本 GC](C:/Users/t-hdong/Desktop/gao/mini-ray/tests/integration/test_stored_physical_gc_path.py:285)、[单输出 nested 重建](C:/Users/t-hdong/Desktop/gao/mini-ray/tests/integration/test_local_nested_reconstruction_path.py:145)。这些是行为来源，旧通过结果不认证新实现。
+现有可复用行为入口：[两 borrower 活过 outer](../tests/integration/test_contained_ref_lifecycle_path.py)、[nested 参数保活](../tests/integration/test_nested_task_argument_path.py)、[实体副本 GC](../tests/integration/test_stored_physical_gc_path.py)、[单输出 nested 重建](../tests/integration/test_local_nested_reconstruction_path.py)。这些是行为来源，旧通过结果不认证新实现。
 
 ## 5. 新架构怎样简化，而不是把 GCS 事务搬家
 
@@ -401,7 +401,7 @@ Windows 在修好平台清理之前不声明完整运行时可用；macOS/Python
 
 术语统一：**owner** 指 outer ObjectRef 的逻辑所有者；**publisher** 指执行并持有序列化源的 Worker；**Node** 指承载该执行的 NodeManager/Store，两者死亡不能混称。执行成功、Node Complete、owner READY、当前 bytes 可用、回复托管退休、对象 GC 是不同事实。READY 后可能变 LOST/进入新 attempt/GC，历史成功与 adoption 收据仍不可改写。
 
-以下§10.2–10.4仍是增强版合同；当前实现和分层证据见[增强验收账本](acceptance-enhanced.md)。W1/W3/W4有限组合、W2准确知识差异、owner死亡与公共图实验均已纳入增强snapshot03同版验收：377项纯合同、37个smoke、七个原main产物。以下合同有对应分层证据，不外推所有故障组合。
+以下§10.2–10.4仍是增强版合同；当前实现和分层证据见[增强验收账本](https://github.com/xinkuleee/mini-ray/blob/ce29981a547f83b53b0c1df9f91354dcf89d8e4f/docs/acceptance-enhanced.md)。W1/W3/W4有限组合、W2准确知识差异、owner死亡与公共图实验均已纳入增强snapshot03同版验收：377项纯合同、37个smoke、七个原main产物。以下合同有对应分层证据，不外推所有故障组合。
 
 ### 10.2 增强版的交付顺序
 
@@ -460,7 +460,7 @@ W1–W4 按 owner/publisher/Node 角色分别定义责任，不要求为表中�
 
 **公共API可达成环候选与真实并发预留现已证明。**增强snapshot01
 `b6da4a46b3877dac9252e2a50a56af58e05adaf3589ef3ec613dfe5f49ae9d7c`上的三个真实图切片通过；
-实现入口是[真实图测试](../tests/integration/test_enhanced_cycle_path.py)和[普通Worker函数](../tests/integration/_cycle_runtime_state.py)。
+实现入口是[真实图测试](https://github.com/xinkuleee/mini-ray/blob/ce29981a547f83b53b0c1df9f91354dcf89d8e4f/tests/integration/test_enhanced_cycle_path.py)和[普通Worker函数](https://github.com/xinkuleee/mini-ray/blob/ce29981a547f83b53b0c1df9f91354dcf89d8e4f/tests/integration/_cycle_runtime_state.py)。
 旧metadata-only控制实验保留历史来源，但不再用它承担公共可达性证明。这些入口后来在最终增强snapshot03全体同版复验通过。
 
 | 场景 | 最小构造与真实经过的边界 | 已有证据与边界 |
@@ -524,7 +524,7 @@ U1–U5在本版选择的有限合同内均已满足；不存在必须实施后�
 两组数字均为**低置信度设计预算**：基础版约1.4–2.2万代码行，增强版总量约2.5–3万代码行。它们不是实测预测、硬上限或第二阶段必然增量，测试/文档另计；不能用增强版预算放宽基础版范围。按§8在基础版单输出普通值及含引用值的完整发布/读取/回收路径跑通后首次重新估算，P5/E0绑定实数，E2按实际新增消息、状态、同步依赖与补偿成本复核。超预算解释成本并更新估算，不删必要校验、清理或测试凑数。
 
 最终增强源码实测**50,277代码行、61,440物理行、59个Python文件**，较基础48,555代码行增加1,722行（3.55%）。
-统计见[增强规模证据](../artifacts/stage2-enhanced/complexity.json)。增量来自独立GCS/图metadata authority、owner client、死亡协调、
+统计见[增强规模证据](https://github.com/xinkuleee/mini-ray/blob/ce29981a547f83b53b0c1df9f91354dcf89d8e4f/artifacts/stage2-enhanced/complexity.json)。增量来自独立GCS/图metadata authority、owner client、死亡协调、
 Node收据及Core的窄交接/退休接线；每次普通成功新增六种GCS阶段RPC，未知回复与cleanup亦有额外查询。
 **紧凑规模目标没有达成。**两阶段有限协议合同和范围纠偏已交付，但Core/Node/wire集中及整体阅读成本仍是保留债务；
 不把预算改大就宣布体量合理，也不把所有现存代码当必要，更不通过删校验/清理/测试凑行数。

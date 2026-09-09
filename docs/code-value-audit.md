@@ -83,7 +83,7 @@ GCS普通结果事务和全局防环仍按既定目标保留；不恢复多返�
 | Core `:12322` `_resolve_task_dependencies` | 91/83 | 只有旧`test_core_owner_integration.py:196`调用，运行时无调用；旧路径还拒绝foreign refs | 把submitted hold断言迁到真实依赖准备/派发路径 |
 | Node `:770` `_legacy_unregister_from_gcs_best_effort` | 29/20 | 旧测试仅monkeypatch或断言不调用，运行时不调用 | Driver sentinel/membership的准确死亡处理 |
 | Node `:3516` `_stop_worker` | 5/3 | 旧测试只将其列为禁止调用项 | pool停止和受管进程清理 |
-| [runtime_state.py](../src/miniray/runtime_state.py) 整体 | 401/287 | 明确标注deprecated、non-runtime facade；无源码入口，只有旧模型测试及历史清单使用 | 将仍有价值的CPU/资源断言对应到实际`ResourceLedger`和Node，不维持第二个教学模型 |
+| [runtime_state.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/src/miniray/runtime_state.py) 整体 | 401/287 | 明确标注deprecated、non-runtime facade；无源码入口，只有旧模型测试及历史清单使用 | 将仍有价值的CPU/资源断言对应到实际`ResourceLedger`和Node，不维持第二个教学模型 |
 
 前七项是**145物理行/128代码行**；后三个旧私有方法是125/106；整个旧模型是401/287。
 合计可作为第一轮清理对象的实现为**671物理行/521代码行**。这是候选定义跨度的实测总和，不是已经完成的删除diff。

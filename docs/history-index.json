@@ -1,0 +1,2454 @@
+{
+  "edition": "base",
+  "status": "APPLIED_HISTORY_INDEX_K3",
+  "runtime_validation_claim": "This index proves archived document byte identity and knowledge mapping only; runtime status is cleanup-progress.md and per-candidate artifacts.",
+  "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+  "plan_sha256": "bda42f5523c852535df807126c5015656c65f4b71e987fadae9439fa40e4a45e",
+  "entries": [
+    {
+      "version": "base",
+      "path": "docs/acceptance-matrix.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "53937e4c6b0a1c84592e6ef2016a30a243e69585",
+      "raw_sha256": "8eb76a104620e5fd84ff867c4c2312cff4f97a0b935217f27e4b174e98be80c4",
+      "raw_bytes": 29321,
+      "checkout_sha256": "1e82e8a0b3c448a822d8acde3225ae033ecb6a32394f4529e8b6ab0392767912",
+      "checkout_bytes": 29633,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-01",
+      "topic": "Current acceptance-baseline B01-B09 / acceptance-enhanced B,G,D,X,Delta; historical retrieval index",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/acceptance-matrix.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/acceptance-matrix.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "save existing full document fixed Git retrieval before rewrite",
+        "old pass counts/hash facts unchanged",
+        "repair incoming links in same change",
+        "new current status only claims successor validation actually run"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/correction-plan.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "0ae0b8dd24c52f4f3b3cddf0c35dbb2c9ce24eb9",
+      "raw_sha256": "348bed796469c81640e4033e6383f65c033eed16471df5031af2cc3677575db1",
+      "raw_bytes": 18812,
+      "checkout_sha256": "681fb5cf14c8efa71025f7207f6cd9015780c7d5958ab498a57e47fd89d925f2",
+      "checkout_bytes": 18984,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-02",
+      "topic": "redesign-plan settled two-stage contract and migration; fixed historical retrieval",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/correction-plan.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/correction-plan.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "save existing full document fixed Git retrieval before rewrite",
+        "old pass counts/hash facts unchanged",
+        "repair incoming links in same change",
+        "new current status only claims successor validation actually run"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/handoff.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "c34dd9dd2cd1143a1a976d471d9cb3cf2d1a7010",
+      "raw_sha256": "2c7be0c7d001db2e4302ffe0f198055d4cf7eff91026685c5795fe00f5eb6aa5",
+      "raw_bytes": 6391,
+      "checkout_sha256": "1f57f45f4603511f38ce6284a9215af235c50c0458925fe9d679c1c4b4cfdedd",
+      "checkout_bytes": 6465,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-03",
+      "topic": "current-status concise version states; full original via fixed Git",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/handoff.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/handoff.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "save existing full document fixed Git retrieval before rewrite",
+        "old pass counts/hash facts unchanged",
+        "repair incoming links in same change",
+        "new current status only claims successor validation actually run"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-core-publication/README.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "895e3985c9f1746b30181fb7fa8b111ffd15e4e0",
+      "raw_sha256": "73f357ccfb10609b1b47585b20182f05145dc2033a159386b35f3b2ac163b43a",
+      "raw_bytes": 37602,
+      "checkout_sha256": "5bb8d8b685d9eb9b80743acb673bc83da771908c95d4a08cb286be9ce6e7b6d5",
+      "checkout_bytes": 37768,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "merge",
+      "anchor": "archive-04",
+      "topic": "historical per-family migration index",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-core-publication/README.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-core-publication/README.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-core-publication/test_core_inline_publication.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "6d1e8b2014a21aca9215dc6b504af789b9137cd6",
+      "raw_sha256": "59e434c7c90399fe314d08a25f6368d3649238e88566509e37839f4f19684272",
+      "raw_bytes": 79217,
+      "checkout_sha256": "2f252f8f347831440a1b0777ac67eeffb516b0a02d0ea05dc9870909fd3828c4",
+      "checkout_bytes": 81128,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-05",
+      "topic": "owner adoption and reply custody distinct from GC",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-core-publication/test_core_inline_publication.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-core-publication/test_core_inline_publication.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-core-publication/test_core_stored_node_loss_fullflow.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "6b08fab5ae7e6eb7e248dcd6367659d72f3145bd",
+      "raw_sha256": "dd355cdb9c5034637c6b3caf861329d2d8f86c004142b08eec11bb93aee511db",
+      "raw_bytes": 13461,
+      "checkout_sha256": "9c58e67ecef10149388c1034f0e18b5cc9ea39cf8d3b5b904a92d3340850ed53",
+      "checkout_bytes": 13812,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-06",
+      "topic": "Node loss, success facts vs bytes and surviving owner",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-core-publication/test_core_stored_node_loss_fullflow.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-core-publication/test_core_stored_node_loss_fullflow.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-core-publication/test_core_stored_node_loss_takeover.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "c423a162fafc08539569d14e4b9a432322db090f",
+      "raw_sha256": "0c1b2a8bee46307f7776ad9df7fe159d3ff95cfb8af4de6a46c97ad9cdd89046",
+      "raw_bytes": 27268,
+      "checkout_sha256": "35593cd084efe089a39a2f7976495c8319741da83ac59b204b9a9fc7570151a5",
+      "checkout_bytes": 27972,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-07",
+      "topic": "owner stays authority; publisher loss cannot recreate bytes",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-core-publication/test_core_stored_node_loss_takeover.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-core-publication/test_core_stored_node_loss_takeover.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-core-publication/test_inline_data_plane_fullflow.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "ebbae2a9f1bc37541c17144901ad4103aa55664a",
+      "raw_sha256": "4c8c7e032235843ce00caf439be5f6b7cdd71d89b9b12d266a76f39250a8ae07",
+      "raw_bytes": 13560,
+      "checkout_sha256": "18906ba29c9f1969e8f62700ad22806cc4360011a8f6f688e14cf2700a9b0c64",
+      "checkout_bytes": 13864,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-08",
+      "topic": "metadata success cannot recreate INLINE bytes",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-core-publication/test_inline_data_plane_fullflow.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-core-publication/test_inline_data_plane_fullflow.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-gcs-publication/README.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "5cfdf5ec691683c70de6aba9ed3ea1c6d69aa220",
+      "raw_sha256": "077c17f1de2d178cdaccaf87f5da3ba8d1b4d41484a19ec327971056f11dbe77",
+      "raw_bytes": 10072,
+      "checkout_sha256": "c084c1dc270a8f76159f5657c22f502b2c1b498f31561af1a1a11d2a86f7452a",
+      "checkout_bytes": 10181,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "merge",
+      "anchor": "archive-09",
+      "topic": "historical per-family migration index",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-gcs-publication/README.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-gcs-publication/README.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-gcs-publication/test_inline_recovery_control.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "0e35434741c46a9d4d2f771bed9d3a7518832f51",
+      "raw_sha256": "bf58f973c91dc1f5c7194bc450aba05b655bd096dfe9f850114ee68b1661fc81",
+      "raw_bytes": 28678,
+      "checkout_sha256": "ebee101d933f1cf8fe3cde79701f6a4181b59832f8998324fa725a11f5fbbbe9",
+      "checkout_bytes": 29408,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-10",
+      "topic": "GCS membership and cleanup coordination",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-gcs-publication/test_inline_recovery_control.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-gcs-publication/test_inline_recovery_control.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-gcs-publication/test_publication_owner_death_control.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "f633d75fa3332b2af0c2e434827eb3e04775816f",
+      "raw_sha256": "ef8359b82dcfcc0b599dbe85116ef26ac81e2b6ab73dc0e45a1e2f64ed1556eb",
+      "raw_bytes": 36479,
+      "checkout_sha256": "d60ce22aaed75ef538d9b0f36896ac8e7e919d8b861608f9cc1e973ebcc0b45b",
+      "checkout_bytes": 37426,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-11",
+      "topic": "GCS dead-owner outbox and exact child cleanup",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-gcs-publication/test_publication_owner_death_control.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-gcs-publication/test_publication_owner_death_control.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-gcs-publication/test_stored_node_loss_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "969061aa96866bbd5437df665bd5f391e179923e",
+      "raw_sha256": "c002f4ac022c587aef149dc81ce1aa15fa50f5747ba06b726501964e003d71bd",
+      "raw_bytes": 36118,
+      "checkout_sha256": "7559fc9f9001164779f177778ef71530aad60b506fb573e31134be064307b00e",
+      "checkout_bytes": 37088,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-12",
+      "topic": "publisher Node loss, accurate success and cleanup",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-gcs-publication/test_stored_node_loss_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-gcs-publication/test_stored_node_loss_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-gcs-publication/test_stored_publication_protocol_adapter.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "dbae2934d2859c4c194343cc9da805f6a32890cd",
+      "raw_sha256": "6e4ca714ff6fcd4e0e35cb761d2b9a397890643df2f945b7b736d416ecd4967a",
+      "raw_bytes": 41685,
+      "checkout_sha256": "5b96482b7e2098695c7475561674183dad0d57e0621ca1f022865998d5a6f949",
+      "checkout_bytes": 42791,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-13",
+      "topic": "current canonical request/receipt wire boundaries",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-gcs-publication/test_stored_publication_protocol_adapter.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-gcs-publication/test_stored_publication_protocol_adapter.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-node-publication/README.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "9c5198e0de61ab95679bd9168517ef25d5c27fc4",
+      "raw_sha256": "8d22a3d413c357a0fdc1146b7108b939b3d4a70c654f5d3014d0ce0bf7944820",
+      "raw_bytes": 7891,
+      "checkout_sha256": "62a32d84bc23494b034758b3a61316510fbacc21045e8db09e665ba94275d0f6",
+      "checkout_bytes": 7962,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "merge",
+      "anchor": "archive-14",
+      "topic": "historical per-family migration index",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-node-publication/README.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-node-publication/README.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-node-publication/test_inline_publication_node_server.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "0ef616806fd493b2577b2a28d27753fa5bbb5a5b",
+      "raw_sha256": "daac208b18fe9f8b2688ab041aff5eec5a0859a9b25126c681d5b621e56f01d2",
+      "raw_bytes": 39236,
+      "checkout_sha256": "a64262b8434bd0921f0720d0e346542cc0a4988de0ffba54eee0e97f34e39922",
+      "checkout_bytes": 40289,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-15",
+      "topic": "Node single-output journal/Complete/report handoff",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-node-publication/test_inline_publication_node_server.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-node-publication/test_inline_publication_node_server.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-node-publication/test_node_publication_owner_death_finalize.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "a80b0d4bad84f7f97fe170c7957b4b4d2c4fd165",
+      "raw_sha256": "d51173facd3cd9ded85296e49b2e1074fef03b14bea05306e46dc2f464819055",
+      "raw_bytes": 15639,
+      "checkout_sha256": "c34931920100f05bbf6a32841c0590625c13308b625151c67713075a3cdb735d",
+      "checkout_bytes": 16064,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-16",
+      "topic": "Node/Worker exact dead-owner finalization",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-node-publication/test_node_publication_owner_death_finalize.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-node-publication/test_node_publication_owner_death_finalize.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-owner-publication/README.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "85e50cecec9aab4d3599783157b9e6a6437e6dc3",
+      "raw_sha256": "09bace569a102dacad495a51047f7b6ed5f353e6518fda93e3708401de124c6e",
+      "raw_bytes": 25870,
+      "checkout_sha256": "70bbc2483a7a5cdacd8787b25c32ed83186eb0a9ebbf45448a5800b840503d72",
+      "checkout_bytes": 26016,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "merge",
+      "anchor": "archive-17",
+      "topic": "historical per-family migration index",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-owner-publication/README.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-owner-publication/README.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-owner-publication/test_inline_owner_publication.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "3a44836c33242a38a9bc3e37043dfbe39357fbaa",
+      "raw_sha256": "f7080bbb8b63784a2fb03b464d36c55ffe165a2400252b4d7424161727312569",
+      "raw_bytes": 15915,
+      "checkout_sha256": "1a7f0a60f4f3606519e5983796523077af0ca55c1d686561e1e94a4a0ef0e7ad",
+      "checkout_bytes": 16309,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-18",
+      "topic": "owner atomic value/outgoing install",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-owner-publication/test_inline_owner_publication.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-owner-publication/test_inline_owner_publication.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-owner-publication/test_stored_owner_atomic_publication.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "b22be3f36680c3999affb3be1a90c592b119603f",
+      "raw_sha256": "4c5c981be08a7bbe25446d9a44c729bb2fb3a7691d395e643d5c5847cf1ee136",
+      "raw_bytes": 11051,
+      "checkout_sha256": "924d01ae203eea61ea51f6a00305ad0c36d688186caf08cc1936c9c04584b3f5",
+      "checkout_bytes": 11343,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-19",
+      "topic": "owner single-output CAS and integrity metadata",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-owner-publication/test_stored_owner_atomic_publication.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-owner-publication/test_stored_owner_atomic_publication.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-owner-publication/test_stored_owner_retirement.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "dbac9a2ed8dc15501fa8dce6f773cb2d748c34b5",
+      "raw_sha256": "335b316117a34aee2b4a3acfd87fa7c1bc7ac13ff46292c0b86b10cae87e1619",
+      "raw_bytes": 11782,
+      "checkout_sha256": "db793290b972b857f926aa2650144e237d8cc126b7cc72ccaf0826ccd0db301c",
+      "checkout_bytes": 12072,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-20",
+      "topic": "known stored success lost/retire with exact cleanup",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-owner-publication/test_stored_owner_retirement.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-owner-publication/test_stored_owner_retirement.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-owner-publication/test_unreceived_inline_owner_retirement.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "fc493594fc27a12b8206894e639798090e22df3d",
+      "raw_sha256": "2f4d300261e091583ca09d65ef882dba5536404ded5a0cdf288be11f55e5258e",
+      "raw_bytes": 19910,
+      "checkout_sha256": "2edbdd54e2370e511e42a6e23987f1b59beb25933dc10cc2deeb4a94c64ba49d",
+      "checkout_bytes": 20372,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-21",
+      "topic": "C6-L lost bytes before owner adoption",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-owner-publication/test_unreceived_inline_owner_retirement.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-owner-publication/test_unreceived_inline_owner_retirement.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/README.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "d400afbbc8c2be540a5501eff50a93222582493f",
+      "raw_sha256": "b037e9965629e7b89e9f483296f092fcd3d89ff0ca21cc27a4f6567fedaab973",
+      "raw_bytes": 19159,
+      "checkout_sha256": "2d316870b1742a52c6e92c4ba25317a0ec8e7113ac8d209c077d44daa64ee4df",
+      "checkout_bytes": 19244,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "merge",
+      "anchor": "archive-22",
+      "topic": "historical per-family migration index",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/README.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/README.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/inline_contained_node.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "d13ca882abf713ac2fc0bc9f421cb249a36b10e4",
+      "raw_sha256": "bcfa1925f78ca5bb40de46b032a70dfba5685e8f285164d5724f2134a50f54c4",
+      "raw_bytes": 51556,
+      "checkout_sha256": "ecfcb17f68dfeccee45bd54deabe8f794db5ff6e8d2081e866b54fec8699fc0e",
+      "checkout_bytes": 52836,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-23",
+      "topic": "Node journal preparation, Complete and exact rollback",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/inline_contained_node.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/inline_contained_node.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/inline_contained_publication.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "cb32b52181069e1e86f127f60ba73ef7e0baf30b",
+      "raw_sha256": "a9ea53fab7ee2b64078856e350556b8b79887b7901019b78f1453fb932e4972f",
+      "raw_bytes": 40757,
+      "checkout_sha256": "29018c26e162d76d6c1c433b3cc270c6524139f4b319d38a06a4bc877df23017",
+      "checkout_bytes": 41768,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-24",
+      "topic": "single-output manifest/identity and phase facts",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/inline_contained_publication.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/inline_contained_publication.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/inline_contained_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "58364b24785b937ce72108d7aaddffd826944b63",
+      "raw_sha256": "d9be776413c1efcd76f1649f4c5b5f45b22ccd8e4b671771575e22d3d565586c",
+      "raw_bytes": 32730,
+      "checkout_sha256": "ea85fd9b30bd2a54e75c640b2eecdbb5e18edb0caf35ead8a2524689ae2303c8",
+      "checkout_bytes": 33557,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-25",
+      "topic": "owner/Node/child handoff and compensation",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/inline_contained_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/inline_contained_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/inline_recovery.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "9588c15d16722d825721ba9d477976ba5c999cf7",
+      "raw_sha256": "190afc8695be33f426f1e882785b6722b244213f95656653bd1b0bc1b8e85697",
+      "raw_bytes": 53357,
+      "checkout_sha256": "100f0b0c88493fab3a81d184934ec25acb826d5736e48173b64210f0d0cfcb6d",
+      "checkout_bytes": 54669,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-26",
+      "topic": "metadata-only success, unknown outcomes and fencing",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/inline_recovery.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/inline_recovery.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/inline_recovery_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "700cfa1b939e7dd656e565fe7d6aa4205d85ab58",
+      "raw_sha256": "31939d99e13431115c75567fbe15a5ba9df64fae4e63126257e7c277abf3a914",
+      "raw_bytes": 34546,
+      "checkout_sha256": "5849920b8999a92a7399793065bed5217927edf4bafee220264000c12f332669",
+      "checkout_bytes": 35372,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-27",
+      "topic": "known success vs UNKNOWN and cleanup facts",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/inline_recovery_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/inline_recovery_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/publication_owner_death.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "29a26ca2580f48acf01ddf09c38300a5222ccd6a",
+      "raw_sha256": "af865b27ce37f772c726f117e16171c621db9075d0122223a0700a73b45533b2",
+      "raw_bytes": 55620,
+      "checkout_sha256": "d52c88d614a50daab3a13970bd4f3045667084889a4d9e4b31b2ad81ab6a12d7",
+      "checkout_bytes": 57111,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-28",
+      "topic": "owner-wide fence and registered cleanup obligations",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/publication_owner_death.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/publication_owner_death.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/publication_owner_death_arbitration.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "f8f5236f2eb54ea029ea230485f0d6701714f25b",
+      "raw_sha256": "aac9005d5282afa33acc5aa3967ca7d8c0e9db04cf41594125d8a0c8cf70c465",
+      "raw_bytes": 20720,
+      "checkout_sha256": "19ad3755b04193c6be7809f660ca5b418f4ef159289fb16377db03a28f85071a",
+      "checkout_bytes": 21266,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-29",
+      "topic": "local owner decision vs GCS death fence, no owner takeover",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/publication_owner_death_arbitration.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/publication_owner_death_arbitration.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/publication_owner_death_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "244c3e52fca4abcb7096e9871bd76e6e1bff5712",
+      "raw_sha256": "02b875aa7a05e43d2d6ab9ece1316705511fcb865c2359c5d555756975b86ae3",
+      "raw_bytes": 26182,
+      "checkout_sha256": "fc03964225a42614668e51e87b09802b291ec4230eda2d730baad309577064e5",
+      "checkout_bytes": 26826,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-30",
+      "topic": "existing GCS dead-owner effect driver",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/publication_owner_death_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/publication_owner_death_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/stored_contained.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "3609c270102e904f3b5a565d3bab7d6944c75b8d",
+      "raw_sha256": "7dadc7af9056dabd9fbe1232927613bd24aa0229543ee4e6a88eed7440045d91",
+      "raw_bytes": 20940,
+      "checkout_sha256": "639c5b4a570bd142b14de1528b3d6bc913470227b0e45f40d5f9195a08e0ae49",
+      "checkout_bytes": 21504,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-31",
+      "topic": "typed child Prepare/Promote/Release and source custody",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/stored_contained.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/stored_contained.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/stored_node_loss.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "e26d3ec0103b775ed765f86510001962fd30512f",
+      "raw_sha256": "8dfa687cd4f3ef8154e9c59a699d0d331d1f374401a7fa566e1a4a72374dd4c1",
+      "raw_bytes": 42175,
+      "checkout_sha256": "90f06b565ad7e4494b6db47f4cc1dcce438cdc385e2a75f30110a49ce0e3dc86",
+      "checkout_bytes": 43248,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-32",
+      "topic": "known Complete/LOST/UNKNOWN owner transitions",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/stored_node_loss.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/stored_node_loss.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/stored_node_loss_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "9a9b040848ff39353b4155c782711c64ff063447",
+      "raw_sha256": "a3aba439c37ea90b5b0106de11bfb538049ae7366c9c8340208d72c0c8c60002",
+      "raw_bytes": 23428,
+      "checkout_sha256": "9673fdd82983c935fe675713e0fed25e1fc2027893f046fe3462c65da5d7ea34",
+      "checkout_bytes": 23973,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-33",
+      "topic": "publisher Node loss, accurate success and cleanup",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/stored_node_loss_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/stored_node_loss_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/stored_publication.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "d637881d9e402174f715094e9c018aa1f284157e",
+      "raw_sha256": "bfda844a67d8e690619339d738e29d4d56b0dd59b68e865f139eb726c76e1218",
+      "raw_bytes": 80864,
+      "checkout_sha256": "41606263a3381ca55142071d3fb95e5b70e77dc69736ea959795bf0c8a6eb1ef",
+      "checkout_bytes": 82874,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-34",
+      "topic": "single-output identity and accurate GCS facts, not tier backend",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/stored_publication.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/stored_publication.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/stored_publication_node.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "548ed24343591c19000f93d3de67069f64fc2da3",
+      "raw_sha256": "8a0a3c667cb473d4f1b377963c4984742984aa5e39ab893d3c7220565e5c336d",
+      "raw_bytes": 43840,
+      "checkout_sha256": "e23ec972169e08e777ea73bd5e4579dd6a407dff5d5e5e8de792fbf883ad30c1",
+      "checkout_bytes": 44910,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-35",
+      "topic": "Node effect intent/ACK replay and local resource Complete",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/stored_publication_node.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/stored_publication_node.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/source/stored_publication_owner.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "1774e2037f7ec8bee81cfac95bc019cbc1f7d518",
+      "raw_sha256": "62eb460faa8cad63bfd06bcd42525bd042ad5905391c8ea03733976e1c07a083",
+      "raw_bytes": 30849,
+      "checkout_sha256": "bdcfd018d2c4cef7e7b511e2a584914f428e146b3f3adea5469803092535837f",
+      "checkout_bytes": 31616,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-36",
+      "topic": "owner CAS/adoption/GC and retirement barriers",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/source/stored_publication_owner.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/source/stored_publication_owner.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_inline_contained_node.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "77f36c80fd39951655d99ab25450df84a16ced57",
+      "raw_sha256": "7ec5b7990c433e211e252bf5d5ea0f7da2efcd87093eef5841c668340020fb0d",
+      "raw_bytes": 17179,
+      "checkout_sha256": "b9690feb7a798ebcb9308fa7acc9abb41ce88ae6c70383360b60bb48981b7b3d",
+      "checkout_bytes": 17638,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-37",
+      "topic": "Node journal preparation, Complete and exact rollback",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_inline_contained_node.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_inline_contained_node.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_inline_contained_protocol.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "6119771916385308232a4a54d25fcf64873a72df",
+      "raw_sha256": "6e4b4f88a160a11acada7996fb7f64126e9cbb29eb118bdfe4a35582dea41d96",
+      "raw_bytes": 11485,
+      "checkout_sha256": "c8094e7772bf86fe2f7fa5ad14eebcbaab19a5a7403f4116a2b316f8f6b47946",
+      "checkout_bytes": 11767,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-38",
+      "topic": "typed child/source and single-result wire",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_inline_contained_protocol.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_inline_contained_protocol.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_inline_contained_publication.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "245fa99be233ac33c02c1dbfd2d7c0b0e73c05e8",
+      "raw_sha256": "6c9f39cf70ff278728483af4524b1820d4e5f2391dcedc6fdbecd1a56f1d32f9",
+      "raw_bytes": 18315,
+      "checkout_sha256": "b60eef02004846655a2f6ee463b8587c9c7834ca8d59d275af118ae217a4222f",
+      "checkout_bytes": 18789,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-39",
+      "topic": "single-output manifest/identity and phase facts",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_inline_contained_publication.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_inline_contained_publication.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_inline_contained_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "37eb1645ef3593dfb618195d46c3177e622e8026",
+      "raw_sha256": "dacb58493fc6f62f3b0cf0b3ee7851fece556594345d13b2c9d18eef77be0a33",
+      "raw_bytes": 15674,
+      "checkout_sha256": "483c29e0bc82c95a62abecd3aa67a1e4cf24084d065a7bc78e6749b37ec8d520",
+      "checkout_bytes": 16082,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-40",
+      "topic": "owner/Node/child handoff and compensation",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_inline_contained_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_inline_contained_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_inline_recovery.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "b1851e70b8d74763651e647c0522d2ffabe00f9a",
+      "raw_sha256": "78ece984945f364eb24c4d58337c42667e11c50b49fb7e4f9ea2df0fd9417a65",
+      "raw_bytes": 40352,
+      "checkout_sha256": "5d617876f270df2b0948dd3ac9868f6b7ee14d83bf1b02b24d794768b9a59fc4",
+      "checkout_bytes": 41376,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-41",
+      "topic": "metadata-only success, unknown outcomes and fencing",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_inline_recovery.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_inline_recovery.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_inline_recovery_protocol.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "99b7ff1868ff835f60758b780dcadd5329f9ef1b",
+      "raw_sha256": "8dec4a21f78423fd7437c2d3b2e49d73161ca62088e8b0c82064ad7f750c5019",
+      "raw_bytes": 34286,
+      "checkout_sha256": "6a55e2864d1411e0db84ffae2d1b2bcec03423277c997c7d5c4e938b0c5076db",
+      "checkout_bytes": 35112,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-42",
+      "topic": "metadata terminal/cleanup request binding",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_inline_recovery_protocol.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_inline_recovery_protocol.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_inline_recovery_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "c88e33c8c7a5466742e49e3d062f2b22353ed2b6",
+      "raw_sha256": "253fb49f4a829bfc9199ff768e4ade5f4b19b1bb65fc7b3600a23448eb5dc35b",
+      "raw_bytes": 37767,
+      "checkout_sha256": "c0131fa65bab8d5129ed7755c677e15552b2e060463f519a971d9733cbe54b87",
+      "checkout_bytes": 38743,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-43",
+      "topic": "known success vs UNKNOWN and cleanup facts",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_inline_recovery_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_inline_recovery_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_publication_owner_death.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "384557ad1f12a338d5b76f1cae89ded27402701c",
+      "raw_sha256": "76677021064358a96b172a33c434ef61bdff3a19aee3728bca2dece04394da87",
+      "raw_bytes": 23135,
+      "checkout_sha256": "751b754011398ec0f8fa35475360bfe3b1ecf46dff9200187ae4c5d849c72fdc",
+      "checkout_bytes": 23743,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-44",
+      "topic": "owner-wide fence and registered cleanup obligations",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_publication_owner_death.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_publication_owner_death.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_publication_owner_death_arbitration.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "3d820c62b0e34f7d778a844534250efd17b5bb40",
+      "raw_sha256": "2077522ea04f3c3a08af6a0e37a49f32e708bd44126fa056a3819dc0e32b4fc9",
+      "raw_bytes": 14345,
+      "checkout_sha256": "6bb9e1318776a08b99ce57224683cc9a0a4d9343c900dd68ed0369fd74caaaeb",
+      "checkout_bytes": 14732,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-45",
+      "topic": "local owner decision vs GCS death fence, no owner takeover",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_publication_owner_death_arbitration.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_publication_owner_death_arbitration.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_publication_owner_death_runtime.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "fa9ea3937cff1deebc67462942f6bc4fe9592175",
+      "raw_sha256": "f3d2ecbaa01b0b4b6974611ac8f91ecebd5cce53c991286416f1cec6e38ff2cf",
+      "raw_bytes": 17993,
+      "checkout_sha256": "d435299b27a095392934258c29719c52df5c62e8e11560f968c7b67f7e0b167c",
+      "checkout_bytes": 18462,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-46",
+      "topic": "existing GCS dead-owner effect driver",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_publication_owner_death_runtime.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_publication_owner_death_runtime.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_stored_contained_transaction.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "8956d446d8ee759a05479512203617821f9471d4",
+      "raw_sha256": "61ed360d61da0752b98f19e9478adc5ce93da1526aa4ea8dd40b61bf4ab167f5",
+      "raw_bytes": 10188,
+      "checkout_sha256": "c8e56a504ed360cc3ad0353c816e0ae9871ea59713f9249ff5dc3ad64b8215d3",
+      "checkout_bytes": 10486,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-47",
+      "topic": "child rollback and release-before-late-operation",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_stored_contained_transaction.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_stored_contained_transaction.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_stored_node_loss.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "226c47fc6726cb00a27c64cc05fa81772a7aabaf",
+      "raw_sha256": "28982f6b93c738a8e1646e8982d6dbec407ff0d54f6bca2387c836f0243e19a2",
+      "raw_bytes": 17781,
+      "checkout_sha256": "9d6b5b9da1c300be568ec28a7253c799c38ac40f208e7197c35eb684e120f51e",
+      "checkout_bytes": 18246,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-48",
+      "topic": "known Complete/LOST/UNKNOWN owner transitions",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_stored_node_loss.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_stored_node_loss.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.3 结果未知与故障规则",
+          "meaning": "成功事实与bytes分开；不接管已死owner；未知效果必须收口"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_stored_publication.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "319103b0b189353d262973c8dfe08894c695dae9",
+      "raw_sha256": "7bf2a01ad1269e2ea3587fa068f830e14e2785d0d2da5bf6513ed4c31d780a33",
+      "raw_bytes": 48401,
+      "checkout_sha256": "a2d32838ba73f95928c0f5e1ed306a0dd23ccb773f77cb3c0638eaf0f9ce87ec",
+      "checkout_bytes": 49618,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-49",
+      "topic": "single-output identity and accurate GCS facts, not tier backend",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_stored_publication.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_stored_publication.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_stored_publication_node.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "ac32e99e7c692ba80f709108a11c757d7f01d469",
+      "raw_sha256": "14584438d4e2ee9dabb53c2fb4f837a19f812465498ecb4abaaa11adf1d72359",
+      "raw_bytes": 37510,
+      "checkout_sha256": "8892c221f7b428839c882dda06b4b909d0d209de44edae8b2fb8b6cf598bdad4",
+      "checkout_bytes": 38464,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-50",
+      "topic": "Node effect intent/ACK replay and local resource Complete",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_stored_publication_node.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_stored_publication_node.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.2 普通结果的完整顺序",
+          "meaning": "child/source实际保活、交接和准确补偿；图不能替代Release"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/history/retired-protocol-family/test_stored_publication_owner.py.txt",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "c2f6839ba0ac9b6eede3f82bf18592f9ea024ee8",
+      "raw_sha256": "ccdfdceabf245cbd9252817e7a07201c3b8cf4a283cbeca0f8a959bcc0bda0f5",
+      "raw_bytes": 14440,
+      "checkout_sha256": "4221690ecee4a8e3e339bd6a0932f00524d6057125f3f4d604bacf358bfe233b",
+      "checkout_bytes": 14824,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-51",
+      "topic": "owner CAS/adoption/GC and retirement barriers",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/history/retired-protocol-family/test_stored_publication_owner.py.txt",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/history/retired-protocol-family/test_stored_publication_owner.py.txt",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "verify raw git cat-file SHA for THIS file before cut",
+        "record this path/ref/OID/raw SHA and checkout SHA separately",
+        "replace incoming live links to raw archive by fixed-ref/index links",
+        "do not restore old protocol family or drop required shared invariant"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "docs/roadmap.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "4941b0bf279cddccb44471a1d570e3786aa3e8e8",
+      "raw_sha256": "73001f194ca6aa76d5ec1a4cc0789fd2d975b7fd2d933fe6f0b80fd617a3bb07",
+      "raw_bytes": 64453,
+      "checkout_sha256": "1d54121d6974754cbb5ce79bf09099f2609124ceb431de0f9cad07d1a405d400",
+      "checkout_bytes": 65271,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "delete-working-copy-after-archive",
+      "anchor": "archive-52",
+      "topic": "redesign-plan settled contract plus new cleanup plan work items; one active backlog only",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/roadmap.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/roadmap.md",
+      "contract_destinations": [
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "0.1 两阶段共同保留的正确性基础",
+          "meaning": "完整身份、实际责任、精确收据与清理义务"
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "section": "5.1 状态归属",
+          "meaning": "owner逻辑可见性、Node执行/资源、child保活及GC分权"
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "section": "行为与迁移去向：B04–B07",
+          "meaning": "历史B对象、引用与故障证据；不是新整理提交已通过"
+        }
+      ],
+      "deletion_preconditions": [
+        "save existing full document fixed Git retrieval before rewrite",
+        "old pass counts/hash facts unchanged",
+        "repair incoming links in same change",
+        "new current status only claims successor validation actually run"
+      ],
+      "retirement_status": "WORKING_COPY_RETIRED_K3",
+      "retained_test_mapping_status": "Historical text retired after knowledge mapping; live test completion remains per cleanup-progress and artifacts, not inferred from this index."
+    },
+    {
+      "version": "base",
+      "path": "README.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "0248f544748e956efb612bdc9836e0f9c939bf81",
+      "raw_sha256": "370aea5a04e0625bf60dcd13aa8bf08cba3338ff5d86977af5ff59b6042fbd61",
+      "raw_bytes": 11540,
+      "checkout_sha256": "28580c501c98630c33b90ed10d66fa05d8f2a7ec00dfaa53789e94431905dc0d",
+      "checkout_bytes": 11684,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "rewrite",
+      "anchor": "archive-53",
+      "topic": "K3重写前基础版文档全文；历史状态/命令不作为当前验收",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:README.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/README.md",
+      "retirement_status": "REPLACED_BY_SHORT_CURRENT_DOCUMENT",
+      "contract_destinations": [
+        {
+          "path": "README.md",
+          "meaning": "当前B短文档；旧全文按本条原blob恢复"
+        }
+      ]
+    },
+    {
+      "version": "base",
+      "path": "docs/design.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "2cfe791d4b40fd8f6007d3f264e278c659afaab1",
+      "raw_sha256": "5110648fb566d5f85b5c5263e184a908dbd63c157bef2258669a67922c30759e",
+      "raw_bytes": 100024,
+      "checkout_sha256": "2d9fc60709adffe0f5c82f80c94f9fb9b6fdfd63e38c501c3dd0b4cd9aef68dd",
+      "checkout_bytes": 101333,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "rewrite",
+      "anchor": "archive-54",
+      "topic": "K3重写前基础版文档全文；历史状态/命令不作为当前验收",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/design.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/design.md",
+      "retirement_status": "REPLACED_BY_SHORT_CURRENT_DOCUMENT",
+      "contract_destinations": [
+        {
+          "path": "docs/design.md",
+          "meaning": "当前B短文档；旧全文按本条原blob恢复"
+        }
+      ]
+    },
+    {
+      "version": "base",
+      "path": "docs/learning-path.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "957fc9b004e5d0ea64dce8498aa8e2d9ad2425a9",
+      "raw_sha256": "212bc026742cdb6bd6add4f2d1f6dfc58bf021ae4856aab3c0259b404a63688d",
+      "raw_bytes": 11969,
+      "checkout_sha256": "92d5e596c6dd692d7e21409f063212d649949549d677731bcae9cf0e9e1dd0c7",
+      "checkout_bytes": 12102,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "rewrite",
+      "anchor": "archive-55",
+      "topic": "K3重写前基础版文档全文；历史状态/命令不作为当前验收",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/learning-path.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/learning-path.md",
+      "retirement_status": "REPLACED_BY_SHORT_CURRENT_DOCUMENT",
+      "contract_destinations": [
+        {
+          "path": "docs/learning-path.md",
+          "meaning": "当前B短文档；旧全文按本条原blob恢复"
+        }
+      ]
+    },
+    {
+      "version": "base",
+      "path": "docs/testing.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "b560ef3feab8c8b5f0376e6d67a936e3c2fcb5a5",
+      "raw_sha256": "b5b2ad3a77933bdfb4b6723442e59a5d86a7959bde9f9319a37e32c4476f98b5",
+      "raw_bytes": 240073,
+      "checkout_sha256": "5656a2279def6359dfe2f6de8d2b821733429b138cc3cd49ab512ef56889af09",
+      "checkout_bytes": 243384,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "rewrite",
+      "anchor": "archive-56",
+      "topic": "K3重写前基础版文档全文；历史状态/命令不作为当前验收",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/testing.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/testing.md",
+      "retirement_status": "REPLACED_BY_SHORT_CURRENT_DOCUMENT",
+      "contract_destinations": [
+        {
+          "path": "docs/testing.md",
+          "meaning": "当前B短文档；旧全文按本条原blob恢复"
+        }
+      ]
+    },
+    {
+      "version": "base",
+      "path": "docs/current-status.md",
+      "historical_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "git_blob_oid": "b29d4eac1bdced124bf7a692851ca69c71c1b639",
+      "raw_sha256": "8d59b7cc68b5b2d0bc89fcad6d77bd0de084d8ee3ce3cd3e01554c1a60571c62",
+      "raw_bytes": 240319,
+      "checkout_sha256": "1db77ac1800a9cb321755717d767bf499fc907d2e31101296a8f39c1db3fdc45",
+      "checkout_bytes": 243710,
+      "resolved_blob_matches": true,
+      "raw_sha_matches_plan": true,
+      "raw_size_matches_plan": true,
+      "checkout_sha_matches_plan": true,
+      "planned_action": "rewrite",
+      "anchor": "archive-57",
+      "topic": "K3重写前基础版文档全文；历史状态/命令不作为当前验收",
+      "fixed_git_spec": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:docs/current-status.md",
+      "fixed_url": "https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/docs/current-status.md",
+      "retirement_status": "REPLACED_BY_SHORT_CURRENT_DOCUMENT",
+      "contract_destinations": [
+        {
+          "path": "docs/current-status.md",
+          "meaning": "当前B短文档；旧全文按本条原blob恢复"
+        }
+      ]
+    }
+  ],
+  "knowledge_mapping": {
+    "source": "K3 documentation preparation",
+    "retained_contract_ids": [
+      "M03",
+      "M06",
+      "M07",
+      "M08",
+      "M09",
+      "M10",
+      "M11",
+      "M14"
+    ],
+    "current_design_sections": [
+      "1. 进程、身份与权威",
+      "2. 提交、依赖与 lease",
+      "3. 结果交接：Complete、READY 与退休",
+      "4. bytes、pull 与 source pin",
+      "5. 多 owner 与 pregrant 副本交接",
+      "6. 引用、put、GC 与 quarantine",
+      "7. 故障知识、whole 重建与首 ACK",
+      "8. 阻塞 get 的 CPU yield",
+      "9. Actor：创建、直达与 generation",
+      "10. PG：预留、LOST 与已有续行",
+      "11. 成员死亡与退出",
+      "12. trace 与阅读边界"
+    ]
+  }
+}

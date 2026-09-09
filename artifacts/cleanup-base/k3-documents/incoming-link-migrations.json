@@ -1,0 +1,125 @@
+{
+  "scope": "Tracked live Markdown outside immutable artifacts and proposed retired files; fenced examples excluded. Re-scan current worktree at K3.",
+  "entries": [
+    {
+      "edition": "base",
+      "source_path": "docs/current-status.md",
+      "source_line": 37,
+      "old_target": "handoff.md",
+      "retired_path": "docs/handoff.md",
+      "new_target": "history-index.md#archive-03",
+      "context": "[handoff.md](handoff.md)、旧 correction-plan、roadmap、acceptance-matrix、design/testing 的历史段落及下方记录保留来源，不覆盖本轮实施授权或当前事实。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "base",
+      "source_path": "docs/current-status.md",
+      "source_line": 2325,
+      "old_target": "acceptance-matrix.md",
+      "retired_path": "docs/acceptance-matrix.md",
+      "new_target": "history-index.md#archive-01",
+      "context": "[`acceptance-matrix.md`](acceptance-matrix.md), without replacing roadmap exits.",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "base",
+      "source_path": "docs/design.md",
+      "source_line": 980,
+      "old_target": "acceptance-matrix.md",
+      "retired_path": "docs/acceptance-matrix.md",
+      "new_target": "history-index.md#archive-01",
+      "context": "单场景及历史运行结果统一链接 [当前状态](current-status.md)／[验收矩阵](acceptance-matrix.md)，",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "base",
+      "source_path": "docs/redesign-plan.md",
+      "source_line": 9,
+      "old_target": "C:/Users/t-hdong/Desktop/gao/mini-ray/docs/correction-plan.md",
+      "retired_path": "docs/correction-plan.md",
+      "new_target": "history-index.md#archive-02",
+      "context": "这是按用户最新决定修订的实施计划，第一阶段已按本计划独立完成约定行为验收；当前证据与剩余项见 [验收账本](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/acceptance-baseline.md)。下文状态表保留设计合同，不能替代实际测试；第二阶段尚未实施。此前“仅文档、不改源码/测试、不提交”的限制属于计划修订轮，已由后续实施指令推进到实现阶段。旧 [correction-plan.md](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/correction-plan.md) 作为历史设计来源；其中等待确认的旧流程不覆盖本次已确定的两阶段顺序。下文 §1–9 说明第一阶段基础版本；§10 说明第二阶段增强版本及两阶段交付衔接。文中“本版”未另行限定时指第一阶段。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "base",
+      "source_path": "docs/testing.md",
+      "source_line": 4,
+      "old_target": "handoff.md",
+      "retired_path": "docs/handoff.md",
+      "new_target": "history-index.md#archive-03",
+      "context": "> 的结果，不是当前快照通过声明；两份未验证草稿及分类冲突见 [handoff](handoff.md)。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "base",
+      "source_path": "docs/testing.md",
+      "source_line": 5,
+      "old_target": "correction-plan.md",
+      "retired_path": "docs/correction-plan.md",
+      "new_target": "history-index.md#archive-02",
+      "context": "> 需求冻结与执行清单冻结的区别见 [纠偏方案](correction-plan.md)。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "enhanced",
+      "source_path": "docs/current-status.md",
+      "source_line": 38,
+      "old_target": "handoff.md",
+      "retired_path": "docs/handoff.md",
+      "new_target": "history-index.md#archive-03",
+      "context": "[handoff.md](handoff.md)、旧 correction-plan、roadmap、acceptance-matrix、design/testing 的历史段落及下方记录保留来源，不覆盖本轮实施授权或当前事实。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "enhanced",
+      "source_path": "docs/current-status.md",
+      "source_line": 2326,
+      "old_target": "acceptance-matrix.md",
+      "retired_path": "docs/acceptance-matrix.md",
+      "new_target": "history-index.md#archive-01",
+      "context": "[`acceptance-matrix.md`](acceptance-matrix.md), without replacing roadmap exits.",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "enhanced",
+      "source_path": "docs/design.md",
+      "source_line": 980,
+      "old_target": "acceptance-matrix.md",
+      "retired_path": "docs/acceptance-matrix.md",
+      "new_target": "history-index.md#archive-01",
+      "context": "单场景及历史运行结果统一链接 [当前状态](current-status.md)／[验收矩阵](acceptance-matrix.md)，",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "enhanced",
+      "source_path": "docs/redesign-plan.md",
+      "source_line": 9,
+      "old_target": "C:/Users/t-hdong/Desktop/gao/mini-ray/docs/correction-plan.md",
+      "retired_path": "docs/correction-plan.md",
+      "new_target": "history-index.md#archive-02",
+      "context": "这是按用户最新决定修订的实施计划，第一阶段已按本计划独立完成约定行为验收；当前证据与剩余项见 [验收账本](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/acceptance-baseline.md)。下文状态表保留设计合同，不能替代实际测试；第二阶段两项机制已在增强snapshot03同版通过约定验收，固定标记为`teaching-enhanced-v0.2`。此前“仅文档、不改源码/测试、不提交”的限制属于计划修订轮，已由后续实施指令推进到实现阶段。旧 [correction-plan.md](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/correction-plan.md) 作为历史设计来源；其中等待确认的旧流程不覆盖本次已确定的两阶段顺序。下文 §1–9 说明第一阶段基础版本；§10 说明第二阶段增强版本及两阶段交付衔接。文中“本版”未另行限定时指第一阶段。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "enhanced",
+      "source_path": "docs/testing.md",
+      "source_line": 4,
+      "old_target": "handoff.md",
+      "retired_path": "docs/handoff.md",
+      "new_target": "history-index.md#archive-03",
+      "context": "> 的结果，不是当前快照通过声明；两份未验证草稿及分类冲突见 [handoff](handoff.md)。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    },
+    {
+      "edition": "enhanced",
+      "source_path": "docs/testing.md",
+      "source_line": 5,
+      "old_target": "correction-plan.md",
+      "retired_path": "docs/correction-plan.md",
+      "new_target": "history-index.md#archive-02",
+      "context": "> 需求冻结与执行清单冻结的区别见 [纠偏方案](correction-plan.md)。",
+      "status": "PROPOSED_RECHECK_CURRENT_TEXT_BEFORE_APPLY"
+    }
+  ]
+}

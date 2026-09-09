@@ -1,0 +1,1524 @@
+{
+  "schema_version": 1,
+  "status": "DRAFT_STATIC_MAPPING_NOT_APPLIED",
+  "date": "2026-09-09",
+  "scope": "K3 四个旧计划的仍有效知识与合同去向；只生成本 mapping，不改 runtime、测试、原文或目标文档。",
+  "plan_source": "mini-ray/docs/project-cleanup-plan.json#document_actions",
+  "source_inputs": {
+    "base": {
+      "root": "audit/two-version-cleanup/base",
+      "commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6"
+    },
+    "enhanced": {
+      "root": "audit/two-version-cleanup/enhanced",
+      "commit": "ce29981a547f83b53b0c1df9f91354dcf89d8e4f"
+    },
+    "same_text_both_editions": [
+      {
+        "path": "docs/correction-plan.md",
+        "physical_lines": 172
+      },
+      {
+        "path": "docs/handoff.md",
+        "physical_lines": 74
+      },
+      {
+        "path": "docs/roadmap.md",
+        "physical_lines": 818
+      },
+      {
+        "path": "docs/acceptance-matrix.md",
+        "physical_lines": 312
+      }
+    ],
+    "identity_note": "本次只用文件 hash 比较确认两份 checkout 文本一致；原 Git blob/归档可恢复性由父任务独立核验。",
+    "line_basis": "所有 mappings.sources 行号均为固定归档根下同名文档；四份文件两版文本一致，源条目同时适用于 B/E。"
+  },
+  "target_policy": {
+    "current_line_basis": "mini-ray/docs 现行文档，2026-09-09 读取；不是旧 tag 行号或未来 staging 行号。",
+    "base": "目标落在 teaching-base 的现代单输出 owner-led 教材/账本；无 GCS 普通发布或全局图；acceptance-enhanced.md 保持缺席。",
+    "enhanced": "目标落在 teaching-enhanced 对应共同教材/基础账本，新增保证/窗口在 acceptance-enhanced.md 与 redesign §10；各自使用自己的源码和证据。",
+    "design": "当前 design.md 的标题是历史设计。edit_spec_pending 明确尚未迁入现代架构；父任务 current-doc-edit-spec.md 应列这些摘要，实际重写后再核节名/锚。",
+    "existing_fixed_evidence": "仅表示既有合同/证据已有明确去向，不表示新清理实现已测试。",
+    "deduplication": "重复知识只链接现有合同。保留的是单输出下仍有效含义，不复制大段源码、旧选项、checkpoint 尾部或旧测试清单。"
+  },
+  "preconditions": [
+    {
+      "id": "P1",
+      "source": "project-cleanup-plan.md §7.2–7.3",
+      "rule": "父任务确认原完整 blob 可按固定 commit/OID 取回，并按原 raw SHA 核验；历史测试/失败/hash 原意不改。"
+    },
+    {
+      "id": "P2",
+      "source": "project-cleanup-plan.md §7.2 第 309 行",
+      "rule": "相应有效含义已有明确的现行合同目标；标 edit_spec_pending 的摘要随目标文档编辑落实并核锚，不能因历史 design 已有该段就称迁移完成。"
+    },
+    {
+      "id": "P3",
+      "source": "document_actions.prerequisites",
+      "rule": "删除同次修复活动文档入链；历史来源转 history-index，现行行为转 redesign/design/本版 acceptance；同时退休文件间旧链接不留重定向壳。"
+    },
+    {
+      "id": "P4",
+      "source": "project-cleanup-plan.md §5.3、§7.4、§9",
+      "rule": "不改旧结果，不新增故障乘积/selector/审批门槛。测试迁移未闭合只阻止相应既定删除；文档 mapping 本身不是运行时验证。"
+    }
+  ],
+  "mappings": [
+    {
+      "id": "M01",
+      "sources": [
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "1. 不变目标与需求来源；2. S1–S4 语义差异",
+          "lines": [
+            11,
+            34
+          ]
+        },
+        {
+          "path": "docs/handoff.md",
+          "heading": "阅读顺序；已有代码",
+          "lines": [
+            17,
+            28
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态",
+          "lines": [
+            44,
+            54
+          ]
+        }
+      ],
+      "retained_meaning": "教学目标、用户选定能力、必要正确性逻辑和 mini 自选增强分开；普通结果是否同步依赖 GCS 是可观察协议差异。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "0. 两阶段总览；3.3 明确从本版活动实现退出",
+          "current_line": 19,
+          "status": "existing_settled_contract",
+          "note": "B 是选定 Ray Core 机制的教学实现；E 另加两项必交付自定义保证。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "10.1 范围与职责",
+          "current_line": 393,
+          "status": "existing_settled_contract",
+          "note": "B 无普通 GCS 发布/全局图；E 两项均保留，不能称生产等价。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧 S1–S4 待确认流程不继续执行；multi-return、targeted、Actor migration 和自动 lift 不从旧文档恢复。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-correction-plan"
+    },
+    {
+      "id": "M02",
+      "sources": [
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "S1：交接记录的完整生命周期",
+          "lines": [
+            38,
+            70
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K0.3 普通 Task 与 direct submission",
+          "lines": [
+            600,
+            607
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K1.1 分布式引用生命周期",
+          "lines": [
+            719,
+            735
+          ]
+        }
+      ],
+      "retained_meaning": "区分清单接管、Node Complete/资源释放、owner 原子可见、回复/来源托管退休和对象 GC；hold 生效前 owner 已持完整清单，ACK 未知保留义务，fence 不代替已发生效果的释放。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "0.1 两阶段共同保留的正确性基础；5.1 状态归属",
+          "current_line": 34,
+          "status": "existing_settled_contract",
+          "note": "现代单输出职责及精确收据边界已有合同。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "5.2 普通结果的完整顺序；5.3 结果未知与故障规则",
+          "current_line": 213,
+          "status": "existing_settled_contract",
+          "note": "B 由 owner/Node/child 履行；put 不伪造 Task lease/Complete。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B04–B06",
+          "current_line": 38,
+          "status": "existing_fixed_evidence",
+          "note": "历史证据边界保留；不把 close 或 shutdown 当物理 GC。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-enhanced.md",
+          "heading": "当前实现与责任；保证与窗口证据 / W1/W3/W4",
+          "current_line": 9,
+          "status": "existing_fixed_evidence",
+          "note": "E 在同一职责上加入 C0–C7；图保守占用到真实效果解除。",
+          "editions": [
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "selected-set/多槽表述收窄为单输出；旧中央 INTENT 责任不能原样搬入 B。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-correction-plan"
+    },
+    {
+      "id": "M03",
+      "sources": [
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "B1：准入证明与 exact replay 记录分离",
+          "lines": [
+            78,
+            89
+          ]
+        },
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "4. 需求级冻结交付表 / B2",
+          "lines": [
+            125,
+            126
+          ]
+        },
+        {
+          "path": "docs/handoff.md",
+          "heading": "真实缺陷、验证缺口与草稿 / B1、B2",
+          "lines": [
+            34,
+            35
+          ]
+        }
+      ],
+      "retained_meaning": "真实 START/JOIN 与 queue handoff 产生准入事实；首 ACK 前固化完整请求及原回复，后续完成/LOST/epoch 变化不改写历史。完整 drop 请求先校验再命中缓存；历史重放不重复队列、预算或物理 Drop，不能给新效果授权。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "5.1 状态归属；5.4 模块整理原则",
+          "current_line": 209,
+          "status": "existing_settled_contract",
+          "note": "紧凑收据保留至 incarnation/job 关闭或明确退休协议，不任意 TTL。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "7.2 固定行为组 / 准入与幂等",
+          "current_line": 294,
+          "status": "existing_settled_contract",
+          "note": "START、同请求重放、同 ID 变字段拒绝、preview 无效已有现代合同。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B07",
+          "current_line": 41,
+          "status": "existing_fixed_evidence",
+          "note": "B1/B2 已属保留且有固定证据；旧 targeted 首 ACK 草稿不继续列为当前缺陷。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/design.md",
+          "heading": "8.2 Lineage reconstruction / 准入事实与重放记录",
+          "current_line": 1032,
+          "status": "edit_spec_pending",
+          "note": "编辑规格应保留请求期证明和历史记录不同生命周期、首 ACK 前绑定、borrower 释放后仍可精确重放；仅摘要，不复制 targeted session 模型。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "queued sibling、selected target、OPEN/MERGE 等已退役形态只归档；不把原 B1/B2 未修状态带入当前状态页。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-correction-plan"
+    },
+    {
+      "id": "M04",
+      "sources": [
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "3. D0 前置边界与 D1 职责",
+          "lines": [
+            93,
+            105
+          ]
+        },
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "4. 需求级冻结交付表 / D1",
+          "lines": [
+            131,
+            131
+          ]
+        }
+      ],
+      "retained_meaning": "Task、owner、Node lease 和交接推进各有唯一权威；必要组合原子提交不拆散；RPC 与本地提交边界清楚，shutdown 聚合真实未决义务，不另造 clean 真相或通用工作流。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "5.1 状态归属；5.4 模块整理原则",
+          "current_line": 199,
+          "status": "existing_settled_contract",
+          "note": "现代职责/组合事务/窄接口合同已有，具体清理顺序由新清理计划负责。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "不恢复 D0→D1→D2 为第二条执行队列；结构包是否实施仍按 K4–K6 收益评估。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-correction-plan"
+    },
+    {
+      "id": "M05",
+      "sources": [
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "4. 需求级冻结交付表；5. D2：需求冻结与执行清单冻结",
+          "lines": [
+            109,
+            155
+          ]
+        },
+        {
+          "path": "docs/handoff.md",
+          "heading": "真实缺陷、验证缺口与草稿；证据边界",
+          "lines": [
+            37,
+            57
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "2. 代表性精确进程选择器",
+          "lines": [
+            222,
+            224
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "5. 不可由本页替代的出口",
+          "lines": [
+            298,
+            307
+          ]
+        }
+      ],
+      "retained_meaning": "需求合同、执行许可和证据层级分开。旧 pass、typed reply double、顺序 START/JOIN、语义注入的第二 PG 拒绝分别不能冒充新源码通过、真实删除、真实并发或真实容量拒绝；精确选择器/环境/边界/源码身份由本版清单和账本承载。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "7.1 三个层级，一份行为账本；7.3 删除重复治理成本；7.4 CI 与完成定义",
+          "current_line": 271,
+          "status": "existing_settled_contract",
+          "note": "有限样本和已知合同缺陷；不由旧 allowlist 自动扩门槛。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B04、B06、B07、B09",
+          "current_line": 38,
+          "status": "existing_fixed_evidence",
+          "note": "ACK-loss、nested replay、B1/B2、PG 层级已有固定交代。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "可复现执行入口；环境与证据保存；历史测试的边界",
+          "current_line": 54,
+          "status": "existing_fixed_evidence",
+          "note": "保原结果；后继命令/结果另记，执行名单不从本 mapping 生成。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-enhanced.md",
+          "heading": "保证与窗口证据；执行与完成边界",
+          "current_line": 39,
+          "status": "existing_fixed_evidence",
+          "note": "E 分别报告纯/组合/真实进程和 W/R 有限边界。",
+          "editions": [
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧 Mac 硬件描述和历史全 allowlist/完整默认 suite/宽矩阵出口仅归档；本草稿不授权运行测试，不新增 selector 或故障门槛。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-correction-plan"
+    },
+    {
+      "id": "M06",
+      "sources": [
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "6. 一次性待确认范围与唯一顺序",
+          "lines": [
+            161,
+            165
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / .remote() 同步准备",
+          "lines": [
+            290,
+            291
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K0.3 普通 Task 与 direct submission",
+          "lines": [
+            591,
+            599
+          ]
+        }
+      ],
+      "retained_meaning": "metadata-only wait 与等待数量保留；显式 put 替代自动 lift，bytes store 不冒称共享内存；Actor 普通异步结果仍是 ObjectRef。remote 返回前可同步序列化/取得引用并抛错，用户函数异步执行，pending 顶层依赖不占 Worker/CPU。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "3.1 保留的基础机制；3.4 延期的能力",
+          "current_line": 121,
+          "status": "existing_settled_contract",
+          "note": "单输出、wait、显式 put、Actor refs 拒绝及存储边界已明确。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B02、B03、B06、B08",
+          "current_line": 36,
+          "status": "existing_fixed_evidence",
+          "note": "对应现代 API/依赖/显式 put/Actor 行为。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/design.md",
+          "heading": "4. K0 普通 Task 路径 / 提交准备与异步执行",
+          "current_line": 122,
+          "status": "edit_spec_pending",
+          "note": "需保留同步序列化/引用准备这一教学细节；删除旧 lifted-argument 路径，保超限拒绝及既得引用回滚。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "不恢复 fetch_local/debug.explain 拼写要求、自动 StoredArg、Actor Ref 参数或结果内 Ref。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-correction-plan"
+    },
+    {
+      "id": "M07",
+      "sources": [
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / candidate、cleanup_pending",
+          "lines": [
+            61,
+            65
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K0.3 普通 Task 与 direct submission",
+          "lines": [
+            607,
+            616
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "1. 已接线机制与尚缺证据 / K0.3",
+          "lines": [
+            205,
+            205
+          ]
+        }
+      ],
+      "retained_meaning": "潜在 publication 身份不证明效果已发生；lease/Push 回复不明时重放相同请求/端点/身份，Core timeout 不替 Node 清资源。关闭新准入后继续已接收请求的精确重放，未决 cancel/custody 阻止假 clean。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "5.1 状态归属；5.3 结果未知与故障规则",
+          "current_line": 202,
+          "status": "existing_settled_contract",
+          "note": "Node 是资源权威；timeout 保未决，旧 ACK 不授权新效果。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/design.md",
+          "heading": "4. K0 普通 Task 路径 / lease、Push 与退出收口",
+          "current_line": 122,
+          "status": "edit_spec_pending",
+          "note": "编辑规格保歧义连接/请求结果区别、冻结身份、未决义务与退出顺序；B 不增加 GCS 普通门禁。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B01、B03、B04",
+          "current_line": 35,
+          "status": "existing_fixed_evidence",
+          "note": "引用实际 gate 和迁移证据，不声称这些摘要扩大了运行时覆盖。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧 OutputPublicationID candidate 类名、旧重试枚举不成为必须保留接口；不新增公共取消语义。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-roadmap"
+    },
+    {
+      "id": "M08",
+      "sources": [
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / 多 owner、pregrant、source pin、提交者死亡",
+          "lines": [
+            112,
+            173
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K0.5 ObjectStore、owner 与跨节点 pull",
+          "lines": [
+            644,
+            661
+          ]
+        }
+      ],
+      "retained_meaning": "执行许可与副本 custody 分离；pregrant 已发生物化也要有真实 inventory。首 owner 失败锁定错误但其它 owner 交接继续；source Pin/Release 未知效果保存 token，Release-before-late-Pin 拒绝复活；提交者死亡不允许伪造其 ACK。",
+      "targets": [
+        {
+          "path": "docs/design.md",
+          "heading": "6. K0 对象系统；8.1 分布式引用计数 / 传输 pin 与副本交接",
+          "current_line": 369,
+          "status": "edit_spec_pending",
+          "note": "应在重写规格保留已存在的物理 custody、source-pin 和多 owner 责任摘要，指向真实 owner/Node 窄接口。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "0.1 两阶段共同保留的正确性基础；5.3 结果未知与故障规则",
+          "current_line": 37,
+          "status": "existing_settled_contract",
+          "note": "准确引用身份、存活事实和未知义务保留。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B03、B05、B06",
+          "current_line": 37,
+          "status": "existing_fixed_evidence",
+          "note": "有限既有证据；旧多 owner/Grant/pregrant/ACK-loss 反例准确迁移仍按清理计划 §5.3，不因该文档摘要声称完成。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧多返回形态去除；不从历史多 owner 进程切片推导新笛卡尔积验收。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-roadmap"
+    },
+    {
+      "id": "M09",
+      "sources": [
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "4. Quarantine：诊断边界，不是已证实的公共 API 缺陷",
+          "lines": [
+            280,
+            294
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / late replica、quarantine",
+          "lines": [
+            159,
+            173
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / replica integrity",
+          "lines": [
+            431,
+            434
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "3. 有限的下一批语义故障验收 / F6",
+          "lines": [
+            259,
+            259
+          ]
+        }
+      ],
+      "retained_meaning": "迟到副本只能凭原 owner 的准确退休/collection 历史授权清理；STALE 不是 ACK，外来 descriptor 不自授权删除。手造无历史 epoch 冲突只证明 fail-closed；quarantine 不盲删、不假 clean、不承诺自动修损坏。物理删除检查实 bytes 与准确 receipt，旧 receipt 不碰新 epoch。",
+      "targets": [
+        {
+          "path": "docs/design.md",
+          "heading": "6. K0 对象系统；8.1 分布式引用计数 / 迟到副本、精确删除与 quarantine",
+          "current_line": 369,
+          "status": "edit_spec_pending",
+          "note": "当前历史设计 763–800 行有细节，但不等于现代迁移完成；编辑规格须保摘要、实际身份与诊断边界。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "5.3 结果未知与故障规则；7.1 三个层级，一份行为账本",
+          "current_line": 238,
+          "status": "existing_settled_contract",
+          "note": "无准确事实保未决；不以人工损坏 fixture 外推公共路径缺陷。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B05、B07",
+          "current_line": 39,
+          "status": "existing_fixed_evidence",
+          "note": "证据保持层级；F6 旧目标/healthy sibling 形态退出，仍有效 late-replica 反例按已有迁移项处理。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "不承诺自动修任意 metadata 损坏；不把旧 F6 与 B05 正常双副本 GC 声称完全等价。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-acceptance-matrix"
+    },
+    {
+      "id": "M10",
+      "sources": [
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / notifier、deadline、锁序",
+          "lines": [
+            80,
+            98
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K1.3 Blocking get 的 CPU yield",
+          "lines": [
+            754,
+            765
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "当前状态 / blocking-entry、notification-deadline、lost-blocking",
+          "lines": [
+            22,
+            40
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "1. 已接线机制与尚缺证据 / K1.3",
+          "lines": [
+            211,
+            211
+          ]
+        }
+      ],
+      "retained_meaning": "CPU yield 只释放 CPU；unblock 恢复逻辑 allocation，可形成内部 signed debt 而不向调度器暴露负可用资源。episode/identity fence 与终态一次清账；notifier 入口失败不消耗序号，可能已发 Block 后精确 Unblock；通知后重算原 deadline、离 authority 锁做 RPC。",
+      "targets": [
+        {
+          "path": "docs/design.md",
+          "heading": "8.3 Blocking get 的 CPU yield",
+          "current_line": 1082,
+          "status": "edit_spec_pending",
+          "note": "重写时保 signed debt、原 deadline、锁序和入口补偿摘要；当前历史 1084–1131 行不能标成迁移已完成。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "3.1 保留的基础机制；7.2 固定行为组 / CPU",
+          "current_line": 131,
+          "status": "existing_settled_contract",
+          "note": "仅 CPU yield 和不重复清账已有合同。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B08",
+          "current_line": 42,
+          "status": "existing_fixed_evidence",
+          "note": "引用有限 notifier/ledger 与真实 nested-get 证据，不称 OS 中断/OOM 或总墙钟取消。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "不恢复 RUNNING cancel；原 get 超时不是已经开始的 notifier 控制 RPC 的取消保证。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-roadmap"
+    },
+    {
+      "id": "M11",
+      "sources": [
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / PG 错误、续行、retry 原子性",
+          "lines": [
+            186,
+            224
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K1.4 Placement Group",
+          "lines": [
+            772,
+            777
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "当前状态 / PG retry 与 publication continuations",
+          "lines": [
+            167,
+            181
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "1. 已接线机制与尚缺证据 / K1.4",
+          "lines": [
+            212,
+            212
+          ]
+        }
+      ],
+      "retained_meaning": "PG 全 commit ACK 前不可见，prepare 失败完整回滚，bundle 隔离；Node-loss 为 LOST。PG LOST 与 retry 准入同一组合原子边界；已选 typed cause 不被歧义 wrapper 覆盖，既有 lease/custody/publication 续行继续收口，不能改写已知 Complete 或提前退休 payload。",
+      "targets": [
+        {
+          "path": "docs/design.md",
+          "heading": "9. K1 Placement Group / 原子预留、LOST 与已有续行",
+          "current_line": 1176,
+          "status": "edit_spec_pending",
+          "note": "保当前历史 1196–1224 行仍适用责任摘要；规划限定两 bundle 与 STRICT 策略，删旧 soft/复杂搜索。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "3.2 保留为高级实验；5.1 状态归属",
+          "current_line": 142,
+          "status": "existing_settled_contract",
+          "note": "硬约束、真实事务、必要组合提交是既有合同。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B09",
+          "current_line": 43,
+          "status": "existing_fixed_evidence",
+          "note": "语义注入拒绝与真实容量组合分开；示例使用可区分 STRICT 策略布局。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-enhanced.md",
+          "heading": "保证与窗口证据 / B、W2/W3/W4",
+          "current_line": 46,
+          "status": "existing_fixed_evidence",
+          "note": "增强续行沿准确事实/图/owner 后续，不恢复旧协议族。",
+          "editions": [
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧四策略、自动 bundle 重排和全 fault 矩阵退出；不能借此新增公共 RPC 取消期限。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-roadmap"
+    },
+    {
+      "id": "M12",
+      "sources": [
+        {
+          "path": "docs/handoff.md",
+          "heading": "真实缺陷、验证缺口与草稿 / Actor 类型分类",
+          "lines": [
+            36,
+            36
+          ]
+        },
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "4. 需求级冻结交付表 / Actor",
+          "lines": [
+            120,
+            120
+          ]
+        },
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "4. 需求级冻结交付表 / Actor restart/migration",
+          "lines": [
+            130,
+            130
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K0.6 Actor；K1.5 节点故障与 Actor restart",
+          "lines": [
+            665,
+            684
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K1.5 节点故障与 Actor restart",
+          "lines": [
+            790,
+            795
+          ]
+        }
+      ],
+      "retained_meaning": "Actor 创建走 GCS、方法直达专属 Worker、每 caller FIFO 与同代去重；同 Node restart 保 ActorID、增加 generation、重跑构造器并 fence 旧调用。以 typed failure 区分容量和构造异常，resource 文本不决定分类。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "3.2 保留为高级实验；3.4 延期的能力",
+          "current_line": 140,
+          "status": "existing_settled_contract",
+          "note": "同 Node restart 与失败边界已确定；Actor Node 死亡终态。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B08",
+          "current_line": 42,
+          "status": "existing_fixed_evidence",
+          "note": "typed failure 与真实 restart 已有有限固定证据。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧 migration bug 的技术原因保为 typed-classification 来源，不继续实现 Actor 跨 Node migration；旧 Actor refs future 模型退出。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-handoff"
+    },
+    {
+      "id": "M13",
+      "sources": [
+        {
+          "path": "docs/correction-plan.md",
+          "heading": "4. 需求级冻结交付表 / nested、foreign replay",
+          "lines": [
+            121,
+            123
+          ]
+        },
+        {
+          "path": "docs/handoff.md",
+          "heading": "真实缺陷、验证缺口与草稿 / foreign nested",
+          "lines": [
+            37,
+            37
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / two borrowers 与 GC",
+          "lines": [
+            399,
+            404
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "3. 有限的下一批语义故障验收 / borrower 与 F6 证据",
+          "lines": [
+            263,
+            271
+          ]
+        }
+      ],
+      "retained_meaning": "Task hold、borrower、outer contained hold、lineage 与物理副本各有生命周期；borrower 可活过 outer，source/retained 保活延续到真实交接。删除自动 StoredArg 不消除 Task 产生 foreign stored outer 的 retained 换代/import/replay/GC 交界；put 无 lineage 不能充作此证据。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "4. 为什么保 nested refs，却删 multi-return；7.2 固定行为组",
+          "current_line": 182,
+          "status": "existing_settled_contract",
+          "note": "现代单 outer、多 child 与直接/顶层/nested Ref 语义已明确。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B05、B06",
+          "current_line": 39,
+          "status": "existing_fixed_evidence",
+          "note": "Task nested replay 真实切片及 49–52 行有限拓扑已关闭旧缺口；两 borrower 证据不独立证明 foreign child metadata GC。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-enhanced.md",
+          "heading": "当前实现与责任；保证与窗口证据 / U4/U5",
+          "current_line": 14,
+          "status": "existing_fixed_evidence",
+          "note": "E 在 Task/put/whole 真实支持入口加图协议，put 无 Task 事实。",
+          "editions": [
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧 multi-return/targeted/shared sibling 断言只保适用的单输出身份/hold/GC 部分；不重开已关闭的 B06 缺口。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-correction-plan"
+    },
+    {
+      "id": "M14",
+      "sources": [
+        {
+          "path": "docs/roadmap.md",
+          "heading": "K0.1 身份、规格与可观测性",
+          "lines": [
+            567,
+            574
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / 黄金 trace",
+          "lines": [
+            99,
+            105
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "当前状态 / publication-trace-contracts",
+          "lines": [
+            42,
+            48
+          ]
+        }
+      ],
+      "retained_meaning": "原始 trace 保运行身份；黄金合同符号化随机值并验证因果偏序和进程内序列。观察失效不改变协议，ACK 事件不是效果权威；Complete、首次 owner READY、payload 退休与 GC 分别说明。",
+      "targets": [
+        {
+          "path": "docs/design.md",
+          "heading": "10. Trace 是一等接口",
+          "current_line": 1226,
+          "status": "edit_spec_pending",
+          "note": "重写只保因果/观察边界摘要；B 普通路径无 GCS 发布，E 保六阶段真实增量，删旧十 RPC 数量锁。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "3.1 保留的基础机制 / trace；7.2 固定行为组 / 七条学习主线",
+          "current_line": 134,
+          "status": "existing_settled_contract",
+          "note": "观察不参与正确性，原 main 走同一实际后端。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B02、B04",
+          "current_line": 36,
+          "status": "existing_fixed_evidence",
+          "note": "七个原 main/规范化 trace 绑定固定来源。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-enhanced.md",
+          "heading": "最终固定版本证据 / 七个教学 main",
+          "current_line": 31,
+          "status": "existing_fixed_evidence",
+          "note": "E 真实 trace 不规范化成 B 的路径。",
+          "editions": [
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "旧黄金事件数量和 phase 名不是后继合同；不要求所有运行收齐 trace 或用时钟排序证明并发。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-roadmap"
+    },
+    {
+      "id": "M15",
+      "sources": [
+        {
+          "path": "docs/acceptance-matrix.md",
+          "heading": "3. 有限的下一批语义故障验收 / F3–F7",
+          "lines": [
+            256,
+            260
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / F3、owner death、F7、Worker owner",
+          "lines": [
+            453,
+            479
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "heading": "当前状态 / executor-owned child death",
+          "lines": [
+            490,
+            494
+          ]
+        }
+      ],
+      "retained_meaning": "幸存准确 Complete、UNKNOWN、已知成功但无 bytes LOST 分开；publisher、Node、owner、child owner 死亡各有独立责任。完整已安装 child 死亡事实可解除其自身 hold，不能冒充活 child 的 Release。metadata-only 图实验只作算法/handler 来源，不证明公共环可达。",
+      "targets": [
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "5.3 结果未知与故障规则",
+          "current_line": 232,
+          "status": "existing_settled_contract",
+          "note": "B 基于幸存 Node/owner 准确事实；无事实才 UNKNOWN。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-baseline.md",
+          "heading": "行为与迁移去向 / B04、B07",
+          "current_line": 38,
+          "status": "existing_fixed_evidence",
+          "note": "保旧结果层级，新公共死亡修复由 K1/CF 项及新证据承接，不改历史 pass。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/redesign-plan.md",
+          "heading": "10.3 共用的失败推进与退休责任；10.5 全局防环的可达场景与入口覆盖",
+          "current_line": 427,
+          "status": "existing_settled_contract",
+          "note": "E 的 W/R 责任分开，旧 metadata-only 图证据非公共可达性依据。",
+          "editions": [
+            "base",
+            "enhanced"
+          ]
+        },
+        {
+          "path": "docs/acceptance-enhanced.md",
+          "heading": "保证与窗口证据 / W1–W4、owner/child death、U4/U5",
+          "current_line": 48,
+          "status": "existing_fixed_evidence",
+          "note": "E W2 两窗口、完整 child proof、R1–R3 有既有分层证据；R4 非门槛。",
+          "editions": [
+            "enhanced"
+          ]
+        }
+      ],
+      "scope_boundary": "不把旧中央 phase 全带回 B；不新增全参与方死亡乘积或未证明自环/首次互环。",
+      "deletion_preconditions": [
+        "P1",
+        "P2",
+        "P3",
+        "P4"
+      ],
+      "incoming_link_group": "L-acceptance-matrix"
+    }
+  ],
+  "archive_only_ranges": [
+    {
+      "source": "docs/correction-plan.md",
+      "lines": [
+        [
+          3,
+          7
+        ],
+        [
+          18,
+          18
+        ],
+        [
+          124,
+          125
+        ],
+        [
+          157,
+          172
+        ]
+      ],
+      "disposition": "archive_only",
+      "reason": "待确认流程、multi-return/targeted 和旧 D0–D2 顺序已被两阶段合同与 K0–K9 整理取代；B1 的通用准入含义见 M03。"
+    },
+    {
+      "source": "docs/handoff.md",
+      "lines": [
+        [
+          5,
+          7
+        ],
+        [
+          24,
+          39
+        ],
+        [
+          48,
+          68
+        ],
+        [
+          70,
+          74
+        ]
+      ],
+      "disposition": "archive_original_status_and_hashes",
+      "reason": "保留当时源码/草稿身份和证据边界，但不得把旧未实现/未修状态或本轮不运行限制当现在的计划。相应仍有效知识见 M01/M03/M05/M12/M13。"
+    },
+    {
+      "source": "docs/roadmap.md",
+      "lines": [
+        [
+          3,
+          7
+        ],
+        [
+          67,
+          501
+        ],
+        [
+          503,
+          561
+        ],
+        [
+          686,
+          694
+        ],
+        [
+          797,
+          818
+        ]
+      ],
+      "disposition": "archive_rolling_chronology_and_superseded_exits",
+      "reason": "保原 checkpoint、选择器、结果和旧权限事实；具体可保职责由 M01–M15 摘要映射，不恢复全 allowlist/宽矩阵。明确省略不当待完成工作。"
+    },
+    {
+      "source": "docs/acceptance-matrix.md",
+      "lines": [
+        [
+          3,
+          20
+        ],
+        [
+          50,
+          194
+        ],
+        [
+          228,
+          245
+        ],
+        [
+          254,
+          260
+        ],
+        [
+          298,
+          312
+        ]
+      ],
+      "disposition": "archive_old_selectors_counts_and_limits",
+      "reason": "旧 E/F 表是历史证据导航，不能复制成当前 manifest 或新 gate；targeted/multi-return/migration 项退休；F3–F7 通用含义与限制见 M09/M15。"
+    }
+  ],
+  "incoming_link_groups": [
+    {
+      "id": "L-correction-plan",
+      "target": "docs/correction-plan.md",
+      "retained_references": [
+        {
+          "path": "docs/redesign-plan.md",
+          "base_lines": [
+            9
+          ],
+          "enhanced_lines": [
+            9
+          ],
+          "current_lines": [
+            13
+          ],
+          "action": "历史来源链接改指 history-index 对应原 blob 条目；现行合同仍由 redesign 本页承担。"
+        },
+        {
+          "path": "docs/testing.md",
+          "base_lines": [
+            5
+          ],
+          "enhanced_lines": [
+            5
+          ],
+          "current_lines": [
+            5
+          ],
+          "action": "需求与执行清单边界改指 redesign §7.1/§7.4 与本版 acceptance；原提案来源改指 history-index。"
+        }
+      ],
+      "retiring_references": [
+        {
+          "path": "docs/handoff.md",
+          "lines": [
+            12,
+            72
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "lines": [
+            6
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "lines": [
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L-handoff",
+      "target": "docs/handoff.md",
+      "retained_references": [
+        {
+          "path": "docs/current-status.md",
+          "base_lines": [
+            37
+          ],
+          "enhanced_lines": [
+            38
+          ],
+          "current_lines": [
+            38
+          ],
+          "action": "旧快照/草稿来源链接改 history-index；当前结果指本版 acceptance，不复制未修缺陷状态。"
+        },
+        {
+          "path": "docs/testing.md",
+          "base_lines": [
+            4
+          ],
+          "enhanced_lines": [
+            4
+          ],
+          "current_lines": [
+            4
+          ],
+          "action": "旧未验证草稿来源改 history-index；保历史结果/证据层级，不继续称当前未验证。"
+        }
+      ],
+      "retiring_references": [
+        {
+          "path": "docs/correction-plan.md",
+          "lines": [
+            7
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "lines": [
+            5
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "lines": [
+            4
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L-roadmap",
+      "target": "docs/roadmap.md",
+      "retained_references": [],
+      "retiring_references": [
+        {
+          "path": "docs/handoff.md",
+          "lines": [
+            17
+          ]
+        },
+        {
+          "path": "docs/acceptance-matrix.md",
+          "lines": [
+            10
+          ]
+        },
+        {
+          "path": "docs/history/retired-core-publication/README.md",
+          "lines": [
+            12
+          ],
+          "action": "父任务合并历史索引时保来源并链接现行合同，旧开放出口不传播。"
+        },
+        {
+          "path": "docs/history/retired-owner-publication/README.md",
+          "lines": [
+            5
+          ],
+          "action": "父任务合并历史索引时保来源与分层证据限定。"
+        },
+        {
+          "path": "docs/history/retired-protocol-family/README.md",
+          "lines": [
+            85
+          ],
+          "action": "父任务合并历史索引时保来源，不再引用已删 backlog。"
+        }
+      ]
+    },
+    {
+      "id": "L-acceptance-matrix",
+      "target": "docs/acceptance-matrix.md",
+      "retained_references": [
+        {
+          "path": "docs/design.md",
+          "base_lines": [
+            980
+          ],
+          "enhanced_lines": [
+            980
+          ],
+          "current_lines": [
+            980
+          ],
+          "action": "历史结果去 history-index；当前证据去 acceptance-baseline B01–B09，E 增加 acceptance-enhanced 的 B/G/D/W/R 项。"
+        },
+        {
+          "path": "docs/current-status.md",
+          "base_lines": [
+            2325
+          ],
+          "enhanced_lines": [
+            2326
+          ],
+          "current_lines": [
+            2326
+          ],
+          "action": "随历史尾部归档从活动页移除；保留摘要若需链接，改指 history-index 对应条目。"
+        }
+      ],
+      "retiring_references": [
+        {
+          "path": "docs/handoff.md",
+          "lines": [
+            17
+          ]
+        },
+        {
+          "path": "docs/roadmap.md",
+          "lines": [
+            27
+          ]
+        }
+      ]
+    }
+  ],
+  "deletion_readiness": "NOT_ASSERTED：本草稿只给可审查去向。P1 由父任务核验，P2/P3 要由目标文档编辑/入链修改实际落实；未执行删除。",
+  "validation": {
+    "runtime_tests_run": false,
+    "git_operations_run": false,
+    "files_modified": [
+      "audit/two-version-cleanup/k3-document-staging/obsolete-contract-mapping.json",
+      "audit/two-version-cleanup/k3-document-staging/obsolete-contract-mapping.md"
+    ]
+  }
+}

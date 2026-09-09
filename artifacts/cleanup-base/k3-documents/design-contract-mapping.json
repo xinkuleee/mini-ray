@@ -1,0 +1,530 @@
+{
+  "schema_version": 1,
+  "status": "DRAFT_FOR_BASE_ONLY_NOT_APPLIED",
+  "date": "2026-09-09",
+  "source_tree": "C:/Users/t-hdong/Desktop/gao/mini-ray-base",
+  "source_identity_note": "对当时实际 B 源码只读核查；未绑定易变临时 HEAD、不记录阶段通过或测试数。line_at_review 是检查时定位，后续源码改变须重新解析符号，不把本草稿当实测证据。",
+  "output": "audit/two-version-cleanup/k3-document-staging/base/docs/design.md",
+  "target": "mini-ray-base/docs/design.md",
+  "line_count": 238,
+  "section_index": [
+    {
+      "heading": "1. 进程、身份与权威",
+      "line": 7
+    },
+    {
+      "heading": "2. 提交、依赖与 lease",
+      "line": 28
+    },
+    {
+      "heading": "3. 结果交接：Complete、READY 与退休",
+      "line": 52
+    },
+    {
+      "heading": "4. bytes、pull 与 source pin",
+      "line": 75
+    },
+    {
+      "heading": "5. 多 owner 与 pregrant 副本交接",
+      "line": 92
+    },
+    {
+      "heading": "6. 引用、put、GC 与 quarantine",
+      "line": 108
+    },
+    {
+      "heading": "7. 故障知识、whole 重建与首 ACK",
+      "line": 134
+    },
+    {
+      "heading": "8. 阻塞 get 的 CPU yield",
+      "line": 159
+    },
+    {
+      "heading": "9. Actor：创建、直达与 generation",
+      "line": 179
+    },
+    {
+      "heading": "10. PG：预留、LOST 与已有续行",
+      "line": 192
+    },
+    {
+      "heading": "11. 成员死亡与退出",
+      "line": 211
+    },
+    {
+      "heading": "12. trace 与阅读边界",
+      "line": 224
+    }
+  ],
+  "required_obsolete_mapping_ids": [
+    "M03",
+    "M06",
+    "M07",
+    "M08",
+    "M09",
+    "M10",
+    "M11",
+    "M14"
+  ],
+  "contracts": [
+    {
+      "id": "M03",
+      "sections": [
+        7
+      ],
+      "retained": "首 ACK 来自实际 queue handoff 的 immutable admission receipt；完整 request/reply 在 ACK 前缓存；旧回复不准入新效果；Drop 先绑定再缓存。",
+      "evidence": [
+        {
+          "path": "src/miniray/owner_reconstruction.py",
+          "symbol": "OwnedObjectReconstructionReducer.handle / _reply_from_outcome",
+          "line_at_review": 111
+        },
+        {
+          "path": "src/miniray/owner_reconstruction.py",
+          "symbol": "ReconstructionAdmissionReceipt validation and reply cache",
+          "line_at_review": 368
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_request_drop_owned_object_serialized",
+          "line_at_review": 5735
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "7. 故障知识、whole 重建与首 ACK",
+          "line": 134
+        }
+      ]
+    },
+    {
+      "id": "M06",
+      "sections": [
+        2,
+        6,
+        9
+      ],
+      "retained": "同步序列化/引用准备与异步用户函数分开；单输出、metadata-only wait、显式 put 和 Actor Ref 范围。",
+      "evidence": [
+        {
+          "path": "src/miniray/api.py",
+          "symbol": "RemoteFunction.remote",
+          "line_at_review": 1734
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_register_submission",
+          "line_at_review": 6132
+        },
+        {
+          "path": "src/miniray/task_outputs.py",
+          "symbol": "validate_num_returns",
+          "line_at_review": 22
+        },
+        {
+          "path": "src/miniray/put_handoff.py",
+          "symbol": "PutManifest / discover_put",
+          "line_at_review": 58
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "2. 提交、依赖与 lease",
+          "line": 28
+        },
+        {
+          "heading": "6. 引用、put、GC 与 quarantine",
+          "line": 108
+        },
+        {
+          "heading": "9. Actor：创建、直达与 generation",
+          "line": 179
+        }
+      ]
+    },
+    {
+      "id": "M07",
+      "sections": [
+        2,
+        3,
+        11
+      ],
+      "retained": "歧义 lease/Push 保冻结身份和未决义务，timeout 不替 Node 清资源；结果与退出区分真实事实。",
+      "evidence": [
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_execute",
+          "line_at_review": 9341
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_begin_ambiguous_lease_cancellation",
+          "line_at_review": 10676
+        },
+        {
+          "path": "src/miniray/output_publication_node.py",
+          "symbol": "complete / _converge_lease",
+          "line_at_review": 229
+        },
+        {
+          "path": "src/miniray/output_handoff.py",
+          "symbol": "module contract",
+          "line_at_review": 1
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "2. 提交、依赖与 lease",
+          "line": 28
+        },
+        {
+          "heading": "3. 结果交接：Complete、READY 与退休",
+          "line": 52
+        },
+        {
+          "heading": "11. 成员死亡与退出",
+          "line": 211
+        }
+      ]
+    },
+    {
+      "id": "M08",
+      "sections": [
+        4,
+        5
+      ],
+      "retained": "source pin outbox、Release-before-Pin、pregrant inventory、多 owner custody、死提交者交接分别保持。",
+      "evidence": [
+        {
+          "path": "src/miniray/transfer_pins.py",
+          "symbol": "TransferPinOutbox",
+          "line_at_review": 31
+        },
+        {
+          "path": "src/miniray/node.py",
+          "symbol": "_handle_pin_object_for_transfer",
+          "line_at_review": 4088
+        },
+        {
+          "path": "src/miniray/node.py",
+          "symbol": "_handle_release_object_pin",
+          "line_at_review": 4242
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "pregrant custody branch in _execute",
+          "line_at_review": 9355
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_drive_location_handoff",
+          "line_at_review": 12645
+        },
+        {
+          "path": "src/miniray/node.py",
+          "symbol": "_handle_ack_lease_dependency_custody",
+          "line_at_review": 5412
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "4. bytes、pull 与 source pin",
+          "line": 75
+        },
+        {
+          "heading": "5. 多 owner 与 pregrant 副本交接",
+          "line": 92
+        }
+      ]
+    },
+    {
+      "id": "M09",
+      "sections": [
+        6
+      ],
+      "retained": "迟到副本要原 owner 授权；STALE 不是 ACK，quarantine 不自授权删除，不把人工损坏当公共路径缺陷。",
+      "evidence": [
+        {
+          "path": "src/miniray/replica_cleanup.py",
+          "symbol": "ReplicaCleanupQueue.acknowledge",
+          "line_at_review": 85
+        },
+        {
+          "path": "src/miniray/node.py",
+          "symbol": "_drop_sealed_replica_locked",
+          "line_at_review": 3691
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "quarantine decision and death wakeup",
+          "line_at_review": 12887
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_drive_location_handoff docstring",
+          "line_at_review": 12649
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "6. 引用、put、GC 与 quarantine",
+          "line": 108
+        }
+      ]
+    },
+    {
+      "id": "M10",
+      "sections": [
+        8
+      ],
+      "retained": "CPU-only yield、signed debt、episode identity、notifier 入口补偿、原 deadline 与锁外通知。",
+      "evidence": [
+        {
+          "path": "src/miniray/resources.py",
+          "symbol": "ResourceLedger contract / reacquire_cpu",
+          "line_at_review": 217
+        },
+        {
+          "path": "src/miniray/blocking.py",
+          "symbol": "BlockingNotifier.blocking_scope",
+          "line_at_review": 83
+        },
+        {
+          "path": "src/miniray/node.py",
+          "symbol": "_handle_notify_worker_blocked / unblocked",
+          "line_at_review": 6155
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "LOST wait predicate/recheck and PENDING deadline",
+          "line_at_review": 6929
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "8. 阻塞 get 的 CPU yield",
+          "line": 159
+        }
+      ]
+    },
+    {
+      "id": "M11",
+      "sections": [
+        10
+      ],
+      "retained": "两 bundle STRICT PG，commit ACK 前不可见；LOST/retry 同锁、sticky typed cause、fresh 与既有续行分开。",
+      "evidence": [
+        {
+          "path": "src/miniray/placement.py",
+          "symbol": "_normalize_bundles",
+          "line_at_review": 75
+        },
+        {
+          "path": "src/miniray/placement_group_runtime.py",
+          "symbol": "apply_reply / fail_node",
+          "line_at_review": 370
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "dispatcher fresh-only PG admission",
+          "line_at_review": 8993
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "PG typed cause in ambiguous cancellation",
+          "line_at_review": 10683
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_retry_system_failure",
+          "line_at_review": 10933
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "10. PG：预留、LOST 与已有续行",
+          "line": 192
+        }
+      ]
+    },
+    {
+      "id": "M14",
+      "sections": [
+        12
+      ],
+      "retained": "trace 是观察；因果偏序、符号化 golden contract、owner READY 与 payload 退休/物理 GC 分开。",
+      "evidence": [
+        {
+          "path": "src/miniray/trace.py",
+          "symbol": "observational emit contract",
+          "line_at_review": 1
+        },
+        {
+          "path": "src/miniray/trace_contract.py",
+          "symbol": "TraceContract / _match_contract",
+          "line_at_review": 101
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "owner CAS capture outside sink",
+          "line_at_review": 11615
+        },
+        {
+          "path": "src/miniray/golden_traces/ordinary_task_success.json",
+          "symbol": "owner_ready / output_payload_retired",
+          "line_at_review": 109
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "12. trace 与阅读边界",
+          "line": 224
+        }
+      ]
+    }
+  ],
+  "common_mechanisms": [
+    {
+      "id": "C01",
+      "sections": [
+        1
+      ],
+      "retained": "真实 Driver/Worker Core、Node/GCS 职责；B 无普通结果事务或全局图。",
+      "evidence": [
+        {
+          "path": "src/miniray/control.py",
+          "symbol": "GCS control-plane contract",
+          "line_at_review": 1
+        },
+        {
+          "path": "src/miniray/output_handoff.py",
+          "symbol": "owner-local history contract",
+          "line_at_review": 1
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "CoreWorker construction",
+          "line_at_review": 1354
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "1. 进程、身份与权威",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "id": "C02",
+      "sections": [
+        3
+      ],
+      "retained": "owner register before effects，Node Complete/资源与 owner CAS/adoption/退休分别归权威。",
+      "evidence": [
+        {
+          "path": "src/miniray/output_publication_node.py",
+          "symbol": "prepare / complete",
+          "line_at_review": 135
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_drive_output_publication_adoption",
+          "line_at_review": 11550
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "3. 结果交接：Complete、READY 与退休",
+          "line": 52
+        }
+      ]
+    },
+    {
+      "id": "C03",
+      "sections": [
+        6,
+        7,
+        11
+      ],
+      "retained": "独立 borrower、contained/lineage holds、无 lease/lineage put、完整死亡证明、whole 重建与 owner 固定。",
+      "evidence": [
+        {
+          "path": "src/miniray/put_handoff.py",
+          "symbol": "PutManifest / discover_put",
+          "line_at_review": 58
+        },
+        {
+          "path": "src/miniray/ownership.py",
+          "symbol": "begin_output_publication_collection",
+          "line_at_review": 3794
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "_retire_lost_output_memberships",
+          "line_at_review": 7036
+        },
+        {
+          "path": "src/miniray/replica_cleanup.py",
+          "symbol": "acknowledge_node_death",
+          "line_at_review": 105
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "6. 引用、put、GC 与 quarantine",
+          "line": 108
+        },
+        {
+          "heading": "7. 故障知识、whole 重建与首 ACK",
+          "line": 134
+        },
+        {
+          "heading": "11. 成员死亡与退出",
+          "line": 211
+        }
+      ]
+    },
+    {
+      "id": "C04",
+      "sections": [
+        9
+      ],
+      "retained": "Actor direct/FIFO/same-Node generation restart 与 typed constructor failure；不支持 migration/Actor refs。",
+      "evidence": [
+        {
+          "path": "src/miniray/actor_worker.py",
+          "symbol": "typed constructor failure",
+          "line_at_review": 583
+        },
+        {
+          "path": "src/miniray/core.py",
+          "symbol": "Actor route fencing comment",
+          "line_at_review": 4331
+        }
+      ],
+      "design_sections": [
+        {
+          "heading": "9. Actor：创建、直达与 generation",
+          "line": 179
+        }
+      ]
+    }
+  ],
+  "not_claimed": [
+    "P1–P6 拟议 TaskSubmissions/LeaseAttempts/OwnerObjects 等新领域类已实现",
+    "新 B 已完成 K1/K7 或任何新源码通过测试",
+    "B 普通结果具有 GCS INTENT/ARM/terminal/adopted 或全局防环",
+    "metadata-only 图/纯模型等于公共进程证据"
+  ],
+  "validation": {
+    "pytest_run": false,
+    "source_tests_worktree_modified": false,
+    "git_commit": false,
+    "only_outputs_written": [
+      "audit/two-version-cleanup/k3-document-staging/base/docs/design.md",
+      "audit/two-version-cleanup/k3-document-staging/design-contract-mapping.json"
+    ],
+    "next_application_check": "父任务应用前核对实际 B 路径/符号及内部 Markdown 链接；现有行数/类型仅描述当前真实结构，不提前写入拟议标量化。"
+  }
+}
