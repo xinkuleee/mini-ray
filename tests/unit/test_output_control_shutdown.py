@@ -1,387 +1,148 @@
-"""Pure GCS shutdown barriers for the unified publication control path.
+"""Pure shutdown barriers for the base owner-led output path.
 
-At most two tiny manifests, one registered Node/Worker metadata pair and four
-contained edges.  No server start, Thread construction, RPC, real wait or user
-code is allowed.  GCS shutdown/membership, output recovery, graph authority and
-the child owner tables run unchanged; only transport is synchronous dispatch.
+One accepted task, one inline output and zero or one real child owner.
+The actual Core admission, handoff, loss cleanup and finish barriers run with
+synchronous callbacks. No user execution, runtime constructors, thread,
+socket, process, timer or wait is used. Complete and Node death are explicit
+input facts; neither is evidence that a process ran or that bytes survived.
 """
 
 from dataclasses import replace
-from types import SimpleNamespace
-import multiprocessing.process
-import socket
-import subprocess
-import threading
-import time
+import hashlib
 
 import pytest
 
-from miniray import control, output_protocol as wire, protocol
-from miniray.contained_cycle import (
-    ContainedGraphManifestDisposition, ContainedGraphTransactionState,
+from miniray import output_protocol as wire, protocol
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.core import _OutputNodeLossObligation
+from miniray.ids import LeaseID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.output_publication import (
+    OutputPublicationCompleteWitness, OutputPublicationHeader, OutputPublicationID,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
 )
-from miniray.ids import AttemptID, LeaseID, TaskID
-from miniray.output_publication import OutputPublicationManifest
-from miniray.output_publication_journal import (
-    OutputPublicationAdoptionProof, OutputPublicationSlotCleanupProof,
-)
-from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryDisposition
-from miniray.ownership import ObjectOwnerTable
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
-from tests.unit.test_output_publication import _assert_metadata
-from tests.unit.test_output_publication_control import _service
+from miniray.ownership import ObjectOwnerTable, ObjectState
+from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
+from miniray.resources import ResourceVector
+from tests.unit._pure_core import close_pure_core, make_pure_core
+from tests.unit.test_common_cleanup_progress import _no_runtime
 
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture(autouse=True)
-def _no_runtime(monkeypatch):
-    def forbidden(*_args, **_kwargs):
-        pytest.fail("pure output shutdown test attempted runtime infrastructure")
-
-    for owner, method in (
-        (threading.Thread, "__init__"), (threading.Thread, "start"),
-        (threading.Thread, "join"), (threading.Timer, "start"),
-        (threading.Event, "wait"), (threading.Condition, "wait"),
-        (multiprocessing.process.BaseProcess, "start"),
-        (socket, "socket"), (socket, "create_connection"),
-        (subprocess, "Popen"), (time, "sleep"),
-    ):
-        monkeypatch.setattr(owner, method, forbidden)
-    monkeypatch.setattr(control, "rpc_request", forbidden)
-    # Direct calls take shutdown's real no-joiner branch.  This is not a fake
-    # liveness result for a background handler: no handler thread exists here.
-    monkeypatch.setattr(control, "current_thread", lambda: SimpleNamespace(daemon=False))
+def _id(kind, value):
+    return kind(bytes((value,)) * 16)
 
 
-def _peer_releases(service, values):
-    """Represent already-promoted child custody in real owner tables.
-
-    This fixture concerns GCS lifetime barriers, not discovery or promotion.
-    Those prior facts are installed explicitly and release still executes the
-    real owner token/tombstone transition instead of returning constant True.
-    """
-    owners = {}
-    expected = set()
-    for slot in values.slots:
-        for transfer in slot.transfers:
-            owner = owners.setdefault(transfer.contained_owner_worker_id, ObjectOwnerTable())
-            child = transfer.contained_object_id
-            if not owner.contains(child):
-                owner.register(child, local_token="source-stays-live")
-            owner.add_contained_reference(child, transfer.final_hold)
-            expected.add((
-                transfer.contained_owner_address,
-                protocol.ReleaseContainedReference(
-                    child, transfer.contained_owner_worker_id, transfer.final_hold,
-                ),
-            ))
+@pytest.mark.parametrize("refs", (False, True), ids=("plain", "child"))
+def test_closed_admission_preserves_accepted_output_until_exact_cleanup_and_finish(refs, monkeypatch):
+    core = make_pure_core()
+    definition = core.define_remote_function(lambda: None)
+    pending, ref = core._register_submission(
+        definition, (), {}, ResourceVector(), num_returns=1, _enqueue=True,
+    )
+    assert core._submissions.get_nowait() == pending
+    core._submissions.task_done()
+    executor, publisher = _id(WorkerID, 91), _id(NodeID, 92)
+    child_id = ObjectID.for_task(_id(TaskID, 93))
+    transfer = PreparedContainedTransfer(
+        child_id, executor, ("child.invalid", 1234), OwnedContainedSource(executor),
+        ContainedReferenceHold(ref.object_id, executor, "shutdown-child"),
+        ContainedReferenceHold(ref.object_id, core.worker_id, "shutdown-child"),
+    )
+    identity = OutputPublicationID(_id(LeaseID, 94), pending.execution)
+    slot = OutputSlotManifest(
+        ref.object_id, protocol.ResultStorage.INLINE, 5, hashlib.sha256(b"value").hexdigest(),
+        (transfer,) if refs else (),
+    )
+    manifest = OutputPublicationManifest.create(OutputPublicationHeader(
+        identity, core.job_id, executor, core.worker_id,
+        OutputPublicationNodeIncarnation(publisher, 9201, 1),
+    ), (slot,))
+    complete = OutputPublicationCompleteWitness.for_manifest(manifest)
+    request = wire.RegisterOutputHandoff(manifest)
+    registered = core.register_output_handoff(request)
+    assert registered.accepted
+    child = ObjectOwnerTable()
+    if refs:
+        child.register(child_id, local_token="child-source")
+        child.publish_inline(child_id, None, b"child")
+        child.prepare_stored_contained_reference(transfer, authority_worker_id=executor)
+        child.promote_stored_contained_reference(transfer, authority_worker_id=executor)
     calls = []
 
-    def release(address, handler, request):
-        if handler != "release_contained_reference" or (address, request) not in expected:
-            pytest.fail("unexpected child cleanup route or identity")
-        assert not service.publications._composition_lock._is_owned()
-        calls.append(request)
-        assert len(calls) <= 4
-        changed = owners[request.owner_worker_id].release_contained_reference(
-            request.object_id, request.hold,
-        )
+    def release(address, handler, message):
+        assert refs and address == transfer.contained_owner_address
+        assert handler == "release_contained_reference" and len(calls) < 3
+        calls.append(message)
+        released = child.release_contained_reference(message.object_id, message.hold)
+        if len(calls) == 1:
+            raise TimeoutError("exact child cleanup happened before its ACK was lost")
         return protocol.ReleaseContainedReferenceReply(
-            request.object_id, request.owner_worker_id, request.hold, True, changed,
+            message.object_id, message.owner_worker_id, message.hold, True, released,
         )
 
-    service._stored_hold_rpc = release
-    return owners, calls
-
-
-def test_shutdown_fences_new_publications_but_exact_reports_and_cleanup_reach_clean(monkeypatch):
-    service, values = _service(monkeypatch, refs=True)
-    adapter = service.publications
-    graph = values.manifest.to_graph_manifest()
-    report = service.report_output_publication
-    intent = wire.ReportOutputPublicationIntent(values.manifest)
-    prepare = protocol.PrepareContainedGraph(graph)
-    assert report(intent).accepted
-    assert service.prepare_contained_graph(prepare).accepted
-    peers, calls = _peer_releases(service, values)
-    shutdown = protocol.Shutdown("output-cleanup-shutdown", "pure barrier contract")
-
-    blocked = service.shutdown(shutdown)
-    assert blocked.request_id == shutdown.request_id and not blocked.clean
-    assert not service._stop_event.is_set()
-    assert not service._shutdown_exit_scheduled
-    assert adapter._publication_admission_closed
-    assert adapter.graph.snapshot().admission_closed
-    assert service._owner_death_progress_thread is None
-    assert not service.placement_groups.has_active_operations()
-    assert not service.actor_coordinator.has_active_operations()
-    assert not service.owner_death_fences.has_active_operations()
-    assert adapter.has_active_operations()
-
-    # Closing admission is not permission to strand the already-accepted
-    # identity: exact INTENT/PREPARE replay and its completion remain legal.
-    replay = report(intent)
-    assert replay.accepted and replay.request == intent
-    assert replay.ack.disposition is OutputRecoveryDisposition.ALREADY_RECORDED
-    prepared = service.prepare_contained_graph(prepare)
-    assert prepared.accepted
-    assert prepared.receipt.disposition is ContainedGraphManifestDisposition.ALREADY_PREPARED
-    other_header = replace(values.header, publication_id=replace(
-        values.publication_id, lease_id=type(values.lease).random(),
-    ))
-    unseen = OutputPublicationManifest.create(other_header, values.slots)
-    before = adapter.graph.snapshot()
-    assert not report(wire.ReportOutputPublicationIntent(unseen)).accepted
-    assert not service.prepare_contained_graph(protocol.PrepareContainedGraph(
-        unseen.to_graph_manifest()
-    )).accepted
-    assert adapter.graph.snapshot() == before
-    assert adapter.output_recovery.publication_ids() == (values.publication_id,)
-    with pytest.raises(ValueError, match="different request ID"):
-        service.shutdown(protocol.Shutdown("other-shutdown", "must not rebind"))
-
-    assert report(wire.ArmOutputPublication(
-        values.publication_id, values.manifest.manifest_digest,
-    )).accepted
-    assert report(wire.ReportOutputPublicationTerminal(values.witness)).accepted
-    commit = service.commit_contained_graph(protocol.CommitContainedGraph(graph))
-    assert commit.accepted and commit.receipt.state is ContainedGraphTransactionState.COMMITTED
-    adoption = wire.ReportOutputPublicationAdopted(OutputPublicationAdoptionProof(
-        values.witness, values.owner, "shutdown-owner-received",
-    ))
-    assert report(adoption).accepted
-    assert not service.shutdown(shutdown).clean  # committed graph still owns four edges
-    assert not service._stop_event.is_set()
-
-    cleanup_requests = []
-    for index, slot in enumerate(values.slots):
-        for transfer in slot.transfers:
-            request = protocol.ReleaseContainedReference(
-                transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.final_hold,
-            )
-            reply = service._stored_hold_rpc(
-                transfer.contained_owner_address, "release_contained_reference", request,
-            )
-            assert reply.accepted and reply.released
-        release = protocol.ReleaseContainedGraphContainer(graph, slot.object_id)
-        released = service.release_contained_graph_container(release)
-        assert released.accepted and released.receipt.released_edges == slot.edges
-        cleanup = wire.ReportOutputPublicationSlotCollected(OutputPublicationSlotCleanupProof(
-            values.witness, values.owner, index, slot.object_id, "shutdown-slot-{}".format(index),
-        ))
-        assert report(cleanup).accepted
-        cleanup_requests.append((release, cleanup))
-        if index == 0:
-            assert not service.shutdown(shutdown).clean
-            assert not service._stop_event.is_set()
-            assert set(adapter.graph.snapshot().committed_edges) == set(values.slots[1].edges)
-
-    assert len(calls) == 4
-    for slot in values.slots:
-        for transfer in slot.transfers:
-            child = peers[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
-            assert transfer.final_hold not in child.contained_holds
-            assert "source-stays-live" in child.local_tokens
-    assert not adapter.graph.snapshot().committed_edges
-    assert not adapter.graph.snapshot().prepared_edges
-    assert not adapter.has_active_operations()
-    clean = service.shutdown(shutdown)
-    assert clean.clean and clean.request_id == shutdown.request_id
-    assert service._stop_event.is_set() and service._shutdown_exit_scheduled
-    assert service.shutdown(shutdown).clean
-    for release, cleanup in cleanup_requests:
-        assert service.release_contained_graph_container(release).receipt.disposition is (
-            ContainedGraphManifestDisposition.ALREADY_RELEASED
-        )
-        assert report(cleanup).ack.disposition is OutputRecoveryDisposition.ALREADY_RECORDED
-    assert report(adoption).accepted
-    assert service._owner_death_progress_thread is None
-    _assert_metadata(adapter.output_recovery.snapshot(values.publication_id))
-
-
-def test_closed_shutdown_still_commits_and_replays_exact_node_death_under_publication_lock(monkeypatch):
-    service, values = _service(monkeypatch, refs=False)
-    adapter, registry = service.publications, service.publications.output_recovery
-    assert service.report_output_publication(wire.ReportOutputPublicationIntent(values.manifest)).accepted
-    shutdown = protocol.Shutdown("output-shutdown-before-node-death", "pure metadata contract")
-    assert not service.shutdown(shutdown).clean
-    assert adapter._publication_admission_closed and not service._stop_event.is_set()
-    node = values.header.node_incarnation
-    request = protocol.ReportNodeDeath(
-        "node-exit-after-shutdown", node.node_id, node.node_pid, node.registration_epoch,
-        1, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed process exit",
+    core._borrow_rpc = release
+    death = protocol.NodeDeathRecord(
+        "shutdown-publisher-death", publisher, 9201, 1, 1, 7,
+        protocol.NodeDeathReason.PROCESS_EXIT, "explicit member fact",
     )
-    membership = service.nodes.report_death
-    freeze = registry.freeze_node_death
-    events = []
-
-    def commit_membership(message):
-        assert adapter._composition_lock._is_owned()
-        assert message == request
-        result = membership(message)
-        events.append(("membership", result.disposition))
-        return result
-
-    def freeze_outputs(death):
-        assert adapter._composition_lock._is_owned()
-        observed = service.nodes.get(node.node_id)
-        assert observed.state is protocol.NodeMembershipState.DEAD
-        assert observed.death == death
-        result = freeze(death)
-        assert len(result) == 1
-        assert result[0].publication_id == values.publication_id
-        events.append(("freeze", death))
-        return result
-
-    monkeypatch.setattr(service.nodes, "report_death", commit_membership)
-    monkeypatch.setattr(registry, "freeze_node_death", freeze_outputs)
-    first = service.report_node_death(request)
-    assert first.disposition is protocol.NodeDeathDisposition.APPLIED
-    work = registry.frozen_workset(first.death)
-    second = service.report_node_death(request)
-    assert second.disposition is protocol.NodeDeathDisposition.ALREADY_DEAD
-    assert second.death == first.death
-    assert registry.frozen_workset(second.death) == work
-    assert events == [
-        ("membership", protocol.NodeDeathDisposition.APPLIED), ("freeze", first.death),
-        ("membership", protocol.NodeDeathDisposition.ALREADY_DEAD), ("freeze", first.death),
-    ]
-    assert work[0].action is OutputRecoveryAction.PRECOMPLETE_ROLLBACK
-    assert work[0].snapshot.complete is None
-    worker = service.get_worker_state(protocol.GetWorkerState(values.executor))
-    assert worker.state is protocol.WorkerMembershipState.DEAD
-    assert worker.death.reason is protocol.WorkerDeathReason.NODE_EXIT
-    assert not service.shutdown(shutdown).clean
-    assert not service._stop_event.is_set()
-    assert not service.report_output_publication(
-        wire.ArmOutputPublication(values.publication_id, values.manifest.manifest_digest)
-    ).accepted
-    assert registry.frozen_workset(first.death) == work
-
-    # No edges, bytes, PGs or actors exist.  One real bounded progress call can
-    # resolve the frozen intent without any fabricated peer acknowledgment.
-    progress = wire.ProgressOutputNodeLoss(work[0])
-    result = service.progress_output_node_loss(progress)
-    assert result.snapshot.resolution is not None
-    assert result.snapshot.resolution.kept_slots == ()
-    assert result.snapshot.complete is None
-    assert service.progress_output_node_loss(progress).snapshot == result.snapshot
-    assert registry.frozen_workset(first.death) == work
-    assert not adapter.has_active_operations()
-    assert service.shutdown(shutdown).clean
-    assert service._stop_event.is_set()
-    assert service._owner_death_progress_thread is None
-    _assert_metadata(result)
-
-
-def test_membership_commit_before_freeze_failure_replays_complete_two_publication_workset(monkeypatch):
-    """One failed service composition cannot hide either admitted publication.
-
-    The registry already builds its whole workset before mutation.  This test
-    instead interrupts the service between the earlier membership commit and
-    that atomic registry operation; it does not recreate a partially mutated
-    legacy saga coordinator.  Exactly two publications/four slots, no edges.
-    """
-    service, values = _service(monkeypatch, refs=False)
-    adapter, registry = service.publications, service.publications.output_recovery
-    task = TaskID(bytes.fromhex("32" * 16))
-    execution = TaskExecutionKey(TaskOutputManifest.for_task(task, 2), AttemptID(task, 0))
-    header = replace(values.header, publication_id=replace(
-        values.publication_id, execution=execution, lease_id=LeaseID(bytes.fromhex("70" * 16)),
-    ))
-    second_manifest = OutputPublicationManifest.create(header, tuple(
-        replace(slot, object_id=object_id)
-        for slot, object_id in zip(values.slots, execution.output_ids)
-    ))
-    manifests = (values.manifest, second_manifest)
-    identities = tuple(manifest.publication_id for manifest in manifests)
-    assert len(set(identities)) == 2
-    assert len({object_id for identity in identities for object_id in identity.output_ids}) == 4
-    for manifest in manifests:
-        assert manifest.to_graph_manifest() is None
-        assert service.report_output_publication(wire.ReportOutputPublicationIntent(manifest)).accepted
-    before = tuple(registry.snapshot(identity) for identity in identities)
-    shutdown = protocol.Shutdown("two-publication-freeze-shutdown", "one interrupted freeze")
-    assert not service.shutdown(shutdown).clean
-    assert adapter._publication_admission_closed and not service._stop_event.is_set()
-    node = values.header.node_incarnation
-    request = protocol.ReportNodeDeath(
-        "node-exit-two-publications", node.node_id, node.node_pid, node.registration_epoch,
-        1, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed process exit",
-    )
-    report_membership = service.nodes.report_death
-    freeze = registry.freeze_node_death
-    membership_dispositions, freeze_attempts = [], []
-
-    def observed_membership(message):
-        assert adapter._composition_lock._is_owned()
-        assert message == request
-        reply = report_membership(message)
-        membership_dispositions.append(reply.disposition)
-        assert len(membership_dispositions) <= 2
-        return reply
-
-    def fail_once_before_atomic_freeze(death):
-        assert adapter._composition_lock._is_owned()
-        committed_node = service.nodes.get(node.node_id)
-        assert committed_node.state is protocol.NodeMembershipState.DEAD
-        assert committed_node.death == death
-        freeze_attempts.append(death)
-        assert len(freeze_attempts) <= 2
-        if len(freeze_attempts) == 1:
-            raise RuntimeError("publication freeze interrupted after membership commit")
-        assert tuple(registry.snapshot(identity) for identity in identities) == before
-        workset = freeze(death)
-        assert len(workset) == 2
-        assert {work.publication_id for work in workset} == set(identities)
-        return workset
-
-    monkeypatch.setattr(service.nodes, "report_death", observed_membership)
-    monkeypatch.setattr(registry, "freeze_node_death", fail_once_before_atomic_freeze)
-    with pytest.raises(RuntimeError, match="after membership commit"):
-        service.report_node_death(request)
-    committed = service.nodes.get(node.node_id)
-    assert committed.state is protocol.NodeMembershipState.DEAD
-    assert committed.death is not None and committed.death == freeze_attempts[0]
-    assert membership_dispositions == [protocol.NodeDeathDisposition.APPLIED]
-    assert tuple(registry.snapshot(identity) for identity in identities) == before
-    assert all(snapshot.frozen_node_death is None for snapshot in before)
-    assert set(registry.publication_ids()) == set(identities)
-    assert adapter.has_active_operations()
-    assert not service.shutdown(shutdown).clean
-    assert not service._stop_event.is_set()
-
-    # No intervening intent/query handler is called: publisher validation may
-    # legitimately perform a lazy freeze.  This replay must itself repair the
-    # exposed membership/workset gap and cannot return success after only one
-    # of the two publications was admitted to recovery.
-    replay = service.report_node_death(request)
-    assert replay.disposition is protocol.NodeDeathDisposition.ALREADY_DEAD
-    assert replay.death == committed.death
-    assert membership_dispositions == [
-        protocol.NodeDeathDisposition.APPLIED, protocol.NodeDeathDisposition.ALREADY_DEAD,
-    ]
-    assert freeze_attempts == [committed.death, committed.death]
-    workset = registry.frozen_workset(replay.death)
-    assert len(workset) == 2 and {work.publication_id for work in workset} == set(identities)
-    assert {work.manifest for work in workset} == set(manifests)
-    assert all(work.action is OutputRecoveryAction.PRECOMPLETE_ROLLBACK for work in workset)
-    assert all(registry.snapshot(identity).frozen_node_death == replay.death for identity in identities)
-    assert not service.shutdown(shutdown).clean
-
-    for index, work in enumerate(workset):
-        result = service.progress_output_node_loss(wire.ProgressOutputNodeLoss(work))
-        assert result.snapshot.resolution is not None
-        assert result.snapshot.resolution.kept_slots == () and result.snapshot.complete is None
-        assert registry.frozen_workset(replay.death) == workset
-        _assert_metadata(result)
-        if index == 0:
-            assert adapter.has_active_operations()
-            assert not service.shutdown(shutdown).clean
-            assert not service._stop_event.is_set()
-    assert not adapter.has_active_operations()
-    assert service.shutdown(shutdown).clean
-    assert service._stop_event.is_set()
-    assert service._owner_death_progress_thread is None
+    loss = _OutputNodeLossObligation(identity, death)
+    try:
+        # Admission closes through the real drain operation. Without a running
+        # lane the accepted finish barrier is the finalization authority.
+        assert core.shutdown(timeout=0.1, preserve_owner_protocol=True)
+        assert not core._accepting and not core.owner_protocol_closed
+        assert core._task_finish_barriers[ref.object_id] == pending
+        assert core._accepted_task_count == 1
+        assert not core.can_finalize_shutdown(require_distributed_clean=True)
+        assert not core.finalize_shutdown(require_distributed_clean=True, timeout=0.1)
+        before = core.owner_table.snapshot(ref.object_id)
+        with pytest.raises(RuntimeError, match="shutting down"):
+            core._register_submission(definition, (), {}, ResourceVector(), _enqueue=True)
+        assert core.owner_table.snapshot(ref.object_id) == before
+        assert core.register_output_handoff(request) == registered
+        report = wire.ReportOutputHandoffComplete(complete)
+        completed = core.report_output_handoff_complete(report)
+        assert completed.accepted and completed.snapshot.complete == complete
+        assert core.report_output_handoff_complete(report) == completed
+        if refs:
+            assert not core._drive_output_node_loss(pending, loss)
+            assert identity in core._output_node_cleanup
+            assert pending.task_key in core._protocol_unresolved
+            assert not core.shutdown(timeout=0.1, preserve_owner_protocol=True)
+            assert not core.owner_protocol_closed
+            assert core.owner_table.snapshot(ref.object_id) == before
+        assert core._drive_output_node_loss(pending, loss)
+        assert core.owner_table.snapshot(ref.object_id).state is ObjectState.LOST
+        assert identity not in core._output_node_cleanup
+        assert pending.task_key not in core._protocol_unresolved
+        assert not core.can_finalize_shutdown(require_distributed_clean=True)
+        assert core._finish_pending_task(pending)
+        assert core._accepted_task_count == 0 and not core._task_finish_barriers
+        assert core._finish_pending_task(pending)
+        core._reference_mailbox.drain()
+        assert core.can_finalize_shutdown(require_distributed_clean=True)
+        assert core._drive_output_node_loss(pending, loss)
+        assert len(calls) == (3 if refs else 0)
+        if refs:
+            assert calls[0] == calls[1]
+            assert not child.snapshot(child_id).contained_holds
+            assert child.snapshot(child_id).local_tokens == frozenset({"child-source"})
+        # No reference event thread exists in this fixture. Finalization still
+        # performs its real owner protocol fence before stopping that boundary.
+        stopped = []
+        def stop_reference_events(_deadline):
+            assert core.owner_protocol_closed
+            stopped.append(True)
+            return True
+        monkeypatch.setattr(core, "_stop_reference_events", stop_reference_events)
+        assert core.finalize_shutdown(require_distributed_clean=True, timeout=0.1)
+        assert core.owner_protocol_closed and stopped == [True]
+        assert not core.report_output_handoff_complete(report).accepted
+    finally:
+        # Final owner closure leaves no consumer to service a handle close.
+        # Release the fixture's local token explicitly, without claiming GC.
+        for token in tuple(core.owner_table.snapshot(ref.object_id).local_tokens):
+            core.owner_table.release_local_reference(ref.object_id, token)
+        close_pure_core(core)

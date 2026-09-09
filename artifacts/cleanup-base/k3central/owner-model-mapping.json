@@ -1,0 +1,92 @@
+[
+  {
+    "old": "test_bounded_manifest_derives_ordered_stable_output_ids",
+    "new": "test_single_manifest_derives_stable_identity_across_attempts",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_bounded_manifest_rejects_invalid_public_counts",
+    "new": "test_manifest_rejects_non_single_public_counts",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_manifest_rejects_missing_reordered_or_foreign_slots",
+    "new": "test_manifest_rejects_missing_duplicate_or_foreign_identity",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_batch_registration_validation_is_side_effect_free_and_commit_is_atomic",
+    "new": "test_registration_preflight_is_side_effect_free_and_exact_replay_is_idempotent",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_partial_registration_is_rejected_without_filling_missing_siblings",
+    "new": "test_incompatible_existing_registration_is_rejected_without_mutation",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_success_manifest_validation_and_commit_cover_mixed_storage_atomically",
+    "new": "test_single_success_preflights_then_publishes_one_exact_value",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_success_manifest_requires_exact_order_and_one_owner_before_mutation",
+    "new": "test_success_requires_exact_object_and_registered_owner_before_mutation",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_stored_replay_binds_complete_descriptor_without_partial_mutation",
+    "new": "test_stored_replay_binds_complete_descriptor_without_mutation",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_stored_replay_attempt_drift_is_fenced_without_mutation",
+    "new": "test_stored_replay_attempt_drift_is_fenced_without_mutation",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_validated_success_plan_rechecks_and_refuses_partial_visibility",
+    "new": "test_stale_success_preflight_is_revalidated_after_boundary",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_attempt_advance_validates_all_siblings_before_one_commit",
+    "new": "test_attempt_advance_preflights_and_fences_stale_expected_attempt",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_attempt_advance_rejects_one_unready_sibling_without_advancing_any",
+    "new": "test_ready_output_cannot_advance_without_loss_transition",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_task_error_validation_commit_and_replay_are_manifest_atomic",
+    "new": "test_error_preflight_commit_and_replay_preserve_exact_error",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_validated_error_plan_rechecks_and_never_partially_fails_siblings",
+    "new": "test_stale_error_preflight_cannot_replace_another_terminal_error",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  },
+  {
+    "old": "test_recovery_lineage_survives_until_the_last_sibling_is_collected",
+    "new": "test_single_output_collection_retires_producer_lineage_after_exact_claim",
+    "disposition": "retained single-output equivalent; sibling cardinality retired",
+    "limits": "Single-result preflight/commit; same-lock validated success, independent tiers, collection metadata not physical byte proof"
+  }
+]

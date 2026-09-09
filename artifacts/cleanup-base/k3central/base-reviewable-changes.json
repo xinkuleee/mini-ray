@@ -1,0 +1,180 @@
+{
+  "plan_revision": "R2.2",
+  "status": "bounded_replacements_passed_two_graph_files_retired",
+  "no_pytest_run_by_subtask": true,
+  "rewritten_files": [
+    {
+      "path": "tests/unit/test_contained_cycle_policy.py",
+      "sha256": "ec9969438d5fe0220bfa8708bf90fca0acc378a4cd5b046562fa298ad1f94a6e",
+      "functions": [
+        "test_python_container_cycle_is_serialized_without_an_object_id_edge"
+      ],
+      "direct_test_imports": []
+    },
+    {
+      "path": "tests/unit/test_output_publication_control.py",
+      "sha256": "e49efaa86b4af93932cced11011c68bb9dacd55ba8aea1873f6e5a01bbd79d65",
+      "functions": [
+        "test_base_gcs_has_no_ordinary_output_publication_authority_or_routes"
+      ],
+      "direct_test_imports": [
+        "tests.unit.test_output_publication"
+      ]
+    },
+    {
+      "path": "tests/unit/test_output_control_shutdown.py",
+      "sha256": "9fb6420bfdd92579e8d4d3972d954e8ddc97f2fce8f1cdcedba9771fcfe86f94",
+      "functions": [
+        "test_closed_admission_preserves_accepted_output_until_exact_cleanup_and_finish"
+      ],
+      "direct_test_imports": [
+        "tests.unit._pure_core",
+        "tests.unit.test_common_cleanup_progress"
+      ]
+    },
+    {
+      "path": "tests/unit/test_multi_container_graph_protocol.py",
+      "sha256": "b85172fff6f2c15a307346c70737c33ce3c927e06652043ccc178f20e8f2a38b",
+      "functions": [
+        "test_single_output_rollback_rejects_inexact_ack_vectors_and_tampered_roundtrip"
+      ],
+      "direct_test_imports": [
+        "tests.unit.test_output_publication_journal"
+      ]
+    },
+    {
+      "path": "tests/unit/test_output_node_loss_control.py",
+      "sha256": "8331b6b129c8fd2940708f976d64e6dea24e776b3518abf1a3ead975a15dd4d3",
+      "functions": [
+        "test_collected_child_accepts_exact_compensation_without_reviving_its_identity",
+        "test_cleanup_revalidates_child_ack_before_retiring_an_obligation",
+        "test_dead_publisher_first_registration_does_not_create_handoff_history"
+      ],
+      "direct_test_imports": [
+        "tests.unit._pure_core",
+        "tests.unit.test_common_cleanup_progress",
+        "tests.unit.test_output_handoff"
+      ]
+    },
+    {
+      "path": "tests/unit/test_output_recovery.py",
+      "sha256": "56fbbd0954dc0726a8cb9281aeecfb6b76bb06793136a1823d9174b904d4e69c",
+      "functions": [
+        "test_resolution_rejects_changed_authority_before_owner_mutation",
+        "test_keep_requires_exact_complete_and_independent_inline_bytes",
+        "test_resolved_receipt_rejects_changed_death_without_rewriting_history"
+      ],
+      "direct_test_imports": [
+        "tests.unit.test_node_lost_output_resolution"
+      ]
+    }
+  ],
+  "bounded_case_counts": {
+    "test_contained_cycle_policy.py": 1,
+    "test_output_publication_control.py": 1,
+    "test_output_control_shutdown.py": 2,
+    "test_multi_container_graph_protocol.py": 5,
+    "test_output_node_loss_control.py": 7,
+    "test_output_recovery.py": 10
+  },
+  "policy_selectors": [
+    "tests/unit/test_collection_safety.py::test_base_python_cycle_contract_has_only_its_reviewed_pure_scope",
+    "tests/unit/test_collection_safety.py::test_broad_or_missing_selection_fails_before_any_collection"
+  ],
+  "validation": {
+    "directory": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\two-version-cleanup\\execution\\base-k3b-02",
+    "identity": {
+      "branch": "refs/heads/teaching-base",
+      "head": "f4e4bb52fa9281d3eac60f32247e54f3632ef8e4",
+      "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_foreign_late_output_replica_cleanup_path.py\n M tests/integration/test_late_output_replica_cleanup_path.py\n M tests/unit/_pure_reference_output_runtime.py\n M tests/unit/test_borrowed_object_refs.py\n M tests/unit/test_collection_safety.py\n M tests/unit/test_contained_cycle_policy.py\n M tests/unit/test_contained_edge_gc.py\n M tests/unit/test_contained_edge_runtime.py\n M tests/unit/test_core_actor_restart.py\n D tests/unit/test_core_output_publication.py\n M tests/unit/test_core_placement_group_scheduling.py\n M tests/unit/test_core_task_retry.py\n M tests/unit/test_lease_completion_handshake.py\n M tests/unit/test_multi_container_graph_protocol.py\n M tests/unit/test_multi_return_owner_model.py\n M tests/unit/test_node_blocking_get_authority.py\n M tests/unit/test_node_placement_group_runtime.py\n M tests/unit/test_output_control_shutdown.py\n M tests/unit/test_output_node_loss_control.py\n M tests/unit/test_output_publication_control.py\n M tests/unit/test_output_recovery.py\n?? tests/support/_contained_output.py\n",
+      "archive_sha256": "0c38d9bdd3abd60581748745e60dedfd09fffa08a463fd79f72a49a15008b227",
+      "file_count": 484,
+      "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+    },
+    "cases": [
+      {
+        "mode": "case",
+        "selector": "tests/unit/test_contained_cycle_policy.py",
+        "exit_code": 0,
+        "seconds": 12.999,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3b-02/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_contained_cycle_policy.py"
+        ],
+        "log": "001-case.log"
+      },
+      {
+        "mode": "case",
+        "selector": "tests/unit/test_output_publication_control.py",
+        "exit_code": 0,
+        "seconds": 8.046,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3b-02/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_output_publication_control.py"
+        ],
+        "log": "002-case.log"
+      },
+      {
+        "mode": "case",
+        "selector": "tests/unit/test_output_control_shutdown.py",
+        "exit_code": 0,
+        "seconds": 16.053,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3b-02/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_output_control_shutdown.py"
+        ],
+        "log": "003-case.log"
+      },
+      {
+        "mode": "case",
+        "selector": "tests/unit/test_multi_container_graph_protocol.py",
+        "exit_code": 0,
+        "seconds": 6.364,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3b-02/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_multi_container_graph_protocol.py"
+        ],
+        "log": "004-case.log"
+      },
+      {
+        "mode": "case",
+        "selector": "tests/unit/test_output_node_loss_control.py",
+        "exit_code": 0,
+        "seconds": 5.547,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3b-02/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_output_node_loss_control.py"
+        ],
+        "log": "005-case.log"
+      },
+      {
+        "mode": "case",
+        "selector": "tests/unit/test_output_recovery.py",
+        "exit_code": 0,
+        "seconds": 5.431,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3b-02/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_output_recovery.py"
+        ],
+        "log": "006-case.log"
+      }
+    ],
+    "limit": "These are exact working-tree candidate tests; they do not claim final HEAD acceptance, E execution, or validation of unrelated old helper consumers."
+  },
+  "retired_after_validation": [
+    "tests/unit/test_contained_graph_manifest_boundaries.py",
+    "tests/unit/test_contained_graph_protocol.py"
+  ]
+}

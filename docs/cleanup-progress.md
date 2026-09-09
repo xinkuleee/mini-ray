@@ -31,3 +31,5 @@ K2k：publication51/finalize9、stored-contained7、Worker completion9/unified75
 K3a：objectownership8、Workerinline8/materialized7/stored25、foreignlineage6/service15通过；Worker side-Core14个pure函数与4个真实loopback selector全部通过。未扩大固定gate，迁移证据单独保存。
 
 K3b：contained-GC5/core-task-retry6/lease-handshake6通过；local/foreign迟到副本原两个真实smoke均通过（13.43s/18.62s），保旧epoch准确Drop与新重建bytes/hold不被晚消息破坏。
+
+K3central：6旧central/graph文件迁B26case全过，collection-policy11case通过，2纯全局图文件按B/E差异映射退休；E待迁清单保留而非忘记。single-owner-model15原函数转单输出25case通过。

@@ -1,0 +1,685 @@
+{
+  "plan_revision": "R2.2",
+  "historical_base": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+  "historical_enhanced": "ce29981a547f83b53b0c1df9f91354dcf89d8e4f",
+  "scope": "four graph-bound test files; no runtime source edits; no pytest invoked by this agent",
+  "not_coverage_claim": "Existing E tests are fixed-archive references, not a tested teaching-enhanced branch. Pending means re-audit/migrate during K8 before K9. Existing B behavior coverage is separate from exact legacy representation retirement.",
+  "files": [
+    {
+      "path": "tests/unit/test_contained_cycle_policy.py",
+      "archived_sha256": {
+        "base": "dae568a4d0bffdec96ec6f12c493a36dd62f4d6c7032a07f7044366cf300e5b9",
+        "enhanced": "dae568a4d0bffdec96ec6f12c493a36dd62f4d6c7032a07f7044366cf300e5b9"
+      },
+      "plan_partial_references": [
+        {
+          "replacement": [
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_unregistered_fences_beside_live_successor_never_claim_epoch_or_forward_permission",
+            "tests/unit/test_enhanced_publication.py::test_w2_late_terminal_is_history_never_reopens_fenced_progress"
+          ],
+          "coverage_status": "partial_behavior_reference_not_one_for_one",
+          "action": "保留语义并迁当前fixture；相近当前测试不能冒充已完全覆盖全部旧负例。",
+          "subjects": [
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_python_container_cycle_is_serialized_without_an_object_id_edge",
+              "line": 55
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_self_contained_object_id_is_rejected_without_mutation",
+              "line": 70
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_whole_candidate_batch_is_rejected_atomically",
+              "line": 85
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_prepared_edges_close_the_concurrent_preflight_race",
+              "line": 106
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_abort_removes_reservation_but_tombstones_its_identity",
+              "line": 147
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_release_returns_full_obligations_and_opens_the_dag_again",
+              "line": 180
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_prepared_container_cannot_be_released_then_committed",
+              "line": 201
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_cycle_policy.py::test_transaction_replay_is_exact_and_conflicts_are_non_mutating",
+              "line": 215
+            }
+          ]
+        }
+      ],
+      "disposition": "retained minimal current B tests",
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_python_container_cycle_is_serialized_without_an_object_id_edge",
+          "old_line": 55,
+          "old_end_line": 66,
+          "contract": "Python self-reference serializes without a nested ObjectRef identity.",
+          "base_disposition": "retained_in_place",
+          "base_replacements": [
+            "tests/unit/test_contained_cycle_policy.py::test_python_container_cycle_is_serialized_without_an_object_id_edge"
+          ],
+          "enhanced_references": [],
+          "representation_retired": "The graph.snapshot empty assertion was unrelated authority construction; encoded.nested_refs already proves no reference edge.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_self_contained_object_id_is_rejected_without_mutation",
+          "old_line": 70,
+          "old_end_line": 81,
+          "contract": "Global ObjectID self-cycle rejection with no admitted graph edge.",
+          "base_disposition": "enhanced_only_no_base_global_graph",
+          "base_replacements": [],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_self_cycle_rejected_and_two_alias_holds_do_not_hide_cycle"
+          ],
+          "representation_retired": "Old explicit cycle_path exception/edge-only transaction representation retires.",
+          "enhanced_pending": "K8 strengthen current self-cycle assertion to compare graph-active/receipt history before and after rejection if current E tests do not already prove no mutation."
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_whole_candidate_batch_is_rejected_atomically",
+          "old_line": 85,
+          "old_end_line": 102,
+          "contract": "A candidate that would close an ObjectID cycle must not reserve any candidate edge.",
+          "base_disposition": "enhanced_only_no_base_global_graph",
+          "base_replacements": [],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_self_cycle_rejected_and_two_alias_holds_do_not_hide_cycle"
+          ],
+          "representation_retired": "Atomic batch across three containers in one old transaction is retired; E supports one ordinary output/put per publication.",
+          "enhanced_pending": "K8 single supported publication with two child edges, one safe and one closing a prepared path: rejected prepare must not add the safe edge either. No multi-target API."
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_prepared_edges_close_the_concurrent_preflight_race",
+          "old_line": 106,
+          "old_end_line": 143,
+          "contract": "Prepared reservations participate in cycle exclusion while another publication is admitted.",
+          "base_disposition": "enhanced_only_no_base_global_graph",
+          "base_replacements": [],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+            "tests/integration/test_enhanced_cycle_path.py::test_concurrent_real_reservations_reject_one_four_object_cycle"
+          ],
+          "representation_retired": "Unbounded Barrier/ThreadPoolExecutor unit fixture retires. Existing E explicit bounded integration is the real concurrent schedule, pure union test supplies reservation oracle.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_abort_removes_reservation_but_tombstones_its_identity",
+          "old_line": 147,
+          "old_end_line": 163,
+          "contract": "Abort fences identity and cycle reservation can retire only after actual cleanup.",
+          "base_disposition": "shared_fencing_at_owner_graph_at_E",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_abort_before_registration_fences_late_manifest_and_complete",
+            "tests/unit/test_output_handoff.py::test_abort_registered_pending_blocks_new_complete_and_reason_rebinding"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_prebegin_fence_prevents_late_begin_without_claiming_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup"
+          ],
+          "representation_retired": "Old abort immediately freeing edges is superseded: fence itself cannot claim child cleanup.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_abort_of_unseen_transaction_is_a_non_mutating_replay",
+          "old_line": 167,
+          "old_end_line": 176,
+          "contract": "Out-of-order cancellation must not authorize late forward work.",
+          "base_disposition": "old_oracle_retired_shared_fence_retained",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_abort_before_registration_fences_late_manifest_and_complete"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_prebegin_fence_prevents_late_begin_without_claiming_cleanup"
+          ],
+          "representation_retired": "Old unseen edge-only abort leaves no tombstone and permits prepare; both current protocols deliberately establish a pre-registration fence.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_release_returns_full_obligations_and_opens_the_dag_again",
+          "old_line": 180,
+          "old_end_line": 197,
+          "contract": "Cleanup retains exact child obligations, replay does not reacquire them, and E cycle reservation opens after genuine release.",
+          "base_disposition": "shared_cleanup_at_owner_graph_at_E",
+          "base_replacements": [
+            "tests/unit/test_output_owner_publication.py::test_output_collection_preserves_exact_edges_and_replay_without_payloads",
+            "tests/unit/test_owner_led_publication.py::test_rollback_compensates_unknown_promotion_and_replays_exact_cleanup"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_recorded_promotion_proves_provisional_retirement_but_final_release_still_required"
+          ],
+          "representation_retired": "Boolean commit/release_container and edge-only transaction replay retire.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_prepared_container_cannot_be_released_then_committed",
+          "old_line": 201,
+          "old_end_line": 211,
+          "contract": "A cleanup claim cannot be followed by fresh forward publication.",
+          "base_disposition": "shared_journal_owner_fence_graph_at_E",
+          "base_replacements": [
+            "tests/unit/test_output_publication_journal.py::test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete",
+            "tests/unit/test_output_handoff.py::test_abort_registered_pending_blocks_new_complete_and_reason_rebinding"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_w2_late_terminal_is_history_never_reopens_fenced_progress",
+            "tests/unit/test_enhanced_publication.py::test_armed_preparation_cannot_be_cleaned_with_empty_rollback_scope"
+          ],
+          "representation_retired": "Old BusyError while PREPARED is not the current API. Current E fences then validates exact cleanup; it does not restore the obsolete graph release operation.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_transaction_replay_is_exact_and_conflicts_are_non_mutating",
+          "old_line": 215,
+          "old_end_line": 232,
+          "contract": "Exact replay is idempotent; same identity cannot rebind manifest or child route.",
+          "base_disposition": "shared_owner_handoff",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_registration_binds_all_manifest_fields_not_only_identity",
+            "tests/unit/test_output_publication_journal.py::test_exact_forward_replay_acks_do_not_mutate_or_duplicate_intents"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_begin_binds_complete_identity_and_rejects_rebinding",
+            "tests/unit/test_enhanced_publication.py::test_w4_old_commits_releases_and_adoption_do_not_touch_successor"
+          ],
+          "representation_retired": "",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_cycle_policy.py::test_multi_container_batch_reserves_one_manifest_atomically",
+          "old_line": 236,
+          "old_end_line": 248,
+          "contract": "Cleanup of one container does not consume an independent container child hold.",
+          "base_disposition": "shared_independent_owner_scope_old_batch_retired",
+          "base_replacements": [
+            "tests/unit/test_output_owner_publication.py::test_output_collection_preserves_unrelated_object_and_its_lineage",
+            "tests/unit/test_output_owner_publication.py::test_single_output_collection_releases_its_child_and_final_task_lineage_once"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_w4_old_commits_releases_and_adoption_do_not_touch_successor"
+          ],
+          "representation_retired": "Shared-batch multi-output admission and per-container release APIs are retired in both versions.",
+          "enhanced_pending": "K8 audit two current independent publications sharing a child: retiring one must leave the other graph membership and hold. Add only if no exact current E integration counterpart."
+        }
+      ]
+    },
+    {
+      "path": "tests/unit/test_contained_graph_manifest_boundaries.py",
+      "archived_sha256": {
+        "base": "2be259cdea9fe979d387305b7035054592b18b053ab98c7b2c6536a8b6a5d29a",
+        "enhanced": "2be259cdea9fe979d387305b7035054592b18b053ab98c7b2c6536a8b6a5d29a"
+      },
+      "plan_partial_references": [
+        {
+          "replacement": [
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_unregistered_fences_beside_live_successor_never_claim_epoch_or_forward_permission",
+            "tests/unit/test_enhanced_publication.py::test_w2_late_terminal_is_history_never_reopens_fenced_progress"
+          ],
+          "coverage_status": "partial_behavior_reference_not_one_for_one",
+          "action": "保留语义并迁当前fixture；相近当前测试不能冒充已完全覆盖全部旧负例。",
+          "subjects": [
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_manifest_boundaries.py::test_unseen_full_manifest_abort_tombstones_exact_identity_and_fences_late_prepare",
+              "line": 95
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_manifest_boundaries.py::test_manifest_receipt_rejects_forged_release_state_and_foreign_edge",
+              "line": 124
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_manifest_boundaries.py::test_graph_admission_close_preserves_prepared_and_committed_cleanup_replays",
+              "line": 153
+            }
+          ]
+        }
+      ],
+      "disposition": "retired after exact B replacements passed in base-k3b-02; global graph has no B authority",
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_contained_graph_manifest_boundaries.py::test_full_manifest_cannot_be_downgraded_or_released_through_edge_only_apis",
+          "old_line": 48,
+          "old_end_line": 91,
+          "contract": "Cleanup and replay bind complete publication metadata; a partial identity cannot authorize release.",
+          "base_disposition": "shared_full_identity_no_graph_API",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_registration_binds_all_manifest_fields_not_only_identity",
+            "tests/unit/test_output_owner_publication.py::test_collection_rejects_changed_manifest_membership_and_frozen_metadata",
+            "tests/unit/test_output_publication.py::test_single_output_metadata_and_data_plane_keep_both_storage_tiers"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_begin_binds_complete_identity_and_rejects_rebinding",
+            "tests/unit/test_enhanced_publication.py::test_unrelated_cleanup_and_conflicting_owner_do_not_remove_edges"
+          ],
+          "representation_retired": "No edge-only versus full-manifest downgrade route exists in current B/E. Two selected containers/targeted execution and BusyError/ALREADY_RELEASED representation retire.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_manifest_boundaries.py::test_unseen_full_manifest_abort_tombstones_exact_identity_and_fences_late_prepare",
+          "old_line": 95,
+          "old_end_line": 121,
+          "contract": "Unknown cancellation binds exact metadata and prevents late registration or rebind.",
+          "base_disposition": "shared_owner_abort_manifest",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_abort_manifest_binds_unknown_cleanup_without_forward_registration",
+            "tests/unit/test_output_handoff.py::test_abort_before_registration_fences_late_manifest_and_complete"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_prebegin_fence_prevents_late_begin_without_claiming_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_unregistered_fences_beside_live_successor_never_claim_epoch_or_forward_permission"
+          ],
+          "representation_retired": "",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_manifest_boundaries.py::test_manifest_receipt_rejects_forged_release_state_and_foreign_edge",
+          "old_line": 124,
+          "old_end_line": 150,
+          "contract": "A typed truthy receipt cannot replace exact manifest-bound cleanup proof.",
+          "base_disposition": "shared_current_receipt_negative_migrated",
+          "base_replacements": [
+            "tests/unit/test_multi_container_graph_protocol.py::test_single_output_rollback_rejects_inexact_ack_vectors_and_tampered_roundtrip",
+            "tests/unit/test_output_handoff.py::test_rollback_rejects_wrong_owner_or_out_of_manifest_effect_without_binding",
+            "tests/unit/test_output_node_loss_control.py::test_cleanup_revalidates_child_ack_before_retiring_an_obligation"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_unrelated_cleanup_and_conflicting_owner_do_not_remove_edges",
+            "tests/unit/test_enhanced_publication.py::test_w1_scope_settles_unknown_effects_and_does_not_claim_unattempted_effects"
+          ],
+          "representation_retired": "Graph COMMITTED/RELEASED state pair is retired; current ACKs bind rollback effects and exact child holds.",
+          "enhanced_pending": "K8 retain current ClosedContainedHolds foreign/missing/duplicate proof negatives at actual retire boundary; no old graph receipt enum resurrection."
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_manifest_boundaries.py::test_graph_admission_close_preserves_prepared_and_committed_cleanup_replays",
+          "old_line": 153,
+          "old_end_line": 192,
+          "contract": "Closing admission preserves accepted cleanup/history and cannot report clean while work remains.",
+          "base_disposition": "shared_real_Core_shutdown_barrier",
+          "base_replacements": [
+            "tests/unit/test_output_control_shutdown.py::test_closed_admission_preserves_accepted_output_until_exact_cleanup_and_finish"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication_control.py::test_live_publication_does_not_block_pre_core_drain_but_blocks_final_shutdown",
+            "tests/unit/test_enhanced_publication_control.py::test_clean_shutdown_permanently_rejects_late_new_begin"
+          ],
+          "representation_retired": "Per-graph close_admission API and two-container prepared/committed manifest enumeration retire.",
+          "enhanced_pending": "K8 confirm accepted committed publication cleanup/replay after close is covered; if not extend existing enhanced shutdown test using one output and exact current receipts."
+        }
+      ],
+      "retirement_evidence": "base-reviewable-changes.json"
+    },
+    {
+      "path": "tests/unit/test_contained_graph_protocol.py",
+      "archived_sha256": {
+        "base": "e8454b584d4d5d8b4dda79a368deebca76e61bf73351e1d405af8838fcdafbc8",
+        "enhanced": "e8454b584d4d5d8b4dda79a368deebca76e61bf73351e1d405af8838fcdafbc8"
+      },
+      "plan_partial_references": [
+        {
+          "replacement": [
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_unregistered_fences_beside_live_successor_never_claim_epoch_or_forward_permission",
+            "tests/unit/test_enhanced_publication.py::test_w2_late_terminal_is_history_never_reopens_fenced_progress"
+          ],
+          "coverage_status": "partial_behavior_reference_not_one_for_one",
+          "action": "保留语义并迁当前fixture；相近当前测试不能冒充已完全覆盖全部旧负例。",
+          "subjects": [
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_protocol.py::test_generic_graph_wire_round_trip_preserves_exact_selected_publication",
+              "line": 65
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_protocol.py::test_generic_graph_uses_one_authority_and_requires_output_intent_and_complete",
+              "line": 86
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_protocol.py::test_generic_graph_rejects_naked_identity_without_mutation",
+              "line": 108
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_protocol.py::test_graph_manifest_cannot_rebind_an_admitted_output_identity",
+              "line": 121
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_protocol.py::test_admission_close_keeps_exact_graph_replay_and_cleanup_but_rejects_new_work",
+              "line": 135
+            },
+            {
+              "selector_or_contract": "tests/unit/test_contained_graph_protocol.py::test_unified_graph_forward_operations_respect_exact_death_fence",
+              "line": 157
+            }
+          ]
+        }
+      ],
+      "disposition": "retired after exact B replacements passed in base-k3b-02; global graph has no B authority",
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_contained_graph_protocol.py::test_generic_graph_wire_round_trip_preserves_exact_selected_publication",
+          "old_line": 65,
+          "old_end_line": 83,
+          "contract": "Wire metadata preserves exact publication identity and no payload.",
+          "base_disposition": "shared_owner_handoff_wire",
+          "base_replacements": [
+            "tests/unit/test_output_protocol.py::test_owner_handoff_and_retirement_echo_exact_metadata_facts",
+            "tests/unit/test_output_protocol.py::test_prepare_and_handoff_deep_revalidate_tampered_values_on_roundtrip"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_metadata_roundtrip_has_no_payload_and_preserves_exact_request"
+          ],
+          "representation_retired": "Generic graph wire, full-vs-targeted subset output projection and multi-slot request names retire.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_protocol.py::test_generic_graph_uses_one_authority_and_requires_output_intent_and_complete",
+          "old_line": 86,
+          "old_end_line": 105,
+          "contract": "Registered manifest and exact completion gate publication progress.",
+          "base_disposition": "shared_owner_node_stage_gates",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_adoption_requires_registered_matching_complete_and_owner",
+            "tests/unit/test_output_publication_journal.py::test_owner_registration_prepare_materialize_and_promote_are_ordered_gates"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_plain_task_has_all_metadata_stages_but_no_adoption_before_owner_fact"
+          ],
+          "representation_retired": "Base has owner registration and Node Complete, no GCS INTENT/ARM or graph authority.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_protocol.py::test_generic_graph_rejects_naked_identity_without_mutation",
+          "old_line": 108,
+          "old_end_line": 118,
+          "contract": "Unregistered/untyped identity cannot mutate publication state.",
+          "base_disposition": "shared_typed_owner_requests",
+          "base_replacements": [
+            "tests/unit/test_output_protocol.py::test_queries_and_retirement_reject_payload_values_and_other_identity",
+            "tests/unit/test_output_handoff.py::test_adoption_requires_registered_matching_complete_and_owner"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_prebegin_fence_prevents_late_begin_without_claiming_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_mutated_frozen_nested_wire_is_revalidated_and_returned_copy_cannot_mutate_authority"
+          ],
+          "representation_retired": "Raw tuple identity graph API retired.",
+          "enhanced_pending": "K8 check current PrepareGraph with valid typed but unknown PublicationRef rejects without record creation; add one negative if absent."
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_protocol.py::test_graph_manifest_cannot_rebind_an_admitted_output_identity",
+          "old_line": 121,
+          "old_end_line": 132,
+          "contract": "Same publication identity cannot rebind its digest or admitted manifest.",
+          "base_disposition": "shared_owner_manifest_identity",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_registration_binds_all_manifest_fields_not_only_identity",
+            "tests/unit/test_output_protocol.py::test_handoff_rejects_digest_manifest_and_adoption_proof_rebinding"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_begin_binds_complete_identity_and_rejects_rebinding"
+          ],
+          "representation_retired": "",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_protocol.py::test_admission_close_keeps_exact_graph_replay_and_cleanup_but_rejects_new_work",
+          "old_line": 135,
+          "old_end_line": 153,
+          "contract": "Admission close rejects new work while accepted exact cleanup progresses.",
+          "base_disposition": "shared_real_Core_shutdown_barrier",
+          "base_replacements": [
+            "tests/unit/test_output_control_shutdown.py::test_closed_admission_preserves_accepted_output_until_exact_cleanup_and_finish"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication_control.py::test_live_publication_does_not_block_pre_core_drain_but_blocks_final_shutdown",
+            "tests/unit/test_enhanced_publication_control.py::test_clean_shutdown_permanently_rejects_late_new_begin"
+          ],
+          "representation_retired": "PublicationControlAdapter and generic graph mutation request representation retire.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_protocol.py::test_unified_graph_forward_operations_respect_exact_death_fence",
+          "old_line": 157,
+          "old_end_line": 182,
+          "contract": "Death fences forward operations without deleting known history.",
+          "base_disposition": "shared_owner_node_death_fence",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_abort_preserves_known_complete_and_exact_replay_without_forward_progress",
+            "tests/unit/test_common_cleanup_progress.py::test_late_envelope_does_not_reverse_unknown_cleanup_or_consume_budget_twice"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_w2_late_terminal_is_history_never_reopens_fenced_progress",
+            "tests/unit/test_enhanced_publication.py::test_owner_death_fences_without_erasing_success_and_real_child_death_settles_holds",
+            "tests/unit/test_enhanced_publication_control.py::test_accurate_terminal_and_commit_survive_executor_death"
+          ],
+          "representation_retired": "Old blanket rejection of late terminal/abort is not the current history-versus-forward-permission contract.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_contained_graph_protocol.py::test_gcs_generic_routes_and_typed_dispatch_share_one_publication_authority",
+          "old_line": 185,
+          "old_end_line": 214,
+          "contract": "Version-specific control service exposes its intended single authority.",
+          "base_disposition": "base_architecture_negative_migrated",
+          "base_replacements": [
+            "tests/unit/test_output_publication_control.py::test_base_gcs_has_no_ordinary_output_publication_authority_or_routes"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication_control.py::test_unmanaged_owner_route_is_bound_but_dead_executor_blocks_new_admission"
+          ],
+          "representation_retired": "B removes GCS ordinary-result transactions/graph; E keeps current enhanced PublicationAuthority only. Old generic graph handlers retire.",
+          "enhanced_pending": "K8 confirm exact enhanced handler and authority composition at real GCS constructor; add no-legacy-authority assertion if not covered."
+        }
+      ],
+      "retirement_evidence": "base-reviewable-changes.json"
+    },
+    {
+      "path": "tests/unit/test_multi_container_graph_protocol.py",
+      "archived_sha256": {
+        "base": "2341ed90ce79a637d0ae8a62b7aae68904486b316dfe7bc0610907fa0532aa2e",
+        "enhanced": "2341ed90ce79a637d0ae8a62b7aae68904486b316dfe7bc0610907fa0532aa2e"
+      },
+      "plan_partial_references": [
+        {
+          "replacement": [
+            "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+            "tests/unit/test_enhanced_publication.py::test_unregistered_fences_beside_live_successor_never_claim_epoch_or_forward_permission",
+            "tests/unit/test_enhanced_publication.py::test_w2_late_terminal_is_history_never_reopens_fenced_progress"
+          ],
+          "coverage_status": "partial_behavior_reference_not_one_for_one",
+          "action": "保留语义并迁当前fixture；相近当前测试不能冒充已完全覆盖全部旧负例。",
+          "subjects": [
+            {
+              "selector_or_contract": "tests/unit/test_multi_container_graph_protocol.py::test_request_rejects_absent_or_empty_container_without_projecting_manifest",
+              "line": 86
+            },
+            {
+              "selector_or_contract": "tests/unit/test_multi_container_graph_protocol.py::test_reply_cannot_accept_empty_release_for_a_forged_absent_container",
+              "line": 95
+            },
+            {
+              "selector_or_contract": "tests/unit/test_multi_container_graph_protocol.py::test_release_reply_rejects_partial_subset_wrong_container_and_projected_manifest",
+              "line": 106
+            },
+            {
+              "selector_or_contract": "tests/unit/test_multi_container_graph_protocol.py::test_reply_boundary_rejects_malformed_release_vectors_even_if_receipt_was_forged",
+              "line": 119
+            },
+            {
+              "selector_or_contract": "tests/unit/test_multi_container_graph_protocol.py::test_single_container_and_nonrelease_graph_protocol_semantics_are_unchanged",
+              "line": 146
+            }
+          ]
+        }
+      ],
+      "disposition": "retained minimal current B tests",
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_multi_container_graph_protocol.py::test_two_containers_release_independently_under_one_manifest_identity",
+          "old_line": 57,
+          "old_end_line": 83,
+          "contract": "Releasing one owned container must preserve independent output/child custody.",
+          "base_disposition": "shared_independent_owner_scope_old_batch_retired",
+          "base_replacements": [
+            "tests/unit/test_output_owner_publication.py::test_output_collection_preserves_unrelated_object_and_its_lineage",
+            "tests/unit/test_output_owner_publication.py::test_single_output_collection_releases_its_child_and_final_task_lineage_once"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_w4_old_commits_releases_and_adoption_do_not_touch_successor"
+          ],
+          "representation_retired": "One manifest containing multiple output containers is retired; no B or E multi-target guarantee is added.",
+          "enhanced_pending": "Same K8 two independent single-output publications/shared-child audit as cycle-policy multi-container case."
+        },
+        {
+          "old_selector": "tests/unit/test_multi_container_graph_protocol.py::test_request_rejects_absent_or_empty_container_without_projecting_manifest",
+          "old_line": 86,
+          "old_end_line": 92,
+          "contract": "Absent cleanup targets and incomplete effect identity cannot authorize mutation.",
+          "base_disposition": "shared_current_owner_cleanup_request",
+          "base_replacements": [
+            "tests/unit/test_output_handoff.py::test_rollback_rejects_wrong_owner_or_out_of_manifest_effect_without_binding",
+            "tests/unit/test_output_publication_journal.py::test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_unrelated_cleanup_and_conflicting_owner_do_not_remove_edges",
+            "tests/unit/test_enhanced_publication.py::test_armed_preparation_cannot_be_cleaned_with_empty_rollback_scope"
+          ],
+          "representation_retired": "Per-container graph request requiring nonempty edge set is retired: current genuine no-effect rollback is valid and must not invent a remote receipt.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_multi_container_graph_protocol.py::test_reply_cannot_accept_empty_release_for_a_forged_absent_container",
+          "old_line": 95,
+          "old_end_line": 102,
+          "contract": "Forged empty cleanup cannot masquerade as completion of required child effects.",
+          "base_disposition": "shared_current_receipt_negative_migrated",
+          "base_replacements": [
+            "tests/unit/test_multi_container_graph_protocol.py::test_single_output_rollback_rejects_inexact_ack_vectors_and_tampered_roundtrip",
+            "tests/unit/test_output_handoff.py::test_unknown_registration_and_child_ack_keep_full_compensation_obligation"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_armed_preparation_cannot_be_cleaned_with_empty_rollback_scope",
+            "tests/unit/test_enhanced_publication.py::test_unrelated_cleanup_and_conflicting_owner_do_not_remove_edges"
+          ],
+          "representation_retired": "",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_multi_container_graph_protocol.py::test_release_reply_rejects_partial_subset_wrong_container_and_projected_manifest",
+          "old_line": 106,
+          "old_end_line": 114,
+          "contract": "Partial cleanup vectors and changed manifest cannot discharge original obligations.",
+          "base_disposition": "shared_current_receipt_negative_migrated",
+          "base_replacements": [
+            "tests/unit/test_multi_container_graph_protocol.py::test_single_output_rollback_rejects_inexact_ack_vectors_and_tampered_roundtrip",
+            "tests/unit/test_output_handoff.py::test_rollback_rejects_wrong_owner_or_out_of_manifest_effect_without_binding",
+            "tests/unit/test_output_protocol.py::test_handoff_rejects_digest_manifest_and_adoption_proof_rebinding"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_w1_scope_settles_unknown_effects_and_does_not_claim_unattempted_effects",
+            "tests/unit/test_enhanced_publication.py::test_unrelated_cleanup_and_conflicting_owner_do_not_remove_edges"
+          ],
+          "representation_retired": "Old multi-container projected graph receipt representation retires.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_multi_container_graph_protocol.py::test_reply_boundary_rejects_malformed_release_vectors_even_if_receipt_was_forged",
+          "old_line": 119,
+          "old_end_line": 130,
+          "contract": "Deeply tampered partial/empty/duplicate/foreign cleanup cannot pass terminal wire validation.",
+          "base_disposition": "shared_current_receipt_negative_migrated",
+          "base_replacements": [
+            "tests/unit/test_multi_container_graph_protocol.py::test_single_output_rollback_rejects_inexact_ack_vectors_and_tampered_roundtrip"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_w1_scope_settles_unknown_effects_and_does_not_claim_unattempted_effects",
+            "tests/unit/test_enhanced_publication.py::test_mutated_frozen_nested_wire_is_revalidated_and_returned_copy_cannot_mutate_authority"
+          ],
+          "representation_retired": "B rollback preserves order as meaningful effect order. E ClosedContainedHolds consumes a unique set of exact hold proofs, so rejecting permutations is old representation-specific, not an E contract.",
+          "enhanced_pending": "K8 add duplicate/foreign/empty and tampered-pickle proof negatives on current ClosedContainedHolds/RetireGraph if exact counterparts absent; retain valid permutations under current set semantics."
+        },
+        {
+          "old_selector": "tests/unit/test_multi_container_graph_protocol.py::test_release_request_keeps_existing_wire_aliases_and_pickle_validation",
+          "old_line": 133,
+          "old_end_line": 143,
+          "contract": "Current cleanup wire roundtrip is exact and revalidates nested tampering.",
+          "base_disposition": "shared_current_receipt_negative_migrated",
+          "base_replacements": [
+            "tests/unit/test_multi_container_graph_protocol.py::test_single_output_rollback_rejects_inexact_ack_vectors_and_tampered_roundtrip",
+            "tests/unit/test_output_protocol.py::test_prepare_and_handoff_deep_revalidate_tampered_values_on_roundtrip"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_metadata_roundtrip_has_no_payload_and_preserves_exact_request",
+            "tests/unit/test_enhanced_publication.py::test_mutated_frozen_nested_wire_is_revalidated_and_returned_copy_cannot_mutate_authority"
+          ],
+          "representation_retired": "Legacy class names/aliases have no compatibility requirement; do not restore them.",
+          "enhanced_pending": ""
+        },
+        {
+          "old_selector": "tests/unit/test_multi_container_graph_protocol.py::test_single_container_and_nonrelease_graph_protocol_semantics_are_unchanged",
+          "old_line": 146,
+          "old_end_line": 164,
+          "contract": "Valid state transitions require exact stage-specific receipt facts.",
+          "base_disposition": "shared_journal_stage_receipts",
+          "base_replacements": [
+            "tests/unit/test_output_publication_journal.py::test_owner_registration_prepare_materialize_and_promote_are_ordered_gates",
+            "tests/unit/test_output_publication_journal.py::test_each_forward_ack_requires_its_own_recorded_intent",
+            "tests/unit/test_output_publication_journal.py::test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation"
+          ],
+          "enhanced_references": [
+            "tests/unit/test_enhanced_publication.py::test_plain_task_has_all_metadata_stages_but_no_adoption_before_owner_fact",
+            "tests/unit/test_enhanced_publication.py::test_arm_requires_complete_exact_observed_preparation"
+          ],
+          "representation_retired": "Generic PREPARED/COMMITTED/ABORTED receipt enum preservation is retired; current B/E typed stages differ.",
+          "enhanced_pending": ""
+        }
+      ]
+    }
+  ],
+  "pending_enhanced": [
+    {
+      "selector": "tests/unit/test_contained_cycle_policy.py::test_self_contained_object_id_is_rejected_without_mutation",
+      "action": "K8 strengthen current self-cycle assertion to compare graph-active/receipt history before and after rejection if current E tests do not already prove no mutation."
+    },
+    {
+      "selector": "tests/unit/test_contained_cycle_policy.py::test_whole_candidate_batch_is_rejected_atomically",
+      "action": "K8 single supported publication with two child edges, one safe and one closing a prepared path: rejected prepare must not add the safe edge either. No multi-target API."
+    },
+    {
+      "selector": "tests/unit/test_contained_cycle_policy.py::test_multi_container_batch_reserves_one_manifest_atomically",
+      "action": "K8 audit two current independent publications sharing a child: retiring one must leave the other graph membership and hold. Add only if no exact current E integration counterpart."
+    },
+    {
+      "selector": "tests/unit/test_contained_graph_manifest_boundaries.py::test_manifest_receipt_rejects_forged_release_state_and_foreign_edge",
+      "action": "K8 retain current ClosedContainedHolds foreign/missing/duplicate proof negatives at actual retire boundary; no old graph receipt enum resurrection."
+    },
+    {
+      "selector": "tests/unit/test_contained_graph_manifest_boundaries.py::test_graph_admission_close_preserves_prepared_and_committed_cleanup_replays",
+      "action": "K8 confirm accepted committed publication cleanup/replay after close is covered; if not extend existing enhanced shutdown test using one output and exact current receipts."
+    },
+    {
+      "selector": "tests/unit/test_contained_graph_protocol.py::test_generic_graph_rejects_naked_identity_without_mutation",
+      "action": "K8 check current PrepareGraph with valid typed but unknown PublicationRef rejects without record creation; add one negative if absent."
+    },
+    {
+      "selector": "tests/unit/test_contained_graph_protocol.py::test_gcs_generic_routes_and_typed_dispatch_share_one_publication_authority",
+      "action": "K8 confirm exact enhanced handler and authority composition at real GCS constructor; add no-legacy-authority assertion if not covered."
+    },
+    {
+      "selector": "tests/unit/test_multi_container_graph_protocol.py::test_two_containers_release_independently_under_one_manifest_identity",
+      "action": "Same K8 two independent single-output publications/shared-child audit as cycle-policy multi-container case."
+    },
+    {
+      "selector": "tests/unit/test_multi_container_graph_protocol.py::test_reply_boundary_rejects_malformed_release_vectors_even_if_receipt_was_forged",
+      "action": "K8 add duplicate/foreign/empty and tampered-pickle proof negatives on current ClosedContainedHolds/RetireGraph if exact counterparts absent; retain valid permutations under current set semantics."
+    }
+  ],
+  "validation": "All six current B migration files passed with snapshot hash verification in execution/base-k3b-02. E references remain audit-only until K8/K9."
+}

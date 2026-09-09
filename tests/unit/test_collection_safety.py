@@ -27,7 +27,7 @@ def _config(selectors=(), **options):
     (_FILE, "tests/integration"), ("../conftest.py",), ("conftest.py",),
 ))
 def test_broad_or_missing_selection_fails_before_any_collection(selectors):
-    with pytest.raises(pytest.UsageError, match="complete default test gate"):
+    with pytest.raises(pytest.UsageError, match="explicit baseline"):
         guard.pytest_configure(_config(selectors))
 
 
@@ -218,18 +218,27 @@ def test_core_blocking_original_six_functions_seven_cases_use_reviewed_pure_comp
     assert case_count == 7
 
 
-def test_contained_cycle_concurrency_cannot_inherit_the_pure_policy_marker():
+def test_base_python_cycle_contract_has_only_its_reviewed_pure_scope():
     ast, tree = _classification_source("test_contained_cycle_policy.py")
     assert not any(isinstance(node, ast.Name) and node.id == "pytestmark"
                    and isinstance(node.ctx, ast.Store) for node in ast.walk(tree))
     functions = {node.name: node for node in tree.body
                  if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")}
-    assert len(functions) == 10
-    concurrent = "test_prepared_edges_close_the_concurrent_preflight_race"
-    assert concurrent in functions
-    for name, function in functions.items():
-        modes = [_mode_marker(value) for value in function.decorator_list]
-        assert modes == ["heavy" if name == concurrent else "unit"], name
+    assert set(functions) == {
+        "test_python_container_cycle_is_serialized_without_an_object_id_edge",
+    }
+    function = next(iter(functions.values()))
+    assert [_mode_marker(value) for value in function.decorator_list] == ["unit"]
+    # The old concurrent ObjectID graph authority is enhanced-only. It must
+    # not enter the base pure closure through the retained serializer case.
+    modules = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert modules == {"miniray.dependency", "miniray.protocol"}
+    assert not any(isinstance(node, ast.Name) and node.id in {
+        "ThreadPoolExecutor", "Barrier", "ContainedReferenceGraphAuthority",
+    } for node in ast.walk(tree))
+    guard._validate_explicit_scope(
+        ("tests/unit/test_contained_cycle_policy.py",), guard._PROJECT_ROOT,
+    )
 
 
 def test_node_death_api_runtime_keeps_two_real_thread_cases_out_of_unit():
