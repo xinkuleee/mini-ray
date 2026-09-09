@@ -1,0 +1,64 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_node_rejects_outcome_manifest_subset_extra_and_reordering ________
+
+    @pytest.mark.unit
+    def test_node_rejects_outcome_manifest_subset_extra_and_reordering() -> None:
+        node, request, grant, first_id = _node_fixture()
+        second_id = ObjectID(request.task_id, 1)
+>       bound = replace(request, return_ids=(first_id, second_id))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_worker_crash_supervisor.py:510: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../mini-ray-cleanup-runtime/python/lib/python3.12/dataclasses.py:1588: in replace
+    return obj.__class__(**changes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+<string>:16: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = RequestWorkerLease(lease_id=LeaseID('c1b4199f0c53e7e5f386044817427760'), task_id=TaskID('47f75d7d85ad2e5101726a66b522a...e5101726a66b522a3ea'), return_index=1)), scheduling_key=None, dependency_owner_routes=(), requester_owner_address=None)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.lease_id, LeaseID):
+            raise ProtocolError("lease_id must be a LeaseID")
+        if not isinstance(self.task_id, TaskID):
+            raise ProtocolError("lease task_id must be a TaskID")
+        if not isinstance(self.attempt_id, AttemptID):
+            raise ProtocolError("lease attempt_id must be an AttemptID")
+        if self.attempt_id.task_id != self.task_id:
+            raise ProtocolError("lease attempt_id must belong to task_id")
+        if not isinstance(self.resources, ResourceVector):
+            raise ProtocolError("lease resources must be a ResourceVector")
+        if not isinstance(self.requester_node_id, NodeID):
+            raise ProtocolError("requester_node_id must be a NodeID")
+        if not isinstance(self.requester_worker_id, WorkerID):
+            raise ProtocolError("requester_worker_id must be a WorkerID")
+        if self.preferred_node_id is not None and not isinstance(
+            self.preferred_node_id, NodeID
+        ):
+            raise ProtocolError("preferred_node_id must be a NodeID or None")
+        if self.target_node_id is not None and not isinstance(
+            self.target_node_id, NodeID
+        ):
+            raise ProtocolError("target_node_id must be a NodeID or None")
+        object.__setattr__(
+            self,
+            "dependencies",
+            _validate_dependencies(self.dependencies, "lease request"),
+        )
+        return_ids = tuple(self.return_ids)
+        if any(not isinstance(object_id, ObjectID) for object_id in return_ids):
+            raise ProtocolError("lease return_ids must contain ObjectID values")
+        if any(object_id.task_id != self.task_id for object_id in return_ids):
+            raise ProtocolError("lease return_ids must belong to task_id")
+        # Empty manifests are only for lease probes that never execute a TaskSpec.
+        if return_ids and return_ids != (ObjectID(self.task_id, 0),):
+>           raise ProtocolError("lease return_ids must contain the single task return at index 0")
+E           miniray.errors.ProtocolError: lease return_ids must contain the single task return at index 0
+
+src/miniray/protocol.py:1915: ProtocolError
+=========================== short test summary info ============================
+FAILED tests/unit/test_worker_crash_supervisor.py::test_node_rejects_outcome_manifest_subset_extra_and_reordering
+1 failed in 1.20s

@@ -35,3 +35,5 @@ K3b：contained-GC5/core-task-retry6/lease-handshake6通过；local/foreign迟�
 K3central：6旧central/graph文件迁B26case全过，collection-policy11case通过，2纯全局图文件按B/E差异映射退休；E待迁清单保留而非忘记。single-owner-model15原函数转单输出25case通过。
 
 K3c：新Core publication13/latecleanup5/NodePG11/surviving4/coretaskretry6/ownerdefer3/journal23通过，最后2个无用SRC退休保持精确tombstone。NodeDeath12过4坏夹具、递归5过1缺descriptor、foreign4过4rawhold、retirement5过3漏loss route、PG4仅已set Event tripwire均已定位为测试接线待复验；未降校验。
+
+K3d：NodeDeath16/recursive6/foreign8/retirement8修后通过；PG4/boundary2/ownerdeath2/CoreNodeLoss9/fencing13/terminal6/lineage4通过。NodeBlocking全部7exact过、borrower所有pure与2L1过；CorePG单一空result夹具、containedruntime2个失败ACK门禁、supervisor单一两槽wire负例已精确修待复验。ownerINLINE scratch丢失确认为真实Core错误，修复保实际owner bytes，下一快照6+9+12回归通过。

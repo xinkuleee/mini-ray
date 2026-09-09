@@ -26,7 +26,6 @@ from miniray import (
     core as core_module, node as node_module, output_protocol as output_wire,
     protocol, transport as transport_module, worker as worker_module,
 )
-from miniray.contained_cycle import ContainedReferenceGraphAuthority
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.control import NodeRegistry
 from miniray.core import (
@@ -42,7 +41,6 @@ from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_publication import OutputPublicationHeader, OutputPublicationID
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
 from miniray.ownership import (
     ConflictingBorrowerTokenError,
     ObjectCollectionState,
@@ -52,12 +50,12 @@ from miniray.ownership import (
     ReleasedBorrowerTokenError,
 )
 from miniray.recovery import TaskState
-from miniray.ref_transfer import ReferenceExportSession
+from miniray.ref_transfer import discover_contained_reference
 from miniray.resources import ResourceVector
 from miniray.trace import EventSink
 from miniray.transport import TransportTimeout
 from tests.unit._pure_core import SynchronousReferenceMailbox, close_pure_core, make_pure_core
-from tests.unit.test_node_placement_group_runtime import _node as _pure_borrower_node
+from tests.support._contained_output import ContainedOutput
 
 
 @pytest.mark.unit
@@ -69,10 +67,10 @@ def test_acquire_wire_normalizes_full_contained_hold_source() -> None:
     hold = ContainedReferenceHold(container, borrower, "typed-transfer")
 
     request = protocol.AcquireBorrowedObject(
-        object_id, owner, borrower, hold, "borrower-token"
+        object_id, owner, borrower, protocol.ContainedTransferSource(hold), "borrower-token"
     )
     reply = protocol.AcquireBorrowedObjectReply(
-        object_id, owner, borrower, hold, "borrower-token", True, True
+        object_id, owner, borrower, protocol.ContainedTransferSource(hold), "borrower-token", True, True
     )
 
     expected = protocol.ContainedTransferSource(hold)
@@ -86,41 +84,21 @@ def _object_id(index: int = 0) -> tuple[ObjectID, AttemptID]:
     return ObjectID.for_task(task_id), AttemptID(task_id, 0)
 
 
-def _bare_core(worker_id: WorkerID | None = None) -> CoreWorker:
-    core = object.__new__(CoreWorker)
-    core.job_id = JobID.random()
-    core.worker_id = worker_id or WorkerID.random()
-    core.driver_task_id = TaskID.for_driver(core.job_id)
-    core._submission_index = 0
-    core.node_id = NodeID.random()
-    core.node_address = ("127.0.0.1", 19001)
-    core.owner_address = None
-    core._owner_table = ObjectOwnerTable()
-    core._objects = {}
-    core._state_lock = threading.RLock()
-    core._completion = threading.Condition(core._state_lock)
-    core._accepting = True
-    core._owner_protocol_open = True
-    core._inflight_borrow_ops = 0
-    core._borrowed_release_obligations = {}
-    core._initialize_reference_events()
-    return core
+def _hold(token):
+    return ContainedReferenceHold(ObjectID.for_task(TaskID(b'h' * 16)), WorkerID(b'h' * 16), token)
 
 
-def _register_inline(core: CoreWorker, value: object) -> ObjectID:
-    object_id, attempt_id = _object_id()
-    core.owner_table.register(object_id, current_attempt=attempt_id)
-    core.owner_table.publish_inline(
-        object_id, attempt_id, cloudpickle.dumps(value)
-    )
-    waiter = _ObjectWaiter(threading.Event())
-    waiter.event.set()
-    core._objects[object_id] = waiter
-    return object_id
-
-
-def _stop(core: CoreWorker) -> None:
-    assert core._stop_reference_events(time.monotonic() + 1.0)
+@pytest.mark.unit
+def test_exporting_ref_without_bound_owner_endpoint_creates_no_custody():
+    object_id, _ = _object_id()
+    owner = WorkerID.random()
+    ref = ObjectRef(object_id, owner)
+    try:
+        with pytest.raises(RuntimeError, match='bound owner endpoint'):
+            discover_contained_reference(ref, owner, None)
+        assert ref._local_token is None and ref.borrower_token is None and not ref.closed
+    finally:
+        ref.close(timeout=0)
 
 
 @pytest.mark.unit
@@ -128,15 +106,15 @@ def test_owner_acquire_release_is_idempotent_and_fences_resurrection() -> None:
     table = ObjectOwnerTable()
     object_id, attempt_id = _object_id()
     table.register(object_id, current_attempt=attempt_id)
-    table.add_contained_reference(object_id, "transfer-1")
+    table.add_contained_reference(object_id, _hold("transfer-1"))
     token = (WorkerID.random(), "borrow-1")
 
-    assert table.acquire_exported_reference(object_id, "transfer-1", token)
-    assert not table.acquire_exported_reference(object_id, "transfer-1", token)
+    assert table.acquire_exported_reference(object_id, protocol.ContainedTransferSource(_hold("transfer-1")), token)
+    assert not table.acquire_exported_reference(object_id, protocol.ContainedTransferSource(_hold("transfer-1")), token)
     assert table.release_borrowed_reference(object_id, token)
     assert not table.release_borrowed_reference(object_id, token)
     with pytest.raises(ReleasedBorrowerTokenError):
-        table.acquire_exported_reference(object_id, "transfer-1", token)
+        table.acquire_exported_reference(object_id, protocol.ContainedTransferSource(_hold("transfer-1")), token)
 
     snapshot = table.snapshot(object_id)
     assert snapshot.contained_tokens == frozenset({"transfer-1"})
@@ -149,20 +127,20 @@ def test_borrower_token_is_bound_to_transfer_and_borrower_identity() -> None:
     table = ObjectOwnerTable()
     object_id, attempt_id = _object_id()
     table.register(object_id, current_attempt=attempt_id)
-    table.add_contained_reference(object_id, "transfer-a")
-    table.add_contained_reference(object_id, "transfer-b")
+    table.add_contained_reference(object_id, _hold("transfer-a"))
+    table.add_contained_reference(object_id, _hold("transfer-b"))
     first_borrower = WorkerID.random()
     second_borrower = WorkerID.random()
 
     assert table.acquire_exported_reference(
-        object_id, "transfer-a", (first_borrower, "same-token")
+        object_id, protocol.ContainedTransferSource(_hold("transfer-a")), (first_borrower, "same-token")
     )
     with pytest.raises(ConflictingBorrowerTokenError):
         table.acquire_exported_reference(
-            object_id, "transfer-b", (first_borrower, "same-token")
+            object_id, protocol.ContainedTransferSource(_hold("transfer-b")), (first_borrower, "same-token")
         )
     assert table.acquire_exported_reference(
-        object_id, "transfer-a", (second_borrower, "same-token")
+        object_id, protocol.ContainedTransferSource(_hold("transfer-a")), (second_borrower, "same-token")
     )
 
 
@@ -171,63 +149,12 @@ def test_release_before_acquire_tombstones_reordered_delivery() -> None:
     table = ObjectOwnerTable()
     object_id, attempt_id = _object_id()
     table.register(object_id, current_attempt=attempt_id)
-    table.add_contained_reference(object_id, "transfer")
+    table.add_contained_reference(object_id, _hold("transfer"))
     token = (WorkerID.random(), "borrow")
 
     assert not table.release_borrowed_reference(object_id, token)
     with pytest.raises(ReleasedBorrowerTokenError):
-        table.acquire_exported_reference(object_id, "transfer", token)
-
-
-@pytest.mark.unit
-def test_export_session_is_lazy_transactional_and_keeps_committed_pin() -> None:
-    object_id, _ = _object_id()
-    owner = WorkerID.random()
-    ref = ObjectRef(object_id, owner)
-    address_calls = 0
-    pins: set[tuple[ObjectID, str]] = set()
-
-    def address() -> tuple[str, int]:
-        nonlocal address_calls
-        address_calls += 1
-        return ("127.0.0.1", 19002)
-
-    def pin(item: ObjectID, token: str) -> None:
-        pins.add((item, token))
-
-    def unpin(item: ObjectID, token: str) -> None:
-        pins.discard((item, token))
-
-    with ReferenceExportSession(owner, address, pin=pin, unpin=unpin):
-        assert cloudpickle.dumps(42)
-    assert address_calls == 0 and not pins
-
-    with pytest.raises(RuntimeError, match="later failure"):
-        with ReferenceExportSession(owner, address, pin=pin, unpin=unpin):
-            cloudpickle.dumps({"child": ref})
-            raise RuntimeError("later failure")
-    assert address_calls == 1 and not pins
-
-    with ReferenceExportSession(owner, address, pin=pin, unpin=unpin) as session:
-        payload = cloudpickle.dumps({"child": ref})
-        session.commit()
-    assert address_calls == 2 and len(pins) == 1
-    with pytest.raises(RuntimeError, match="requires a scoped Core/Worker importer"):
-        cloudpickle.loads(payload)
-
-
-@pytest.mark.unit
-def test_exporting_ref_without_bound_owner_endpoint_creates_no_pin() -> None:
-    object_id, _ = _object_id()
-    owner = WorkerID.random()
-    pins: list[tuple[ObjectID, str]] = []
-    with pytest.raises(RuntimeError, match="bound Worker owner endpoint"):
-        with ReferenceExportSession(
-            owner, lambda: None, pin=lambda item, token: pins.append((item, token)),
-            unpin=lambda item, token: None,
-        ):
-            cloudpickle.dumps(ObjectRef(object_id, owner))
-    assert pins == []
+        table.acquire_exported_reference(object_id, protocol.ContainedTransferSource(_hold("transfer")), token)
 
 
 @pytest.mark.unit
@@ -251,7 +178,7 @@ def test_worker_plain_result_does_not_require_server_or_embedded_core(monkeypatc
     assert not hasattr(worker, "_server")
     assert result.storage is protocol.ResultStorage.INLINE
     assert reply.output_publication == fixture.complete_envelope
-    assert reply.output_publication.manifest.to_graph_manifest() is None
+    assert reply.output_publication.manifest.slots[0].transfers == ()
     assert backend.store.used_bytes == 0
     assert backend.completions == [reply.output_publication.complete]
     assert worker._handle_push_task(fixture.push) is reply
@@ -304,138 +231,30 @@ class _BorrowerLoadMailbox(SynchronousReferenceMailbox):
 
 
 class _BorrowerLoadFixture:
-    """One child put and one real INLINE outer publication, at most two borrows.
-
-    The owner also executes this Task on an inert Node slot: this is the
-    supported same-owner publication path, not forged executor ownership.
-    The outer's canonical nested child argument keeps a real lineage hold
-    and a retry budget after finish. These tests do not perform reconstruction.
-    One empty 1-KiB store and all reference/graph reducers are in memory.
-    """
-
+    """Actual same-owner Task publication followed by independent borrowers."""
     def __init__(self):
-        self.owner, self.borrower = owner, borrower = make_pure_core(), make_pure_core()
-        borrower._reference_mailbox = _BorrowerLoadMailbox(borrower)
-        self.node = node = _pure_borrower_node()
-        owner.worker_id, owner.node_id = node.worker_id, node.node_id
-        owner.node_address, owner.gcs_address = ("borrow-publisher.invalid", 1), ("borrow-control.invalid", 2)
-        owner.owner_address = ("127.0.0.1", 19004)
-        registry = NodeRegistry()
-        assert registry.register(node.node_id, owner.node_address, node.resource_ledger.total, node_pid=node._node_pid)
-        node._registration_epoch = registry.get(node.node_id).registration_epoch
-        node._registered_with_gcs = True
-        self.journal, self.recovery = OutputPublicationJournal(), OutputPublicationRecoveryAuthority()
-        self.graph = ContainedReferenceGraphAuthority()
+        self.output = output = ContainedOutput(same_owner=True)
+        self.owner = output.core
+        self.borrower = make_pure_core()
+        self.borrower._reference_mailbox = _BorrowerLoadMailbox(self.borrower)
+        self.borrower._borrow_rpc = self.borrow_rpc
+        self.borrower._borrow_rpc_with_deadline = self.borrow_rpc_with_deadline
         self.calls, self.borrowed_refs = [], []
         self.lose_acquire_ack = False
-        self.child, self.outer = None, None
-
-        def no_store(*_args, **_kwargs):
-            pytest.fail("tiny INLINE borrower fixture attempted a physical output effect")
-
-        def prepare_child(address, message):
-            assert address == owner.owner_address
-            return owner.prepare_stored_contained_pin(message)
-
-        def promote_child(address, message):
-            assert address == owner.owner_address
-            return owner.promote_stored_contained_pin(message)
-
-        self.adapter = OutputPublicationNodeAdapter(
-            self.journal, report_intent=self.recovery.report_intent, arm_complete=self.recovery.arm_complete,
-            report_terminal=self.recovery.report_terminal, report_rollback=self.recovery.report_rollback,
-            prepare_child=prepare_child, promote_child=promote_child, release_child=self.release_child,
-            prepare_graph=lambda message: protocol.ContainedGraphReply(message, self.graph.prepare_manifest(message.manifest)),
-            abort_graph=lambda message: protocol.ContainedGraphReply(message, self.graph.abort_manifest(message.manifest)),
-            seal_replica=no_store, drop_replica=no_store,
-        )
-        node._output_publication_journal, node._output_publications = self.journal, self.adapter
-        owner._rpc = self.publication_rpc
-        owner._borrow_rpc = lambda address, handler, message: (
-            self.release_child(address, message) if handler == "release_contained_reference" else no_store()
-        )
-        borrower._borrow_rpc = self.borrow_rpc
-        borrower._borrow_rpc_with_deadline = self.borrow_rpc_with_deadline
-        self.child = owner.put({"answer": 42})
-        self.pending, self.outer = owner._register_submission(
-            owner.define_remote_function(lambda value: value),
-            ({"child": self.child},), {}, ResourceVector({"CPU": 1}), max_retries=1, _enqueue=True,
-        )
-        assert self.take(owner) == (self.pending,)
-        assert self.pending.nested_local_holds == (self.child.object_id,)
-        self.lineage = owner.owner_table.snapshot(self.child.object_id).lineage_tokens
-        assert len(self.lineage) == 1
-        request = protocol.RequestWorkerLease(
-            LeaseID.random(), self.pending.task_id, self.pending.spec.attempt_id, self.pending.spec.resources,
-            owner.node_id, owner.worker_id, target_node_id=node.node_id, return_ids=self.pending.output_ids,
-        )
-        grant = node._handle_request_lease(request)
-        assert type(grant) is protocol.GrantWorkerLease and grant.worker_id == owner.worker_id
-        started = node._handle_start_worker_lease(protocol.StartWorkerLease(
-            request.lease_id, request.task_id, request.attempt_id, grant.worker_id,
-        ))
-        assert started.accepted and started.node_incarnation is not None
-        discovery = OutputDiscoverySession(OutputPublicationHeader(
-            OutputPublicationID(request.lease_id, self.pending.execution), owner.job_id,
-            grant.worker_id, owner.worker_id, started.node_incarnation,
-        ), inline_threshold=1024, owner_address=owner.owner_address)
-        discovered = discovery.discover(({"child": self.child},))
-        (slot,) = discovered.manifest.slots
-        assert slot.tier is protocol.ResultStorage.INLINE and slot.size_bytes <= 1024 and len(slot.transfers) == 1
-        self.transfer = slot.transfers[0]
-        prepared = node._handle_prepare_output_publication(
-            output_wire.PrepareOutputPublication(discovered.manifest, discovered.slot_payloads),
-        )
-        assert prepared.accepted and self.recovery.snapshot(discovered.manifest.publication_id).armed
-        discovery.release_sources_after_promotions()
-        complete = node._handle_complete_worker_lease(protocol.CompleteWorkerLease(
-            request.lease_id, request.task_id, request.attempt_id, grant.worker_id, protocol.TaskReplyStatus.SUCCEEDED,
-        ))
-        assert complete.accepted and complete.released and complete.state is protocol.LeaseExecutionState.COMPLETED
-        self.envelope = complete.output_publication
-        assert self.envelope is not None and self.envelope.manifest == discovered.manifest
-        reply = protocol.TaskReply(request.task_id, request.attempt_id, grant.worker_id,
-                                   protocol.TaskReplyStatus.SUCCEEDED, self.envelope.results,
-                                   output_publication=self.envelope)
-        assert owner._publish_reply(self.pending, reply, expected_node_id=node.node_id, expected_lease_id=request.lease_id)
-        assert owner._finish_pending_task(self.pending)
-        self.payload = owner.owner_table.snapshot(self.outer.object_id).inline_data
-        assert self.payload == discovered.slot_payloads[0]
-        record = owner._recovery.task_record(self.pending.task_id)
-        assert record.state is TaskState.SUCCEEDED and record.retries_remaining == 1
-        assert owner._recovery.lineage_for_object(self.outer.object_id).task_spec == self.pending.spec
-        assert owner.owner_table.snapshot(self.child.object_id).lineage_tokens == self.lineage
-        assert not owner.owner_table.snapshot(self.child.object_id).submitted_tokens
+        output.register()
+        self.child, self.outer, self.pending = output.child_ref, output.ref, output.pending
+        self.node, self.journal, self.adapter = output.node, output.journal, output.adapter
+        assert self.take(self.owner) == (self.pending,)
+        self.lineage = self.owner.owner_table.snapshot(self.child.object_id).lineage_tokens
+        reply = output.complete()
+        self.transfer, self.envelope = output.transfer, output.envelope
+        assert self.owner._publish_reply(self.pending, reply,
+            expected_node_id=self.node.node_id, expected_lease_id=output.grant.lease_id)
+        assert self.owner._finish_pending_task(self.pending)
+        assert self.take(self.owner) == ()
+        self.payload = self.owner.owner_table.snapshot(self.outer.object_id).inline_data
+        assert self.payload == output.outputs.slot_payloads[0]
         assert not self.journal.snapshot(self.envelope.publication_id).retained_result_slots
-        assert node.object_store.used_bytes == 0 and node.resource_ledger.available == node.resource_ledger.total
-
-    def release_child(self, address, message):
-        assert address == self.owner.owner_address and message.object_id == self.child.object_id
-        return self.owner.release_contained_reference(message)
-
-    def publication_rpc(self, address, handler, message):
-        if handler == output_wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER:
-            assert address == self.owner.node_address
-            assert self.recovery.snapshot(self.envelope.publication_id).adopted == message.proof
-            return self.node._handle_ack_output_publication_adopted(message)
-        assert address == self.owner.gcs_address
-        if handler == "commit_contained_graph":
-            return protocol.ContainedGraphReply(message, self.graph.commit_manifest(message.manifest))
-        if handler == "release_contained_graph_container":
-            return protocol.ContainedGraphReply(message, self.graph.release_manifest_container(message.manifest, message.container_object_id))
-        assert handler == output_wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-        if type(message) is output_wire.ReportOutputPublicationTerminal:
-            ack = self.recovery.report_terminal(message.witness)
-        elif type(message) is output_wire.ReportOutputPublicationAdopted:
-            assert self.owner.owner_table.output_owner_publication_receipt(
-                OutputOwnerPublicationPlan(self.pending.execution, self.envelope),
-            ).committed
-            ack = self.recovery.report_adopted(message.proof)
-        else:
-            assert type(message) is output_wire.ReportOutputPublicationSlotCollected
-            assert self.owner.owner_table.collection_state(self.outer.object_id) is ObjectCollectionState.COLLECTING
-            ack = self.recovery.report_slot_collected(message.proof)
-        return output_wire.OutputRecoveryReply(message, ack)
 
     def borrow_rpc(self, address, handler, message):
         assert address == self.owner.owner_address and len(self.calls) < 10
@@ -497,9 +316,9 @@ class _BorrowerLoadFixture:
                    for ref in (self.child, self.outer))
         assert not self.owner._recovery.reconstruction_snapshot(self.child.object_id).is_put
         assert self.owner._recovery.lineage_for_object(self.outer.object_id) is None
-        assert not self.graph.has_active_obligations() and self.node.object_store.used_bytes == 0
-        snapshot = self.recovery.snapshot(self.envelope.publication_id)
-        assert snapshot.adopted is not None and len(snapshot.slot_collections) == 1
+        assert self.node.object_store.used_bytes == 0
+        snapshot = self.owner._output_handoff_table().query(self.envelope.publication_id)
+        assert snapshot.adoption is not None
         assert self.adapter.report_terminal(self.envelope.publication_id)
         assert not self.adapter.pending_terminal_reports()
 
@@ -1102,8 +921,8 @@ class _LiveBorrowerShutdownProbe:
                    for ref in (fixture.child, fixture.outer))
         assert owner._recovery.lineage_for_object(fixture.outer.object_id) is None
         assert not owner._recovery.reconstruction_snapshot(fixture.child.object_id).is_put
-        assert not fixture.graph.has_active_obligations() and fixture.node.object_store.used_bytes == 0
-        assert len(fixture.recovery.snapshot(fixture.envelope.publication_id).slot_collections) == 1
+        assert fixture.node.object_store.used_bytes == 0
+        assert owner._output_handoff_table().query(fixture.envelope.publication_id).adoption is not None
         assert fixture.adapter.report_terminal(fixture.envelope.publication_id)
         assert not fixture.adapter.pending_terminal_reports()
 

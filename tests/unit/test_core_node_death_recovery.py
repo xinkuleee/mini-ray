@@ -43,6 +43,7 @@ def _core() -> CoreWorker:
     core.worker_id = WorkerID.random()
     core.node_id = NodeID.random()
     core.node_address = ("127.0.0.1", 28101)
+    core.owner_address = ("owner.invalid", 28102)
     core.gcs_address = ("127.0.0.1", 28100)
     core.driver_task_id = TaskID.for_driver(core.job_id)
     core.event_sink = EventSink()
@@ -242,10 +243,12 @@ def _stored_reply(
 
 
 def _next_pending(core: CoreWorker) -> _PendingTask:
-    while True:
+    for _ in range(32):
         item = core._submissions.get_nowait()
+        core._submissions.task_done()
         if isinstance(item, _PendingTask):
             return item
+    pytest.fail("Node-death fixture exceeded its finite queued-work bound")
 
 
 def test_death_replay_is_exact_and_stale_or_malformed_proof_mutates_nothing() -> None:
@@ -316,13 +319,13 @@ def test_death_removes_only_dead_replica_then_final_replica_becomes_lost() -> No
 
 
 def test_promoted_route_does_not_change_canonical_task_reply_replay(monkeypatch) -> None:
-    """Two tiny slots/stores; real grant, adoption and Node-loss reducers."""
+    """One output/two tiny stores; real grant, adoption and Node-loss reducers."""
     from tests.unit.test_core_output_surviving_replica import _Fixture, _no_runtime
 
     _no_runtime.__wrapped__(monkeypatch)
     fixture = _Fixture(monkeypatch)
     core, pending = fixture.core, fixture.pending
-    original = fixture.envelope.results[1]
+    original = fixture.envelope.results[0]
     output, survivor = fixture.output, fixture.target.node_id
     try:
         fixture.add_secondary()
@@ -330,7 +333,6 @@ def test_promoted_route_does_not_change_canonical_task_reply_replay(monkeypatch)
         assert core._drive_output_node_loss(pending, obligation)
         fixture.assert_kept()
         snapshot = core.owner_table.snapshot(output)
-        healthy = core.owner_table.snapshot(pending.output_ids[0])
         assert snapshot.canonical_stored_result == original
         assert snapshot.current_attempt == pending.spec.attempt_id
         assert core._stored_descriptors[output] == replace(original, node_id=survivor)
@@ -358,17 +360,16 @@ def test_promoted_route_does_not_change_canonical_task_reply_replay(monkeypatch)
         assert after == snapshot and after.canonical_stored_result == original
         assert after.locations == frozenset({survivor})
         assert core._stored_descriptors[output] == replace(original, node_id=survivor)
-        assert core.owner_table.snapshot(pending.output_ids[0]) == healthy
-        assert fixture.target.object_store.get(output) == fixture.publication.values.payloads[1]
+        assert fixture.target.object_store.get(output) == fixture.publication.values.payloads[0]
     finally:
         fixture.close()
 
 
 def test_dead_location_and_late_stored_result_cannot_resurrect(monkeypatch) -> None:
     """Real Complete may arrive late, but cannot reverse a latched DROP."""
-    from miniray import control, output_protocol as wire
+    from miniray import output_protocol as wire
     from miniray.core import _OutputNodeLossObligation
-    from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryOwnerDecision
+    from miniray.output_handoff import OutputHandoffPhase
     from tests.unit._pure_core import close_pure_core
     from tests.unit.test_core_output_publication import _fixture as _publication
     from tests.unit.test_core_output_surviving_replica import _no_runtime
@@ -407,84 +408,60 @@ def test_dead_location_and_late_stored_result_cannot_resurrect(monkeypatch) -> N
     assert not reply.accepted
     assert dead not in core.owner_table.snapshot(pending.object_id).locations
 
-    # Prepare and local Complete are real, but no terminal report or result
-    # has reached the submitting Core. GCS therefore freezes UNKNOWN, not a
-    # fabricated success. One two-slot publication and one 1 KiB store suffice.
-    publication, publisher, lost_core, lost, reply, _calls, _rpc = _publication(refs=False)
-    adapter = control.PublicationControlAdapter(publication.graph)
-    adapter.output_recovery = publication.recovery
-    service = control.GCSLite(publications=adapter)
+    # A real Node Complete and two real child promotions exist, while the
+    # owner has only registration. The first child Release loses its ACK,
+    # allowing a late envelope to arrive after UNKNOWN/DISCARD was selected.
+    publication, publisher, lost_core, lost, late_reply, _calls, _rpc = _publication(
+        refs=True, stored=True, report_complete=False)
     survivor = NodeID(bytes(value ^ 1 for value in publisher.node_id.value))
     survivor_address = ("survivor.invalid", 1)
-    service.register_node(protocol.RegisterNode(
-        survivor, 1702, survivor_address, ResourceVector({"CPU": 1}),
-    ))
-    registered = service.register_node(protocol.RegisterNode(
-        publisher.node_id, publisher._node_pid, ("publisher.invalid", 2),
-        ResourceVector({"CPU": 1}),
-    ))
-    assert registered.registration_epoch == publisher._registration_epoch
-    executor = protocol.WorkerIncarnation(
-        publisher.node_id, publisher._node_pid, publisher._registration_epoch,
-        publication.values.executor, 1801,
-    )
-    assert service.register_worker_incarnation(protocol.RegisterWorkerIncarnation(executor)).accepted
     lost_core.node_id, lost_core.node_address = survivor, survivor_address
-    lost_core._home_route = _HomeRoute(survivor, survivor_address, registered.membership_epoch)
-    epoch, live = service.nodes.live_snapshot()
-    lost_core._installed_cluster_snapshot = _snapshot(epoch, *live)
-    lost_core._membership_epoch = epoch
-    frozen = service.publications.commit_node_death(lambda: service.nodes.report_death(
-        protocol.ReportNodeDeath(
-            "late-real-complete", publisher.node_id, publisher._node_pid,
-            publisher._registration_epoch, 1, protocol.NodeDeathReason.PROCESS_EXIT,
-            "publisher exit before terminal delivery",
-        )
-    )).death
-    epoch, live = service.nodes.live_snapshot()
-    lost_core.handle_node_death(frozen, _snapshot(epoch, *live))
+    resources = ResourceVector({"CPU": 1})
+    live_info = protocol.NodeInfo(survivor, 1702, 1, survivor_address, resources, resources)
+    frozen = protocol.NodeDeathRecord("late-real-complete", publisher.node_id, publisher._node_pid,
+        publisher._registration_epoch, 3, 1, protocol.NodeDeathReason.PROCESS_EXIT,
+        "publisher exit before owner terminal delivery")
+    lost_core.handle_node_death(frozen, _snapshot(3, live_info))
     obligation = _OutputNodeLossObligation(publication.id, frozen)
-    calls, arrivals = [], []
+    releases, arrivals = [], []
+    original_borrow = lost_core._borrow_rpc
 
-    def rpc(address, handler, request):
-        assert address == lost_core.gcs_address
-        calls.append((handler, request))
-        assert len(calls) <= 4
-        if handler == wire.PROGRESS_OUTPUT_NODE_LOSS_HANDLER and not arrivals:
-            choice = lost_core._output_loss_choices[publication.id]
-            assert all(slot.decision is OutputRecoveryOwnerDecision.DROP for slot in choice.slots)
-            before = tuple(lost_core.owner_table.snapshot(output) for output in lost.output_ids)
-            arrivals.append(reply)
-            assert not lost_core._publish_reply(
-                lost, reply, expected_node_id=publisher.node_id,
-                expected_lease_id=publication.id.lease_id,
-            )
-            assert tuple(lost_core.owner_table.snapshot(output) for output in lost.output_ids) == before
-            assert all(item.state is ObjectState.PENDING and not item.locations for item in before)
-            assert publication.id not in lost_core._output_result_custody
-        assert handler in (wire.GET_OUTPUT_NODE_LOSS_HANDLER, wire.DECIDE_OUTPUT_NODE_LOSS_HANDLER,
-                           wire.PROGRESS_OUTPUT_NODE_LOSS_HANDLER)
-        return service.handlers[handler](request)
+    def release_then_lost_ack(address, handler, request):
+        result = original_borrow(address, handler, request)
+        releases.append(request)
+        if len(releases) == 1:
+            raise TimeoutError("first child release effect before ACK loss")
+        return result
 
-    lost_core._rpc = rpc
+    lost_core._borrow_rpc = release_then_lost_ack
     try:
-        assert publication.journal.snapshot(publication.id).complete == reply.output_publication.complete
+        assert publication.journal.snapshot(publication.id).complete == late_reply.output_publication.complete
         assert publication.ledger.available == publication.ledger.total
+        assert publication.handoffs.query(publication.id).complete is None
         assert not lost_core._drive_output_node_loss(lost, obligation)
-        history = publication.recovery.snapshot(publication.id)
-        assert history.recovery_action is OutputRecoveryAction.COMPLETION_UNKNOWN
-        assert history.complete is history.resolution.complete is None
-        assert history.resolution.kept_slots == () and arrivals == [reply]
+        assert lost_core._output_loss_choices[publication.id] is False
+        before = lost_core.owner_table.snapshot(lost.object_id)
+        assert before.state is ObjectState.PENDING and not before.locations
+        assert publication.handoffs.query(publication.id).phase is OutputHandoffPhase.ABORTED
+        arrivals.append(late_reply)
+        assert not lost_core._drive_output_node_loss(lost, replace(obligation, envelope=late_reply.output_publication))
         retried = _next_pending(lost_core)
         assert retried.spec.attempt_id == lost.spec.attempt_id.next()
-        before = tuple(lost_core.owner_table.snapshot(output) for output in lost.output_ids)
-        assert all(item.state is ObjectState.PENDING and not item.locations for item in before)
-        assert not lost_core._publish_reply(
-            lost, reply, expected_node_id=publisher.node_id,
-            expected_lease_id=publication.id.lease_id,
-        )
-        assert tuple(lost_core.owner_table.snapshot(output) for output in lost.output_ids) == before
-        assert not lost_core._stored_descriptors and len(calls) == 3
+        assert lost_core._recovery.task_record(lost.task_id).retries_started == 1
+        history = publication.handoffs.query(publication.id)
+        assert history.complete is None and history.adoption is None
+        assert history.phase is OutputHandoffPhase.ABORTED and arrivals == [late_reply]
+        current = lost_core.owner_table.snapshot(lost.object_id)
+        assert current.state is ObjectState.PENDING and not current.locations
+        assert not lost_core._publish_reply(lost, late_reply, expected_node_id=publisher.node_id,
+                                           expected_lease_id=publication.id.lease_id)
+        assert lost_core.owner_table.snapshot(lost.object_id) == current
+        assert not lost_core._stored_descriptors
+        assert publication.id not in lost_core._output_result_custody
+        for transfer in publication.manifest.slots[0].transfers:
+            child = publication.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
+            assert transfer.final_hold not in child.contained_holds
+            assert transfer.provisional_hold not in child.contained_holds
     finally:
         for output in tuple(lost_core._objects):
             for token in tuple(lost_core.owner_table.snapshot(output).local_tokens):
@@ -685,7 +662,7 @@ def test_new_lease_uses_one_migrated_home_snapshot() -> None:
 
 def test_known_grant_cancel_keeps_frozen_requester_after_home_migration(monkeypatch) -> None:
     """One tiny Node: real Grant/Cancel/inventory ACK, no input owners."""
-    from tests.unit.test_cancelled_grant_inventory import _node
+    from tests.unit.test_core_owner_integration import _cancellation_node as _node
     from tests.unit.test_core_output_surviving_replica import _no_runtime
 
     _no_runtime.__wrapped__(monkeypatch)
@@ -827,7 +804,7 @@ def test_pg_is_terminal_but_foreign_attempt_uses_normal_system_retry(mode: str) 
 
 def test_survivor_ambiguous_lease_cancels_before_terminal_pg_loss(monkeypatch) -> None:
     """Unknown Grant becomes a real no-replica cancellation before PG error."""
-    from tests.unit.test_cancelled_grant_inventory import _node
+    from tests.unit.test_core_owner_integration import _cancellation_node as _node
     from tests.unit.test_core_output_surviving_replica import _no_runtime
 
     _no_runtime.__wrapped__(monkeypatch)

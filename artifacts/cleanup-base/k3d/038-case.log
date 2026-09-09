@@ -1,0 +1,21 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_failed_edge_release_freezes_outer_metadata_until_retry_ack ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7a9e2c912690>
+
+    @pytest.mark.unit
+    @pytest.mark.usefixtures('_no_edge_retry_runtime')
+    def test_failed_edge_release_freezes_outer_metadata_until_retry_ack(monkeypatch):
+        f=_EdgeRetryFixture(monkeypatch)
+        try:
+            f.register();f.adopt_finish();c=f.core
+            _edge_release_local(f.ref);_edge_drain_notices(c)
+>           obligation=c._object_gc_obligations[f.ref.object_id]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: ObjectID(task_id=TaskID('ed216d023745b01bba2d773a05757618'), return_index=0)
+
+tests/unit/test_contained_edge_runtime.py:141: KeyError
+=========================== short test summary info ============================
+FAILED tests/unit/test_contained_edge_runtime.py::test_failed_edge_release_freezes_outer_metadata_until_retry_ack
+1 failed in 1.83s

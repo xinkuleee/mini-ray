@@ -20,6 +20,7 @@ import cloudpickle
 import pytest
 
 from miniray import protocol
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.core import (
     CoreWorker, ObjectRef, _PendingTask, _ReleaseBorrowedReference,
     _RetryInlineGc, _WAKE_COORDINATOR,
@@ -211,12 +212,13 @@ class _ForeignReconstruction:
         assert owner._recovery.task_record(pending.task_id).retries_started == 0
         assert self.output.store.used_bytes == len(cloudpickle.dumps({"reconstructed": True}))
 
-        self.source = protocol.ContainedTransferSource("foreign-runtime-transfer")
+        self.source = protocol.ContainedTransferSource(ContainedReferenceHold(
+            ObjectID.for_task(TaskID(b'h' * 16)), owner.worker_id, "foreign-runtime-transfer"))
         assert owner.owner_table.add_contained_reference(
-            pending.object_id, self.source.transfer_token
+            pending.object_id, self.source.hold
         )
         self.pin_release = protocol.ReleaseContainedReference(
-            pending.object_id, owner.worker_id, self.source.transfer_token
+            pending.object_id, owner.worker_id, self.source.hold
         )
         self.token = "foreign-runtime-borrow"
         self.acquire = protocol.AcquireBorrowedObject(
@@ -419,7 +421,7 @@ def test_foreign_lost_get_routes_start_to_owner_then_polls_same_object(
                        if isinstance(request, protocol.RequestOwnedObjectReconstruction)]
         assert len(reconstruct) == 1
         request = reconstruct[0]
-        assert request.source == protocol.ContainedTransferSource("foreign-runtime-transfer")
+        assert request.source == fixture.source
         assert request.credential == protocol.BorrowedCredential(fixture.source, fixture.token)
         assert request.expected_owner_attempt == original.spec.attempt_id
         assert owner.owner_table.snapshot(original.object_id).current_attempt == original.spec.attempt_id.next()
@@ -504,9 +506,11 @@ def test_foreign_reconstruction_failures_have_nondeath_typed_mapping(
     job = JobID.random()
     task = TaskID.derive(job, TaskID.for_driver(job), 0)
     owner = WorkerID.random()
+    source = protocol.ContainedTransferSource(ContainedReferenceHold(
+        ObjectID.for_task(TaskID.derive(job, task, 1)), owner, "transfer"))
     request = protocol.RequestOwnedObjectReconstruction(
         ObjectID.for_task(task), owner, WorkerID.random(),
-        protocol.ContainedTransferSource("transfer"), "borrow",
+        source, "borrow",
         AttemptID(task, 0),
     )
     reply = protocol.RequestOwnedObjectReconstructionReply(

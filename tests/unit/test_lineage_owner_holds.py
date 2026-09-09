@@ -70,8 +70,10 @@ def test_inline_producer_collection_returns_frozen_lineage_release_metadata() ->
 
     assert table.add_outgoing_lineage_edge(producer, edge)
     assert not table.add_outgoing_lineage_edge(producer, edge)
-    assert not table.collect_if_unused(producer)
-    collected = table.collect_unused_with_edges(producer)
+    plan = table.begin_collection(producer, collection_id="lineage-release")
+    assert plan is not None and plan.lineage_releases == (edge,)
+    assert table.contains(producer)
+    collected = table.complete_collection(plan)
 
     assert collected == ObjectMetadataCollection(
         producer, collected=True, lineage_releases=(edge,)

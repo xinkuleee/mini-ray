@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "d44217a665987f52114b41e62b4f5a3a65f3f77d",
+  "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_ambiguous_grant_custody_path.py\n M tests/integration/test_local_replica_handoff_failure_path.py\n M tests/integration/test_pregrant_custody_path.py\n M tests/unit/_pure_reference_output_runtime.py\n M tests/unit/test_borrowed_object_refs.py\n M tests/unit/test_contained_edge_runtime.py\n M tests/unit/test_core_actor_restart.py\n M tests/unit/test_core_node_death_recovery.py\n M tests/unit/test_core_output_lease_domain.py\n M tests/unit/test_core_output_node_loss.py\n M tests/unit/test_core_output_receipt_loss.py\n M tests/unit/test_core_placement_group_scheduling.py\n M tests/unit/test_core_reconstruction_runtime.py\n M tests/unit/test_core_stored_publication_adoption.py\n M tests/unit/test_foreign_reconstruction_runtime.py\n M tests/unit/test_lineage_owner_holds.py\n M tests/unit/test_node_blocking_get_authority.py\n M tests/unit/test_output_owner_retired_fencing.py\n M tests/unit/test_output_owner_terminal_metadata.py\n M tests/unit/test_publication_control_boundary.py\n M tests/unit/test_publication_owner_death_control.py\n M tests/unit/test_publication_pg_loss_paths.py\n M tests/unit/test_stored_physical_gc.py\n M tests/unit/test_targeted_retirement_admission.py\n M tests/unit/test_worker_crash_supervisor.py\n?? tests/support/_contained_output.py\n",
+  "archive_sha256": "3730801f4f4d9d0368ddc43d299147ed26b00225fcbbc8c569c7a9f914fe2d6b",
+  "file_count": 482,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

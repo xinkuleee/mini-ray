@@ -2,13 +2,13 @@
 
 The six unit-marked contracts call real handlers and the resource ledger on
 an unstarted Node; they create no listener, process, or background thread.
-The shared synchronous fixture prepares two tiny ref-free output slots through
-the real journal/adapter and an in-memory recovery authority before Complete.
+The shared synchronous fixture prepares one tiny ref-free stored output through
+the real journal/adapter and an in-memory owner handoff before Complete.
 A directly allocated ``child`` token isolates accounting, not Worker scheduling.
 The final L1 contract races two real handlers behind a three-party barrier:
 waits are at most one second, normal joins share two seconds, and failure
 cleanup shares one second. It settles the actual terminal outbox but retains
-both result slots and the 13-byte stored replica pending an absent owner. It
+the result slot and the 13-byte stored replica pending owner adoption. It
 does not prove owner adoption, physical GC, or a running Worker/GCS process.
 """
 
@@ -81,7 +81,8 @@ def _running_lease(
     assert prepared.accepted
     assert record.output_publication_id == fixture.id
     assert fixture.journal.snapshot(fixture.id).ready_to_complete
-    assert fixture.recovery.snapshot(fixture.id).armed
+    assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
+    assert fixture.handoffs.query(fixture.id).complete is None
     assert node._ledger.snapshot() == baseline
     return node, request, grant
 
@@ -311,7 +312,6 @@ def test_concurrent_block_and_completion_linearize_without_leaking(
 
     from miniray import transport
     from miniray.output_publication_journal import OutputPublicationJournalState
-    from miniray.output_recovery import OutputRecoveryStage
 
     resources = ResourceVector({"CPU": 1, "GPU": 1})
     barrier = threading.Barrier(3, timeout=1.0)
@@ -380,20 +380,21 @@ def test_concurrent_block_and_completion_linearize_without_leaking(
         ledger = node.resource_ledger
         block_message = _blocked(request, grant.worker_id, 0)
         complete_message = _complete(request, grant.worker_id)
-        original_terminal = adapter._report_terminal
+        original_terminal = adapter._report_complete
 
         def report_terminal(witness):
             try:
-                # The original bound fixture callback calls its actual
-                # OutputPublicationRecoveryAuthority, not a fabricated ACK.
-                acknowledgement = original_terminal(witness)
-                terminal_acks.put_nowait(acknowledgement)
-                return acknowledgement
+                # The original callback validates the actual owner-handoff
+                # reply before returning; inspect that authority's saved fact.
+                original_terminal(witness)
+                owner_handoff = original_terminal.__self__.handoffs.query(identity)
+                assert owner_handoff.complete == witness
+                terminal_acks.put_nowait(owner_handoff)
             except BaseException as exc:
                 retain_error(exc)
                 raise
 
-        monkeypatch.setattr(adapter, "_report_terminal", report_terminal)
+        monkeypatch.setattr(adapter, "_report_complete", report_terminal)
         monkeypatch.setattr(node, "_background_rpc", forbidden)
         threads = (
             threading.Thread(target=block, name="miniray-test-block-complete-block", daemon=True),
@@ -458,11 +459,9 @@ def test_concurrent_block_and_completion_linearize_without_leaking(
         assert node._drive_output_publications()
         acknowledgement = terminal_acks.get_nowait()
         terminal_acks.task_done()
-        assert acknowledgement.stage is OutputRecoveryStage.TERMINAL
-        assert acknowledgement.snapshot.manifest == envelope.manifest
-        assert acknowledgement.snapshot.armed and acknowledgement.snapshot.complete == witness
-        assert acknowledgement.snapshot.adopted is None
-        assert acknowledgement.snapshot.slot_collections == ()
+        assert acknowledgement.manifest == envelope.manifest
+        assert acknowledgement.complete == witness
+        assert acknowledgement.adoption is None
         assert not adapter.pending_terminal_reports()
 
         released_ledger = ledger.snapshot()
@@ -483,18 +482,17 @@ def test_concurrent_block_and_completion_linearize_without_leaking(
         assert not adapter.pending_rollbacks() and not adapter._tickets
         assert terminal_acks.empty() and terminal_acks.unfinished_tasks == 0
 
-        # This fixture has no output owner. Complete/report ACK must preserve
-        # delivery custody, not synthesize adoption or physical-GC authority.
+        # This fixture has no owner adoption. Complete/report ACK preserves
+        # delivery custody; it cannot authorize retirement or physical GC.
         snapshot = journal.snapshot(identity)
         assert snapshot.state is OutputPublicationJournalState.COMPLETED
-        assert snapshot.retained_result_slots == (0, 1) and snapshot.retired_slots == ()
+        assert snapshot.retained_result_slots == (0,) and snapshot.retired_slots == ()
         assert snapshot.rollback is None and snapshot.rollback_tombstone is None
-        inline, stored = envelope.results
-        assert inline.inline_data == b"inline-result" and stored.inline_data is None
+        stored, = envelope.results
+        assert stored.inline_data is None
         assert node.object_store.capacity_bytes == 1024 and node.object_store.used_bytes == 13
         assert node.object_store.get(stored.object_id) == b"stored-result"
         assert node.object_store.snapshot(stored.object_id).pin_count == 0
-        assert not node.object_store.contains(inline.object_id, sealed_only=False)
         assert not node._local_replica_write_claims and not node._dropped_metadata
         assert errors.empty() and not error_overflow, tuple(errors.queue)
     finally:

@@ -1,0 +1,80 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_worker_start_and_complete_echo_task_scheduling_key ____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7efa12c99fd0>
+
+    @pytest.mark.unit
+    def test_worker_start_and_complete_echo_task_scheduling_key(monkeypatch) -> None:
+        from miniray.output_publication import OutputPublicationNodeIncarnation
+    
+        node_id = NodeID.random()
+        worker_id = WorkerID.random()
+        key = _scheduling_key(node_id)
+        job_id = JobID.random()
+        task_id = TaskID.derive(job_id, TaskID.for_driver(job_id), 0)
+        spec = protocol.TaskSpec(
+            job_id, task_id, AttemptID(task_id, 0),
+            protocol.FunctionKey(job_id, __name__, "pg_worker", "v1"), (), 1,
+            ResourceVector(), WorkerID.random(), scheduling_key=key,
+        )
+        push = protocol.PushTask(LeaseID.random(), worker_id, spec)
+        worker = object.__new__(WorkerServer)
+        worker.worker_id = worker_id
+        worker.node_id = node_id
+        worker.node_address = ("127.0.0.1", 22001)
+        worker._completion_acked = set()
+        worker._push_obligations = set()
+        seen = []
+    
+        def rpc(_address, handler, request):
+            seen.append(request)
+            if handler == START_WORKER_LEASE_HANDLER:
+                return protocol.StartWorkerLeaseReply(
+                    request.lease_id, protocol.LeaseExecutionState.RUNNING, True,
+                    scheduling_key=request.scheduling_key,
+                    node_incarnation=OutputPublicationNodeIncarnation(node_id, 21001, 3),
+                )
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            return protocol.CompleteWorkerLeaseReply(
+                request.lease_id, request.task_id, request.attempt_id,
+                request.worker_id, request.status,
+                protocol.LeaseExecutionState.COMPLETED, True, True,
+                scheduling_key=request.scheduling_key,
+            )
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        worker._start_worker_lease(push)
+>       reply = protocol.TaskReply(
+            task_id, spec.attempt_id, worker_id, protocol.TaskReplyStatus.SUCCEEDED, ()
+        )
+
+tests/unit/test_core_placement_group_scheduling.py:879: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:10: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = TaskReply(task_id=TaskID('ccc634eb08153ffa60921b244138eb0c'), attempt_id=AttemptID(task_id=TaskID('ccc634eb08153ffa609...a291e310d1a827ebbc'), status=<TaskReplyStatus.SUCCEEDED: 'SUCCEEDED'>, results=(), error=None, output_publication=None)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "results", tuple(self.results))
+        if self.attempt_id.task_id != self.task_id:
+            raise ProtocolError("reply attempt_id must belong to task_id")
+        if any(result.object_id.task_id != self.task_id for result in self.results):
+            raise ProtocolError("reply result IDs must belong to task_id")
+        if self.status is TaskReplyStatus.SUCCEEDED and self.error is not None:
+            raise ProtocolError("a successful task reply cannot contain an error")
+        if self.status is not TaskReplyStatus.SUCCEEDED and self.error is None:
+            raise ProtocolError("a failed task reply must contain an error")
+        if self.status is not TaskReplyStatus.SUCCEEDED and self.results:
+            raise ProtocolError("a failed task reply cannot publish results")
+        if self.status is TaskReplyStatus.SUCCEEDED:
+            if tuple(result.object_id for result in self.results) != (ObjectID(self.task_id, 0),):
+>               raise ProtocolError("successful task reply must publish the single return at index 0")
+E               miniray.errors.ProtocolError: successful task reply must publish the single return at index 0
+
+src/miniray/protocol.py:3078: ProtocolError
+=========================== short test summary info ============================
+FAILED tests/unit/test_core_placement_group_scheduling.py::test_worker_start_and_complete_echo_task_scheduling_key
+1 failed in 1.98s

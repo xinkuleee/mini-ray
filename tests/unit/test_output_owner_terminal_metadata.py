@@ -1,10 +1,9 @@
-"""Pure full-owner reachability after two-slot output publication and GC.
+"""Pure full-owner reachability after current single-output publication and GC.
 
-Two INLINE results exercise real owner-held bytes; one shared child exercises
-distinct final holds and per-container graph release.  Every authority is an
-in-memory state machine.  No runtime, transport, thread, process or payload
-deserialization is started.  Function/argument bytes are installed in TaskSpec
-before registration, not retrofitted into an already-registered fixture.
+One INLINE result exercises owner-held bytes; one child executes real
+prepare/promote/release/collection transitions. Argument, keyword and function
+bytes are installed before owner registration. No GCS graph, runtime, transport,
+thread, process, user execution or payload deserialization is used.
 """
 
 from __future__ import annotations
@@ -17,13 +16,9 @@ import hashlib
 import pytest
 
 from miniray import protocol
-from miniray.contained_cycle import ContainedReferenceGraphAuthority
-from miniray.contained_edges import ContainedReferenceHold
-from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.ids import AttemptID, JobID, LeaseID, NodeID, TaskID, WorkerID
 from miniray.output_publication import (
-    OutputPublicationCompleteWitness, OutputPublicationEnvelope,
-    OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationCompleteWitness, OutputPublicationEnvelope, OutputPublicationManifest,
 )
 from miniray.ownership import (
     ObjectCollectionState, ObjectOwnerTable, ObjectState,
@@ -31,9 +26,7 @@ from miniray.ownership import (
     OutputOwnerPublicationDisposition, OutputOwnerPublicationMembership,
     OutputOwnerPublicationPlan, StoredContainedReferenceDisposition,
 )
-from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
-from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from tests.unit.test_output_owner_publication import _Fixture as _OwnerValues
 
 
 pytestmark = pytest.mark.unit
@@ -41,139 +34,92 @@ pytestmark = pytest.mark.unit
 _ARGUMENT = b"argument-stream-must-not-survive-full-owner-gc"
 _KEYWORD = b"keyword-stream-must-not-survive-full-owner-gc"
 _FUNCTION = b"serialized-function-must-not-survive-full-owner-gc"
-_RESULTS = (b"slot-zero-inline-result-must-be-forgotten",
-            b"slot-one-inline-result-must-be-forgotten")
+_RESULT = b"single-inline-result-must-be-forgotten"
 
 
-class _Fixture:
+class _Fixture(_OwnerValues):
     def __init__(self):
-        self.job = JobID(b"J" * 16)
-        self.owner_id, self.executor_id = WorkerID(b"O" * 16), WorkerID(b"E" * 16)
-        self.node = NodeID(b"N" * 16)
-        task = TaskID.derive(self.job, TaskID.for_driver(self.job), 73)
-        self.attempt = AttemptID(task, 0)
-        function = protocol.FunctionKey(self.job, __name__, "producer", "v1")
-        self.spec = protocol.TaskSpec(
-            self.job, task, self.attempt, function, (protocol.InlineArg(_ARGUMENT),),
-            2, ResourceVector(), self.owner_id,
-            function_definition=protocol.FunctionDefinition.from_payload(function, _FUNCTION),
+        super().__init__(edges=True, all_stored=False)
+        self.output = self.publication_id.output_ids[0]
+        self.transfer = self.manifest.slots[0].transfers[0]
+        # Set payload-bearing lineage before table() registers the TaskSpec.
+        self.spec = replace(
+            self.spec, args=(protocol.InlineArg(_ARGUMENT),),
+            function_definition=protocol.FunctionDefinition.from_payload(self.spec.function, _FUNCTION),
             kwargs=(("payload", protocol.InlineArg(_KEYWORD)),),
         )
-        self.execution = TaskExecutionKey.from_task_spec(self.spec)
-        self.publication_id = OutputPublicationID(LeaseID(b"L" * 16), self.execution)
-        self.header = OutputPublicationHeader(
-            self.publication_id, self.job, self.executor_id, self.owner_id,
-            OutputPublicationNodeIncarnation(self.node, 401, 1),
-        )
-        self.child_id = ObjectID.for_task(TaskID.for_put(self.job, self.executor_id, 0))
-        self.transfers = tuple(
-            PreparedContainedTransfer(
-                self.child_id, self.executor_id, ("127.0.0.1", 31901),
-                OwnedContainedSource(self.executor_id),
-                ContainedReferenceHold(object_id, self.executor_id, "shared-child-token"),
-                ContainedReferenceHold(object_id, self.owner_id, "shared-child-token"),
-            )
-            for object_id in self.publication_id.output_ids
-        )
-        self.plan = self.publication(_RESULTS)
+        self.plan = self.publication(_RESULT)
 
-    def publication(self, payloads):
-        slots, results = [], []
-        for object_id, payload, transfer in zip(
-            self.publication_id.output_ids, payloads, self.transfers
-        ):
-            checksum = hashlib.sha256(payload).hexdigest()
-            slots.append(OutputSlotManifest(
-                object_id, protocol.ResultStorage.INLINE, len(payload), checksum, (transfer,),
-            ))
-            results.append(protocol.ResultDescriptor(
-                object_id, protocol.ResultStorage.INLINE, len(payload),
-                self.owner_id, self.node, checksum, payload,
-            ))
-        manifest = OutputPublicationManifest.create(self.header, tuple(slots))
+    def publication(self, payload):
+        checksum = hashlib.sha256(payload).hexdigest()
+        slot = replace(self.manifest.slots[0], size_bytes=len(payload), checksum=checksum)
+        manifest = OutputPublicationManifest.create(self.header, (slot,))
+        result = replace(
+            self.envelope.results[0], size_bytes=len(payload), checksum=checksum, inline_data=payload,
+        )
         envelope = OutputPublicationEnvelope(
-            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), tuple(results),
+            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (result,),
         )
         return OutputOwnerPublicationPlan(self.execution, envelope)
 
     def collect_all(self):
-        owner, child_owner = ObjectOwnerTable(), ObjectOwnerTable()
-        owner.register_task_outputs(self.spec, local_tokens=("handle-0", "handle-1"))
-        child_attempt = AttemptID(self.child_id.task_id, 0)
-        child_owner.register(self.child_id, current_attempt=child_attempt, local_token="child-handle")
-        assert child_owner.publish_inline(self.child_id, child_attempt, b"shared-child-value")
-        for transfer in self.transfers:
-            assert child_owner.prepare_stored_contained_reference(
-                transfer, authority_worker_id=self.executor_id,
-            ) is StoredContainedReferenceDisposition.PREPARED
-            assert child_owner.promote_stored_contained_reference(
-                transfer, authority_worker_id=self.executor_id,
-            ) is StoredContainedReferenceDisposition.PROMOTED
-        assert child_owner.release_local_reference(self.child_id, "child-handle")
-        graph = ContainedReferenceGraphAuthority()
-        graph_manifest = self.plan.envelope.manifest.to_graph_manifest()
-        assert graph_manifest is not None
-        graph.prepare_manifest(graph_manifest)
-        graph.commit_manifest(graph_manifest)
-        publication = owner.commit_output_publication(self.plan)
-        assert publication.disposition is OutputOwnerPublicationDisposition.APPLIED
-        for index, object_id in enumerate(self.publication_id.output_ids):
-            snapshot = owner.snapshot(object_id)
-            assert snapshot.state is ObjectState.READY_INLINE
-            assert snapshot.inline_data == _RESULTS[index]
-            assert snapshot.producer_task_spec == self.spec
-            assert snapshot.producer_task_spec.args[0].data == _ARGUMENT
-            assert snapshot.producer_task_spec.kwargs[0][1].data == _KEYWORD
-            assert snapshot.producer_task_spec.function_definition.payload == _FUNCTION
+        owner, child_owner = self.table(), ObjectOwnerTable()
+        child_attempt = AttemptID(self.child.task_id, 0)
+        child_owner.register(self.child, current_attempt=child_attempt, local_token="child-handle")
+        assert child_owner.publish_inline(self.child, child_attempt, b"child-value")
+        assert child_owner.prepare_stored_contained_reference(
+            self.transfer, authority_worker_id=self.executor,
+        ) is StoredContainedReferenceDisposition.PREPARED
+        assert child_owner.promote_stored_contained_reference(
+            self.transfer, authority_worker_id=self.executor,
+        ) is StoredContainedReferenceDisposition.PROMOTED
+        assert child_owner.release_local_reference(self.child, "child-handle")
+        assert child_owner.snapshot(self.child).contained_holds == frozenset((self.transfer.final_hold,))
+        assert child_owner.contained_release_was_seen(self.child, self.transfer.provisional_hold)
+        assert owner.commit_output_publication(self.plan).disposition is OutputOwnerPublicationDisposition.APPLIED
+        snapshot = owner.snapshot(self.output)
+        assert snapshot.state is ObjectState.READY_INLINE and snapshot.inline_data == _RESULT
+        assert snapshot.producer_task_spec == self.spec
+        assert snapshot.producer_task_spec.args[0].data == _ARGUMENT
+        assert snapshot.producer_task_spec.kwargs[0][1].data == _KEYWORD
+        assert snapshot.producer_task_spec.function_definition.payload == _FUNCTION
 
-        saved = []
-        for index, object_id in enumerate(self.publication_id.output_ids):
-            collection_id = f"full-owner-gc-{index}"
-            assert owner.begin_output_publication_collection(object_id, collection_id=collection_id) is None
-            assert owner.release_local_reference(object_id, f"handle-{index}")
-            plan = owner.begin_output_publication_collection(object_id, collection_id=collection_id)
-            assert plan is not None and plan.metadata_plan.producer_task_spec == self.spec
-            assert owner.collection_state(object_id) is ObjectCollectionState.COLLECTING
-            assert owner.output_publication_collection_receipt(plan) is None
-            assert plan.metadata_plan.locations == ()
-            assert len(plan.metadata_plan.contained_releases) == 1
-            edge = plan.metadata_plan.contained_releases[0]
-            assert edge.incoming_hold(self.owner_id) == self.transfers[index].final_hold
-            assert child_owner.release_contained_reference(self.child_id, edge.incoming_hold(self.owner_id))
-            graph_release = graph.release_manifest_container(graph_manifest, object_id)
-            assert graph_release.released_edges == plan.membership.slot.edges
-            completed = owner.complete_output_publication_collection(plan, graph_release)
-            assert completed.disposition is OutputOwnerPublicationDisposition.APPLIED
-            assert completed.collection.collected
-            assert completed.collection.contained_releases == plan.metadata_plan.contained_releases
-            assert not completed.collection.lineage_releases
-            assert not owner.contains(object_id)
-            assert owner.collection_state(object_id) is ObjectCollectionState.COLLECTED
-            assert owner.output_owner_publication(object_id) is None
-            assert owner.output_owner_result(object_id) is None
-            saved.append((plan, graph_release, completed))
-            remaining = self.transfers[index + 1:]
-            assert child_owner.snapshot(self.child_id).contained_holds == frozenset(
-                transfer.final_hold for transfer in remaining
-            )
-            (graph_state,) = graph.snapshot().manifests
-            assert graph_state.active_edges == tuple(transfer.edge for transfer in remaining)
-            for sibling_index in range(index + 1, 2):
-                sibling = owner.snapshot(self.publication_id.output_ids[sibling_index])
-                assert sibling.inline_data == _RESULTS[sibling_index]
-                assert sibling.producer_task_spec == self.spec
+        collection_id = "full-owner-gc"
+        assert owner.begin_output_publication_collection(self.output, collection_id=collection_id) is None
+        self.release_handle(owner, self.output)
+        plan = owner.begin_output_publication_collection(self.output, collection_id=collection_id)
+        assert plan is not None and plan.metadata_plan.producer_task_spec == self.spec
+        assert owner.collection_state(self.output) is ObjectCollectionState.COLLECTING
+        assert owner.output_publication_collection_receipt(plan) is None
+        assert plan.metadata_plan.locations == ()
+        assert len(plan.metadata_plan.contained_releases) == 1
+        edge = plan.metadata_plan.contained_releases[0]
+        assert edge.incoming_hold(self.owner) == self.transfer.final_hold
+        assert child_owner.release_contained_reference(self.child, edge.incoming_hold(self.owner))
+        assert not child_owner.snapshot(self.child).contained_holds
+        assert child_owner.contained_release_was_seen(self.child, self.transfer.final_hold)
+        # The actual child effect precedes the local owner CAS. The current
+        # owner API receives its frozen plan, not an invented GCS graph ACK.
+        completed = owner.complete_output_publication_collection(plan)
+        assert completed.disposition is OutputOwnerPublicationDisposition.APPLIED
+        assert completed.collection.collected
+        assert completed.collection.contained_releases == plan.metadata_plan.contained_releases
+        assert not completed.collection.lineage_releases
+        assert not owner.contains(self.output)
+        assert owner.collection_state(self.output) is ObjectCollectionState.COLLECTED
+        assert owner.output_owner_publication(self.output) is None
+        assert owner.output_owner_result(self.output) is None
 
-        child_gc = child_owner.begin_collection(self.child_id, collection_id="shared-child-gc")
-        assert child_gc is not None
-        assert child_owner.complete_collection(child_gc).collected
+        child_gc = child_owner.begin_collection(self.child, collection_id="child-gc")
+        assert child_gc is not None and child_owner.complete_collection(child_gc).collected
         assert not owner._entries and not owner._task_lineage
         assert not child_owner._entries
-        return owner, child_owner, tuple(saved)
+        return owner, child_owner, plan, completed
 
 
 def _owner_state(owner):
     # Cover every root, including future caches. Only the synchronization lock
-    # is excluded; never select just the expected terminal-receipt dictionaries.
+    # is excluded; never select just expected terminal-receipt dictionaries.
     assert "_lock" in vars(owner)
     return {name: value for name, value in vars(owner).items() if name != "_lock"}
 
@@ -183,8 +129,8 @@ def _assert_metadata_only(owner):
 
     def visit(value, path):
         if type(value) in (JobID, TaskID, WorkerID, NodeID, LeaseID):
-            # Only these typed opaque identity leaves may own bytes. A random
-            # 16-byte payload elsewhere does not receive this exemption.
+            # Only these exact opaque identity leaves may own bytes. A random
+            # 16-byte payload or an extra identity cache receives no exemption.
             assert vars(value).keys() == {"value"}, path
             assert type(value.value) is bytes and len(value.value) == 16, path
             return
@@ -204,7 +150,7 @@ def _assert_metadata_only(owner):
             members = {member.name for member in fields(value)}
             for name in sorted(members):
                 visit(getattr(value, name), f"{path}.{name}")
-            # Dataclass fields alone must not hide an extra instance cache.
+            # Declared fields must not hide an extra instance cache.
             for name, item in vars(value).items():
                 if name not in members:
                     visit(item, f"{path}.{name}")
@@ -223,67 +169,65 @@ def _assert_metadata_only(owner):
 
 def test_full_owner_gc_forgets_all_payloads_but_replays_exact_caller_plans():
     fixture = _Fixture()
-    owner, child_owner, saved = fixture.collect_all()
+    owner, child_owner, plan, completed = fixture.collect_all()
     _assert_metadata_only(owner)
     _assert_metadata_only(child_owner)
     terminal = deepcopy(_owner_state(owner))
-    for plan, graph_release, completed in saved:
-        replayed = replace(completed, disposition=OutputOwnerPublicationDisposition.ALREADY_APPLIED)
-        # The caller may retain the source TaskSpec and its payloads. Both the
-        # original and a structurally rebuilt plan must recover the exact ACK.
-        rebuilt = replace(plan, metadata_plan=replace(
-            plan.metadata_plan, producer_task_spec=replace(fixture.spec),
-        ))
-        assert rebuilt == plan and rebuilt is not plan
-        for retained in (plan, rebuilt):
-            assert owner.output_publication_collection_receipt(retained) == replayed
-            assert owner.complete_output_publication_collection(retained, graph_release) == replayed
-        assert owner.begin_output_publication_collection(plan.object_id, collection_id=plan.collection_id) is None
+    child_terminal = deepcopy(_owner_state(child_owner))
+    replayed = replace(completed, disposition=OutputOwnerPublicationDisposition.ALREADY_APPLIED)
+    # Caller-retained source bytes remain legal. Both original and structurally
+    # rebuilt plans must recover the same exact ACK without owner retention.
+    rebuilt = replace(plan, metadata_plan=replace(
+        plan.metadata_plan, producer_task_spec=replace(fixture.spec),
+    ))
+    assert rebuilt == plan and rebuilt is not plan
+    for retained in (plan, rebuilt):
+        assert owner.output_publication_collection_receipt(retained) == replayed
+        assert owner.complete_output_publication_collection(retained) == replayed
+    assert owner.begin_output_publication_collection(plan.object_id, collection_id=plan.collection_id) is None
     assert owner.commit_output_publication(fixture.plan).disposition is OutputOwnerPublicationDisposition.FENCED
     assert _owner_state(owner) == terminal
+    assert _owner_state(child_owner) == child_terminal
     _assert_metadata_only(owner)
+    _assert_metadata_only(child_owner)
 
 
 @pytest.mark.parametrize("changed_field", ["argument", "keyword", "function", "result", "collection_id"])
 def test_terminal_owner_rejects_changed_payload_or_collection_identity(changed_field):
     fixture = _Fixture()
-    owner, child_owner, saved = fixture.collect_all()
+    owner, child_owner, plan, completed = fixture.collect_all()
     terminal = deepcopy(_owner_state(owner))
-    for index, (plan, graph_release, completed) in enumerate(saved):
-        metadata, membership = plan.metadata_plan, plan.membership
-        changed_graph_release = graph_release
-        if changed_field == "argument":
-            spec = replace(fixture.spec, args=(protocol.InlineArg(b"altered-argument-payload"),))
-            metadata = replace(metadata, producer_task_spec=spec)
-        elif changed_field == "keyword":
-            spec = replace(fixture.spec, kwargs=(("payload", protocol.InlineArg(b"altered-keyword-payload")),))
-            metadata = replace(metadata, producer_task_spec=spec)
-        elif changed_field == "function":
-            spec = replace(fixture.spec, function_definition=protocol.FunctionDefinition.from_payload(
-                fixture.spec.function, b"altered-function-payload",
-            ))
-            metadata = replace(metadata, producer_task_spec=spec)
-        elif changed_field == "result":
-            payloads = list(_RESULTS)
-            payloads[index] = b"altered-inline-result-payload"
-            changed_publication = fixture.publication(tuple(payloads))
-            with pytest.raises(OutputOwnerPublicationConflictError, match="rebound"):
-                owner.commit_output_publication(changed_publication)
-            manifest = changed_publication.envelope.manifest
-            membership = OutputOwnerPublicationMembership(manifest, index)
-            # Even a self-consistent forged result/graph pair must fail the
-            # terminal identity check, not merely an unrelated graph mismatch.
-            changed_graph_release = replace(graph_release, manifest=manifest.to_graph_manifest())
-        else:
-            metadata = replace(metadata, collection_id=f"different-gc-{index}")
-            with pytest.raises(OutputOwnerPublicationConflictError, match="identity changed"):
-                owner.begin_output_publication_collection(plan.object_id, collection_id=metadata.collection_id)
-        changed = OutputOwnerPublicationCollectionPlan(membership, metadata)
-        with pytest.raises(OutputOwnerPublicationConflictError, match="terminal identity"):
-            owner.complete_output_publication_collection(changed, changed_graph_release)
-        with pytest.raises(OutputOwnerPublicationConflictError, match="terminal identity"):
-            owner.output_publication_collection_receipt(changed)
-        assert owner.output_publication_collection_receipt(plan).collection == completed.collection
+    child_terminal = deepcopy(_owner_state(child_owner))
+    metadata, membership = plan.metadata_plan, plan.membership
+    if changed_field == "argument":
+        spec = replace(fixture.spec, args=(protocol.InlineArg(b"altered-argument-payload"),))
+        metadata = replace(metadata, producer_task_spec=spec)
+    elif changed_field == "keyword":
+        spec = replace(fixture.spec, kwargs=(("payload", protocol.InlineArg(b"altered-keyword-payload")),))
+        metadata = replace(metadata, producer_task_spec=spec)
+    elif changed_field == "function":
+        spec = replace(fixture.spec, function_definition=protocol.FunctionDefinition.from_payload(
+            fixture.spec.function, b"altered-function-payload",
+        ))
+        metadata = replace(metadata, producer_task_spec=spec)
+    elif changed_field == "result":
+        changed_publication = fixture.publication(b"altered-inline-result-payload")
+        with pytest.raises(OutputOwnerPublicationConflictError, match="rebound"):
+            owner.commit_output_publication(changed_publication)
+        # Rebuild a self-consistent manifest/witness/descriptor. Rejection must
+        # bind terminal identity rather than an unrelated malformed envelope.
+        membership = OutputOwnerPublicationMembership(changed_publication.envelope.manifest, 0)
+    else:
+        metadata = replace(metadata, collection_id="different-gc")
+        with pytest.raises(OutputOwnerPublicationConflictError, match="identity changed"):
+            owner.begin_output_publication_collection(plan.object_id, collection_id=metadata.collection_id)
+    changed = OutputOwnerPublicationCollectionPlan(membership, metadata)
+    with pytest.raises(OutputOwnerPublicationConflictError, match="terminal identity"):
+        owner.complete_output_publication_collection(changed)
+    with pytest.raises(OutputOwnerPublicationConflictError, match="terminal identity"):
+        owner.output_publication_collection_receipt(changed)
+    assert owner.output_publication_collection_receipt(plan).collection == completed.collection
     assert _owner_state(owner) == terminal
+    assert _owner_state(child_owner) == child_terminal
     _assert_metadata_only(owner)
     _assert_metadata_only(child_owner)

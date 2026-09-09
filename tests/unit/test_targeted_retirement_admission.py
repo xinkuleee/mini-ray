@@ -1,41 +1,32 @@
-"""Pure targeted START admission before irreversible old-output retirement.
+"""Single-output admission preflight and exact old-effect retirement.
 
-One in-memory Node/store (at most 4 KiB), two logical tasks and three output
-slots total (at most two selected per publication), four contained transfers,
-bounded synchronous renewal callbacks and at most 32 RPC reducer calls per
-case.  Real unified publication/ownership/graph/retirement methods
-run underneath fake transport.  No process, thread, socket, user function,
-sleep, blocking wait or background queue consumption is permitted.
+One threadless Core/Node, one 1 KiB store, two real child transfers and at
+most 16 synchronous cleanup calls. Foreign renewal results are explicit
+prerequisite doubles; publication, owner/recovery, retirement and GC are real.
+No process, socket, producer execution, sleep or blocking wait is allowed.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from dataclasses import replace
 import queue
 import socket
 import subprocess
 import threading
 import time
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
-from miniray.core import (
-    CoreWorker, _DelayedTargetedReconstruction, _PendingTask,
-    _StartTargetedReconstruction,
-)
+from miniray import protocol
+from miniray.core import CoreWorker, ObjectRef, _PendingTask, _WAKE_COORDINATOR
 from miniray.errors import SystemTaskError
-from miniray.foreign_lineage_runtime import (
-    ForeignLineageRenewalDisposition, ForeignLineageRenewalResult,
-)
+from miniray.foreign_lineage_runtime import ForeignLineageRenewalDisposition, ForeignLineageRenewalResult
 from miniray.node import NodeServer
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.recovery import TaskState
-from miniray.targeted_reconstruction import TargetedSessionPhase
-from tests.unit._pure_core import close_pure_core
-from tests.unit.test_core_output_publication import _fixture
-from tests.unit.test_task_finish_barrier import _Fixture as _StoredFixture
+from tests.unit.test_core_output_publication import _fixture, _close
 
 
 pytestmark = pytest.mark.unit
@@ -44,8 +35,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def _no_runtime(monkeypatch):
     def forbidden(*_args, **_kwargs):
-        pytest.fail("targeted-retirement contract attempted real runtime work")
-
+        pytest.fail("retirement contract attempted real runtime work")
     for owner, method in (
         (CoreWorker, "__init__"), (NodeServer, "__init__"),
         (threading.Thread, "start"), (threading.Thread, "join"),
@@ -58,69 +48,63 @@ def _no_runtime(monkeypatch):
 
 def _drain_queue(core):
     records = []
-    for _ in range(64):
+    for _ in range(8):
         try:
             item = core._submissions.get_nowait()
         except queue.Empty:
             return tuple(records)
         records.append(item)
         core._submissions.task_done()
-    pytest.fail("targeted fixture exceeded 64 in-memory queue records")
+    pytest.fail("retirement fixture exceeded eight queue records")
 
 
 class _Case:
     def __init__(self, *, refs=True):
         self.fixture, self.node, self.core, self.pending, reply, _calls, rpc = _fixture(refs=refs)
         core, pending = self.core, self.pending
-        assert core._publish_reply(
-            pending, reply, expected_node_id=self.node.node_id,
-            expected_lease_id=self.fixture.id.lease_id,
-        )
+        assert core._publish_reply(pending, reply, expected_node_id=self.node.node_id,
+                                   expected_lease_id=self.fixture.id.lease_id)
         assert core._finish_pending_task(pending)
-        assert not any(isinstance(item, _PendingTask) for item in _drain_queue(core))
-        self.healthy, self.lost = pending.output_ids
+        assert all(item is _WAKE_COORDINATOR for item in _drain_queue(core))
+        self.lost = pending.object_id
         assert core.owner_table.mark_lost(self.lost, pending.spec.attempt_id)
-        self.targeted = core._targeted_reconstruction_coordinator()
-        with core._state_lock:
-            opened = self.targeted.request(self.lost, pending.spec.attempt_id)
-        assert opened.session.phase is TargetedSessionPhase.OPEN
-        assert opened.session.target_output_ids == (self.lost,)
-        self.events = []
-        self.rpc_calls = []
+        # Core's real LOST transitions invalidate the readable route together
+        # with owner locations (notify_node_dead and output Node-loss drive).
+        # Keep canonical owner metadata and Node bytes for exact retirement.
+        core._stored_descriptors.pop(self.lost)
+        assert core.owner_table.snapshot(self.lost).canonical_stored_result is not None
+        # This is an inert view of the existing real outer0 owner token.
+        self.ref = ObjectRef(self.lost, core.worker_id)
+        self.events, self.rpc_calls = [], []
         borrow = core._borrow_rpc
 
         def rpc_unlocked(address, handler, request):
             assert not core._state_lock._is_owned(), handler
             self.rpc_calls.append((handler, request))
-            assert len(self.rpc_calls) <= 32
+            assert len(self.rpc_calls) <= 16
             return rpc(address, handler, request)
 
         def borrow_unlocked(address, handler, request):
             assert not core._state_lock._is_owned(), handler
-            if handler != "release_contained_reference":
-                pytest.fail("unexpected targeted retirement owner RPC")
-            assert isinstance(request, protocol.ReleaseContainedReference)
+            assert handler == "release_contained_reference"
             self.rpc_calls.append((handler, request))
-            assert len(self.rpc_calls) <= 32
+            assert len(self.rpc_calls) <= 16
             return borrow(address, handler, request)
 
-        core._rpc = rpc_unlocked
-        core._borrow_rpc = borrow_unlocked
+        core._rpc, core._borrow_rpc = rpc_unlocked, borrow_unlocked
+
+    def start(self):
+        return self.core._start_or_join_reconstruction(
+            self.lost, self.core._objects[self.lost], return_requested_outcome=True,
+        )
 
     def metadata(self):
         core, fixture = self.core, self.fixture
-        child_keys = {
-            (transfer.contained_owner_worker_id, transfer.contained_object_id)
-            for slot in fixture.manifest.slots for transfer in slot.transfers
-        }
         return (
-            tuple(core.owner_table.snapshot(value) for value in self.pending.output_ids),
-            dict(core._stored_descriptors),
-            fixture.graph.snapshot(),
-            tuple((owner, child, fixture.child_owners[owner].snapshot(child))
-                  for owner, child in sorted(child_keys)),
-            fixture.recovery.snapshot(fixture.id),
-            fixture.journal.snapshot(fixture.id),
+            core.owner_table.snapshot(self.lost), dict(core._stored_descriptors),
+            tuple((transfer, fixture.child_owners[transfer.contained_owner_worker_id]
+                   .snapshot(transfer.contained_object_id)) for transfer in fixture.manifest.slots[0].transfers),
+            fixture.handoffs.query(fixture.id), fixture.journal.snapshot(fixture.id),
             fixture.store.used_bytes,
         )
 
@@ -129,652 +113,266 @@ class _Case:
 
     def assert_not_started(self, record):
         core = self.core
-        assert core._recovery.task_record(self.pending.task_id) == record
-        assert record.state is TaskState.SUCCEEDED
+        assert self.record() == record and record.state is TaskState.SUCCEEDED
         assert core._recovery.active_recovery(self.pending.task_id) is None
         assert core._accepted_task_count == 0
-        session = self.targeted.current_session(self.pending.task_id)
-        assert session is not None and session.phase is TargetedSessionPhase.OPEN
+        assert not core._reconstruction_coordinator()._sessions
         assert not any(isinstance(item, _PendingTask) for item in tuple(core._submissions.queue))
 
-    def foreign(self, drive, *, validate=None, complete=None):
-        task_id = self.pending.task_id
-        self.core._foreign_lineage_registry = SimpleNamespace(
-            snapshot=lambda task: SimpleNamespace(edges=()) if task == task_id else None
-        )
-
+    @contextmanager
+    def foreign(self, monkeypatch, drive, *, validate=None, complete=None):
+        # Only prerequisite replies are doubled. Preserve real registry/runtime
+        # identity and restore them before real owner/recovery/child GC.
+        registry, runtime = self.core._foreign_lineage_registry, self.core._foreign_lineage_runtime
         def forbidden(*_args):
-            pytest.fail("deferred targeted admission reached a commit-only foreign operation")
-
-        self.core._foreign_lineage_runtime = SimpleNamespace(
-            drive_renewal=drive,
-            validate_renewal_ready=forbidden if validate is None else validate,
-            complete_renewal=forbidden if complete is None else complete,
-        )
+            pytest.fail("deferred admission reached a commit-only foreign operation")
+        with monkeypatch.context() as patch:
+            patch.setattr(registry, "snapshot", lambda task: SimpleNamespace(edges=())
+                          if task == self.pending.task_id else None)
+            patch.setattr(runtime, "drive_renewal", drive)
+            patch.setattr(runtime, "validate_renewal_ready", forbidden if validate is None else validate)
+            patch.setattr(runtime, "complete_renewal", forbidden if complete is None else complete)
+            yield
+        assert self.core._foreign_lineage_registry is registry
+        assert self.core._foreign_lineage_runtime is runtime
 
     def result(self, task_id, attempt_id, disposition):
-        assert task_id == self.pending.task_id
-        assert attempt_id == self.pending.spec.attempt_id.next()
+        assert task_id == self.pending.task_id and attempt_id == self.pending.spec.attempt_id.next()
         return ForeignLineageRenewalResult(task_id, attempt_id, disposition, (), 0)
 
     def no_retirement(self, monkeypatch):
         def unexpected(_object_id):
-            pytest.fail("inadmissible targeted START retired old output membership")
+            pytest.fail("inadmissible START retired old output membership")
         monkeypatch.setattr(self.core, "_retire_lost_output_memberships", unexpected)
 
+    def assert_collected(self):
+        core, fixture = self.core, self.fixture
+        assert core.owner_table.release_local_reference(self.lost, "outer0")
+        core._reference_released(self.lost)
+        assert core.owner_table.collection_state(self.lost) is ObjectCollectionState.COLLECTED
+        assert not core.owner_table.contains(self.lost)
+        assert core._recovery.lineage_for_object(self.lost) is None
+        assert not core._objects and not core._stored_descriptors
+        assert not core._object_gc_obligations and not getattr(core, "_output_retirement_work", {})
+        assert not core.owner_table.has_active_output_retirements()
+        fixture.assert_no_pins_or_bytes()
+        for transfer in fixture.manifest.slots[0].transfers:
+            assert fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
+                transfer.contained_object_id).local_tokens == frozenset(("source-live",))
+        assert not core._foreign_lineage_runtime.has_pending_obligations()
+
     def close(self):
-        # No local ObjectRef is created by this fixture: release its two exact
-        # fixture tokens without executing queued GC or changing retry state.
-        for object_id in tuple(self.core._objects):
-            for token in tuple(self.core.owner_table.snapshot(object_id).local_tokens):
-                self.core.owner_table.release_local_reference(object_id, token)
-        close_pure_core(self.core)
+        _close(self.core)
 
 
-def test_waiting_foreign_renewal_keeps_old_membership_graph_and_healthy_sibling(monkeypatch):
-    case = _Case(refs=True)
-    core = case.core
+def test_waiting_foreign_renewal_keeps_old_membership_children_and_bytes(monkeypatch):
+    case = _Case()
     before, record = case.metadata(), case.record()
     case.no_retirement(monkeypatch)
-
     def drive(task, attempt):
-        assert not core._state_lock._is_owned()
+        assert not case.core._state_lock._is_owned()
         case.events.append("renew")
         return case.result(task, attempt, ForeignLineageRenewalDisposition.WAITING)
-
-    case.foreign(drive)
     try:
-        core._start_open_targeted_reconstruction(case.pending.task_id)
+        with case.foreign(monkeypatch, drive):
+            assert case.start() is None
         assert case.events == ["renew"]
-        assert case.metadata() == before
-        assert case.rpc_calls == []
+        assert case.metadata() == before and case.rpc_calls == []
         case.assert_not_started(record)
-        records = _drain_queue(core)
-        assert len(records) == 1 and isinstance(records[0], _DelayedTargetedReconstruction)
-        assert records[0].event == _StartTargetedReconstruction(case.pending.task_id, 1)
+        assert _drain_queue(case.core) == ()
     finally:
         case.close()
 
 
 def test_finish_barrier_arriving_during_renewal_precedes_any_retirement(monkeypatch):
-    case = _Case(refs=True)
+    case = _Case()
     core = case.core
     before, record = case.metadata(), case.record()
     case.no_retirement(monkeypatch)
-
     def drive(task, attempt):
         assert not core._state_lock._is_owned()
-        # One deterministic concurrent-history hook, not a fake owner result:
-        # old logical execution has not yet released its last finish hold.
         with core._state_lock:
-            core._task_finish_barriers[case.lost] = case.pending
+            core._install_task_finish_barrier_locked(case.pending)
         case.events.append("finish-arrived")
         return case.result(task, attempt, ForeignLineageRenewalDisposition.READY)
-
-    case.foreign(drive)
     try:
-        core._start_open_targeted_reconstruction(case.pending.task_id)
+        with case.foreign(monkeypatch, drive):
+            assert case.start() is None
         assert case.events == ["finish-arrived"]
         assert core._task_finish_barriers[case.lost] is case.pending
-        assert case.metadata() == before
-        assert case.rpc_calls == []
+        assert case.metadata() == before and case.rpc_calls == []
         case.assert_not_started(record)
     finally:
         case.close()
 
 
 def test_exhausted_budget_is_rejected_before_old_output_or_foreign_effects(monkeypatch):
-    case = _Case(refs=True)
-    core = case.core
-    current = core._recovery.task_record(case.pending.task_id)
-    # This fixture uses attempt #3; an exhausted 3-retry history is valid.
+    case = _Case()
+    current = case.core._recovery.task_record(case.pending.task_id)
     current.retries_started = current.max_retries
     before, record = case.metadata(), case.record()
     case.no_retirement(monkeypatch)
-
     def never_renew(*_args):
-        pytest.fail("exhausted targeted START began a foreign hold exchange")
-
-    case.foreign(never_renew)
+        pytest.fail("exhausted START began a foreign hold exchange")
     try:
-        with pytest.raises(SystemTaskError):
-            core._start_open_targeted_reconstruction(case.pending.task_id)
-        assert case.metadata() == before
-        assert case.rpc_calls == []
+        with case.foreign(monkeypatch, never_renew):
+            with pytest.raises(SystemTaskError, match="budget is exhausted"):
+                case.start()
+        assert case.metadata() == before and case.rpc_calls == []
         case.assert_not_started(record)
     finally:
         case.close()
 
 
 def test_renewal_revoked_during_real_retirement_prevents_owner_attempt_commit(monkeypatch):
-    case = _Case(refs=True)
-    core = case.core
-    record = case.record()
-    healthy = core.owner_table.snapshot(case.healthy)
+    case = _Case()
+    core, record = case.core, case.record()
     retire = core._retire_lost_output_memberships
     revoked = False
-
     def drive(task, attempt):
         assert not core._state_lock._is_owned()
         case.events.append("renew")
         return case.result(task, attempt, ForeignLineageRenewalDisposition.READY)
-
     def validate(task, attempt):
         case.result(task, attempt, ForeignLineageRenewalDisposition.READY)
         case.events.append("validate-revoked" if revoked else "validate-ready")
         if revoked:
             raise SystemTaskError("foreign input hold revoked during retirement")
-
     def retire_then_revoke(object_id):
         nonlocal revoked
         assert not core._state_lock._is_owned()
-        assert case.events and case.events[-1] == "validate-ready"
+        assert case.events[-1] == "validate-ready"
         result = retire(object_id)
         assert result and object_id == case.lost
         case.events.append("retired")
         revoked = True
         return result
-
-    case.foreign(drive, validate=validate)
     monkeypatch.setattr(core, "_retire_lost_output_memberships", retire_then_revoke)
     try:
-        with pytest.raises(SystemTaskError, match="revoked during retirement"):
-            core._start_open_targeted_reconstruction(case.pending.task_id)
-        assert case.events[0] == "renew"
-        assert case.events[-2:] == ["retired", "validate-revoked"]
-        assert case.events[1:-2] and set(case.events[1:-2]) == {"validate-ready"}
-        assert core.owner_table.snapshot(case.healthy) == healthy
+        with case.foreign(monkeypatch, drive, validate=validate):
+            with pytest.raises(SystemTaskError, match="revoked during retirement"):
+                case.start()
+        assert case.events == ["renew", "validate-ready", "retired", "validate-revoked"]
         lost = core.owner_table.snapshot(case.lost)
-        assert lost.state is ObjectState.LOST
-        assert lost.current_attempt == case.pending.spec.attempt_id
-        assert lost.output_publication is None
-        assert case.rpc_calls, "the revocation hook must follow real retirement effects"
+        assert lost.state is ObjectState.LOST and lost.current_attempt == case.pending.spec.attempt_id
+        assert lost.output_publication is None and lost.output_retirement_id is None
+        assert len(case.rpc_calls) == 3
+        case.fixture.assert_no_pins_or_bytes()
         case.assert_not_started(record)
+        case.assert_collected()
     finally:
         case.close()
 
 
-def _lose_inline_history_with_finish_gate(case):
-    """Inject a missing INLINE payload without pretending mark_lost supports it.
-
-    This adversarial history leaves the old membership alive behind a logical
-    finish gate.  It specifically checks that another slot's helper cannot
-    expand its cleanup authority to all LOST siblings.
-    """
-    core = case.core
-    with core._state_lock:
-        entry = core.owner_table._entries[case.healthy]
-        assert entry.state is ObjectState.READY_INLINE
-        entry.state = ObjectState.LOST
-        entry.inline_data = None
-        core._task_finish_barriers[case.healthy] = case.pending
-    return core.owner_table.snapshot(case.healthy)
-
-
-def test_retiring_stored_target_does_not_touch_lost_inline_sibling_behind_finish_gate():
-    case = _Case(refs=True)
-    core = case.core
-    sibling = _lose_inline_history_with_finish_gate(case)
-    sibling_edges = frozenset(case.fixture.manifest.slots[0].edges)
-    child_holds = tuple(
-        (transfer, case.fixture.child_owners[transfer.contained_owner_worker_id]
-         .snapshot(transfer.contained_object_id).contained_holds)
-        for transfer in case.fixture.manifest.slots[0].transfers
-    )
-    record = case.record()
-    try:
-        assert core._retire_lost_output_memberships(case.lost)
-        assert core.owner_table.snapshot(case.healthy) == sibling
-        assert frozenset(case.fixture.graph.snapshot().committed_edges) == sibling_edges
-        for transfer, prior in child_holds:
-            current = case.fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
-                transfer.contained_object_id
-            )
-            assert transfer.final_hold in prior
-            assert transfer.final_hold in current.contained_holds
-        drops = [request for handler, request in case.rpc_calls if handler == "drop_object_replica"]
-        assert len(drops) == 1 and drops[0].object_id == case.lost
-        reports = [request for handler, request in case.rpc_calls
-                   if handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER]
-        assert len(reports) == 1 and reports[0].proof.object_id == case.lost
-        assert core.owner_table.snapshot(case.lost).output_publication is None
-        assert core._task_finish_barriers[case.healthy] is case.pending
-        case.assert_not_started(record)
-    finally:
-        case.close()
-
-
-def test_target_merged_during_retirement_is_repreflighted_before_any_attempt_advance(monkeypatch):
-    case = _Case(refs=True)
-    core = case.core
-    record = case.record()
+def test_finish_barrier_arriving_during_real_retirement_prevents_attempt_commit(monkeypatch):
+    case = _Case()
+    core, record = case.core, case.record()
     rpc = core._rpc
     injected = []
-    previews = []
-    preview = case.targeted.preview_start
-
-    def observed_preview(task_id):
-        current = case.targeted.current_session(task_id)
-        previews.append(current.target_output_ids)
-        return preview(task_id)
-
-    def merge_during_rpc(address, handler, request):
-        assert not core._state_lock._is_owned()
-        if not injected and handler == "release_contained_graph_container":
-            sibling = _lose_inline_history_with_finish_gate(case)
+    def finish_during_drop(address, handler, request):
+        result = rpc(address, handler, request)
+        if handler == "drop_object_replica":
+            assert not injected
             with core._state_lock:
-                merged = case.targeted.request(case.healthy, case.pending.spec.attempt_id)
-            assert merged.session.target_output_ids == case.pending.output_ids
-            injected.append(sibling)
-        return rpc(address, handler, request)
-
-    monkeypatch.setattr(case.targeted, "preview_start", observed_preview)
-    monkeypatch.setattr(core, "_rpc", merge_during_rpc)
+                core._install_task_finish_barrier_locked(case.pending)
+            injected.append(request)
+        return result
+    monkeypatch.setattr(core, "_rpc", finish_during_drop)
     try:
-        core._start_open_targeted_reconstruction(case.pending.task_id)
+        assert case.start() is None
         assert len(injected) == 1
-        assert previews and previews[0] == (case.lost,)
-        # A changed target set must either be deferred explicitly or re-enter
-        # preflight.  A delayed event is the same semantic wake with backoff,
-        # so a finish gate need not make the coordinator spin.  Neither path
-        # may silently commit the old one-slot proposal.
-        queued = tuple(core._submissions.queue)
-        events = tuple(
-            item.event if isinstance(item, _DelayedTargetedReconstruction) else item
-            for item in queued
-        )
-        assert any(isinstance(event, _StartTargetedReconstruction)
-                   and event.task_id == case.pending.task_id for event in events) or (
-            case.pending.output_ids in previews
-        )
-        assert case.targeted.current_session(case.pending.task_id).target_output_ids == case.pending.output_ids
-        assert core.owner_table.snapshot(case.healthy) == injected[0]
-        assert core.owner_table.snapshot(case.lost).current_attempt == case.pending.spec.attempt_id
+        assert core._task_finish_barriers == {case.lost: case.pending}
         assert core.owner_table.snapshot(case.lost).output_publication is None
+        case.fixture.assert_no_pins_or_bytes()
         case.assert_not_started(record)
-        # Finish still blocks the newly merged slot on the next explicit turn.
-        core._start_open_targeted_reconstruction(case.pending.task_id)
-        assert core.owner_table.snapshot(case.healthy) == injected[0]
+        calls = tuple(case.rpc_calls)
+        assert case.start() is None and tuple(case.rpc_calls) == calls
         case.assert_not_started(record)
     finally:
         case.close()
-
-
-def _assert_failed_without_start(case, error, record, healthy):
-    core = case.core
-    failed = core.owner_table.snapshot(case.lost)
-    assert failed.state is ObjectState.ERROR
-    # Retired-output snapshots are isolated deep copies, not aliases of the
-    # owner authority. The published choice stays exact inside that authority.
-    assert type(failed.error) is type(error) and failed.error.args == error.args
-    assert core.owner_table._entries[case.lost].error is error
-    assert failed.current_attempt == case.pending.spec.attempt_id
-    assert failed.output_publication is None
-    assert failed.output_retirement_id is None
-    assert failed.canonical_stored_result is None and not failed.locations
-    assert not failed.outgoing_contained_edges
-    assert case.lost not in core._stored_descriptors
-    assert core._objects[case.lost].event.is_set()
-    assert core.owner_table.snapshot(case.healthy) == healthy
-    assert core._recovery.task_record(case.pending.task_id) == record
-    assert core._recovery.active_recovery(case.pending.task_id) is None
-    assert core._accepted_task_count == 0
-    assert case.targeted.current_session(case.pending.task_id) is None
-    assert case.targeted.open_failure(case.pending.task_id) is None
-    assert not any(isinstance(item, _PendingTask) for item in tuple(core._submissions.queue))
-    assert not core.owner_table.has_active_output_retirements()
-    assert not getattr(core, "_output_retirement_work", {})
-    assert not case.fixture.store.contains(case.lost, sealed_only=False)
-
-
-def _collect_failed_target_then_healthy_sibling(case, healthy):
-    """Close exact fixture handles and execute real per-slot owner GC.
-
-    Child sources are intentionally still live.  Only this publication's
-    provisional/final holds and bytes must vanish; collecting child owners'
-    unrelated source tokens would weaken the test.
-    """
-    core, fixture = case.core, case.fixture
-    lost_slot, healthy_slot = fixture.manifest.slots[1], fixture.manifest.slots[0]
-    assert fixture.store.used_bytes == 0
-    assert frozenset(fixture.graph.snapshot().committed_edges) == frozenset(healthy_slot.edges)
-    for transfer in lost_slot.transfers:
-        child = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
-            transfer.contained_object_id
-        )
-        assert transfer.final_hold not in child.contained_holds
-        assert transfer.provisional_hold not in child.contained_holds
-    for transfer in healthy_slot.transfers:
-        assert transfer.final_hold in (
-            fixture.child_owners[transfer.contained_owner_worker_id]
-            .snapshot(transfer.contained_object_id).contained_holds
-        )
-
-    # These are the actual owner tokens installed by _fixture, not inert refs.
-    # Their synchronous release is the same owner authority that close uses.
-    assert core.owner_table.release_local_reference(case.lost, "outer1")
-    core._reference_released(case.lost)
-    assert core.owner_table.collection_state(case.lost) is ObjectCollectionState.COLLECTED
-    assert not core.owner_table.contains(case.lost)
-    assert case.lost not in core._objects
-    assert core._recovery.lineage_for_object(case.lost) is None
-    assert core._recovery.lineage_for_object(case.healthy) is not None
-    assert core.owner_table.snapshot(case.healthy) == healthy
-    assert frozenset(fixture.graph.snapshot().committed_edges) == frozenset(healthy_slot.edges)
-    assert not core._object_gc_obligations
-
-    assert core.owner_table.release_local_reference(case.healthy, "outer0")
-    core._reference_released(case.healthy)
-    assert core.owner_table.collection_state(case.healthy) is ObjectCollectionState.COLLECTED
-    assert not core.owner_table.contains(case.healthy)
-    assert core._recovery.lineage_for_object(case.healthy) is None
-    assert not core._objects and not core._stored_descriptors
-    assert not core._object_gc_obligations
-    assert not getattr(core, "_output_retirement_work", {})
-    assert not core.owner_table.has_active_output_retirements()
-    assert not fixture.graph.snapshot().committed_edges
-    assert not fixture.graph.snapshot().prepared_edges
-    assert fixture.store.used_bytes == 0
-    assert not fixture.journal.snapshot(fixture.id).retained_result_slots
-    for slot in fixture.manifest.slots:
-        for transfer in slot.transfers:
-            child = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
-                transfer.contained_object_id
-            )
-            assert transfer.final_hold not in child.contained_holds
-            assert transfer.provisional_hold not in child.contained_holds
-    assert tuple(proof.slot_index for proof in fixture.recovery.snapshot(fixture.id).slot_collections) == (0, 1)
-    assert not core._foreign_lineage_runtime.has_pending_obligations()
 
 
 @pytest.mark.parametrize("prerequisite", ("budget", "foreign-failed"))
-def test_terminal_open_failure_retires_selected_membership_before_error_and_gc(monkeypatch, prerequisite):
-    case = _Case(refs=True)
+def test_failed_admission_keeps_live_output_until_real_retirement_and_gc(monkeypatch, prerequisite):
+    case = _Case()
     core = case.core
-    healthy = core.owner_table.snapshot(case.healthy)
     if prerequisite == "budget":
         current = core._recovery.task_record(case.pending.task_id)
         current.retries_started = current.max_retries
     before, record = case.metadata(), case.record()
-    original_registry = core._foreign_lineage_registry
-    original_runtime = core._foreign_lineage_runtime
-    assert original_registry.snapshot(case.pending.task_id) is None
     renewal_calls = []
-
-    def failed_renewal(task_id, attempt):
+    def failed_renewal(task, attempt):
         assert not core._state_lock._is_owned()
-        renewal_calls.append((task_id, attempt))
-        return replace(case.result(task_id, attempt, ForeignLineageRenewalDisposition.FAILED),
+        renewal_calls.append((task, attempt))
+        return replace(case.result(task, attempt, ForeignLineageRenewalDisposition.FAILED),
                        failure="foreign prerequisite definitively failed")
-
     try:
-        with monkeypatch.context() as patch:
-            if prerequisite == "foreign-failed":
-                # This is a prerequisite-result double, not a claim to cover
-                # a real foreign input hold.  Restore the real empty registry
-                # before retirement and GC so collection uses real authorities.
-                patch.setattr(original_registry, "snapshot",
-                              lambda task: SimpleNamespace(edges=())
-                              if task == case.pending.task_id else None)
-                patch.setattr(original_runtime, "drive_renewal", failed_renewal)
-            with pytest.raises(SystemTaskError) as raised:
-                core._start_open_targeted_reconstruction(case.pending.task_id)
-        error = raised.value
-        assert len(renewal_calls) == (1 if prerequisite == "foreign-failed" else 0)
-        assert case.metadata() == before
-        assert case.rpc_calls == []
+        with case.foreign(monkeypatch, failed_renewal):
+            with pytest.raises(SystemTaskError):
+                case.start()
+        assert len(renewal_calls) == int(prerequisite == "foreign-failed")
+        assert case.metadata() == before and case.rpc_calls == []
         case.assert_not_started(record)
-        assert core._foreign_lineage_registry is original_registry
-        assert original_registry.snapshot(case.pending.task_id) is None
-
-        core._fail_open_targeted_reconstruction(case.pending.task_id, error)
-        _assert_failed_without_start(case, error, record, healthy)
-        drops = [request for handler, request in case.rpc_calls if handler == "drop_object_replica"]
-        assert len(drops) == 1 and drops[0].object_id == case.lost
-        _collect_failed_target_then_healthy_sibling(case, healthy)
+        # Ordinary admission reports the failure and retains the live LOST
+        # object. It has no targeted OPEN failure/error-publication latch.
+        # Explicit old-effect retirement uses the same real cleanup authority
+        # as a subsequent reconstruction; final reference release runs GC.
+        assert core._retire_lost_output_memberships(case.lost)
+        retired = core.owner_table.snapshot(case.lost)
+        assert retired.state is ObjectState.LOST and retired.error is None
+        assert retired.current_attempt == case.pending.spec.attempt_id
+        assert retired.local_tokens == frozenset(("outer0",))
+        assert retired.output_publication is None and retired.output_retirement_id is None
+        assert not retired.outgoing_contained_edges and retired.canonical_stored_result is None
+        assert not retired.locations
+        case.assert_not_started(record)
+        assert len(case.rpc_calls) == 3
+        case.assert_collected()
     finally:
         case.close()
 
 
-def test_lost_terminal_retirement_ack_keeps_failure_latched_until_same_cleanup_replays(monkeypatch):
-    case = _Case(refs=True)
-    core = case.core
-    healthy = core.owner_table.snapshot(case.healthy)
-    current = core._recovery.task_record(case.pending.task_id)
-    current.retries_started = current.max_retries
-    record = case.record()
+def test_lost_retirement_ack_keeps_admission_fenced_until_exact_cleanup_replays(monkeypatch):
+    case = _Case()
+    core, record = case.core, case.record()
+    original = core._rpc
+    drops, statuses = [], []
     original_member = core.owner_table.snapshot(case.lost).output_publication
-    original_rpc = core._rpc
-    report_requests = []
-    lost_ack = False
-
-    def report_then_lose_ack(address, handler, request):
-        nonlocal lost_ack
-        result = original_rpc(address, handler, request)
-        if (handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-                and type(request) is wire.ReportOutputPublicationSlotCollected
-                and request.proof.object_id == case.lost):
-            report_requests.append(request)
-            assert len(report_requests) <= 2
-            if not lost_ack:
-                lost_ack = True
-                raise TimeoutError("slot retirement report applied; ACK lost")
+    def lose_drop_ack(address, handler, request):
+        result = original(address, handler, request)
+        if handler == "drop_object_replica":
+            drops.append(request)
+            statuses.append(result.status)
+            if len(drops) == 1:
+                raise TimeoutError("physical retirement applied; ACK lost")
         return result
-
-    def no_forward_work(*_args, **_kwargs):
-        pytest.fail("latched OPEN failure re-entered START/renewal/execute")
-
-    monkeypatch.setattr(core, "_rpc", report_then_lose_ack)
+    monkeypatch.setattr(core, "_rpc", lose_drop_ack)
     try:
-        with pytest.raises(SystemTaskError) as raised:
-            core._start_open_targeted_reconstruction(case.pending.task_id)
-        error = raised.value
-        core._fail_open_targeted_reconstruction(case.pending.task_id, error)
-        assert lost_ack and len(report_requests) == 1
-        assert case.targeted.open_failure(case.pending.task_id) is error
+        assert case.start() is None
         unresolved = core.owner_table.snapshot(case.lost)
-        assert unresolved.state is ObjectState.LOST
+        assert unresolved.state is ObjectState.LOST and unresolved.error is None
         assert unresolved.output_publication == original_member
-        assert unresolved.canonical_stored_result is not None
         assert unresolved.output_retirement_id is not None
-        assert case.lost in core._output_retirement_work
         plan = core._output_retirement_work[case.lost]["plan"]
         assert plan.retirement_id == unresolved.output_retirement_id
-        assert report_requests[0].proof.cleanup_id == plan.retirement_id
-        assert core.owner_table.has_active_output_retirements()
-        assert core.owner_table.snapshot(case.healthy) == healthy
+        assert len(core._output_retirement_work[case.lost]["child"]) == 2
+        assert not core._output_retirement_work[case.lost]["replica"]
+        case.fixture.assert_no_pins_or_bytes()
         case.assert_not_started(record)
-        acked_proofs = case.fixture.recovery.snapshot(case.fixture.id).slot_collections
-        assert acked_proofs == (report_requests[0].proof,)
-        assert case.fixture.store.used_bytes == 0
-
-        # Do not fake a renewed prerequisite into success: replay of the public
-        # admission entry must follow the latched failure before preview/renew.
-        monkeypatch.setattr(case.targeted, "preview_start", no_forward_work)
-        monkeypatch.setattr(core._foreign_lineage_runtime, "drive_renewal", no_forward_work)
-        monkeypatch.setattr(core._foreign_lineage_runtime, "complete_renewal", no_forward_work)
-        monkeypatch.setattr(core, "_execute", no_forward_work)
-        assert core._start_open_targeted_reconstruction(case.pending.task_id) is None
-        assert len(report_requests) == 2 and report_requests[1] == report_requests[0]
-        assert report_requests[1].proof.cleanup_id == plan.retirement_id
-        _assert_failed_without_start(case, error, record, healthy)
-        # Child/graph/replica ACKs from the first pass are never repeated; only
-        # the uncertain, exact GCS report must be replayed on the second pass.
-        drops = [request for handler, request in case.rpc_calls if handler == "drop_object_replica"]
-        releases = [request for handler, request in case.rpc_calls
-                    if handler == "release_contained_reference"]
-        assert len(drops) == 1
-        assert len(releases) == len(case.fixture.manifest.slots[1].transfers)
-        _collect_failed_target_then_healthy_sibling(case, healthy)
+        calls = tuple(case.rpc_calls)
+        with pytest.raises(TimeoutError, match="retirement did not finish"):
+            core.get(case.ref, timeout=0)
+        assert tuple(case.rpc_calls) == calls
+        case.assert_not_started(record)
+        assert core._retire_lost_output_memberships(case.lost)
+        receipt = core.owner_table.output_publication_retirement_receipt(plan)
+        assert receipt.plan == plan
+        assert drops == [drops[0]] * 2
+        assert statuses == [protocol.DropObjectReplicaStatus.DROPPED,
+                            protocol.DropObjectReplicaStatus.ALREADY_DROPPED]
+        assert sum(handler == "release_contained_reference" for handler, _ in case.rpc_calls) == 2
+        assert len(case.rpc_calls) == 4
+        case.assert_not_started(record)
+        case.assert_collected()
     finally:
         case.close()
-
-
-def _drop_one_stored_slot(fixture, pending, object_id):
-    """Lose one real stored replica, preserving sibling bytes and lineage."""
-    core = fixture.core
-    snapshot = core.owner_table.snapshot(object_id)
-    descriptor = snapshot.canonical_stored_result
-    assert snapshot.state is ObjectState.READY_STORED and descriptor is not None
-    assert snapshot.output_publication.publication_id.execution == pending.execution
-    reply = fixture.backend.node._handle_drop_object_replica(protocol.DropObjectReplica(
-        object_id, pending.spec.attempt_id, core.worker_id, core.node_id, descriptor.checksum,
-    ))
-    assert reply.status is protocol.DropObjectReplicaStatus.DROPPED
-    assert not fixture.backend.store.contains(object_id, sealed_only=False)
-    assert core.owner_table.mark_lost(object_id, pending.spec.attempt_id)
-    core._stored_descriptors.pop(object_id, None)
-
-
-def _release_stored_fixture_refs(fixture):
-    # _StoredFixture refs are deliberately inert; their owner tokens are real.
-    # Release only those exact tokens without driving unrelated pending work.
-    core = fixture.core
-    for object_id in tuple(core._objects):
-        for token in tuple(core.owner_table.snapshot(object_id).local_tokens):
-            assert core.owner_table.release_local_reference(object_id, token)
-    assert core._state_lock.depth == 0
-    assert core._state_lock.waits == 0
-    assert not hasattr(core, "_coordinator") and not hasattr(core, "_reference_thread")
-
-
-def test_all_lost_sibling_request_cannot_bypass_existing_targeted_failure_latch(monkeypatch):
-    """A live retry budget must not turn terminal cleanup into whole START."""
-    fixture = _StoredFixture()
-    core = fixture.core
-    producer, refs = fixture.submit(num_returns=2)
-    fixture.succeed(producer, stored=True)
-    assert core._finish_pending_task(producer) and not fixture.queued()
-    first, later = producer.output_ids
-    _drop_one_stored_slot(fixture, producer, first)
-    targeted = core._targeted_reconstruction_coordinator()
-    with core._state_lock:
-        targeted.request(first, producer.spec.attempt_id)
-    record = replace(core._recovery.task_record(producer.task_id))
-    assert record.retries_remaining > 0 and record.retries_started == 0
-    failure = SystemTaskError("targeted prerequisite terminal despite available budget")
-    rpc = core._rpc
-    reports = []
-    lost_ack = False
-
-    def lose_one_report_ack(address, handler, request):
-        nonlocal lost_ack
-        assert core._state_lock.depth == 0, handler
-        result = rpc(address, handler, request)
-        if (handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-                and type(request) is wire.ReportOutputPublicationSlotCollected
-                and request.proof.object_id == first):
-            reports.append(request)
-            assert len(reports) <= 2
-            if not lost_ack:
-                lost_ack = True
-                raise TimeoutError("first target retirement ACK lost")
-        return result
-
-    def forbidden_start(*_args, **_kwargs):
-        pytest.fail("active targeted failure was bypassed through whole-task START")
-
-    monkeypatch.setattr(core, "_rpc", lose_one_report_ack)
-    try:
-        core._fail_open_targeted_reconstruction(producer.task_id, failure)
-        assert lost_ack and len(reports) == 1
-        assert targeted.open_failure(producer.task_id) is failure
-        assert targeted.current_session(producer.task_id).phase is TargetedSessionPhase.OPEN
-        original_membership = core.owner_table.snapshot(first).output_publication
-        assert original_membership is not None
-        assert core.owner_table.snapshot(first).output_retirement_id is not None
-        _drop_one_stored_slot(fixture, producer, later)
-        assert all(core.owner_table.snapshot(value).state is ObjectState.LOST
-                   for value in producer.output_ids)
-
-        # The old target's get must wait on its unresolved cleanup, not restart
-        # even though both siblings are now LOST and budget remains available.
-        whole = core._reconstruction_coordinator()
-        for method in ("preflight_graph", "preview", "prepare", "commit_prepared"):
-            monkeypatch.setattr(whole, method, forbidden_start)
-        monkeypatch.setattr(targeted, "preview_start", forbidden_start)
-        monkeypatch.setattr(core, "_execute", forbidden_start)
-        with pytest.raises(TimeoutError, match="retirement did not finish"):
-            core.get(refs[0], timeout=0)
-        assert len(reports) == 1
-        assert core._recovery.task_record(producer.task_id) == record
-
-        outcome = core._start_or_join_reconstruction(
-            later, core._objects[later], return_requested_outcome=True,
-        )
-        assert outcome is None
-        assert len(reports) == 2 and reports[1] == reports[0]
-        assert core._recovery.task_record(producer.task_id) == record
-        assert core._recovery.active_recovery(producer.task_id) is None
-        assert core._accepted_task_count == 0
-        assert not any(isinstance(item, _PendingTask) for item in tuple(core._submissions.queue))
-        assert not whole._sessions
-        for object_id in producer.output_ids:
-            result = core.owner_table.snapshot(object_id)
-            assert result.current_attempt == producer.spec.attempt_id
-            assert result.state is ObjectState.ERROR
-            assert type(result.error) is SystemTaskError and result.error.args == failure.args
-        with pytest.raises(SystemTaskError, match="targeted prerequisite terminal"):
-            core.get(refs[0], timeout=0)
-        assert targeted.current_session(producer.task_id) is None
-        assert targeted.open_failure(producer.task_id) is None
-        assert fixture.backend.store.used_bytes == 0
-    finally:
-        _release_stored_fixture_refs(fixture)
-
-
-def test_parent_lineage_cannot_reconstruct_producer_with_active_targeted_session(monkeypatch):
-    """Ordinary DFS cannot acquire a second authority over targeted outputs."""
-    fixture = _StoredFixture()
-    core = fixture.core
-    producer, refs = fixture.submit(num_returns=2)
-    fixture.succeed(producer, stored=True)
-    assert core._finish_pending_task(producer) and not fixture.queued()
-    parent, parent_ref = fixture.submit(refs[0])
-    fixture.succeed(parent, stored=True)
-    assert core._finish_pending_task(parent) and not fixture.queued()
-    first, later = producer.output_ids
-    _drop_one_stored_slot(fixture, producer, first)
-    targeted = core._targeted_reconstruction_coordinator()
-    with core._state_lock:
-        opened = targeted.request(first, producer.spec.attempt_id).session
-    # Force whole-producer DFS to otherwise be admissible: every output is
-    # LOST at the same epoch, but the earlier targeted OPEN remains authority.
-    _drop_one_stored_slot(fixture, producer, later)
-    _drop_one_stored_slot(fixture, parent, parent.object_id)
-    ids = producer.output_ids + parent.output_ids
-    before = tuple(core.owner_table.snapshot(object_id) for object_id in ids)
-    records = {pending.task_id: replace(core._recovery.task_record(pending.task_id))
-               for pending in (producer, parent)}
-    publications = fixture.backend.recovery.publication_ids()
-    remote_before = tuple(fixture.backend.recovery.snapshot(value) for value in publications)
-    calls_before = tuple(fixture.backend.calls)
-
-    def no_retirement_or_start(*_args, **_kwargs):
-        pytest.fail("parent recovery crossed a producer's active targeted session")
-
-    whole = core._reconstruction_coordinator()
-    monkeypatch.setattr(core, "_retire_lost_output_memberships", no_retirement_or_start)
-    monkeypatch.setattr(whole, "commit_prepared", no_retirement_or_start)
-    monkeypatch.setattr(core, "_execute", no_retirement_or_start)
-    try:
-        assert core._start_or_join_reconstruction(
-            parent.object_id, core._objects[parent.object_id], return_requested_outcome=True,
-        ) is None
-        with pytest.raises(TimeoutError, match="reconstruction admission did not finish"):
-            core.get(parent_ref, timeout=0)
-        assert tuple(core.owner_table.snapshot(object_id) for object_id in ids) == before
-        assert targeted.current_session(producer.task_id) == opened
-        assert targeted.current_session(parent.task_id) is None
-        assert not whole._sessions
-        assert core._accepted_task_count == 0
-        assert not getattr(core, "_output_retirement_work", {})
-        assert not core.owner_table.has_active_output_retirements()
-        assert not any(isinstance(item, _PendingTask) for item in tuple(core._submissions.queue))
-        assert tuple(fixture.backend.calls) == calls_before
-        assert tuple(fixture.backend.recovery.snapshot(value) for value in publications) == remote_before
-        for pending in (producer, parent):
-            assert core._recovery.task_record(pending.task_id) == records[pending.task_id]
-            assert core._recovery.active_recovery(pending.task_id) is None
-    finally:
-        _release_stored_fixture_refs(fixture)

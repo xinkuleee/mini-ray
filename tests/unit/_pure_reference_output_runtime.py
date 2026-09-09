@@ -2,7 +2,7 @@
 
 Only in-process Node/owner delivery is supplied here. Real discovery,
 publication adapter/journal, owner handoff and ObjectStore(1024) run
-synchronously, with at most two publications and exactly one output each.
+synchronously, with at most three publications and exactly one output each.
 The default INLINE helper path is reused; STORED never becomes INLINE to make
 a test pass. No Node, Core, Worker, thread, timer, socket or wait is started.
 """
@@ -48,7 +48,7 @@ class PureReferenceOutputRuntime(PureOutputRuntime):
         execution = TaskExecutionKey.from_task_spec(push.spec)
         identity = OutputPublicationID(push.lease_id, execution)
         assert len(identity.output_ids) == 1
-        assert identity in self.pushes or len(self.pushes) < 2
+        assert identity in self.pushes or len(self.pushes) < 3
         return super().complete(push, values, inline_threshold=inline_threshold)
 
     def _seal(self, effect, descriptor, payload):
