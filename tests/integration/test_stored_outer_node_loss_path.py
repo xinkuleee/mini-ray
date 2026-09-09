@@ -1,30 +1,30 @@
-"""Bounded unified stored-output publication Node-loss acceptance.
+"""Four bounded single-output publisher-loss windows on the retained APIs.
 
-Four semantic gates distinguish INTENT before effects, acknowledged promotions
-before ARM, ARM without known Complete, and successful Complete before delivery.
-The first three require cleanup before a budgeted system retry; the fourth
-must first become LOST/SUCCEEDED with no retry, then reconstruct on explicit get.
-GCS stores immutable metadata, not per-effect bitmaps or output bytes. Gate
-identity, Node replica reads, graph manifests, frozen recovery work, and exact
-cleanup resolution replace assumptions about a separate stored-only journal.
+Owner registration/INTENT before effects, actual promotions, completed
+preparation before Complete, and known Complete before delivery each retain
+the original single output, survivor blocker and one system-retry budget.
+The first three require exact cleanup before retry; known Complete must first
+settle LOST/SUCCEEDED without retry, then reconstruct only on explicit get.
 
-Static bounds per exact 30-second runner invocation: one GCS, two Nodes and one
-Worker per Node (five startup children); one local blocker, one producer with
-at most two physical attempts, two tiny executor-owned puts, 64 KiB padding,
-and a 1 MiB ObjectStore per Node. One test-owned loopback listener, no tracing,
-Actor, placement group, extra test thread, or fabricated death/Complete. Work
-shares a ten-second monotonic deadline; all sockets, polling and reference
-close waits are bounded. Finally releases gates, closes references within
-three seconds, and always calls runtime shutdown, including partial startup.
+Each exact selector starts five children: one GCS, two Nodes and one Worker
+per Node. One listener, one blocker, one producer with two physical attempts,
+two tiny executor-owned puts, 64 KiB padding and two 1 MiB stores. Work shares
+ten seconds after init; fixture waits are at most ten seconds; final reference
+release shares three seconds before unconditional shutdown. No extra thread,
+Actor, placement group, tracing, fabricated death or fabricated RPC receipt.
 
-Graph queries intentionally retain metadata after cleanup. Resolution is the
-causal cleanup barrier, and clean survivor/GCS drain proves no active graph or
-hold work remains. No test-side graph mutation is used to repair the result.
+Base reads the surviving owner's handoff and committed loss receipt, plus
+physical Node bytes. Its historical ARM case is preparation-complete; no GCS
+publication/graph state or nonexistent ARM action is claimed.
+The prepared checkpoint has a distinct test-local prefix; it never claims a
+new runtime gate enum or manufactures a Complete witness. Run each of the
+four exact functions separately under the 30-second process-tree runner.
 """
 
 from __future__ import annotations
 
 from dataclasses import fields, is_dataclass, replace
+from functools import partial
 from enum import Enum
 import hashlib
 import multiprocessing as mp
@@ -37,21 +37,24 @@ import time
 import pytest
 
 import miniray as ray
-from miniray import output_protocol as wire, protocol
+from miniray import api as api_module, output_protocol as wire, protocol
 from miniray.api import _get_runtime, _test_crash_node
-from miniray.control import GET_CONTAINED_GRAPH_HANDLER, GET_WORKER_STATE_HANDLER
+from miniray.control import GET_WORKER_STATE_HANDLER
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.node import GET_OBJECT_HANDLER, REQUEST_LEASE_HANDLER
 from miniray.output_publication import OutputPublicationEnvelope, OutputPublicationID
-from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryOwnerDecision
+from miniray.output_handoff import NodeLostOutputResolution, OutputHandoffPhase
 from miniray.ownership import ObjectState
 from miniray.publication_gate import (
     OUTPUT_PUBLICATION_GATE_RELEASE, OutputPublicationGateConfig,
     OutputPublicationGatePhase, recv_output_publication_gate_arrival,
 )
 from miniray.recovery import TaskState
-from miniray.stored_publication import OwnedContainedSource
+from miniray.publication_sources import OwnedContainedSource
 from miniray.transport import request as rpc_request
+from tests.integration._publisher_precomplete_fixture import (
+    PREPARED_FRAME_PREFIX, node_process_with_prepared_checkpoint,
+)
 
 
 pytestmark = pytest.mark.multiprocess_smoke
@@ -64,6 +67,13 @@ _BLOCKER_RELEASE = b"B"
 _INLINE_THRESHOLD = 1024
 _OBJECT_STORE_BYTES = 1024 * 1024
 _OUTER_PADDING = b"N" * (64 * 1024)
+
+
+class _LossWindow(str, Enum):
+    BEFORE_EFFECTS = "before_effects"
+    PROMOTED = "promoted"
+    PREPARED_BEFORE_COMPLETE = "prepared_before_complete"
+    COMPLETE_BEFORE_DELIVERY = "complete_before_delivery"
 
 
 def _remaining(deadline: float) -> float:
@@ -129,7 +139,7 @@ def _assert_metadata_only(value: object) -> None:
     assert not isinstance(value, (
         bytes, bytearray, memoryview, OutputPublicationEnvelope,
         protocol.ResultDescriptor, protocol.ObjectStoreDescriptor,
-    )), "GCS output recovery carried data-plane bytes or descriptors"
+    )), "publication observation carried data-plane bytes or descriptors"
     if is_dataclass(value) and not isinstance(value, type):
         for field in fields(value):
             _assert_metadata_only(getattr(value, field.name))
@@ -148,37 +158,24 @@ def _query(address, handler, request, deadline):
     )
 
 
-def _recovery(context, publication, deadline):
-    request = wire.GetOutputPublicationRecovery(publication)
-    reply = _query(
-        context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER,
-        request, deadline,
-    )
-    assert type(reply) is wire.GetOutputPublicationRecoveryReply
-    assert reply.request == request and reply.found and reply.snapshot is not None
+def _handoff(address, publication, deadline):
+    request = wire.GetOutputHandoff(publication)
+    reply = _query(address, wire.GET_OUTPUT_HANDOFF_HANDLER, request, deadline)
+    assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
+    assert reply.snapshot is not None and reply.snapshot.publication_id == publication
     _assert_metadata_only(reply)
     return reply.snapshot
 
 
-def _node_loss(context, publication, owner_id, death, deadline):
-    request = wire.GetOutputNodeLoss(publication, owner_id, death)
-    reply = _query(context.gcs_address, wire.GET_OUTPUT_NODE_LOSS_HANDLER, request, deadline)
-    assert type(reply) is wire.GetOutputNodeLossReply
-    assert reply.request == request and reply.found
-    _assert_metadata_only(reply)
-    return reply
-
-
-def _graph(context, publication, deadline):
-    request = protocol.GetContainedGraph(publication.graph_transaction_id)
-    reply = _query(context.gcs_address, GET_CONTAINED_GRAPH_HANDLER, request, deadline)
-    assert type(reply) is protocol.GetContainedGraphReply and reply.request == request
-    assert reply.disposition in (
-        protocol.StoredPublicationQueryDisposition.FOUND,
-        protocol.StoredPublicationQueryDisposition.NOT_FOUND,
-    )
-    _assert_metadata_only(reply)
-    return reply
+def _loss_receipt(core, publication):
+    with core._state_lock:
+        receipt = core.owner_table._output_loss_receipts.get(publication)
+        if receipt is None or publication not in getattr(core, "_output_loss_completed", set()):
+            return None
+        receipt = replace(receipt)
+    assert type(receipt) is NodeLostOutputResolution
+    _assert_metadata_only(receipt)
+    return receipt
 
 
 def _release_connection(connection, marker, deadline):
@@ -209,39 +206,42 @@ def _close_reference(reference, deadline):
 
 
 def test_precomplete_stored_outer_node_loss_rolls_back_then_retries_survivor() -> None:
-    _run_node_loss(OutputPublicationGatePhase.AFTER_INTENT_ACK)
+    _run_node_loss(_LossWindow.BEFORE_EFFECTS)
 
 
 def test_post_effect_precomplete_stored_outer_node_loss_compensates_then_retries() -> None:
-    _run_node_loss(OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
+    _run_node_loss(_LossWindow.PROMOTED)
 
 
 def test_postcomplete_stored_outer_node_loss_retires_then_reconstructs() -> None:
-    _run_node_loss(OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY)
+    _run_node_loss(_LossWindow.COMPLETE_BEFORE_DELIVERY)
 
 
 def test_armed_unknown_stored_outer_node_loss_cleans_then_retries() -> None:
-    _run_node_loss(OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE)
+    _run_node_loss(_LossWindow.PREPARED_BEFORE_COMPLETE)
 
 
-def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
+def _run_node_loss(window: _LossWindow) -> None:
     listener = blocker_connection = publication_connection = None
     context = runtime = core = report = death = None
     blocker = outer = child = None
     original_rpc = original_retry = None
+    original_entry = api_module._node_process_main
     managed_pids, managed_addresses = set(), set()
     close_errors = []
     observations_lock = threading.Lock()
-    requests, grants, cleanup_acks, retries = {}, {}, {}, {}
+    requests, grants, retries = {}, {}, {}
     grant_conflicts = set()
-    postcomplete = gate_phase is OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY
-    unknown = gate_phase is OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE
-    effects_existed = gate_phase is not OutputPublicationGatePhase.AFTER_INTENT_ACK
-    expected_action = (
-        OutputRecoveryAction.POSTCOMPLETE_RESOLVE if postcomplete else
-        OutputRecoveryAction.COMPLETION_UNKNOWN if unknown else
-        OutputRecoveryAction.PRECOMPLETE_ROLLBACK
-    )
+    assert type(window) is _LossWindow
+    postcomplete = window is _LossWindow.COMPLETE_BEFORE_DELIVERY
+    unknown = window is _LossWindow.PREPARED_BEFORE_COMPLETE
+    effects_existed = window is not _LossWindow.BEFORE_EFFECTS
+    gate_phase = {
+        _LossWindow.BEFORE_EFFECTS: OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
+        _LossWindow.PROMOTED: OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK,
+        _LossWindow.PREPARED_BEFORE_COMPLETE: OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK,
+        _LossWindow.COMPLETE_BEFORE_DELIVERY: OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY,
+    }[window]
     try:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -249,13 +249,17 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         listener.listen(2)
         gate_address = listener.getsockname()
         managed_addresses.add(gate_address)
+        if unknown:
+            api_module._node_process_main = partial(
+                node_process_with_prepared_checkpoint, gate_address, _SURVIVOR_RESOURCE,
+            )
         context = ray.init(
             num_nodes=2, num_workers_per_node=1,
             node_resources=({"CPU": 1, _SURVIVOR_RESOURCE: 1}, {"CPU": 1}),
             inline_threshold=_INLINE_THRESHOLD, object_store_bytes=_OBJECT_STORE_BYTES,
-            _test_output_publication_gate=OutputPublicationGateConfig(
+            _test_output_publication_gate=(None if unknown else OutputPublicationGateConfig(
                 1, gate_address, gate_phase, _BOUND_SECONDS,
-            ),
+            )),
             enable_tracing=False,
         )
         deadline = time.monotonic() + _BOUND_SECONDS
@@ -263,6 +267,7 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         assert len(survivor.worker_ids) == len(victim.worker_ids) == 1
         runtime = _get_runtime()
         core = runtime.core_worker
+        owner_address = runtime.owner_service.address
         original_rpc, original_retry = core._rpc, core._retry_system_failure
         managed_pids.update((context.gcs_pid, *context.node_pids, *context.worker_pids))
         managed_addresses.update((context.gcs_address, runtime.owner_service.address))
@@ -281,28 +286,24 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
                         pair = message, reply
                         if grants.setdefault(key, pair) != pair:
                             grant_conflicts.add(key)
-                snapshot = (
-                    reply.snapshot if type(reply) is wire.OutputNodeLossReply else
-                    reply.snapshot if type(reply) is wire.GetOutputNodeLossReply and reply.found else None
-                )
-                if snapshot is not None and snapshot.resolution is not None:
-                    identity = snapshot.publication_id
-                    cleanup_acks[(identity.task_id, identity.attempt_id)] = snapshot.resolution
             return reply
 
-        def inspect_retry(pending, error):
+        def inspect_retry(pending, error, **options):
             key = pending.task_id, pending.spec.attempt_id
             with core._state_lock:
                 record = core._recovery.task_record(pending.task_id)
                 owner = core.owner_table.snapshot(pending.output_ids[0])
                 with observations_lock:
-                    # This ACK was delivered through Core's actual RPC path,
-                    # not a test query or fabricated cleanup receipt.
-                    retries.setdefault(key, (
-                        cleanup_acks.get(key), record.current_attempt,
-                        record.retries_started, owner,
-                    ))
-            return original_retry(pending, error)
+                    # Read the real owner CAS receipt at the retry entry,
+                    # before the retry authority can advance this attempt.
+                    receipt = next((value for identity, value in core.owner_table._output_loss_receipts.items()
+                                    if identity.task_id == pending.task_id
+                                    and identity.attempt_id == pending.spec.attempt_id), None)
+                    completed = (receipt is not None and receipt.publication_id in
+                                 getattr(core, "_output_loss_completed", set()))
+                    retries.setdefault(key, (receipt, completed, record.current_attempt,
+                                             record.retries_started, owner))
+            return original_retry(pending, error, **options)
 
         core._rpc, core._retry_system_failure = inspect_rpc, inspect_retry
         blocker = _occupy_survivor.remote(gate_address, deadline)
@@ -315,6 +316,8 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         listener.settimeout(_remaining(deadline))
         publication_connection, _ = listener.accept()
         publication_connection.settimeout(_remaining(deadline))
+        if unknown:
+            assert _recv_exact(publication_connection, len(PREPARED_FRAME_PREFIX), deadline) == PREPARED_FRAME_PREFIX
         arrival = recv_output_publication_gate_arrival(publication_connection)
         assert arrival.phase is gate_phase
         publication = arrival.publication_id
@@ -326,7 +329,7 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         assert publication.attempt_id == AttemptID(object_id.task_id, 0)
         _assert_metadata_only(arrival)
 
-        before = _recovery(context, publication, deadline)
+        before = _handoff(owner_address, publication, deadline)
         manifest = before.manifest
         assert manifest.manifest_digest == arrival.manifest_digest
         assert manifest.header.owner_worker_id == core.worker_id
@@ -334,17 +337,13 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         assert manifest.header.node_incarnation.node_id == victim.node_id
         assert manifest.header.node_incarnation.node_pid == victim.node_pid
         assert manifest.header.node_incarnation.registration_epoch == arrival.registration_epoch
-        assert before.armed is (postcomplete or unknown)
+        assert before.phase is OutputHandoffPhase.PENDING and before.abort_reason is None
         assert (before.complete is not None) is postcomplete
         if postcomplete:
             assert before.complete.status is protocol.TaskReplyStatus.SUCCEEDED
             assert before.complete.publication_id == publication
             assert before.complete.manifest_digest == arrival.manifest_digest
-        assert before.recovery_action is expected_action
-        assert before.adopted is None and before.rollback is None
-        assert before.owner_decision is None and before.resolution is None
-        assert before.frozen_node_death is None and before.owner_death is None
-        assert before.slot_collections == ()
+        assert before.adoption is None
         assert len(manifest.slots) == 1
         slot = manifest.slots[0]
         assert slot.object_id == object_id and slot.tier is protocol.ResultStorage.OBJECT_STORE
@@ -358,15 +357,8 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         assert transfer.provisional_hold.container_owner_worker_id == victim.worker_id
         assert transfer.final_hold.container_owner_worker_id == core.worker_id
         assert transfer.final_hold.container_object_id == object_id
-        graph_before = _graph(context, publication, deadline)
-        if effects_existed:
-            assert graph_before.disposition is protocol.StoredPublicationQueryDisposition.FOUND
-            assert graph_before.manifest == manifest.to_graph_manifest()
-        else:
-            assert graph_before.disposition is protocol.StoredPublicationQueryDisposition.NOT_FOUND
-            assert graph_before.manifest is None
 
-        # Promotion gates are after actual replica/child effects. The INTENT
+        # Promotion gates are after actual replica/child effects. The first
         # gate is before the first effect; metadata alone is not that proof.
         physical = _query(
             victim.node_address, GET_OBJECT_HANDLER,
@@ -383,6 +375,8 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
             assert hashlib.sha256(physical.data).hexdigest() == slot.checksum
         else:
             assert not physical.found and not physical.sealed and physical.data is None
+        # These diagnostic bytes are never installed as Core custody.
+        del physical
         owner_before = core.owner_table.snapshot(object_id)
         assert owner_before.state is ObjectState.PENDING
         assert owner_before.current_attempt == publication.attempt_id
@@ -415,36 +409,26 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         assert child_owner.death.node_pid == victim.node_pid
         assert child_owner.death.node_registration_epoch == arrival.registration_epoch
 
-        def cleanup_finished():
-            reply = _node_loss(context, publication, core.worker_id, death, deadline)
-            return reply if reply.snapshot.resolution is not None else None
-
-        terminal = _poll_until(cleanup_finished, deadline, "exact output cleanup did not converge")
-        assert terminal.work.action is expected_action
-        assert terminal.work.snapshot == replace(before, frozen_node_death=death)
-        resolved = terminal.snapshot
-        resolution = resolved.resolution
-        assert resolved.manifest == manifest and resolved.frozen_node_death == death
-        assert resolved.armed == before.armed and resolved.complete == before.complete
-        assert resolved.adopted is None and resolved.rollback is None
-        assert resolved.owner_death is None and resolved.owner_cleaned is None
+        resolution = _poll_until(
+            lambda: _loss_receipt(core, publication), deadline,
+            "exact owner Node-loss cleanup did not converge",
+        )
+        resolved = _handoff(owner_address, publication, deadline)
+        assert resolved.manifest == manifest and resolved.complete == before.complete
+        assert resolved.phase is OutputHandoffPhase.ABORTED and resolved.adoption is None
         assert resolution.publication_id == publication
         assert resolution.manifest_digest == manifest.manifest_digest
         assert resolution.node_death == death and resolution.owner_worker_id == core.worker_id
-        assert resolution.kept_slots == ()
-        assert resolution.complete == before.complete
-        assert not resolved.terminal_report_allowed
-        if postcomplete or unknown:
-            decision = resolved.owner_decision
-            assert decision is not None and decision.complete == before.complete
-            assert len(decision.slots) == 1
-            assert decision.slots[0].object_id == object_id and decision.slots[0].slot_index == 0
-            assert decision.slots[0].decision is OutputRecoveryOwnerDecision.DROP
-        else:
-            assert resolved.owner_decision is None
-        assert _graph(context, publication, deadline).manifest == manifest.to_graph_manifest()
-        assert _node_loss(context, publication, core.worker_id, death, deadline) == terminal
-        assert _recovery(context, publication, deadline) == resolved
+        assert resolution.complete == before.complete and not resolution.keep
+        resolution.validate_manifest(manifest)
+        # This child belongs to the dead executor. The exact committed
+        # NODE_EXIT receipt settles both its final and provisional holds.
+        assert resolution.cleanup == (child_owner.death,)
+        assert _handoff(owner_address, publication, deadline) == resolved
+        assert _loss_receipt(core, publication) == resolution
+        with core._state_lock:
+            assert publication not in getattr(core, "_output_node_cleanup", {})
+            assert publication not in getattr(core, "_output_result_custody", {})
 
         if postcomplete:
             # No public get/wait after the crash: observe successful-but-lost
@@ -484,17 +468,17 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
             _poll_until(retry_admitted, deadline, "cleaned unsuccessful attempt did not consume one retry")
             with observations_lock:
                 sample = retries[(object_id.task_id, publication.attempt_id)]
-            ack, prior_attempt, prior_retries, pending_owner = sample
-            assert ack == resolution
+            ack, cleanup_completed, prior_attempt, prior_retries, pending_owner = sample
+            assert ack == resolution and cleanup_completed
             assert prior_attempt == publication.attempt_id and prior_retries == 0
             assert pending_owner.state is ObjectState.PENDING
             assert pending_owner.current_attempt == publication.attempt_id
             assert pending_owner.output_publication is None and not pending_owner.locations
             assert pending_owner.canonical_stored_result is None
             if unknown:
-                assert terminal.work.action is OutputRecoveryAction.COMPLETION_UNKNOWN
-                assert resolved.complete is None and resolved.owner_decision.complete is None
-                assert resolution.complete is None
+                assert resolved.complete is None and resolution.complete is None
+                with core._state_lock:
+                    assert core._recovery.task_record(object_id.task_id).state is TaskState.RETRY_PENDING
 
         assert publication not in getattr(core, "_output_result_custody", {})
         with observations_lock:
@@ -526,17 +510,21 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
         new_publication = owner.output_publication.publication_id
         assert new_publication != publication
         assert new_publication.output_ids == new_publication.full_output_ids == (object_id,)
-        assert owner.output_publication.manifest.header.node_incarnation.node_id == survivor.node_id
+        new_incarnation = owner.output_publication.manifest.header.node_incarnation
+        assert (new_incarnation.node_id, new_incarnation.node_pid, new_incarnation.registration_epoch) == (
+            survivor.node_id, survivor.node_pid, runtime.nodes[0].registration_epoch,
+        )
         assert owner.output_publication.slot.transfers[0].contained_object_id == child.object_id
+        assert core.owner_table.snapshot(object_id).local_tokens == owner_before.local_tokens
         record = core._recovery.task_record(object_id.task_id)
         assert record.state is TaskState.SUCCEEDED and record.retries_started == 1
         assert record.retries_remaining == 0
         assert record.current_attempt == owner.current_attempt
         assert core._recovery.active_recovery(object_id.task_id) is None
-        # The immutable old history remains PRECOMPLETE/UNKNOWN/Complete even
-        # after another physical attempt has successfully published new bytes.
-        assert _recovery(context, publication, deadline) == resolved
-        assert _node_loss(context, publication, core.worker_id, death, deadline).work == terminal.work
+        # Old metadata and its exact cleanup receipt cannot be rebound by
+        # the successful replacement attempt or used to recreate old bytes.
+        assert _handoff(owner_address, publication, deadline) == resolved
+        assert _loss_receipt(core, publication) == resolution
         with observations_lock:
             assert not grant_conflicts
             task_grants = {attempt: pair for (task_id, attempt), pair in grants.items()
@@ -565,6 +553,7 @@ def _run_node_loss(gate_phase: OutputPublicationGatePhase) -> None:
                 core._rpc = original_rpc
             if core is not None and original_retry is not None:
                 core._retry_system_failure = original_retry
+            api_module._node_process_main = original_entry
             report = ray.shutdown()
 
     assert not close_errors, "bounded reference cleanup failed: {!r}".format(close_errors)

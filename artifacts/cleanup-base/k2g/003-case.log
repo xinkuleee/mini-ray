@@ -1,0 +1,42 @@
+.F...                                                                    [100%]
+=================================== FAILURES ===================================
+_______ test_foreign_wait_terminal_lost_is_ready_without_fetching_bytes ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7255211373b0>
+
+    @pytest.mark.unit
+    def test_foreign_wait_terminal_lost_is_ready_without_fetching_bytes(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        with _fixture(monkeypatch) as fixture:
+>           entry = fixture.stored_put(index=3)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_foreign_wait_drop.py:454: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_foreign_wait_drop._WaitDrop object at 0x725521137110>
+
+    def stored_put(self, *, index):
+        assert not self.entries
+        self.owner.inline_threshold = 0
+        local = self.owner.put(b"stored")
+        self.refs.append(local)
+        entry = self.borrow(local, index=index, pending=None)
+        snapshot = self.owner.owner_table.snapshot(local.object_id)
+        assert snapshot.state is ObjectState.READY_STORED and snapshot.producer_task_spec is None
+        assert snapshot.output_publication is None
+        assert self.owner._recovery.reconstruction_snapshot(local.object_id).is_put
+>       assert self.owner._accepted_task_count == 0 and self.owner._submissions.empty()
+E       assert (0 == 0 and False)
+E        +  where 0 = <miniray.core.CoreWorker object at 0x7255211357c0>._accepted_task_count
+E        +    where <miniray.core.CoreWorker object at 0x7255211357c0> = <test_foreign_wait_drop._WaitDrop object at 0x725521137110>.owner
+E        +  and   False = empty()
+E        +    where empty = <queue.Queue object at 0x725521136600>.empty
+E        +      where <queue.Queue object at 0x725521136600> = <miniray.core.CoreWorker object at 0x7255211357c0>._submissions
+E        +        where <miniray.core.CoreWorker object at 0x7255211357c0> = <test_foreign_wait_drop._WaitDrop object at 0x725521137110>.owner
+
+tests/unit/test_foreign_wait_drop.py:269: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_foreign_wait_drop.py::test_foreign_wait_terminal_lost_is_ready_without_fetching_bytes
+1 failed, 4 passed in 2.22s

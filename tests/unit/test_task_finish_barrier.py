@@ -4,9 +4,9 @@ Real Core methods, owner/recovery tables, and FIFO admission are composed
 synchronously.  No Core constructor, mailbox, thread, process, socket, or
 wall-clock wait is started.  Interleaving hooks model the finalizer races.
 Successful results use real OutputDiscovery, a Node publication adapter and
-journal, metadata-only recovery, and real Node storage/drop handlers. Per case:
-at most three logical tasks, six publications, two selected slots, 128 bytes
-per serialized slot and one 4 KiB in-memory store. No output contains refs.
+journal, actual Core owner handoffs, and real Node storage/drop handlers. Per case:
+at most three logical tasks, six publications, one output per task, 128 bytes
+per serialized output and one 4 KiB in-memory store. No output contains refs.
 """
 
 from __future__ import annotations
@@ -41,14 +41,13 @@ from miniray.output_publication import (
 )
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
 from miniray.ownership import ObjectCollectionState, ObjectOwnerTable, ObjectState
 from miniray.reconstruction_runtime import ReconstructionDisposition
 from miniray.recovery import RecoveryManager, TaskState
 from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
 from miniray.trace import MemoryEventSink
 from miniray.transport import TransportTimeout
-from tests.unit.test_output_publication import _assert_metadata
+from tests.unit._pure_output_runtime import _metadata as _assert_metadata
 
 
 pytestmark = pytest.mark.unit
@@ -100,12 +99,11 @@ class _Composition:
 
 
 class _OutputBackend:
-    """Only bounded Node storage and metadata GCS effects, no transport."""
+    """Actual owner handoffs and bounded Node storage, with no transport."""
 
     def __init__(self, core, no_rpc):
         self.core, self.no_rpc = core, no_rpc
         self.journal = OutputPublicationJournal()
-        self.recovery = OutputPublicationRecoveryAuthority()
         self.store = ObjectStore(4096)
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         self.completed = {}
@@ -124,12 +122,10 @@ class _OutputBackend:
         node._owner_death_fences = {}
         node._output_publication_journal = self.journal
         self.adapter = OutputPublicationNodeAdapter(
-            self.journal, report_intent=self.recovery.report_intent,
-            arm_complete=self.recovery.arm_complete,
-            report_terminal=self.recovery.report_terminal,
-            report_rollback=self.recovery.report_rollback,
+            self.journal, register_owner=self._register_owner,
+            report_complete=self._report_complete,
+            report_rollback=self._report_rollback,
             prepare_child=no_rpc, promote_child=no_rpc, release_child=no_rpc,
-            prepare_graph=no_rpc, abort_graph=no_rpc,
             seal_replica=node._seal_output_publication_replica,
             drop_replica=node._drop_output_publication_replica,
         )
@@ -139,38 +135,42 @@ class _OutputBackend:
             self.no_rpc("unexpected Node route", node_id)
         return self.core.node_address
 
+    def _owner_call(self, request, method):
+        _assert_metadata(request)
+        reply = method(request)
+        assert type(reply) is wire.OutputHandoffReply
+        assert reply.request == request and reply.accepted, reply.error
+        _assert_metadata(reply)
+        return reply.snapshot
+
+    def _register_owner(self, manifest):
+        snapshot = self._owner_call(wire.RegisterOutputHandoff(manifest), self.core.register_output_handoff)
+        assert snapshot.manifest == manifest and snapshot.complete is None
+
+    def _report_complete(self, witness):
+        assert self.journal.snapshot(witness.publication_id).complete == witness
+        snapshot = self._owner_call(wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete)
+        assert snapshot.complete == witness
+
+    def _report_rollback(self, tombstone, *, manifest):
+        snapshot = self._owner_call(wire.ReportOutputHandoffRollback(manifest, tombstone),
+                                   self.core.report_output_handoff_rollback)
+        assert snapshot.manifest == manifest and snapshot.adoption is None
+
+    def handoff_snapshot(self, identity):
+        snapshot = self._owner_call(wire.GetOutputHandoff(identity), self.core.get_output_handoff)
+        assert snapshot.publication_id == identity
+        return snapshot
+
     def rpc(self, address, handler, request):
         self.calls.append((handler, request))
         assert len(self.calls) <= 32
-        if handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER:
-            assert address == self.core.gcs_address
-            if type(request) is wire.ReportOutputPublicationTerminal:
-                ack = self.recovery.report_terminal(request.witness)
-            elif type(request) is wire.ReportOutputPublicationAdopted:
-                assert self.completed[request.proof.complete.publication_id] == request.proof.complete
-                ack = self.recovery.report_adopted(request.proof)
-            elif type(request) is wire.ReportOutputPublicationSlotCollected:
-                identity = request.proof.complete.publication_id
-                snapshot = self.recovery.snapshot(identity)
-                slot = snapshot.manifest.slots[request.proof.slot_index]
-                assert slot.object_id == request.proof.object_id and not slot.edges
-                if slot.tier is protocol.ResultStorage.OBJECT_STORE:
-                    assert not self.store.contains(slot.object_id, sealed_only=False)
-                    assert self.node._dropped_metadata[slot.object_id] == (
-                        identity.attempt_id, self.core.worker_id, slot.checksum,
-                    )
-                ack = self.recovery.report_slot_collected(request.proof)
-            else:
-                return self.no_rpc(handler, request)
-            assert ack.snapshot.manifest.to_graph_manifest() is None
-            _assert_metadata(ack.snapshot)
-            return wire.OutputRecoveryReply(request, ack)
         if handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER:
             assert address == self.core.node_address
             assert type(request) is wire.AckOutputPublicationAdopted
             identity = request.proof.complete.publication_id
             assert self.completed[identity] == request.proof.complete
-            assert self.recovery.snapshot(identity).adopted == request.proof
+            assert self.handoff_snapshot(identity).adoption == request.proof
             self.journal.retire_completed(request.proof)
             return wire.AckOutputPublicationAdoptedReply(request, True)
         if handler == "drop_object_replica":
@@ -179,7 +179,7 @@ class _OutputBackend:
         return self.no_rpc(handler, request)
 
     def succeed(self, pending, *, stored, value):
-        assert len(self.completed) < 6 and len(pending.output_ids) <= 2
+        assert len(self.completed) < 6 and len(pending.output_ids) == 1
         identity = OutputPublicationID(
             LeaseID((len(self.completed) + 1).to_bytes(16, "big")), pending.execution,
         )
@@ -188,9 +188,9 @@ class _OutputBackend:
             OutputPublicationNodeIncarnation(self.core.node_id, 3001, 1),
         )
         discovery = OutputDiscoverySession(header, inline_threshold=0 if stored else 128)
-        outputs = discovery.discover((value,) * len(pending.output_ids))
+        outputs = discovery.discover((value,))
         assert all(len(payload) <= 128 for payload in outputs.slot_payloads)
-        assert outputs.manifest.to_graph_manifest() is None
+        assert all(not slot.transfers for slot in outputs.manifest.slots)
         _assert_metadata(outputs.manifest)
         assert discovery.source_references == ()
         token = AllocationToken("finish-lease-{}".format(len(self.completed)))
@@ -208,20 +208,20 @@ class _OutputBackend:
 
         envelope = self.adapter.complete(identity, commit_lease=complete_lease)
         assert self.ledger.available == ResourceVector({"CPU": 1})
-        assert self.recovery.snapshot(identity).complete is None
+        assert self.handoff_snapshot(identity).complete is None
         assert self.adapter.report_terminal(identity)
-        _assert_metadata(self.recovery.snapshot(identity))
+        _assert_metadata(self.handoff_snapshot(identity))
         reply = protocol.TaskReply(
             pending.task_id, pending.spec.attempt_id, self.executor,
             protocol.TaskReplyStatus.SUCCEEDED, envelope.results,
-            target_execution=pending.target_execution, output_publication=envelope,
+            output_publication=envelope,
         )
         assert self.core._publish_reply(
             pending, reply, expected_node_id=self.core.node_id,
             expected_lease_id=identity.lease_id,
         )
         assert not self.journal.snapshot(identity).retained_result_slots
-        assert self.recovery.snapshot(identity).adopted.complete == envelope.complete
+        assert self.handoff_snapshot(identity).adoption.complete == envelope.complete
         assert self.core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
         return envelope.results
 
@@ -268,6 +268,11 @@ class _Fixture:
         core._dead_nodes = {}
         core._task_finish_barriers = {}
         core._accepting = True
+        core._owner_protocol_open = True
+        core._owner_retain_admission_open = True
+        core._inflight_submissions = 0
+        core._inflight_puts = 0
+        core._inflight_borrow_ops = 0
         core._accepted_task_count = 0
         core._submission_index = 0
         core._reference_index = 0
@@ -790,7 +795,7 @@ def test_system_retry_moves_every_barrier_but_preserves_logical_hold():
     fixture = _Fixture()
     core = fixture.core
     dependency, dependency_ref = fixture.ready_dependency()
-    pending, _refs = fixture.submit(dependency_ref, num_returns=2)
+    pending, _refs = fixture.submit(dependency_ref)
     assert not core._retry_system_failure(pending, SystemTaskError("worker exited"))
     (retried,) = fixture.queued()
     assert retried.spec.attempt_id == pending.spec.attempt_id.next()

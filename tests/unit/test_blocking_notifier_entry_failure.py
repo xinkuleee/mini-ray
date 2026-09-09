@@ -15,7 +15,7 @@ or actual wait runs. At most two lock acquisitions and four typed RPC calls
 occur. Guard violations survive any production exception/finalizer handling.
 
 The final representative Core case uses one genuinely PENDING Task and two
-threadless Cores with a really acquired typed legacy borrower capability. Its
+threadless Cores with a really acquired typed contained borrower capability. Its
 notifier is an explicit failed-entry CM, not a real Node notification: one
 owner Get runs, no polling/storage work or Block RPC runs, and teardown applies
 the real borrowed/contained/local releases without finishing or collecting the

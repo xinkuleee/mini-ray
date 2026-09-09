@@ -252,7 +252,7 @@ class _LostFixture:
         assert self.metadata() == self.before
         assert self.core._task_finish_barriers[self.blocked_output] in self.tasks
         assert not self.core._reconstruction._sessions
-        assert not self.core._targeted_reconstruction.active_task_ids()
+        assert all(self.core._recovery.active_recovery(task.task_id) is None for task in self.tasks)
         assert not getattr(self.core, "_output_retirement_work", {})
         assert not self.core.owner_table.has_active_output_retirements()
         assert not self.core._protocol_unresolved
@@ -268,8 +268,9 @@ class _LostFixture:
             assert self.core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.COLLECTED
             assert self.core._recovery.lineage_for_object(pending.object_id) is None
         for identity in self.backend.completed:
-            snapshot = self.backend.recovery.snapshot(identity)
-            assert snapshot.adopted is not None and len(snapshot.slot_collections) == 1
+            snapshot = self.backend.handoff_snapshot(identity)
+            assert snapshot.complete is not None and snapshot.adoption is not None
+            assert self.core.owner_table.collection_state(identity.output_ids[0]) is ObjectCollectionState.COLLECTED
             assert not self.backend.journal.snapshot(identity).retained_result_slots
         assert not self.core._objects and not self.core._stored_descriptors
         assert not self.core._object_gc_obligations and self.backend.store.used_bytes == 0

@@ -3,7 +3,7 @@
 Real Core get/get_many and owner handlers run synchronously. Only the clock,
 notification entry and selected Event.wait/poll boundaries are simulated.
 The borrowed capability is really acquired from an explicitly installed
-legacy export pin, normalized to ContainedTransferSource; this is not claimed
+typed container hold, carried by ContainedTransferSource; this is not claimed
 to exercise contained-result serialization. The LOST case uses two canonical
 stored Tasks: the parent finished, but its child still owns its original
 finish barrier, so real owner reconstruction defers with retryable NOT_LOST.
@@ -30,7 +30,8 @@ import pytest
 
 from miniray import control, core as core_module, node as node_module, protocol, transport, worker
 from miniray.core import CoreWorker, ObjectRef, _ReleaseBorrowedReference
-from miniray.ids import AttemptID, TaskID
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.ids import AttemptID, ObjectID, TaskID
 from miniray.node import NodeServer
 from miniray.ownership import ObjectState
 from miniray.resources import ResourceVector
@@ -218,14 +219,16 @@ class _Borrower:
         self.core = core = make_pure_core()
         core._reference_mailbox = _BorrowMailbox(core, forbidden)
         self.calls, self.replies = [], []
-        self.source = protocol.ContainedTransferSource("deadline-fixture-export")
+        self.source = protocol.ContainedTransferSource(ContainedReferenceHold(
+            ObjectID.for_task(TaskID.random()), owner.worker_id, "deadline-fixture-export",
+        ))
         self.acquire = protocol.AcquireBorrowedObject(
             local_ref.object_id, owner.worker_id, core.worker_id, self.source, "deadline-fixture-borrow",
         )
         self.release = protocol.ReleaseBorrowedObject(
             local_ref.object_id, owner.worker_id, core.worker_id, self.acquire.borrower_token,
         )
-        # Supported explicit legacy export, not an invented live outer object.
+        # Install an explicit typed owner pin; no serialization or outer value is claimed.
         assert owner.owner_table.add_contained_reference(local_ref.object_id, self.source.hold)
         self.key, self.obligation, inserted = core._register_borrowed_release_obligation(
             owner.owner_address, self.acquire, self.release,
@@ -429,7 +432,7 @@ def test_foreign_lost_deferred_by_real_owner_does_not_poll_after_notification_ex
         assert f.core._task_finish_barriers[f.child.object_id] is f.child
         assert f.pending.object_id not in f.core._task_finish_barriers
         assert not f.core._reconstruction._sessions
-        assert not f.core._targeted_reconstruction.active_task_ids()
+        assert all(f.core._recovery.active_recovery(task.task_id) is None for task in f.tasks)
         assert f.backend.store.used_bytes == 0 and f.take() == ()
     finally:
         try:

@@ -1,23 +1,12 @@
-"""Bounded adopted unified-publication owner-death acceptance.
+"""Bounded adopted output owner death on current owner/Node authorities.
 
-Run only the reviewed exact node ID with scripts/run_bounded_test.py and its
-30-second process-group deadline. Bounds: one GCS, two Nodes, one ordinary
-Worker per Node (five startup children), one exact owner-Worker SIGKILL and
-one replacement; two tasks with max_retries=0, one tiny Driver put, 8 KiB
-padding, and a 1 MiB ObjectStore per Node. No Actors, placement groups, tracing,
-test-owned listeners, gates, threads, or synthetic death records.
-
-All work shares a ten-second monotonic deadline; reference cleanup gets three
-seconds. init/shutdown retain their existing finite runtime deadlines, and the
-external runner is the final process-tree bound, including partial startup.
-
-This slice waits for exact successful Complete AND owner adoption before the
-kill. GCS owner_cleaned is the causal barrier for owner-wide Node fences, child
-hold/graph cleanup, Node retirement, and the still-live executor Worker ACK.
-Existing graph queries retain immutable manifests after edge release; they do
-not expose active_edges. Accordingly cleanup is checked through owner_cleaned,
-source hold tombstones, physical replica absence, and clean GCS/Worker drain,
-not by treating a persistent manifest as an active graph or replaying cleanup.
+Two Nodes, one Worker each, one replacement after exact owner exit; two Tasks,
+one child put and one <=32 KiB stored result. Work: 10 s; cleanup: 3 s.
+Run this exact selector under the approved 30 s process-tree runner.
+Before death the real owner GetOutputHandoff must contain Complete+ADOPTED.
+After death actual membership, child release tombstones, physical absence,
+and the Node process own journal/Worker-ACK observations establish cleanup.
+Enhanced edition additionally checks GetPublication RETIRED receipts.
 """
 
 from __future__ import annotations
@@ -36,15 +25,18 @@ import pytest
 
 import miniray as ray
 from miniray import output_protocol as wire, protocol
+from miniray import api as api_module, node as node_module
 from miniray.api import _get_runtime
-from miniray.control import GET_CONTAINED_GRAPH_HANDLER, GET_WORKER_STATE_HANDLER
+from miniray.control import GET_NODES_HANDLER, GET_WORKER_STATE_HANDLER
 from miniray.core import _worker_death_reference_id
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.node import GET_OBJECT_HANDLER
 from miniray.output_publication import OutputPublicationEnvelope, OutputPublicationID
+from miniray.output_handoff import OutputHandoffPhase
+from miniray.output_publication_journal import OutputPublicationJournalState
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.runtime_binding import current_core_worker
-from miniray.stored_publication import BorrowedContainedSource
+from miniray.publication_sources import BorrowedContainedSource
 from miniray.transport import request as rpc_request
 from tests.support._legacy_reference_cleanup import _close_local
 
@@ -134,14 +126,11 @@ def _rpc(address, handler, request, deadline):
     )
 
 
-def _recovery(context, publication_id, deadline):
-    request = wire.GetOutputPublicationRecovery(publication_id)
-    reply = _rpc(
-        context.gcs_address, wire.GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER,
-        request, deadline,
-    )
-    assert type(reply) is wire.GetOutputPublicationRecoveryReply
-    assert reply.request == request and reply.found and reply.snapshot is not None
+def _handoff(owner_address, publication_id, deadline):
+    request = wire.GetOutputHandoff(publication_id)
+    reply = _rpc(owner_address, wire.GET_OUTPUT_HANDOFF_HANDLER, request, deadline)
+    assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
+    assert reply.snapshot is not None and reply.snapshot.publication_id == publication_id
     _assert_metadata_only(reply)
     return reply.snapshot
 
@@ -156,13 +145,7 @@ def _worker_state(context, worker_id, deadline):
     return reply
 
 
-def _graph(context, publication_id, deadline):
-    request = protocol.GetContainedGraph(publication_id.graph_transaction_id)
-    reply = _rpc(context.gcs_address, GET_CONTAINED_GRAPH_HANDLER, request, deadline)
-    assert type(reply) is protocol.GetContainedGraphReply and reply.request == request
-    assert reply.disposition is protocol.StoredPublicationQueryDisposition.FOUND
-    _assert_metadata_only(reply)
-    return reply.manifest
+
 
 
 def _replica(node, object_id, deadline):
@@ -203,11 +186,75 @@ def _pid_exists(pid):
         return True
 
 
+_ACTUAL_NODE_PROCESS_MAIN = api_module._node_process_main
+
+
+def _node_process_with_adopted_cleanup_observation(*args):
+    """Observe the existing Node/Worker protocol; no cleanup is synthesized."""
+    node_type = node_module.NodeServer
+    actual_spawn = node_type._spawn_worker_process
+    actual_ack = node_type._handle_ack_output_publication_adopted
+    actual_rpc = node_type._background_rpc
+    producer = bool(args[1].get(_PRODUCER_RESOURCE, 0))
+    nodes, spawned, adoptions, finalized = [], [], {}, {}
+
+    def spawn(node, worker_id):
+        if node not in nodes:
+            nodes.append(node)
+        result = actual_spawn(node, worker_id)
+        spawned.append((worker_id, result[0].pid, result[1]))
+        assert len(spawned) <= 2
+        return result
+
+    def ack(node, request):
+        reply = actual_ack(node, request)
+        if producer and reply.accepted:
+            identity = request.proof.complete.publication_id
+            assert identity not in adoptions or adoptions[identity] == request.proof
+            adoptions[identity] = request.proof
+        return reply
+
+    def rpc(node, address, handler, request, **options):
+        reply = actual_rpc(node, address, handler, request, **options)
+        if producer and handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER:
+            if type(reply) is wire.FinalizeOutputOwnerDeathReply and reply.request == request and reply.cleaned:
+                identity = request.manifest.publication_id
+                witness = (address, request)
+                assert identity not in finalized or finalized[identity] == witness
+                finalized[identity] = witness
+        return reply
+
+    node_type._spawn_worker_process = spawn
+    node_type._handle_ack_output_publication_adopted = ack
+    node_type._background_rpc = rpc
+    try:
+        _ACTUAL_NODE_PROCESS_MAIN(*args)
+        assert len(nodes) == 1 and len(spawned) == (1 if producer else 2)
+        if producer:
+            (identity, proof), = adoptions.items()
+            node, = nodes
+            snapshot = node._output_publication_journal.snapshot(identity)
+            death = node._owner_death_fences[proof.owner_worker_id]
+            assert snapshot.complete == proof.complete and snapshot.rollback is None
+            assert snapshot.state is OutputPublicationJournalState.RETIRED
+            assert snapshot.retained_result_slots == ()
+            assert node._output_publications.owner_death_finished(identity)
+            assert finalized == {identity: (spawned[0][2], wire.FinalizeOutputOwnerDeath(snapshot.manifest, death))}
+            assert node._output_publication_journal._records[identity].owner_death == death
+            assert identity.output_ids[0] not in node._sealed_metadata
+    finally:
+        node_type._spawn_worker_process = actual_spawn
+        node_type._handle_ack_output_publication_adopted = actual_ack
+        node_type._background_rpc = actual_rpc
+
+
 def test_adopted_output_owner_death_cleans_live_executor_and_source_holds():
     context = report = core = source = outer = foreign = None
     owner_node = producer_node = death = None
     managed_pids, managed_addresses = set(), set()
     close_errors = []
+    original_entry = api_module._node_process_main
+    api_module._node_process_main = _node_process_with_adopted_cleanup_observation
     try:
         context = ray.init(
             num_nodes=2, num_workers_per_node=1,
@@ -248,19 +295,18 @@ def test_adopted_output_owner_death_cleans_live_executor_and_source_holds():
         assert publication_id.attempt_id == AttemptID(foreign.object_id.task_id, 0)
 
         def adopted():
-            snapshot = _recovery(context, publication_id, deadline)
-            return snapshot if snapshot.complete is not None and snapshot.adopted is not None else None
+            snapshot = _handoff(owner_node.worker_address, publication_id, deadline)
+            return snapshot if snapshot.phase is OutputHandoffPhase.ADOPTED else None
 
-        before = _poll_until(adopted, deadline, "GCS did not confirm adopted Complete")
-        assert before.owner_death is None and before.owner_cleaned is None
-        assert before.frozen_node_death is None and before.rollback is None
-        assert before.adopted.complete == before.complete
+        before = _poll_until(adopted, deadline, "owner did not acknowledge adopted Complete")
+        assert before.complete is not None and before.adoption is not None
+        assert before.adoption.complete == before.complete and before.abort_reason is None
         manifest = before.manifest
         assert manifest.header.owner_worker_id == owner_node.worker_id
         assert manifest.header.executor_worker_id == producer_node.worker_id
         assert manifest.header.node_incarnation.node_id == producer_node.node_id
         assert manifest.header.node_incarnation.node_pid == producer_node.node_pid
-        assert before.adopted.owner_worker_id == owner_node.worker_id
+        assert before.adoption.owner_worker_id == owner_node.worker_id
         assert len(manifest.slots) == 1
         slot = manifest.slots[0]
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE
@@ -279,7 +325,6 @@ def test_adopted_output_owner_death_cleans_live_executor_and_source_holds():
         assert source_before.state is ObjectState.READY_INLINE
         assert transfer.final_hold in source_before.contained_holds
         assert ray.get(source, timeout=_remaining(deadline)) == _SOURCE_VALUE
-        assert _graph(context, publication_id, deadline) == manifest.to_graph_manifest()
 
         physical = _replica(producer_node, foreign.object_id, deadline)
         assert physical.found and physical.sealed
@@ -333,18 +378,19 @@ def test_adopted_output_owner_death_cleans_live_executor_and_source_holds():
         assert death.exit_code == -signal.SIGKILL
 
         def owner_cleanup_finished():
-            snapshot = _recovery(context, publication_id, deadline)
-            return snapshot if snapshot.owner_cleaned is not None else None
+            visible = _rpc(context.gcs_address, GET_NODES_HANDLER, protocol.GetNodes(), deadline)
+            assert type(visible) is protocol.GetNodesReply
+            if {node.node_id for node in visible.nodes} != {owner_node.node_id, producer_node.node_id}:
+                return False
+            child = core.owner_table.snapshot(source_id)
+            return (all(hold not in child.contained_holds
+                        and core.owner_table.contained_release_was_seen(source_id, hold)
+                        for hold in (transfer.final_hold, transfer.provisional_hold))
+                    and not _replica(producer_node, foreign.object_id, deadline).found)
 
-        after = _poll_until(owner_cleanup_finished, deadline, "output owner cleanup did not converge")
-        assert after.owner_death == after.owner_cleaned == death
-        assert after.manifest == manifest
-        assert after.complete == before.complete and after.adopted == before.adopted
-        assert after.frozen_node_death is None and after.resolution is None
-        assert not after.forward_allowed
-        assert _graph(context, publication_id, deadline) == manifest.to_graph_manifest()
+        _poll_until(owner_cleanup_finished, deadline, "actual owner fence/child cleanup did not converge")
 
-        # owner_cleaned cannot use executor death to bypass the Worker ACK:
+        # Actual Node process checks below require the living Worker cleanup ACK:
         # the same physical Node-B Worker must be ALIVE on both sides.
         executor_after = _worker_state(context, producer_node.worker_id, deadline)
         assert executor_after.state is protocol.WorkerMembershipState.ALIVE
@@ -385,6 +431,7 @@ def test_adopted_output_owner_death_cleans_live_executor_and_source_holds():
             deadline, "surviving source did not collect after its final local close",
         )
     finally:
+        api_module._node_process_main = original_entry
         cleanup_deadline = time.monotonic() + _CLEANUP_SECONDS
         try:
             for reference in (foreign, outer, source):
