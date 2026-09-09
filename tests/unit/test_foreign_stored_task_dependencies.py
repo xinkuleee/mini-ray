@@ -1,18 +1,18 @@
 """Foreign dependency contracts with explicit infrastructure classification.
 
-Five canonical submission cases use real foreign-lineage, Node custody and
+Six canonical submission cases use real foreign-lineage, Node custody and
 final GC authorities with finite in-memory progress. Three also cover selected
-output or pre-Push failure paths. The two death-fenced cases preserve actual
+output or pre-Push failure paths. The three death-fenced cases preserve actual
 membership/replica cleanup; the formal STALE replacement is an explicit typed
 protocol fault, quarantine, then separately supplied owner-death authority.
-The remaining bare-state unit contracts are separately scoped.
+The retry case uses real submission with a metadata-only producer; the
+remaining owner/report reducer contracts are separately scoped.
 """
 
 from __future__ import annotations
 
 import hashlib
 import multiprocessing.process
-import queue
 import socket
 import subprocess
 import threading
@@ -27,8 +27,9 @@ from miniray import (
     protocol, transport as transport_module, worker as worker_module,
 )
 from miniray.control import GCSLite, NodeRegistry, WorkerRegistry
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.core import (
-    CoreWorker, _DelayedReadyTask, _ForeignDependencyGuard,
+    CoreWorker, _DelayedReadyTask, _ForeignDependencyGuard, _HomeRoute,
     _LeaseRequestState, _LocationReportState, _ObjectWaiter, _PendingTask,
     _ReleaseBorrowedReference, _STOP, _WAKE_COORDINATOR,
 )
@@ -39,17 +40,20 @@ from miniray.ids import (
 from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
 from miniray.ownership import (
-    ObjectCollectionState, ObjectOwnerTable, ObjectState, OutputOwnerPublicationPlan,
+    ObjectCollectionState, ObjectState, OutputOwnerPublicationPlan,
 )
 from miniray.recovery import TaskState
-from miniray.ref_transfer import ReferenceExportSession
+from miniray.output_discovery import OutputDiscoverySession
+from miniray.output_handoff import OutputHandoffPhase
+from miniray.output_publication import (
+    OutputPublicationHeader, OutputPublicationID, OutputPublicationNodeIncarnation,
+)
 from miniray.resources import AllocationToken, ResourceVector
-from miniray.trace import EventSink
 from miniray.transport import TransportConnectionError, TransportTimeout
 from tests.unit._pure_core import (
     SynchronousReferenceMailbox, close_pure_core, make_pure_core,
 )
-from tests.unit._pure_node_output import prepare_ref_free_output
+from tests.unit._pure_output_runtime import PureOutputRuntime
 from tests.unit.test_node_placement_group_runtime import _node as _pure_report_node
 
 
@@ -71,26 +75,10 @@ def _retained_hold(
 def _owner_core(
     borrower: WorkerID, *, node_id: NodeID | None = None, payload: bytes | None = None,
 ) -> tuple[CoreWorker, ObjectID, AttemptID, protocol.ObjectStoreDescriptor]:
-    core = object.__new__(CoreWorker)
-    core.job_id = JobID.random()
-    core.worker_id = WorkerID.random()
+    core = make_pure_core()
     core.node_id = node_id or NodeID.random()
     core.node_address = ("127.0.0.1", 27101)
-    core.event_sink = EventSink()
-    core._owner_table = ObjectOwnerTable()
-    core._stored_descriptors = {}
-    core._objects = {}
-    core._state_lock = threading.RLock()
-    core._completion = threading.Condition(core._state_lock)
-    core._owner_protocol_open = True
-    core._owner_retain_admission_open = True
-    core._inflight_borrow_ops = 0
-    core._dead_nodes = {}
-    core._membership_epoch = 0
-    core._placement_group_states = {}
-    core._placement_group_manifests = {}
-    core._submissions = queue.Queue()
-    core._object_gc_obligations = {}
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     object_id, attempt = _identity()
     data = payload or cloudpickle.dumps({"blob": b"x" * 4096})
     checksum = hashlib.sha256(data).hexdigest()
@@ -102,7 +90,16 @@ def _owner_core(
     assert core.owner_table.publish_stored(
         object_id, attempt, core.node_id, descriptor=result
     )
-    core.owner_table.add_borrowed_reference(object_id, (borrower, "borrow"))
+    hold = ContainedReferenceHold(_identity()[0], core.worker_id, "stored-owner-source")
+    assert core.owner_table.add_contained_reference(object_id, hold)
+    acquired = core.acquire_exported_reference(protocol.AcquireBorrowedObject(
+        object_id, core.worker_id, borrower, protocol.ContainedTransferSource(hold), "borrow",
+    ))
+    assert acquired.accepted and acquired.acquired
+    released = core.release_contained_reference(protocol.ReleaseContainedReference(
+        object_id, core.worker_id, hold,
+    ))
+    assert released.accepted and released.released
     core._stored_descriptors[object_id] = result
     descriptor = protocol.ObjectStoreDescriptor(
         object_id, core.worker_id, attempt, core.node_id, len(data), checksum,
@@ -111,25 +108,9 @@ def _owner_core(
 
 
 def _consumer_core() -> CoreWorker:
-    core = object.__new__(CoreWorker)
-    core.job_id = JobID.random()
-    core.worker_id = WorkerID.random()
-    core.node_id = NodeID.random()
+    core = make_pure_core()
     core.node_address = ("127.0.0.1", 27102)
-    core.driver_task_id = TaskID.for_driver(core.job_id)
-    core.event_sink = EventSink()
-    core._owner_table = ObjectOwnerTable()
-    core._stored_descriptors = {}
-    core._objects = {}
-    core._state_lock = threading.RLock()
-    core._completion = threading.Condition(core._state_lock)
-    core._submissions = queue.Queue()
-    core._protocol_unresolved = {}
-    core._foreign_guard_release_retries = {}
-    core._active_task_finishes = set()
-    core._finishing_tasks = set()
-    core._finished_tasks = set()
-    core._accepted_task_count = 0
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     return core
 
 
@@ -180,18 +161,17 @@ def _grant(
 def _install_hold(
     owner: CoreWorker, guard: _ForeignDependencyGuard, borrower_token: str = "borrow"
 ) -> None:
-    # Helpers use distinct default tokens only when exercising Core-side report
-    # machinery without a real owner.  Real owner tests bind the exact token.
-    if not owner.owner_table.has_borrowed_reference(
-        guard.object_id, (guard.borrower_worker_id, borrower_token)
-    ):
-        owner.owner_table.add_borrowed_reference(
-            guard.object_id, (guard.borrower_worker_id, borrower_token)
-        )
-    owner.owner_table.retain_borrowed_reference_for_task(
-        guard.object_id, (guard.borrower_worker_id, borrower_token),
-        guard.hold,
-    )
+    reply = owner.retain_owned_object_for_task(protocol.RetainOwnedObjectForTask(
+        guard.object_id, owner.worker_id, guard.borrower_worker_id, borrower_token, guard.hold,
+    ))
+    assert reply.accepted and reply.retained
+
+
+def _retain(owner, object_id, borrower, hold):
+    reply = owner.retain_owned_object_for_task(protocol.RetainOwnedObjectForTask(
+        object_id, owner.worker_id, borrower, "borrow", hold,
+    ))
+    assert reply.accepted and reply.retained
 
 
 @pytest.mark.unit
@@ -226,9 +206,7 @@ def test_owner_reports_target_location_idempotently_and_fences_metadata() -> Non
     borrower = WorkerID.random()
     owner, object_id, attempt, source = _owner_core(borrower)
     hold = _retained_hold(borrower, _identity()[1])
-    owner.owner_table.retain_borrowed_reference_for_task(
-        object_id, (borrower, "borrow"), hold
-    )
+    _retain(owner, object_id, borrower, hold)
     target = replace(source, node_id=NodeID.random())
     request = protocol.ReportRetainedObjectLocation(
         object_id, owner.worker_id, borrower, hold, target
@@ -423,92 +401,34 @@ def test_location_report_ack_reenters_wire_validator() -> None:
 def test_confirmed_owner_death_cancels_grant_without_report_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    consumer = _consumer_core()
-    live_owner, _, _, live_source = _owner_core(consumer.worker_id)
-    dead_owner, _, _, dead_source = _owner_core(consumer.worker_id)
-    pending, guards = _pending(consumer, (live_source, dead_source))
-    for owner, guard in zip((live_owner, dead_owner), guards):
-        _install_hold(owner, guard)
-    consumer._accepted_task_count = 1
-    grant = _grant(
-        pending, (live_source, dead_source), target=consumer.node_id
-    )
-    request = protocol.RequestWorkerLease(
-        grant.lease_id, pending.spec.task_id, pending.spec.attempt_id,
-        pending.spec.resources, consumer.node_id, consumer.worker_id,
-        preferred_node_id=consumer.node_id,
-        dependencies=(live_source, dead_source),
-    )
-    reports = consumer._build_location_reports(
-        (live_source, dead_source), grant, guards
-    )
-    state = _LocationReportState(
-        grant, consumer.node_address, reports, lease_request=request
-    )
-    consumer._mark_protocol_unresolved(
-        pending, "location_report_wait", target_node_id=grant.node_id
-    )
-    consumer.owner_table.install_dead_worker(
-        dead_owner.worker_id, "confirmed-owner-death"
-    )
-    report_calls: list[WorkerID] = []
-    cancellation_calls: list[protocol.CancelWorkerLease] = []
-    release_calls: list[WorkerID] = []
+    f = _DeathFencedReportFixture(monkeypatch, owner_count=2)
+    try:
+        # Begin with a known real grant, but lose both report ACKs before
+        # supplying the separately registered owner-death authority.
+        f.lose_all_reports = True
+        assert not f.execute()
+        state = f.delayed()
+        assert not state.receipts and len(f.reports) == 2
+        death, record = f.install_owner_death(1)
+        assert f.take() == ()
+        f.lose_all_reports = False
+        def healthy_after_cancel(index):
+            assert index == 0
+            f.assert_cancelled()
 
-    def report_location(item):
-        report_calls.append(item.guard.owner_worker_id)
-        assert item.guard.owner_worker_id == live_owner.worker_id
-        return live_owner.report_retained_object_location(item.request)
-
-    def cancel_grant(_address, handler, cancellation):
-        assert handler == "cancel_worker_lease"
-        cancellation_calls.append(cancellation)
-        return protocol.CancelWorkerLeaseReply(
-            cancellation.lease_id, cancellation.task_id,
-            cancellation.attempt_id, cancellation.requester_node_id,
-            cancellation.requester_worker_id,
-            protocol.LeaseExecutionState.ABANDONED,
-            accepted=True, cancelled=True, released=True,
-            scheduling_key=cancellation.scheduling_key,
-        )
-
-    def release_guard(guard):
-        release_calls.append(guard.owner_worker_id)
-        assert guard.owner_worker_id == live_owner.worker_id
-        reply = live_owner.release_owned_object_for_task(
-            protocol.ReleaseOwnedObjectForTask(
-                guard.object_id, guard.owner_worker_id,
-                guard.borrower_worker_id, guard.hold,
-            )
-        )
-        return reply.released
-
-    monkeypatch.setattr(
-        consumer, "_report_foreign_dependency_location", report_location
-    )
-    monkeypatch.setattr(consumer, "_rpc", cancel_grant)
-    monkeypatch.setattr(
-        consumer, "_release_foreign_dependency_guard", release_guard
-    )
-
-    assert consumer._execute(
-        pending, pending.spec, (live_source, dead_source), location_state=state
-    )
-    assert report_calls == [live_owner.worker_id]
-    assert len(cancellation_calls) == 1
-    assert not consumer._is_protocol_unresolved(pending)
-    assert consumer._submissions.empty()
-    assert consumer.owner_table.snapshot(
-        pending.object_id
-    ).state.name == "ERROR"
-
-    assert consumer._finish_pending_task(pending)
-    assert release_calls == [live_owner.worker_id]
-    assert not live_owner.owner_table.snapshot(
-        live_source.object_id
-    ).retained_tokens
-    assert dead_owner.owner_table.snapshot(dead_source.object_id).retained_tokens
-    assert consumer._accepted_task_count == 0
+        f.before_report = healthy_after_cancel
+        assert f.execute(state)
+        assert [index for index, _, _ in f.reports] == [0, 1, 0]
+        assert len(f.cancels) == len(f.custody_acks) == 1
+        assert f.custody_acks[0][2].owner_deaths == (record,)
+        assert f.consumer._owner_is_dead(death.worker_id)
+        f.assert_terminal()
+        f.collect()
+        assert [index for index, _, _ in f.releases] == [0]
+        assert f.owners[1].owner_table.snapshot(f.sources[1].object_id) == f.dead_owner_snapshot
+        assert f.consumer._accepted_task_count == 0
+    finally:
+        f.close()
 
 
 @pytest.mark.unit
@@ -603,9 +523,7 @@ def test_report_stale_after_epoch_race_never_records_target() -> None:
     borrower = WorkerID.random()
     owner, object_id, attempt, source = _owner_core(borrower)
     hold = _retained_hold(borrower, _identity()[1])
-    owner.owner_table.retain_borrowed_reference_for_task(
-        object_id, (borrower, "borrow"), hold
-    )
+    _retain(owner, object_id, borrower, hold)
     target = replace(source, node_id=NodeID.random())
     original_add = owner.owner_table.add_location
 
@@ -641,9 +559,9 @@ def test_foreign_grant_never_writes_borrower_owner_table() -> None:
         consumer.owner_table.snapshot(source.object_id)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def _no_canonical_report_runtime(monkeypatch):
-    """Only the five canonical submission cases use this runtime tripwire."""
+    """All cases are finite; none starts runtime infrastructure."""
     def forbidden(*_args, **_kwargs):
         pytest.fail("pure foreign report attempted runtime or unmodelled transport")
 
@@ -686,10 +604,29 @@ class _ReportReferenceMailbox(SynchronousReferenceMailbox):
         return True
 
 
+def _acquire_stored_input(owner, consumer, ref):
+    """One typed temporary incoming pin; real Acquire precedes exact Release."""
+    hold = ContainedReferenceHold(_identity()[0], owner.worker_id, "stored-input-bootstrap")
+    assert owner.owner_table.add_contained_reference(ref.object_id, hold)
+    borrowed = consumer._restore_borrowed_reference(
+        ref.object_id, owner.worker_id, owner.owner_address, hold,
+    )
+    assert owner.owner_table.has_borrowed_reference(
+        ref.object_id, (consumer.worker_id, borrowed.borrower_token),
+    )
+    reply = owner.release_contained_reference(protocol.ReleaseContainedReference(
+        ref.object_id, owner.worker_id, hold,
+    ))
+    assert reply.accepted and reply.released and reply.hold == hold
+    assert not owner.owner_table.snapshot(ref.object_id).contained_holds
+    return borrowed
+
+
 class _CanonicalReportFixture:
     """One normal consumer Task, two 1-KiB Nodes, one tiny stored put input.
 
-    A real export pin/Acquire bootstraps a borrowed Python handle, then normal
+    A typed temporary incoming pin and actual Acquire bootstrap a borrowed
+    Python handle, then normal
     submission installs its TaskID-scoped foreign lineage. Closing that input
     handle cannot release the retained task credential. Node pull has exactly
     three in-process pin/chunk/release calls and one actual grant. One replay
@@ -704,8 +641,10 @@ class _CanonicalReportFixture:
         self.source_address, self.target_address = ("report-source.invalid", 1), ("report-target.invalid", 2)
         self.gcs_address = ("report-control.invalid", 3)
         owner.node_id, owner.node_address = self.source_node.node_id, self.source_address
+        owner._home_route = _HomeRoute(owner.node_id, owner.node_address, 0)
         owner.owner_address = ("report-owner.invalid", 4)
         consumer.node_id, consumer.node_address = self.target.node_id, self.target_address
+        consumer._home_route = _HomeRoute(consumer.node_id, consumer.node_address, 0)
         consumer.gcs_address = self.gcs_address
         consumer._registered_functions = set()
         self.registry = NodeRegistry()
@@ -726,21 +665,12 @@ class _CanonicalReportFixture:
         owner._rpc = self.owner_rpc
         owner._resolve_node_address = self.resolve
         consumer._rpc, consumer._borrow_rpc, consumer._push_task_rpc = self.rpc, self.borrow_rpc, self.push_rpc
-        self.payload = cloudpickle.dumps({"blob": b"tiny-input"})
+        value = {"blob": b"tiny-input"}
+        self.payload = cloudpickle.dumps(value)
         assert len(self.payload) <= 128
-        self.owner_ref = owner._put_serialized(self.payload, force_object_store=True)
-        # The temporary handoff is an explicit input fixture, not a result
-        # publication backend. Its rollback occurs only after real Acquire.
-        session = ReferenceExportSession(
-            owner.worker_id, owner.owner_address, pin=owner.owner_table.add_contained_reference,
-            unpin=owner.request_export_pin_release,
-        )
-        exported = session.export(self.owner_ref)
-        try:
-            self.borrowed = consumer._restore_borrowed_reference(*exported)
-        finally:
-            session.rollback()
-        assert not owner.owner_table.snapshot(self.owner_ref.object_id).contained_holds
+        owner.inline_threshold = 0
+        self.owner_ref = owner.put(value)
+        self.borrowed = _acquire_stored_input(owner, consumer, self.owner_ref)
         self.pending, self.output = consumer._register_submission(
             consumer.define_remote_function(lambda value: "done"),
             (self.borrowed,), {}, ResourceVector({"CPU": 1}), _enqueue=True,
@@ -846,21 +776,6 @@ class _CanonicalReportFixture:
         if handler == "get_worker_deaths":
             assert address == self.gcs_address
             return self.workers.deaths_after(request)
-        if handler == output_wire.REPORT_OUTPUT_PUBLICATION_HANDLER:
-            assert address == self.gcs_address and self.publication is not None
-            if type(request) is output_wire.ReportOutputPublicationTerminal:
-                assert request.witness == self.envelope.complete
-                ack = self.publication.recovery.report_terminal(request.witness)
-            elif type(request) is output_wire.ReportOutputPublicationAdopted:
-                assert consumer.owner_table.output_owner_publication_receipt(
-                    OutputOwnerPublicationPlan(self.pending.execution, self.envelope),
-                ).committed
-                ack = self.publication.recovery.report_adopted(request.proof)
-            else:
-                assert type(request) is output_wire.ReportOutputPublicationSlotCollected
-                assert consumer.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.COLLECTING
-                ack = self.publication.recovery.report_slot_collected(request.proof)
-            return output_wire.OutputRecoveryReply(request, ack)
         assert address == self.target_address
         if handler == "request_worker_lease":
             assert request == self.request and len(self.transfers) == 3
@@ -887,7 +802,11 @@ class _CanonicalReportFixture:
             assert len(self.abandons) == 1 and reply.released
             return reply
         assert handler == output_wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
-        assert self.publication.recovery.snapshot(self.envelope.publication_id).adopted == request.proof
+        snapshot = self.publication.handoff_snapshot(self.envelope.publication_id)
+        assert snapshot.phase is OutputHandoffPhase.ADOPTED and snapshot.adoption == request.proof
+        assert consumer.owner_table.output_owner_publication_receipt(
+            OutputOwnerPublicationPlan(self.pending.execution, self.envelope),
+        ).committed
         return node._handle_ack_output_publication_adopted(request)
 
     def push_rpc(self, address, handler, push):
@@ -902,15 +821,36 @@ class _CanonicalReportFixture:
             push.lease_id, push.spec.task_id, push.spec.attempt_id, push.worker_id,
         ))
         assert started.accepted and started.state is protocol.LeaseExecutionState.RUNNING
-        self.publication = prepare_ref_free_output(
-            self.target, self.request, self.grant, job_id=self.consumer.job_id, values=("done",),
+        # Real single-output discovery and Node Prepare/Complete retain owner
+        # handoff facts; the B path has no ordinary GCS publication authority.
+        self.publication = PureOutputRuntime(self.consumer)
+        identity = OutputPublicationID(push.lease_id, self.pending.execution)
+        session = OutputDiscoverySession(OutputPublicationHeader(
+            identity, self.consumer.job_id, push.worker_id, self.consumer.worker_id,
+            OutputPublicationNodeIncarnation(
+                self.target.node_id, self.target._node_pid, self.target._registration_epoch,
+            ),
+        ), inline_threshold=1024)
+        outputs = session.discover(("done",))
+        self.publication.manifest = outputs.manifest
+        assert len(outputs.manifest.slots) == 1 and not outputs.manifest.slots[0].transfers
+        assert outputs.manifest.slots[0].tier is protocol.ResultStorage.INLINE
+        assert getattr(self.target, "_output_publication_journal", None) is None
+        self.target._output_publication_journal = self.publication.journal
+        self.target._output_publications = self.publication.adapter
+        prepared = self.target._handle_prepare_output_publication(
+            output_wire.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads),
         )
+        assert prepared.accepted
+        session.release_sources_after_promotions()
         complete = self.target._handle_complete_worker_lease(protocol.CompleteWorkerLease(
             push.lease_id, push.spec.task_id, push.spec.attempt_id, push.worker_id, protocol.TaskReplyStatus.SUCCEEDED,
         ))
         assert complete.accepted and complete.released and complete.state is protocol.LeaseExecutionState.COMPLETED
         self.envelope = complete.output_publication
         assert self.envelope is not None and self.envelope.manifest == self.publication.manifest
+        assert self.publication.adapter.report_terminal(identity)
+        assert self.publication.handoff_snapshot(identity).complete == self.envelope.complete
         return protocol.TaskReply(push.spec.task_id, push.spec.attempt_id, push.worker_id,
                                   protocol.TaskReplyStatus.SUCCEEDED, self.envelope.results,
                                   output_publication=self.envelope)
@@ -948,6 +888,7 @@ class _CanonicalReportFixture:
         assert consumer._finish_pending_task(self.pending) and consumer._finish_pending_task(self.pending)
         assert consumer._accepted_task_count == 0 and not consumer._task_finish_barriers
         self.assert_held()
+        consumer._reference_mailbox.drain()
         self.output.close(timeout=0)
         consumer._reference_mailbox.drain()
         assert len(self.releases) == 1 and self.releases[0][1].released
@@ -959,10 +900,11 @@ class _CanonicalReportFixture:
         assert not consumer._objects and not consumer._stored_descriptors
         if self.publication is not None:
             identity = self.envelope.publication_id
-            snapshot = self.publication.recovery.snapshot(identity)
-            assert snapshot.adopted is not None and len(snapshot.slot_collections) == 1
+            snapshot = self.publication.handoff_snapshot(identity)
+            assert snapshot.phase is OutputHandoffPhase.ADOPTED and snapshot.adoption is not None
+            assert snapshot.complete == self.envelope.complete
             assert not self.publication.journal.snapshot(identity).retained_result_slots
-            assert self.publication.adapter.report_terminal(identity)
+            assert not self.publication.adapter.pending_terminal_reports()
         # The live owner's own input handle keeps both reported replicas alive
         # until normal owner GC; consumer failure is not deletion authority.
         assert node.object_store.get(self.source.object_id) == self.payload
@@ -1007,7 +949,7 @@ class _DeathFencedReportFixture:
     One consumer, one or two owners, two 1-KiB Nodes and real GCS authorities.
     GCS normally binds TCP during construction; only that endpoint constructor
     is inert here. No server, thread or socket is created, started or stopped.
-    Each <=128-byte put uses real export/Acquire/Retain, three source-transfer
+    Each <=128-byte put uses a typed input pin and actual Acquire/Retain, three source-transfer
     callbacks and one shared actual grant. No Worker executes the function.
     Exactly two real GCS fence effects delete the dead owner's source/target
     replicas after Cancel unpins them. Assertions retain the dead Core's
@@ -1015,7 +957,7 @@ class _DeathFencedReportFixture:
     leaving its retained token and queued GC unprocessed. It is not a live
     endpoint or a claim of successful normal owner shutdown.
 
-    Fault controls are local to these two cases. STALE is deliberately a typed
+    Fault controls are local to these three cases. STALE is deliberately a typed
     protocol fault, not fabricated producer history; every cancellation and
     custody ACK still comes from its actual Node handler. All work is finite.
     The existing single-owner canonical fixture and its defaults are separate.
@@ -1032,7 +974,7 @@ class _DeathFencedReportFixture:
         self.gcs_address = ("death-report-control.invalid", 3)
         with monkeypatch.context() as endpoint_boundary:
             endpoint_boundary.setattr(control_module, "TCPServer", _UnboundReportControlEndpoint)
-            self.service = GCSLite(stored_hold_rpc=self.fence_rpc)
+            self.service = GCSLite(owner_fence_rpc=self.fence_rpc)
         assert type(self.service._server) is _UnboundReportControlEndpoint
         for node, address in ((self.source_node, self.source_address),
                               (self.target, self.target_address)):
@@ -1045,6 +987,7 @@ class _DeathFencedReportFixture:
         self.target._registered_with_gcs = True
         self.target._cluster_addresses = {self.source_node.node_id: self.source_address}
         consumer.node_id, consumer.node_address = self.target.node_id, self.target_address
+        consumer._home_route = _HomeRoute(consumer.node_id, consumer.node_address, 0)
         consumer.gcs_address = self.gcs_address
         consumer._registered_functions = set()
         self.transfers, self.calls, self.borrow_calls = [], [], []
@@ -1053,6 +996,7 @@ class _DeathFencedReportFixture:
         self.cancels, self.custody_acks, self.fences, self.drops, self.seals = [], [], [], [], []
         self.lease_queries = self.death_queries = 0
         self.lose_report_index = None
+        self.lose_all_reports = False
         self.report_ack_lost = False
         self.inject_stale = False
         self.lose_cancel_ack = False
@@ -1066,6 +1010,7 @@ class _DeathFencedReportFixture:
         source_info = self.service.nodes.get(self.source_node.node_id)
         for index, owner in enumerate(self.owners):
             owner.node_id, owner.node_address = self.source_node.node_id, self.source_address
+            owner._home_route = _HomeRoute(owner.node_id, owner.node_address, 0)
             owner.owner_address = ("death-report-owner-{}.invalid".format(index), 10 + index)
             owner._rpc, owner._resolve_node_address = self.owner_rpc, self.resolve
             incarnation = protocol.WorkerIncarnation(
@@ -1076,22 +1021,15 @@ class _DeathFencedReportFixture:
                 protocol.RegisterWorkerIncarnation(incarnation),
             ).accepted
             self.incarnations.append(incarnation)
-            payload = cloudpickle.dumps({"blob": b"tiny-owner-input", "owner": index})
+            value = {"blob": b"tiny-owner-input", "owner": index}
+            payload = cloudpickle.dumps(value)
             assert len(payload) <= 128
             self.payloads.append(payload)
-            ref = owner._put_serialized(payload, force_object_store=True)
+            owner.inline_threshold = 0
+            ref = owner.put(value)
             self.owner_refs.append(ref)
             assert owner._recovery.lineage_for_object(ref.object_id) is None
-            session = ReferenceExportSession(
-                owner.worker_id, owner.owner_address, pin=owner.owner_table.add_contained_reference,
-                unpin=owner.request_export_pin_release,
-            )
-            exported = session.export(ref)
-            try:
-                self.borrowed.append(consumer._restore_borrowed_reference(*exported))
-            finally:
-                session.rollback()
-            assert not owner.owner_table.snapshot(ref.object_id).contained_holds
+            self.borrowed.append(_acquire_stored_input(owner, consumer, ref))
         self.pending, self.output = consumer._register_submission(
             consumer.define_remote_function(lambda *values: "not executed"),
             tuple(self.borrowed), {}, ResourceVector({"CPU": 1}), _enqueue=True,
@@ -1211,7 +1149,7 @@ class _DeathFencedReportFixture:
             reply = owner.report_retained_object_location(request)
             self.reports.append((index, request, reply))
             assert len(self.reports) <= 3
-            if index == self.lose_report_index and not self.report_ack_lost:
+            if self.lose_all_reports or (index == self.lose_report_index and not self.report_ack_lost):
                 assert reply.accepted and reply.custody_transferred
                 self.report_ack_lost = True
                 raise TransportTimeout("real location report committed before ACK loss")
@@ -1387,6 +1325,7 @@ class _DeathFencedReportFixture:
         assert consumer._finish_pending_task(self.pending) and consumer._finish_pending_task(self.pending)
         assert consumer._accepted_task_count == 0 and not consumer._task_finish_barriers
         self.assert_held()  # Canonical input lineage outlives execution finish.
+        consumer._reference_mailbox.drain()
         self.output.close(timeout=0)
         consumer._reference_mailbox.drain()
         assert consumer.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.COLLECTED
@@ -1460,46 +1399,6 @@ class _DeathFencedReportFixture:
                 ref.close(timeout=0)
         for core in (self.consumer, *self.owners):
             close_pure_core(core)
-
-
-def _live_report_fixture() -> tuple[
-    CoreWorker, CoreWorker, _PendingTask, _ForeignDependencyGuard,
-    protocol.ObjectStoreDescriptor, protocol.GrantWorkerLease, _LeaseRequestState,
-]:
-    consumer = CoreWorker(
-        ("127.0.0.1", 27401), NodeID.random(), event_sink=EventSink(),
-        dispatch_lanes=1,
-    )
-    owner, _, _, source = _owner_core(consumer.worker_id)
-    pending, guards = _pending(consumer, (source,))
-    guard = replace(
-        guards[0], borrower_token="borrow"
-    )
-    _install_hold(owner, guard)
-    consumer._borrow_rpc = lambda _address, handler, request: (
-        owner.release_owned_object_for_task(request)
-        if handler == "release_owned_object_for_task"
-        else owner.get_retained_owned_object(request)
-        if handler == "get_retained_owned_object"
-        else owner.report_retained_object_location(request)
-        if handler == "report_retained_object_location"
-        else (_ for _ in ()).throw(AssertionError(handler))
-    )
-    pending = replace(pending, foreign_dependency_guards=(guard,))
-    with consumer._state_lock:
-        consumer._accepted_task_count += 1
-    grant = _grant(pending, (source,), target=consumer.node_id)
-    lease_request = protocol.RequestWorkerLease(
-        grant.lease_id, pending.spec.task_id, pending.spec.attempt_id,
-        pending.spec.resources, consumer.node_id, consumer.worker_id,
-        preferred_node_id=consumer.node_id, dependencies=(source,),
-    )
-    return (
-        consumer, owner, pending, guard, source, grant,
-        _LeaseRequestState(
-            lease_request, consumer.node_address, consumer.node_id, True
-        ),
-    )
 
 
 @pytest.mark.unit
@@ -1708,43 +1607,76 @@ def test_successful_report_survives_definite_push_failure(
 @pytest.mark.unit
 def test_consumer_retry_preserves_foreign_producer_descriptor_epoch() -> None:
     consumer = _consumer_core()
-    owner, _, _, source = _owner_core(consumer.worker_id)
-    pending, guards = _pending(consumer, (source,))
-    guard = replace(
-        guards[0], borrower_token="borrow"
-    )
-    _install_hold(owner, guard)
-    pending = replace(
-        pending,
-        spec=replace(pending.spec, max_retries=1),
-        foreign_dependency_guards=(guard,),
-    )
-    consumer._recovery_manager().register_task(pending.spec, max_retries=1)
-    consumer._borrow_rpc = lambda _address, handler, request: (
-        owner.get_retained_owned_object(request)
-        if handler == "get_retained_owned_object"
-        else (_ for _ in ()).throw(AssertionError(handler))
-    )
-    system_reply = protocol.TaskReply(
-        pending.spec.task_id, pending.spec.attempt_id, WorkerID.random(),
-        protocol.TaskReplyStatus.SYSTEM_ERROR, results=(),
-        error=protocol.RemoteErrorInfo("RuntimeError", "retry"),
-    )
+    owner, object_id, _, source = _owner_core(consumer.worker_id)
+    consumer._reference_mailbox = _ReportReferenceMailbox(consumer)
+    calls = []
 
-    assert not consumer._retry_explicit_system_failure(pending, system_reply)
-    retried = consumer._submissions.get_nowait()
-    prepared, dependencies, _ = consumer._prepare_task_dependencies(
-        retried.spec, retried.foreign_dependency_guards
+    def owner_rpc(address, handler, request):
+        assert address == owner.owner_address and len(calls) < 8
+        calls.append((handler, request))
+        methods = {
+            "acquire_borrowed_object": owner.acquire_exported_reference,
+            "retain_owned_object_for_task": owner.retain_owned_object_for_task,
+            "get_retained_owned_object": owner.get_retained_owned_object,
+            "release_borrowed_object": owner.release_borrowed_reference,
+            "release_owned_object_for_task": owner.release_owned_object_for_task,
+        }
+        assert handler in methods
+        return methods[handler](request)
+
+    def take():
+        work = []
+        assert consumer._submissions.qsize() <= 8
+        for _ in range(consumer._submissions.qsize()):
+            item = consumer._submissions.get_nowait()
+            consumer._submissions.task_done()
+            if item is not _WAKE_COORDINATOR:
+                assert type(item) is _PendingTask
+                work.append(item)
+        return tuple(work)
+
+    consumer._borrow_rpc = owner_rpc
+    local = owner._new_object_ref(object_id)
+    borrowed = _acquire_stored_input(owner, consumer, local)
+    pending, output = consumer._register_submission(
+        consumer.define_remote_function(lambda value: value), (borrowed,), {},
+        ResourceVector({"CPU": 1}), max_retries=1, _enqueue=True,
     )
-    assert retried.spec.attempt_id == pending.spec.attempt_id.next()
-    expected_hold = _retained_hold(consumer.worker_id, pending.spec.attempt_id)
-    assert guard.hold == expected_hold
-    assert retried.foreign_dependency_guards[0].hold == expected_hold
-    assert prepared.args == pending.spec.args
-    assert dependencies == (source,)
-    assert dependencies[0].producer_attempt_id == source.producer_attempt_id
-    assert dependencies[0].producer_attempt_id != retried.spec.attempt_id
-    assert retried.foreign_dependency_guards == pending.foreign_dependency_guards
+    try:
+        assert take() == (pending,)
+        guard, = pending.foreign_dependency_guards
+        borrowed.close(timeout=0)
+        system_reply = protocol.TaskReply(
+            pending.task_id, pending.spec.attempt_id, WorkerID.random(),
+            protocol.TaskReplyStatus.SYSTEM_ERROR,
+            error=protocol.RemoteErrorInfo("RuntimeError", "retry"),
+        )
+        assert not consumer._retry_explicit_system_failure(pending, system_reply)
+        retried, = take()
+        prepared, dependencies, _ = consumer._prepare_task_dependencies(
+            retried.spec, retried.foreign_dependency_guards,
+        )
+        assert retried.spec.attempt_id == pending.spec.attempt_id.next()
+        expected_hold = _retained_hold(consumer.worker_id, pending.spec.attempt_id)
+        assert guard.hold == retried.foreign_dependency_guards[0].hold == expected_hold
+        assert prepared.args == pending.spec.args and dependencies == (source,)
+        assert dependencies[0].producer_attempt_id == source.producer_attempt_id
+        assert dependencies[0].producer_attempt_id != retried.spec.attempt_id
+        assert retried.foreign_dependency_guards == pending.foreign_dependency_guards
+        assert sum(handler == "retain_owned_object_for_task" for handler, _ in calls) == 1
+        assert consumer._publish_task_error(retried, SystemTaskError("bounded retry cleanup"))
+        assert consumer._finish_pending_task(retried)
+        consumer._reference_mailbox.drain()
+        output.close(timeout=0)
+        consumer._reference_mailbox.drain()
+        assert not owner.owner_table.snapshot(object_id).retained_tokens
+        assert sum(handler == "release_owned_object_for_task" for handler, _ in calls) == 1
+        assert not consumer._foreign_lineage_collection_receipts
+    finally:
+        for ref in (borrowed, output, local):
+            ref.close(timeout=0)
+        close_pure_core(consumer)
+        close_pure_core(owner)
 
 
 @pytest.mark.unit
@@ -1752,9 +1684,7 @@ def test_lost_current_epoch_report_restores_ready_stored_location() -> None:
     borrower = WorkerID.random()
     owner, object_id, attempt, source = _owner_core(borrower)
     hold = _retained_hold(borrower, _identity()[1])
-    owner.owner_table.retain_borrowed_reference_for_task(
-        object_id, (borrower, "borrow"), hold
-    )
+    _retain(owner, object_id, borrower, hold)
     assert owner.owner_table.mark_lost(object_id, attempt)
     assert owner.owner_table.snapshot(object_id).state.name == "LOST"
     target = replace(source, node_id=NodeID.random())
@@ -1780,22 +1710,21 @@ def test_foreign_replica_report_after_source_death_restores_route() -> None:
     borrower = WorkerID.random()
     owner, object_id, attempt, source = _owner_core(borrower)
     hold = _retained_hold(borrower, _identity()[1])
-    owner.owner_table.retain_borrowed_reference_for_task(
-        object_id, (borrower, "borrow"), hold
-    )
+    _retain(owner, object_id, borrower, hold)
     canonical = owner._stored_descriptors[object_id]
+    target = replace(source, node_id=NodeID.random())
     removal = owner.handle_node_death(
         protocol.NodeDeathRecord(
             "source-death", source.node_id, 12345, 1, 1, -9,
             protocol.NodeDeathReason.PROCESS_EXIT, "test process exited",
         ),
-        1,
-        True,
+        protocol.InstallClusterSnapshot(1, "source-death-survivors", (
+            protocol.NodeInfo(target.node_id, 12346, 1, ("survivor.invalid", 27103),
+                              ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})),
+        )),
     )
     assert removal.lost == (object_id,)
     assert object_id not in owner._stored_descriptors
-    target = replace(source, node_id=NodeID.random())
-
     reply = owner.report_retained_object_location(
         protocol.ReportRetainedObjectLocation(
             object_id, owner.worker_id, borrower, hold, target
@@ -1818,9 +1747,7 @@ def test_foreign_replica_report_before_source_death_keeps_survivor_route() -> No
     borrower = WorkerID.random()
     owner, object_id, _, source = _owner_core(borrower)
     hold = _retained_hold(borrower, _identity()[1])
-    owner.owner_table.retain_borrowed_reference_for_task(
-        object_id, (borrower, "borrow"), hold
-    )
+    _retain(owner, object_id, borrower, hold)
     canonical = owner._stored_descriptors[object_id]
     target = replace(source, node_id=NodeID.random())
     reply = owner.report_retained_object_location(
@@ -1835,8 +1762,10 @@ def test_foreign_replica_report_before_source_death_keeps_survivor_route() -> No
             "source-death", source.node_id, 12345, 1, 1, -9,
             protocol.NodeDeathReason.PROCESS_EXIT, "test process exited",
         ),
-        1,
-        True,
+        protocol.InstallClusterSnapshot(1, "source-death-survivors", (
+            protocol.NodeInfo(target.node_id, 12346, 1, ("survivor.invalid", 27103),
+                              ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1})),
+        )),
     )
 
     snapshot = owner.owner_table.snapshot(object_id)
@@ -1856,9 +1785,7 @@ def test_foreign_replica_route_write_failure_has_no_owner_mutation() -> None:
     borrower = WorkerID.random()
     owner, object_id, _, source = _owner_core(borrower)
     hold = _retained_hold(borrower, _identity()[1])
-    owner.owner_table.retain_borrowed_reference_for_task(
-        object_id, (borrower, "borrow"), hold
-    )
+    _retain(owner, object_id, borrower, hold)
     before = owner.owner_table.snapshot(object_id)
     target = replace(source, node_id=NodeID.random())
     owner._stored_descriptors = RejectingRoutes()

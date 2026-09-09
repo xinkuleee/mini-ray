@@ -20,6 +20,12 @@ from miniray import output_protocol as wire, protocol
 from miniray.dependency import (
     ContainedRef, NestedReferenceImportSession, encode_task_argument,
 )
+from miniray.core import ObjectRef
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.ref_transfer import exporting_references, importing_references
+from miniray.object_manager import ObjectManager
+from miniray.object_store import ObjectStore
+from miniray.node import NodeServer
 from miniray.ids import (
     AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID,
 )
@@ -35,7 +41,7 @@ from miniray.worker import (
     WorkerFailpointMode,
     WorkerServer,
 )
-from tests.unit._unified_worker_rpc import UnifiedWorkerRPC
+from tests.unit.test_worker_completion_paths import _SingleOutputRPC
 from tests.unit.test_worker_unified_output import _install_no_runtime
 
 
@@ -53,6 +59,14 @@ class _TaskIdentity:
     task_id: TaskID
     attempt_id: AttemptID
     task_owner_id: WorkerID
+
+
+@dataclass(frozen=True)
+class _ContainedInput:
+    object_id: ObjectID
+    owner_worker_id: WorkerID
+    owner_address: tuple[str, int]
+    source: protocol.ContainedTransferSource
 
 
 class _ImportedHandle:
@@ -112,25 +126,31 @@ def _inline(
     return argument
 
 
-def _stored(
-    identity: _TaskIdentity, argument: protocol.InlineArg,
-    node_id: NodeID, *, index: int = 0,
-) -> tuple[protocol.StoredArg, protocol.ObjectStoreDescriptor]:
-    storage_task = TaskID.for_put(
-        identity.job_id, identity.task_owner_id, index
-    )
+def _stored(identity, argument, node_id, *, index=0):
+    """Explicit put-style RefArg carrying actual result reducer bytes.
+
+    Task nested_refs are not a stored wire format. Decode the fixture value,
+    then export its ObjectRefs under exact container holds before sealing it.
+    No owner reference accounting is claimed by this value-construction step.
+    """
+    storage_task = TaskID.for_put(identity.job_id, identity.task_owner_id, index)
     storage_id = ObjectID.for_task(storage_task)
-    return (
-        protocol.StoredArg(
-            storage_id, identity.task_owner_id,
-            argument.serializer, argument.nested_refs,
-        ),
-        protocol.ObjectStoreDescriptor(
-            storage_id, identity.task_owner_id, AttemptID(storage_task, 0),
-            node_id, len(argument.data),
-            hashlib.sha256(argument.data).hexdigest(),
-        ),
-    )
+    handles = NestedReferenceImportSession(lambda transfer: ObjectRef(
+        transfer.object_id, transfer.owner_worker_id, transfer.owner_address))
+    value = worker_module.decode_inline_argument(argument, import_nested_ref=handles)
+    handles.commit()
+    def export(reference):
+        hold = ContainedReferenceHold(storage_id, identity.task_owner_id,
+            "stored-input:" + reference.object_id.hex)
+        return reference.object_id, reference.owner_worker_id, reference.owner_address, hold
+    try:
+        with exporting_references(export):
+            payload = cloudpickle.dumps(value)
+    finally:
+        handles.close()
+    descriptor = protocol.ObjectStoreDescriptor(storage_id, identity.task_owner_id,
+        AttemptID(storage_task, 0), node_id, len(payload), hashlib.sha256(payload).hexdigest())
+    return protocol.RefArg(storage_id, identity.task_owner_id), descriptor, payload
 
 
 def _push(
@@ -235,7 +255,8 @@ def _install_runtime_fakes(
     preparation: Callable[[wire.PrepareOutputPublication], object] | None = None,
     stored_payloads: dict[ObjectID, bytes] | None = None,
 ) -> None:
-    publication = UnifiedWorkerRPC()
+    publications = {}
+    stores = {}
 
     class _Core:
         def _restore_task_argument_reference(
@@ -243,6 +264,13 @@ def _install_runtime_fakes(
         ) -> object:
             return restore(transfer, attempt_id)
 
+        def _restore_borrowed_reference(self, object_id, owner, address, hold):
+            # Contained and Task sources are deliberately distinct credentials.
+            source = protocol.ContainedTransferSource(hold)
+            item = _ContainedInput(object_id, owner, address, source)
+            return restore(item, current_attempt[0])
+
+    current_attempt = [None]
     core = _Core()
 
     def embedded_core(job_id: JobID) -> object:
@@ -260,32 +288,46 @@ def _install_runtime_fakes(
 
     def rpc(_address: object, handler: str, message: object) -> object:
         if handler == START_WORKER_LEASE_HANDLER:
+            current_attempt[0] = message.attempt_id
             events.append("start")
             assert isinstance(message, protocol.StartWorkerLease)
             return _start_reply(message, worker.node_id)
         if handler == worker_module.GET_OBJECT_HANDLER:
-            assert isinstance(message, protocol.GetObject)
-            assert stored_payloads is not None
-            data = stored_payloads[message.object_id]
+            assert isinstance(message, protocol.GetObject) and stored_payloads is not None
+            if not stores:
+                node = object.__new__(NodeServer)
+                node.node_id = worker.node_id
+                node._state_lock = threading.RLock()
+                node._object_store = ObjectStore(128 * 1024)
+                node._object_manager = ObjectManager(node.node_id, node._object_store)
+                node._sealed_metadata, node._dropped_metadata = {}, {}
+                node._object_localization_locks, node._owner_death_fences = {}, {}
+                stores["node"] = node
+            node = stores["node"]
+            if not node._object_store.contains(message.object_id):
+                payload = stored_payloads[message.object_id]
+                seal = protocol.SealObject.from_data(message.object_id, message.expected_attempt_id,
+                    message.expected_owner_worker_id, payload)
+                assert node._handle_seal_object(seal).sealed
             events.append(("get_object", message.object_id))
-            return protocol.GetObjectReply(
-                message.object_id, worker.node_id, True, True, data,
-                hashlib.sha256(data).hexdigest(),
-                producer_attempt_id=message.expected_attempt_id,
-                owner_worker_id=message.expected_owner_worker_id,
-                size_bytes=len(data),
-            )
+            return node._handle_get_object(message)
         if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
             events.append("prepare")
+            identity = message.manifest.publication_id
+            publication = publications.setdefault(identity.execution.attempt_id, _SingleOutputRPC())
             return publication.prepare(message) if preparation is None else preparation(message)
         assert handler == COMPLETE_WORKER_LEASE_HANDLER
         events.append("complete")
         assert isinstance(message, protocol.CompleteWorkerLease)
-        reply = publication.complete(message) if completion is None else completion(message)
-        if (completion is not None and type(reply) is protocol.CompleteWorkerLeaseReply
-                and reply.accepted and reply.status is protocol.TaskReplyStatus.SUCCEEDED):
-            reply = replace(reply, output_publication=publication.envelope(message))
-        return reply
+        if completion is not None:
+            reply = completion(message)
+            if (type(reply) is protocol.CompleteWorkerLeaseReply and reply.accepted
+                    and reply.status is protocol.TaskReplyStatus.SUCCEEDED):
+                return publications[message.attempt_id].complete(message)
+            return reply
+        if message.status is not protocol.TaskReplyStatus.SUCCEEDED:
+            return _completion_reply(message)
+        return publications[message.attempt_id].complete(message)
 
     monkeypatch.setattr(worker, "_embedded_core_for", embedded_core)
     monkeypatch.setattr(worker_module.cloudpickle, "loads", loads)
@@ -309,15 +351,15 @@ def test_one_import_session_spans_args_and_kwargs_and_deduplicates(
     stored_payloads: dict[ObjectID, bytes] = {}
     dependencies: list[protocol.ObjectStoreDescriptor] = []
     if storage_layout in {"positional", "both"}:
-        stored, descriptor = _stored(identity, positional, worker.node_id)
-        stored_payloads[stored.object_id] = positional.data
+        stored, descriptor, stored_bytes = _stored(identity, positional, worker.node_id)
+        stored_payloads[stored.object_id] = stored_bytes
         dependencies.append(descriptor)
         positional = stored
     if storage_layout in {"keyword", "both"}:
-        stored, descriptor = _stored(
+        stored, descriptor, stored_bytes = _stored(
             identity, keyword, worker.node_id, index=1
         )
-        stored_payloads[stored.object_id] = keyword.data
+        stored_payloads[stored.object_id] = stored_bytes
         dependencies.append(descriptor)
         keyword = stored
     push, function_payload = _push(
@@ -338,7 +380,8 @@ def test_one_import_session_spans_args_and_kwargs_and_deduplicates(
     def function(value: object, *, named: object) -> int:
         first, second = value["items"]
         third = named["again"]
-        observed.append(first is second is third)
+        assert first is second
+        observed.append(first is third)
         events.append("user")
         return 7
 
@@ -350,11 +393,24 @@ def test_one_import_session_spans_args_and_kwargs_and_deduplicates(
     reply = worker._handle_push_task(push)
 
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
-    assert observed == [True]
-    assert acquired == [(transfer, identity.attempt_id)]
-    assert events.count(("acquire", "shared")) == 1
-    assert events.count(("close", "shared")) == 1
-    assert events.index("embedded_core") < events.index("function_decode")
+    assert observed == [storage_layout == "inline"]
+    expected_imports = 1 if storage_layout == "inline" else 2
+    assert len(acquired) == expected_imports
+    assert all(attempt == identity.attempt_id for _source, attempt in acquired)
+    if storage_layout == "inline":
+        assert acquired == [(transfer, identity.attempt_id)]
+    else:
+        # The two arguments have different Task/contained credentials, or
+        # different concrete containers. A shared session must not merge them.
+        assert acquired[0][0] != acquired[1][0]
+    assert events.count(("acquire", "shared")) == expected_imports
+    assert events.count(("close", "shared")) == expected_imports
+    if storage_layout == "both":
+        # RefArg carries no Task nested manifest. Its materialized result
+        # reducer obtains the existing owner only when bytes are decoded.
+        assert events.index("function_decode") < events.index("embedded_core")
+    else:
+        assert events.index("embedded_core") < events.index("function_decode")
     assert events.index("embedded_core") < events.index(("acquire", "shared"))
     assert events.index("user") < events.index(("close", "shared"))
     assert events.index(("close", "shared")) < events.index("complete")
@@ -371,8 +427,8 @@ def test_single_call_shaped_value_stays_one_argument_and_decodes_once(
     stored_payloads: dict[ObjectID, bytes] = {}
     dependencies: tuple[protocol.ObjectStoreDescriptor, ...] = ()
     if stored_argument:
-        stored, descriptor = _stored(identity, argument, worker.node_id)
-        stored_payloads[stored.object_id] = argument.data
+        stored, descriptor, stored_bytes = _stored(identity, argument, worker.node_id)
+        stored_payloads[stored.object_id] = stored_bytes
         argument = stored
         dependencies = (descriptor,)
     push, function_payload = _push(
@@ -400,7 +456,9 @@ def test_single_call_shaped_value_stays_one_argument_and_decodes_once(
     reply = worker._handle_push_task(push)
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert observed == [value]
-    assert len(decodes) == 1
+    assert len(decodes) == (0 if stored_argument else 1)
+    if stored_argument:
+        assert events.count(("get_object", argument.object_id)) == 1
 
 
 def test_inline_and_stored_arguments_share_rollback_on_later_decode_failure(
@@ -421,7 +479,7 @@ def test_inline_and_stored_arguments_share_rollback_on_later_decode_failure(
     }
     first = _inline({"nested": references[0]}, by_identity)
     stored_stream = _inline({"nested": references[1]}, by_identity)
-    stored, descriptor = _stored(identity, stored_stream, worker.node_id)
+    stored, descriptor, stored_bytes = _stored(identity, stored_stream, worker.node_id)
     push, function_payload = _push(
         worker.worker_id, identity, args=(first, stored),
         kwargs=(("invalid", protocol.InlineArg(b"not a serialized value")),),
@@ -440,7 +498,7 @@ def test_inline_and_stored_arguments_share_rollback_on_later_decode_failure(
     _install_runtime_fakes(
         monkeypatch, worker, function_payload,
         lambda *_args, **_kwargs: pytest.fail("invalid call reached user code"),
-        restore, events, stored_payloads={stored.object_id: stored_stream.data},
+        restore, events, stored_payloads={stored.object_id: stored_bytes},
     )
     reply = worker._handle_push_task(push)
     assert reply.status is protocol.TaskReplyStatus.SYSTEM_ERROR
@@ -455,7 +513,7 @@ def test_inline_and_stored_arguments_share_rollback_on_later_decode_failure(
 
 
 @pytest.mark.parametrize(
-    "corruption", ["checksum", "pickle", "unused_manifest"]
+    "corruption", ["checksum", "pickle", "invalid_contained_hold"]
 )
 def test_stored_stream_failure_rolls_back_previously_imported_inline_handle(
     monkeypatch: pytest.MonkeyPatch, corruption: str,
@@ -468,20 +526,21 @@ def test_stored_stream_failure_rolls_back_previously_imported_inline_handle(
         {"nested": reference},
         {(reference.object_id, reference.owner_worker_id): transfer},
     )
-    stream = (
-        protocol.InlineArg(b"invalid pickle")
-        if corruption == "pickle"
-        else protocol.InlineArg(
-            cloudpickle.dumps(7), nested_refs=(transfer,)
-        )
-        if corruption == "unused_manifest"
-        else protocol.InlineArg(cloudpickle.dumps(7))
-    )
-    stored, descriptor = _stored(identity, stream, worker.node_id)
-    payload = (
-        bytes([stream.data[0] ^ 1]) + stream.data[1:]
-        if corruption == "checksum" else stream.data
-    )
+    stream = protocol.InlineArg(cloudpickle.dumps(7))
+    stored, descriptor, stored_bytes = _stored(identity, stream, worker.node_id)
+    if corruption == "checksum":
+        payload = bytes([stored_bytes[0] ^ 1]) + stored_bytes[1:]
+    elif corruption == "pickle":
+        payload = b"invalid pickle"
+    else:
+        from miniray.ref_transfer import restore_exported_reference
+        class InvalidContained:
+            def __reduce__(self):
+                return restore_exported_reference, (transfer.object_id, transfer.owner_worker_id,
+                    transfer.owner_address, "removed-ownerless-token")
+        payload = cloudpickle.dumps(InvalidContained())
+    if corruption != "checksum":
+        descriptor = replace(descriptor, size_bytes=len(payload), checksum=hashlib.sha256(payload).hexdigest())
     push, function_payload = _push(
         worker.worker_id, identity, args=(first,),
         kwargs=(("stored", stored),), dependencies=(descriptor,),
@@ -508,70 +567,44 @@ def test_stored_stream_failure_rolls_back_previously_imported_inline_handle(
     assert events.index(("close", "before-store")) < events.index("complete")
 
 
-def test_stored_argument_decodes_pulled_stream_with_nested_import_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    identity = _identity()
+def test_stored_argument_decodes_pulled_stream_with_nested_import_session(monkeypatch) -> None:
+    identity, node_id = _identity(), NodeID.random()
     transfer = _transfer(identity, "stored", 19)
     reference = ContainedRef(transfer.object_id, transfer.owner_worker_id)
-    inline = _inline(
-        {"nested": [reference, reference]},
-        {(reference.object_id, reference.owner_worker_id): transfer},
-    )
-    storage_task = TaskID.derive(
-        identity.job_id, TaskID.for_driver(identity.job_id), 20
-    )
-    storage_id = ObjectID.for_task(storage_task)
-    storage_owner = WorkerID.random()
-    node_id = NodeID.random()
-    descriptor = protocol.ObjectStoreDescriptor(
-        storage_id, storage_owner, AttemptID(storage_task, 0), node_id,
-        len(inline.data), hashlib.sha256(inline.data).hexdigest(),
-    )
-    stored = protocol.StoredArg(
-        storage_id, storage_owner, inline.serializer, inline.nested_refs
-    )
-    events: list[object] = []
+    inline = _inline({"nested": [reference, reference]},
+        {(reference.object_id, reference.owner_worker_id): transfer})
+    stored, descriptor, payload = _stored(identity, inline, node_id)
+    events = []
     imported = _ImportedHandle("stored", events)
-    session = NestedReferenceImportSession(
-        lambda item: (
-            imported if item == transfer
-            else pytest.fail("wrong nested transfer")
-        )
-    )
-
-    def rpc(_address: object, handler: str, request: object) -> object:
+    sources = []
+    def restore(object_id, owner, address, hold):
+        assert (object_id, owner, address) == (transfer.object_id, transfer.owner_worker_id, transfer.owner_address)
+        assert type(hold) is ContainedReferenceHold and hold.container_object_id == stored.object_id
+        sources.append(hold)
+        return imported
+    session = NestedReferenceImportSession(lambda _item: pytest.fail("RefArg must not restore a Task manifest"),
+                                           import_exported_ref=restore)
+    node = object.__new__(NodeServer)
+    node.node_id, node._state_lock = node_id, threading.RLock()
+    node._object_store = ObjectStore(128 * 1024)
+    node._object_manager = ObjectManager(node_id, node._object_store)
+    node._sealed_metadata, node._dropped_metadata = {}, {}
+    node._object_localization_locks, node._owner_death_fences = {}, {}
+    assert node._handle_seal_object(protocol.SealObject.from_data(
+        stored.object_id, descriptor.producer_attempt_id, descriptor.owner_worker_id, payload)).sealed
+    def rpc(_address, handler, request):
         assert handler == worker_module.GET_OBJECT_HANDLER
-        assert request == protocol.GetObject(
-            storage_id, node_id,
-            expected_attempt_id=descriptor.producer_attempt_id,
-            expected_owner_worker_id=storage_owner,
-            expected_size_bytes=len(inline.data),
-            expected_checksum=descriptor.checksum,
-        )
-        return protocol.GetObjectReply(
-            storage_id, node_id, True, True, inline.data,
-            descriptor.checksum,
-            producer_attempt_id=descriptor.producer_attempt_id,
-            owner_worker_id=storage_owner, size_bytes=len(inline.data),
-        )
-
+        assert request == protocol.GetObject(stored.object_id, node_id,
+            expected_attempt_id=descriptor.producer_attempt_id, expected_owner_worker_id=descriptor.owner_worker_id,
+            expected_size_bytes=len(payload), expected_checksum=descriptor.checksum)
+        return node._handle_get_object(request)
     monkeypatch.setattr(worker_module, "rpc_request", rpc)
-    monkeypatch.setattr(
-        worker_module.cloudpickle, "loads",
-        lambda _payload: pytest.fail(
-            "StoredArg must not use plain cloudpickle.loads"
-        ),
-    )
-
-    decoded = worker_module._decode_argument(
-        stored, dependencies={storage_id: descriptor}, node_id=node_id,
-        node_address=("127.0.0.1", 24999), nested_imports=session,
-    )
+    with importing_references(session.resolve_exported):
+        decoded = worker_module._decode_argument(stored, dependencies={stored.object_id: descriptor},
+            node_id=node_id, node_address=("127.0.0.1", 24999), nested_imports=session)
     session.commit()
-    assert decoded["nested"][0] is imported
-    assert decoded["nested"][1] is imported
-    assert session.acquired == (imported,)
+    assert decoded["nested"][0] is decoded["nested"][1] is imported
+    assert len(sources) == 1 and session.acquired == (imported,)
     session.close()
     assert events == [("close", "stored")]
 

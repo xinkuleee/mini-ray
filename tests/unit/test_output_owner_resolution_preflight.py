@@ -1,6 +1,6 @@
-"""Pure batch preflight for unreceived outputs after publisher Node loss.
+"""Pure owner preflight for an unreceived output after publisher Node loss.
 
-Two selected slots, one shared child identity, and one task-lineage edge. No
+One output, one exact child identity, and one task-lineage edge. No
 Core/Node/Worker, transport, thread, timer, process or actual wait is started.
 The owner reducer consumes an exact metadata resolution; it performs no cleanup.
 """
@@ -19,13 +19,9 @@ import pytest
 
 from miniray import protocol
 from miniray.contained_edges import ContainedReferenceHold, LineageReferenceEdge
-from miniray.ids import JobID, ObjectID, TaskID, WorkerID
-from miniray.output_publication import (
-    OutputPublicationCompleteWitness, OutputPublicationID, OutputPublicationManifest,
-)
-from miniray.output_recovery import OutputRecoveryResolution
+from miniray.ids import AttemptID, JobID, ObjectID, TaskID, WorkerID
+from miniray.output_handoff import NodeLostOutputResolution
 from miniray.ownership import ObjectState, OutputOwnerPublicationConflictError
-from miniray.task_outputs import TaskExecutionKey
 from tests.unit.test_output_owner_publication import _Fixture, _assert_metadata_only
 
 
@@ -49,14 +45,9 @@ def _no_runtime(monkeypatch):
 
 
 def _case(*, known):
-    # Reuse the real owner-value fixture; narrow its full manifest to exactly
-    # the two mixed-tier slots under test, without constructing another backend.
+    # One current output; explicit cleanup receipts are boundary input facts,
+    # not claims that this local owner reducer performed remote releases.
     values = _Fixture()
-    values.spec = replace(values.spec, num_returns=2)
-    values.execution = values.full_execution = TaskExecutionKey.from_task_spec(values.spec)
-    values.publication_id = OutputPublicationID(values.publication_id.lease_id, values.execution)
-    values.header = replace(values.header, publication_id=values.publication_id)
-    values.manifest = OutputPublicationManifest.create(values.header, values.manifest.slots[:2])
     owner = values.table()
     for index, output in enumerate(values.publication_id.output_ids):
         incoming = ContainedReferenceHold(
@@ -72,10 +63,13 @@ def _case(*, known):
         "owner-preflight-publisher-exit", node.node_id, node.node_pid, node.registration_epoch,
         1, -9, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed publisher exit",
     )
-    resolution = OutputRecoveryResolution(
-        values.publication_id, values.manifest.manifest_digest, death, values.owner,
-        "exact-unreceived-cleanup", (),
-        OutputPublicationCompleteWitness.for_manifest(values.manifest) if known else None,
+    cleanup = tuple(protocol.ReleaseContainedReferenceReply(
+        transfer.contained_object_id, transfer.contained_owner_worker_id, hold, True, False,
+    ) for transfer in values.manifest.slots[0].transfers
+      for hold in (transfer.final_hold, transfer.provisional_hold))
+    resolution = NodeLostOutputResolution(
+        values.publication_id, values.manifest.manifest_digest, values.owner, death,
+        complete=values.envelope.complete if known else None, keep=False, cleanup=cleanup,
     )
     return values, owner, resolution
 
@@ -92,7 +86,7 @@ def _metadata_history(owner):
 
 
 @pytest.mark.parametrize("known", (False, True), ids=("unknown", "known-complete"))
-def test_pristine_unreceived_batch_preserves_incoming_holds_and_canonical_lineage(known):
+def test_pristine_unreceived_output_preserves_incoming_holds_and_canonical_lineage(known):
     values, owner, resolution = _case(known=known)
     before = _snapshots(owner, values)
     lineage = deepcopy(owner._task_lineage)
@@ -111,7 +105,11 @@ def test_pristine_unreceived_batch_preserves_incoming_holds_and_canonical_lineag
     expected_attempts = {(output, values.attempt) for output in values.publication_id.output_ids} if known else set()
     assert owner._retired_output_slots == expected_slots
     assert owner._retired_output_attempts == expected_attempts
-    assert owner._output_publication_receipts == {values.publication_id: values.manifest}
+    # UNKNOWN retains its exact loss/cleanup history without asserting that
+    # publication succeeded. Only an actual Complete may retain that receipt.
+    assert owner._output_publication_receipts == (
+        {values.publication_id: values.manifest} if known else {}
+    )
     assert owner._output_loss_receipts == {values.publication_id: resolution}
     history = _metadata_history(owner)
     assert not owner.resolve_output_node_loss(values.manifest, resolution)
@@ -124,12 +122,12 @@ def test_pristine_unreceived_batch_preserves_incoming_holds_and_canonical_lineag
 @pytest.mark.parametrize("corruption", (
     "inline_data", "error", "canonical_stored_result", "location_attempts",
     "outgoing_contained_edges", "missing-lineage", "foreign-owner-lineage",
-    "foreign-job-lineage", "incomplete-lineage-manifest", "different-lineage-args",
+    "foreign-job-lineage", "foreign-task-lineage",
     "lost-state", "ready-state", "next-attempt",
 ))
-def test_bad_second_unreceived_slot_cannot_erase_metadata_or_partially_resolve_batch(known, corruption):
+def test_bad_unreceived_output_cannot_erase_metadata_or_install_resolution(known, corruption):
     values, owner, resolution = _case(known=known)
-    second = values.publication_id.output_ids[1]
+    second = values.publication_id.output_ids[0]
     entry = owner._entries[second]
     assert entry.output_publication is None and entry.state is ObjectState.PENDING
     if corruption == "inline_data":
@@ -137,11 +135,11 @@ def test_bad_second_unreceived_slot_cannot_erase_metadata_or_partially_resolve_b
     elif corruption == "error":
         entry.error = "already-recorded-error"
     elif corruption == "canonical_stored_result":
-        entry.canonical_stored_result = values.envelope.results[1]
+        entry.canonical_stored_result = replace(values.envelope.results[0], storage=protocol.ResultStorage.OBJECT_STORE, inline_data=None)
     elif corruption == "location_attempts":
         entry.location_attempts[values.node] = values.attempt
     elif corruption == "outgoing_contained_edges":
-        entry.outgoing_contained_edges.add(values.manifest.slots[1].edges[0])
+        entry.outgoing_contained_edges.add(values.manifest.slots[0].edges[0])
     elif corruption == "missing-lineage":
         entry.producer_task_spec = None
     elif corruption == "foreign-owner-lineage":
@@ -149,10 +147,9 @@ def test_bad_second_unreceived_slot_cannot_erase_metadata_or_partially_resolve_b
     elif corruption == "foreign-job-lineage":
         other_job = JobID.random()
         entry.producer_task_spec = replace(values.spec, job_id=other_job, function=replace(values.spec.function, job_id=other_job))
-    elif corruption == "incomplete-lineage-manifest":
-        entry.producer_task_spec = replace(values.spec, num_returns=1)
-    elif corruption == "different-lineage-args":
-        entry.producer_task_spec = replace(values.spec, args=(protocol.InlineArg(b"another-producer-input"),))
+    elif corruption == "foreign-task-lineage":
+        task = TaskID.random()
+        entry.producer_task_spec = replace(values.spec, task_id=task, attempt_id=AttemptID(task, 0))
     elif corruption == "lost-state":
         entry.state = ObjectState.LOST
     elif corruption == "ready-state":
@@ -162,7 +159,7 @@ def test_bad_second_unreceived_slot_cannot_erase_metadata_or_partially_resolve_b
         entry.current_attempt = values.attempt.next()
     before = _snapshots(owner, values)
     history = _metadata_history(owner)
-    assert before[0].state is ObjectState.PENDING and before[0].output_publication is None
+    assert before[0].output_publication is None
     with pytest.raises(OutputOwnerPublicationConflictError):
         owner.resolve_output_node_loss(values.manifest, resolution)
     assert _snapshots(owner, values) == before

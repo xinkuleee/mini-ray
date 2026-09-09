@@ -55,3 +55,5 @@ K3l：PGdispatch2/普通结果knowledge5/containedGC失败ACK2修后通过；INL
 K3m：inlinegate33/NodeDeathGC2/foreignstored13/trace52/traceobservation6/Nodeadapter28通过，foreigninline12pure函数13case+2原race L1全部通过；preflight未知分支1处错要求successreceipt已定位修测试，25其它通过。
 
 K3n：collection通用guard17通过并退出旧7个硬编码锁；14个原集成迁移全部通过，覆盖回收收据重放/PG peer loss两个窗口/route与multiowner/child Worker death/INLINE已收未收/存活副本KEEP/unreported/embedded owner证书/borrowedunknown。
+
+K3o：foreignStoredTask原19全部通过，完整两个owner/location/custody/quarantine/GC未抹掉；owner预检修后26与Worker nested20通过。当前只剩原集成最后2case、owner-fence小组合及既定full32共同回归用于whole12退休，后续进入K4。

@@ -1,0 +1,41 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_foreign_stored_task_dependencies.py",
+    "exit_code": 0,
+    "seconds": 3.979,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3o-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_foreign_stored_task_dependencies.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_resolution_preflight.py",
+    "exit_code": 0,
+    "seconds": 2.996,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3o-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_resolution_preflight.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_nested_task_arguments.py",
+    "exit_code": 0,
+    "seconds": 3.648,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3o-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_nested_task_arguments.py"
+    ],
+    "log": "002-case.log"
+  }
+]
