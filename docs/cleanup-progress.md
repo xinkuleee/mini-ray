@@ -29,3 +29,5 @@ K2j发布族：discovery34/protocol37/journal23、Node-server13/owner-death10/de
 K2k：publication51/finalize9、stored-contained7、Worker completion9/unified75、owner33/same-owner12/cross-cleanup45通过；同Core双caller真实2线程重建1通过。object-ownership7通过1因未终态fixture导致collection为空已修待验。
 
 K3a：objectownership8、Workerinline8/materialized7/stored25、foreignlineage6/service15通过；Worker side-Core14个pure函数与4个真实loopback selector全部通过。未扩大固定gate，迁移证据单独保存。
+
+K3b：contained-GC5/core-task-retry6/lease-handshake6通过；local/foreign迟到副本原两个真实smoke均通过（13.43s/18.62s），保旧epoch准确Drop与新重建bytes/hold不被晚消息破坏。

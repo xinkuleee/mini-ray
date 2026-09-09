@@ -1,0 +1,67 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_contained_edge_gc.py",
+    "exit_code": 0,
+    "seconds": 8.122,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3b-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_contained_edge_gc.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_task_retry.py",
+    "exit_code": 0,
+    "seconds": 6.976,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3b-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_task_retry.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_lease_completion_handshake.py",
+    "exit_code": 0,
+    "seconds": 15.32,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3b-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_lease_completion_handshake.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_late_output_replica_cleanup_path.py::test_late_sealed_secondary_is_rejected_then_cleaned_after_real_consumer_cancellation",
+    "exit_code": 0,
+    "seconds": 19.705,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3b-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_late_output_replica_cleanup_path.py::test_late_sealed_secondary_is_rejected_then_cleaned_after_real_consumer_cancellation"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_foreign_late_output_replica_cleanup_path.py::test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstructed_epoch",
+    "exit_code": 0,
+    "seconds": 23.936,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k3b-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_foreign_late_output_replica_cleanup_path.py::test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstructed_epoch"
+    ],
+    "log": "004-case.log"
+  }
+]

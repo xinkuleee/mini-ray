@@ -19,7 +19,7 @@ import time
 import cloudpickle
 import pytest
 
-from miniray import protocol
+from miniray import output_protocol as output_wire, protocol
 from miniray.core import (
     CoreWorker, RemoteFunctionDefinition, _ObjectWaiter, _PendingTask,
     _WAKE_COORDINATOR, _lineage_hold_token,
@@ -33,6 +33,8 @@ from miniray.reconstruction_runtime import (
 from miniray.recovery import RecoveryManager, TaskState
 from miniray.resources import ResourceVector
 from miniray.trace import EventSink
+from miniray.output_discovery import OutputDiscoverySession
+from miniray.output_publication import OutputPublicationHeader, OutputPublicationID
 from tests.unit._pure_core import close_pure_core, make_pure_core
 from tests.unit._pure_reference_output_runtime import PureReferenceOutputRuntime
 
@@ -121,21 +123,7 @@ def _close_submissions(core: CoreWorker, *refs) -> None:
 
 
 def _core() -> CoreWorker:
-    core = object.__new__(CoreWorker)
-    core.job_id = JobID.random()
-    core.worker_id = WorkerID.random()
-    core.node_id = NodeID.random()
-    core.driver_task_id = TaskID.for_driver(core.job_id)
-    core.event_sink = EventSink()
-    core._submission_index = 0
-    core._owner_table = ObjectOwnerTable()
-    core._recovery = RecoveryManager()
-    core._objects = {}
-    core._stored_descriptors = {}
-    core._state_lock = threading.RLock()
-    core._completion = threading.Condition(core._state_lock)
-    core._submissions = queue.Queue()
-    return core
+    return make_pure_core()
 
 
 def _lost_reconstructible_task(
@@ -402,19 +390,22 @@ def test_reconstruction_system_retry_success_and_next_loss_start_cleanly() -> No
         original.spec.task_id
     ) == attempt_2.spec.attempt_id
 
-    # A delayed terminal message from reconstruction attempt 1 cannot clear
-    # attempt 2's merge identity or publish the stable ObjectID.
-    assert not core._reconstruction.complete(
-        original.spec.task_id, attempt_1.spec.attempt_id
-    )
-    stale_reply = _stored_success_reply(runtime, attempt_1)
-    assert stale_reply.output_publication.manifest.execution == attempt_1.execution
+    # Do not invent a stale successful Node publication after owner advance.
+    # The current owner must reject old registration before any child/Store
+    # effect. Stale terminal state cannot clear the admitted successor either.
+    assert not core._reconstruction.complete(original.task_id, attempt_1.spec.attempt_id)
     before_stale = core.owner_table.snapshot(original.object_id)
-    assert not core._publish_reply(attempt_1, stale_reply)
+    old_id = OutputPublicationID(LeaseID.random(), attempt_1.execution)
+    stale_discovery = OutputDiscoverySession(OutputPublicationHeader(
+        old_id, core.job_id, WorkerID.random(), core.worker_id, runtime.incarnation), inline_threshold=0)
+    stale = stale_discovery.discover((b'stored-result',))
+    registration = core.register_output_handoff(output_wire.RegisterOutputHandoff(stale.manifest))
+    assert not registration.accepted
+    assert not runtime.store.used_bytes and not runtime.journal.publication_ids()
+    stale_discovery.abort()
+    assert not core._publish_error(original.object_id, attempt_1.spec.attempt_id,
+                                   SystemTaskError('late old attempt'))
     assert core.owner_table.snapshot(original.object_id) == before_stale
-    assert runtime.recovery.snapshot(stale_reply.output_publication.publication_id).adopted is None
-    runtime.retire_fenced_reply(attempt_1, stale_reply)
-    assert runtime.store.used_bytes == 0
     joined = core._reconstruction.request(original.object_id)
     assert joined.disposition is ReconstructionDisposition.JOIN
     assert joined.decision.attempt_id == attempt_2.spec.attempt_id
@@ -455,9 +446,10 @@ def test_reconstruction_system_retry_success_and_next_loss_start_cleanly() -> No
     ).retries_started == 3
     assert runtime.store.used_bytes == 0
     assert not runtime.replicas
-    assert len(runtime.recovery.snapshot(
-        current_reply.output_publication.publication_id
-    ).slot_collections) == 1
+    old_handoff = runtime.handoff_snapshot(current_reply.output_publication.publication_id)
+    assert old_handoff.adoption is not None
+    assert core.owner_table.snapshot(original.object_id).output_publication is None
+    assert runtime.journal.snapshot(current_reply.output_publication.publication_id).retained_result_slots == ()
 
 
 @pytest.mark.unit

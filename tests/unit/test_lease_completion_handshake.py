@@ -18,10 +18,10 @@ import pytest
 from miniray import output_protocol as wire, protocol
 from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
-from miniray.node import NodeServer
+from miniray.node import NodeServer, _WorkerSlot
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
+from miniray.output_handoff import OutputHandoffTable
 from miniray.resources import (
     AllocationToken,
     NodeSnapshot,
@@ -33,7 +33,7 @@ from miniray.worker import (
     START_WORKER_LEASE_HANDLER,
     WorkerServer,
 )
-from tests.unit._pure_node_output import prepare_ref_free_output
+from tests.unit._pure_node_output_current import prepare_ref_free_output
 
 
 pytestmark = pytest.mark.unit
@@ -98,6 +98,10 @@ def _node_without_transport(
     node._cluster_addresses = {}
     node._worker_process = _AliveWorker()
     node._worker_address = ("127.0.0.1", 19001)
+    node._workers = {worker_id: _WorkerSlot(worker_id, process=node._worker_process,
+        address=node._worker_address, pid=21002)}
+    node._worker_order = (worker_id,)
+    node._next_worker_cursor = 0
     node._shutdown_request_id = None
     node._leases = {}
     node._lease_outcomes = {}
@@ -293,7 +297,7 @@ def test_granted_running_completed_releases_exactly_once() -> None:
     assert publication.journal.snapshot(publication.manifest.publication_id).complete == (
         first_complete.output_publication.complete
     )
-    assert publication.recovery.snapshot(publication.manifest.publication_id).complete is None
+    assert publication.handoffs.query(publication.manifest.publication_id).complete is None
     assert node._ledger.release_calls == 1
     assert node.resource_ledger.available == resources
     assert node._active_lease_id is None
@@ -349,19 +353,27 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
         NodeID.random(), WorkerID.random(), resources
     )
     request, grant = _grant(node, resources, num_returns=1)
-    recovery = OutputPublicationRecoveryAuthority()
+    handoffs = OutputHandoffTable()
     node._output_publication_journal = OutputPublicationJournal()
 
     def unexpected_effect(*_args, **_kwargs):
         pytest.fail("ref-free INLINE handshake attempted a child/graph/store effect")
 
+    def register_owner(manifest):
+        snapshot = handoffs.register(manifest, manifest.publication_id.attempt_id)
+        reply = wire.OutputHandoffReply(wire.RegisterOutputHandoff(manifest), True, snapshot)
+        assert reply.snapshot.manifest == manifest
+
+    def report_complete(witness):
+        snapshot = handoffs.record_complete(witness)
+        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+        assert reply.snapshot.complete == witness
+
     node._output_publications = OutputPublicationNodeAdapter(
-        node._output_publication_journal, report_intent=recovery.report_intent,
-        arm_complete=recovery.arm_complete, report_terminal=recovery.report_terminal,
-        report_rollback=recovery.report_rollback, prepare_child=unexpected_effect,
-        promote_child=unexpected_effect, release_child=unexpected_effect,
-        prepare_graph=unexpected_effect, abort_graph=unexpected_effect,
-        seal_replica=unexpected_effect, drop_replica=unexpected_effect,
+        node._output_publication_journal, register_owner=register_owner,
+        report_complete=report_complete, report_rollback=unexpected_effect,
+        prepare_child=unexpected_effect, promote_child=unexpected_effect,
+        release_child=unexpected_effect, seal_replica=unexpected_effect, drop_replica=unexpected_effect,
     )
     job_id = JobID.random()
     definition = protocol.FunctionDefinition.from_payload(
@@ -393,6 +405,11 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     worker._lease_bindings = {}
     worker._attempt_leases = {}
     worker._functions = {}
+    worker._lifecycle = threading.Condition(threading.RLock())
+    worker._accepted_pushes = {}
+    worker._push_obligations = set()
+    worker._accepting_tasks = True
+    worker._active_tasks = 0
 
     executions = 0
     reductions = 0
@@ -485,8 +502,8 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     }
     assert node._ledger.release_calls == 1
     assert completion_replies[0].released and not completion_replies[1].released
-    # Node local Complete is authoritative even before the GCS terminal outbox.
+    # Node local Complete is authoritative even before the owner terminal outbox.
     publication = pending.outputs.manifest.publication_id
-    assert recovery.snapshot(publication).complete is None
+    assert handoffs.query(publication).complete is None
     assert node._output_publications.report_terminal(publication)
-    assert recovery.snapshot(publication).complete == cached.output_publication.complete
+    assert handoffs.query(publication).complete == cached.output_publication.complete

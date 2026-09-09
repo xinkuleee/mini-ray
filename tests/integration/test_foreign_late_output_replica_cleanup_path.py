@@ -1,19 +1,21 @@
 """F6: a foreign Worker owner retains and collects a late retired replica.
 
-A factory holding A's CPU submits a mixed two-return producer that spills to B.
-Its embedded Core forwards the real GCS Adopted RPC, then holds that exact ACK
-on one bounded control socket. The factory returns both Worker-owned handles,
+A factory holding A's CPU submits one stored-output producer that spills to B.
+Its embedded Core pauses before the actual Node adoption ACK request, after
+its real owner ADOPTED CAS, on one bounded control socket. It returns the handle,
 freeing A's sole Worker. A Driver-submitted consumer really pulls/seals/pins
 the stored return on A, but its existing dispatch lane pauses before the first
-foreign location report. The test crashes B, releases the owner's Adopted ACK,
-and waits for A's real KEEP/DROP decision before releasing the late report.
+foreign location report. The test crashes B, resumes the real request into the
+dead Node, and observes A's committed loss receipt before releasing the report.
 
 The live original owner must answer RETIRED with deletion custody; the consumer
 must cancel its actual grant without Push, and the owner's existing cleanup
 mailbox must delete the sealed secondary. Only after observed physical absence
 does the test replay the exact old Drop. One public get then reconstructs the
-same stored ObjectID on A; old report/Drop replay must leave its new epoch and
-the healthy INLINE sibling untouched. No owner history or ACK is fabricated.
+same stored ObjectID on A; old owner-commit/report/Drop replay must leave its
+new epoch and reference holds untouched. The same socket carries the foreign
+owner's actual typed loss receipt; the Driver never substitutes its own Core.
+No owner history or ACK is fabricated.
 
 Five startup children, two 1 MiB stores, one tiny Driver put, one factory, one
 producer (two physical attempts), and one never-executed consumer. One Node
@@ -41,26 +43,26 @@ from miniray import output_protocol as wire, protocol
 from miniray.api import _get_runtime, _test_crash_node
 from miniray.control import GET_NODES_HANDLER, GET_WORKER_STATE_HANDLER
 from miniray.errors import SystemTaskError
-from miniray.ids import AttemptID, LeaseID, TaskID
+from miniray.ids import AttemptID, TaskID
 from miniray.node import (
     CANCEL_LEASE_HANDLER, DROP_OBJECT_REPLICA_HANDLER, GET_OBJECT_HANDLER,
     GET_WORKER_LEASE_OUTCOME_HANDLER, SHUTDOWN_STATUS_HANDLER,
 )
 from miniray.output_publication import OutputPublicationID
-from miniray.output_recovery import OutputRecoveryAction, OutputRecoveryOwnerDecision
+from miniray.output_handoff import NodeLostOutputResolution, OutputHandoffPhase, OutputHandoffSnapshot
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.publication_sources import BorrowedContainedSource
 from miniray.resources import ResourceVector
 from miniray.runtime_binding import current_core_worker, current_execution_context
-from miniray.task_outputs import TargetExecutionKey, TargetOutputManifest, TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.recovery import TaskState
+from miniray.transport import _receive, _send
 from miniray.worker import GET_OWNED_OBJECT_HANDLER, REPORT_RETAINED_OBJECT_LOCATION_HANDLER
-from tests.integration.test_borrowed_output_unknown_path import _wait
 from tests.support._legacy_reference_cleanup import _close_local
 from tests.integration.test_stored_outer_node_loss_path import (
-    _node_loss, _pid_exists, _poll_until, _query, _recovery, _recv_exact,
-    _release_connection, _remaining,
+    _assert_metadata_only, _close_reference, _handoff, _pid_exists, _poll_until,
+    _query, _recv_exact, _release_connection, _remaining,
 )
-from tests.integration.test_stored_outer_publication_path import _close_reference
 
 
 pytestmark = pytest.mark.multiprocess_smoke
@@ -71,70 +73,137 @@ _RESUME_OWNER = b"R"
 _OWNER_RESUMED = b"A"
 _GATE_SECONDS = 8.0
 _WORK_SECONDS = 18.0
+_MAX_OBSERVATION_BYTES = 64 * 1024
+_GATE_KIND = "foreign-owner-before-node-adoption-ack"
+_LOSS_KIND = "foreign-owner-committed-node-loss"
+_REPLAY_KIND = "foreign-owner-old-loss-commit-replayed"
 
 
-@ray.remote(num_cpus=1, num_returns=2, max_retries=1)
-def _mixed_foreign_owned_outputs(container):
+@ray.remote(num_cpus=1, max_retries=1)
+def _stored_foreign_owned_output(container):
     child, = container
     assert isinstance(child, ray.ObjectRef) and child.borrower_token is not None
     execution = current_execution_context()
     assert execution is not None and execution.blocking_notifier is not None
-    return {"child": child, "slot": 0, "producer_pid": os.getpid()}, {
-        "child": child, "slot": 1, "padding": _PADDING, "producer_pid": os.getpid(),
+    return {
+        "child": child, "padding": _PADDING, "producer_pid": os.getpid(),
         "attempt": execution.parent_attempt_id, "lease_id": execution.blocking_notifier.identity.lease_id,
     }
 
 
 @ray.remote(num_cpus=1, resources={_OWNER_RESOURCE: 1}, max_retries=0)
-def _return_worker_owned_outputs_while_adopted_ack_is_held(container, control_address, deadline):
+def _return_worker_owned_output_before_node_adoption_ack(container, control_address, deadline):
     core = current_core_worker()
     assert core is not None and core._dispatch_lane_count == 1
-    original = core._rpc
+    original, original_loss = core._rpc, core._drive_output_node_loss_once
     reached = threading.Event()
     selected = []
     selection_lock = threading.Lock()
+    connection = None
+    old_manifest = old_resolution = None
+    loss_sent = replay_sent = False
 
-    def hold_actual_adopted_ack(address, handler, request):
-        reply = original(address, handler, request)
+    def observe_owner_loss(pending, obligation):
+        nonlocal old_resolution, loss_sent
+        result = original_loss(pending, obligation)
+        with core._state_lock:
+            identity = obligation.publication_id
+            receipt = core.owner_table._output_loss_receipts.get(identity)
+            if (not selected or identity != selected[0] or receipt is None or loss_sent
+                    or identity not in getattr(core, "_output_loss_completed", set())):
+                return result
+            old_resolution = replace(receipt)
+            handoff = core._output_handoff_table().query(identity)
+            owner = core.owner_table.snapshot(identity.output_ids[0])
+            record = core._recovery.task_record(identity.task_id)
+            assert owner.state is ObjectState.LOST and owner.current_attempt == identity.attempt_id
+            assert owner.inline_data is None and owner.canonical_stored_result is None
+            assert owner.output_publication is None and not owner.locations
+            observation = (_LOSS_KIND, old_resolution, handoff, record.state,
+                           record.current_attempt, record.retries_started)
+            loss_sent = True
+        _assert_metadata_only(observation)
+        connection.settimeout(_remaining(deadline))
+        _send(connection, observation, _MAX_OBSERVATION_BYTES)
+        return result
+
+    def hold_before_actual_adopted_ack(address, handler, request):
+        nonlocal connection, old_manifest, replay_sent
         take_gate = False
-        if handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER and type(request) is wire.ReportOutputPublicationAdopted:
+        adoption = (handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
+                    and type(request) is wire.AckOutputPublicationAdopted)
+        if adoption:
             identity = request.proof.complete.publication_id
-            if request.proof.owner_worker_id == core.worker_id and len(identity.output_ids) == 2:
+            if request.proof.owner_worker_id == core.worker_id and identity.attempt_id.attempt_number == 0:
                 with selection_lock:
                     if not selected:
                         selected.append(identity)
                         take_gate = True
-        if not take_gate:
-            return reply
-        assert type(reply) is wire.OutputRecoveryReply and reply.accepted and reply.request == request
-        assert reply.ack.snapshot.adopted == request.proof
-        gate_deadline = min(deadline, time.monotonic() + _GATE_SECONDS)
-        try:
-            # No Core/owner lock is held while the existing dispatch lane waits.
+        if take_gate:
+            with core._state_lock:
+                handoff = core._output_handoff_table().query(identity)
+                assert handoff.phase is OutputHandoffPhase.ADOPTED and handoff.adoption == request.proof
+                old_manifest = handoff.manifest
+                assert old_manifest.header.owner_worker_id == core.worker_id
+                assert len(identity.output_ids) == 1 and identity.output_ids[0].return_index == 0
+            gate_deadline = min(deadline, time.monotonic() + _GATE_SECONDS)
             assert not core._state_lock._is_owned()
-            with socket.create_connection(control_address, timeout=_remaining(gate_deadline)) as connection:
+            try:
+                connection = socket.create_connection(control_address, timeout=_remaining(gate_deadline))
                 connection.settimeout(_remaining(gate_deadline))
-                connection.sendall(os.getpid().to_bytes(8, "big") + bytes(identity.lease_id) + bytes(identity.task_id))
+                _send(connection, (_GATE_KIND, os.getpid(), request, handoff), _MAX_OBSERVATION_BYTES)
                 reached.set()
                 connection.settimeout(_remaining(gate_deadline))
                 if connection.recv(1) != _RESUME_OWNER:
-                    raise RuntimeError("Driver did not resume the exact owner Adopted ACK")
-                core._rpc = original
+                    raise RuntimeError("Driver did not resume the exact Node adoption request")
                 connection.settimeout(_remaining(gate_deadline))
                 connection.sendall(_OWNER_RESUMED)
-        finally:
-            core._rpc = original
+            except BaseException:
+                core._rpc, core._drive_output_node_loss_once = original, original_loss
+                if connection is not None:
+                    connection.close()
+                raise
+            # The publisher is now dead. The real transport exception drives
+            # the normal existing adoption-replay / Node-loss takeover path.
+        reply = original(address, handler, request)
+        if (adoption and selected and identity.task_id == selected[0].task_id
+                and identity.attempt_id == selected[0].attempt_id.next() and not replay_sent):
+            assert type(reply) is wire.AckOutputPublicationAdoptedReply
+            assert reply.accepted and reply.request == request
+            with core._state_lock:
+                assert old_resolution is not None and loss_sent
+                owner_before = core.owner_table.snapshot(identity.output_ids[0])
+                assert owner_before.state is ObjectState.READY_STORED and owner_before.current_attempt == identity.attempt_id
+                # Replay the real prior owner commit; it must return its
+                # existing receipt without mutating the reconstructed epoch.
+                committed = core.owner_table.resolve_output_node_loss(old_manifest, old_resolution)
+                assert committed is False
+                assert core.owner_table.snapshot(identity.output_ids[0]) == owner_before
+                assert core.owner_table._output_loss_receipts[selected[0]] == old_resolution
+                record = core._recovery.task_record(identity.task_id)
+                observation = (_REPLAY_KIND, identity, old_resolution, committed,
+                               core._output_handoff_table().query(identity), record.state,
+                               record.current_attempt, record.retries_started)
+                replay_sent = True
+            _assert_metadata_only(observation)
+            try:
+                connection.settimeout(_remaining(deadline))
+                _send(connection, observation, _MAX_OBSERVATION_BYTES)
+            finally:
+                connection.close()
+                core._rpc, core._drive_output_node_loss_once = original, original_loss
         return reply
 
-    core._rpc = hold_actual_adopted_ack
+    core._rpc, core._drive_output_node_loss_once = hold_before_actual_adopted_ack, observe_owner_loss
     try:
-        refs = _mixed_foreign_owned_outputs.remote(container)
+        ref = _stored_foreign_owned_output.remote(container)
         assert reached.wait(min(_GATE_SECONDS, _remaining(deadline)))
-        assert len(refs) == 2
         # This thread returns; its dispatch lane, not this Worker slot, waits.
-        return refs
+        return [ref]
     except BaseException:
-        core._rpc = original
+        core._rpc, core._drive_output_node_loss_once = original, original_loss
+        if connection is not None:
+            connection.close()
         raise
 
 
@@ -164,6 +233,15 @@ def _assert_drop(reply, request):
     assert reply.status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED and reply.accepted and not reply.dropped
     assert protocol.DropObjectReplica(reply.object_id, reply.producer_attempt_id, reply.owner_worker_id,
                                       reply.node_id, reply.checksum) == request
+
+
+def _wait(core, predicate, deadline):
+    with core._completion:
+        while True:
+            result = predicate()
+            if result:
+                return result
+            core._completion.wait(_remaining(deadline))
 
 
 def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstructed_epoch():
@@ -242,7 +320,7 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
 
         def hold_real_foreign_grant(requested, grant, foreign_guards=()):
             result = original_build(requested, grant, foreign_guards)
-            if publication is not None and grant.dependencies and grant.dependencies[0].object_id == publication.output_ids[1]:
+            if publication is not None and grant.dependencies and grant.dependencies[0].object_id == publication.output_ids[0]:
                 assert len(result) == len(foreign_guards) == len(grant.dependencies) == 1
                 assert grant.node_id == target.node_id and grant.worker_id == target.worker_id
                 with observation_lock:
@@ -264,41 +342,45 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
 
         core._rpc, core._borrow_rpc = record_rpc, record_borrow
         core._build_location_reports, core._push_task_rpc = hold_real_foreign_grant, record_push
-        outer = _return_worker_owned_outputs_while_adopted_ack_is_held.remote([source], control_address, deadline)
+        outer = _return_worker_owned_output_before_node_adoption_ack.remote([source], control_address, deadline)
         listener.settimeout(_remaining(deadline))
         owner_connection, _ = listener.accept()
-        frame = _recv_exact(owner_connection, 40, deadline)
-        assert int.from_bytes(frame[:8], "big") == target.worker_pid
-        task_id = TaskID(frame[24:40])
+        frame = _receive(owner_connection, _MAX_OBSERVATION_BYTES, deadline=deadline)
+        _assert_metadata_only(frame)
+        assert type(frame) is tuple and len(frame) == 4 and frame[0] == _GATE_KIND
+        _, owner_pid, adoption_request, before = frame
+        assert owner_pid == target.worker_pid
+        assert type(adoption_request) is wire.AckOutputPublicationAdopted
+        assert type(before) is OutputHandoffSnapshot and before.phase is OutputHandoffPhase.ADOPTED
+        publication = adoption_request.proof.complete.publication_id
+        task_id = publication.task_id
         assert task_id == TaskID.derive(core.job_id, TaskID.derive(core.job_id, outer.object_id.task_id, 0), 0)
-        publication = OutputPublicationID(LeaseID(frame[8:24]), TaskExecutionKey(TaskOutputManifest.for_task(task_id, 2), AttemptID(task_id, 0)))
+        assert publication.execution == TaskExecutionKey(TaskOutputManifest.for_task(task_id, 1), AttemptID(task_id, 0))
         owner_gate_deadline = min(deadline, time.monotonic() + _GATE_SECONDS)
         refs = tuple(ray.get(outer, timeout=_remaining(owner_gate_deadline)))
-        assert len(refs) == 2 and tuple(ref.object_id for ref in refs) == publication.output_ids
+        assert len(refs) == 1 and tuple(ref.object_id for ref in refs) == publication.output_ids
         assert all(isinstance(ref, ray.ObjectRef) and ref.owner_worker_id == target.worker_id
                    and ref.owner_address == target.worker_address and ref.borrower_token for ref in refs)
         assert all(not core.owner_table.contains(ref.object_id) for ref in refs)
         _wait(core, lambda: outer.object_id not in core._task_finish_barriers, owner_gate_deadline)
-        before = _recovery(context, publication, owner_gate_deadline)
+        assert _handoff(target.worker_address, publication, owner_gate_deadline) == before
         manifest = before.manifest
-        assert before.complete is not None and before.adopted is not None and before.adopted.complete == before.complete
-        assert before.frozen_node_death is before.owner_decision is before.resolution is None
+        assert before.complete is not None and before.adoption == adoption_request.proof
+        assert before.adoption.complete == before.complete and before.abort_reason is None
         assert manifest.header.owner_worker_id == target.worker_id != core.worker_id
         assert manifest.header.executor_worker_id == publisher.worker_id and manifest.header.node_incarnation.node_id == publisher.node_id
-        assert tuple(slot.tier for slot in manifest.slots) == (protocol.ResultStorage.INLINE, protocol.ResultStorage.OBJECT_STORE)
-        assert len(_PADDING) < manifest.slots[1].size_bytes < 32 * 1024
+        assert tuple(slot.tier for slot in manifest.slots) == (protocol.ResultStorage.OBJECT_STORE,)
+        assert len(_PADDING) < manifest.slots[0].size_bytes < 32 * 1024
         assert all(len(slot.transfers) == 1 and slot.transfers[0].contained_object_id == source_id for slot in manifest.slots)
         assert all(type(slot.transfers[0].source) is BorrowedContainedSource
                    and slot.transfers[0].contained_owner_worker_id == core.worker_id for slot in manifest.slots)
-        healthy_before = _owned(refs[0], core.worker_id, owner_gate_deadline)
-        stored_before = _owned(refs[1], core.worker_id, owner_gate_deadline)
-        assert healthy_before.state is protocol.OwnedObjectState.READY_INLINE
+        stored_before = _owned(refs[0], core.worker_id, owner_gate_deadline)
         assert stored_before.state is protocol.OwnedObjectState.READY_STORED and stored_before.descriptor.node_id == publisher.node_id
-        assert healthy_before.current_attempt == stored_before.current_attempt == publication.attempt_id
+        assert stored_before.current_attempt == publication.attempt_id
         _close_local(outer, owner_gate_deadline)
         _wait(core, lambda: core.owner_table.collection_state(outer.object_id) is ObjectCollectionState.COLLECTED, owner_gate_deadline)
 
-        consumer = _foreign_late_consumer_must_not_run.remote(refs[1])
+        consumer = _foreign_late_consumer_must_not_run.remote(refs[0])
         assert localized.wait(min(_GATE_SECONDS, _remaining(owner_gate_deadline)))
         with observation_lock:
             ((requested, grant, location),) = held
@@ -312,7 +394,7 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         assert original_report.hold.task_id == consumer.object_id.task_id
         assert location.guard.owner_address == target.worker_address
         old_drop = protocol.DropObjectReplica(replica.object_id, replica.producer_attempt_id, replica.owner_worker_id, replica.node_id, replica.checksum)
-        sealed = _physical(target, refs[1].object_id, owner_gate_deadline)
+        sealed = _physical(target, refs[0].object_id, owner_gate_deadline)
         assert sealed.found and sealed.sealed and sealed.producer_attempt_id == publication.attempt_id
         assert sealed.owner_worker_id == target.worker_id and sealed.size_bytes == replica.size_bytes
         assert sealed.checksum == replica.checksum == hashlib.sha256(sealed.data).hexdigest()
@@ -324,20 +406,31 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         death = _test_crash_node(publisher.node_id, timeout=_remaining(owner_gate_deadline))
         assert death.node_pid == publisher.node_pid and death.exit_code == -signal.SIGKILL
         assert death.reason is protocol.NodeDeathReason.PROCESS_EXIT
+        assert death.registration_epoch == manifest.header.node_incarnation.registration_epoch
+        assert manifest.header.node_incarnation.node_pid == publisher.node_pid
         owner_connection.settimeout(_remaining(owner_gate_deadline))
         owner_connection.sendall(_RESUME_OWNER)
         assert _recv_exact(owner_connection, 1, owner_gate_deadline) == _OWNER_RESUMED
-        owner_connection.close()
-        owner_connection = None
-
-        def drop_is_latched():
-            snapshot = _recovery(context, publication, deadline)
-            if snapshot.owner_decision is None:
-                return None
-            assert tuple(slot.decision for slot in snapshot.owner_decision.slots) == (OutputRecoveryOwnerDecision.KEEP, OutputRecoveryOwnerDecision.DROP)
-            return snapshot
-
-        _poll_until(drop_is_latched, deadline, "foreign Worker owner did not latch DROP")
+        loss_frame = _receive(owner_connection, _MAX_OBSERVATION_BYTES, deadline=owner_gate_deadline)
+        _assert_metadata_only(loss_frame)
+        assert type(loss_frame) is tuple and len(loss_frame) == 6 and loss_frame[0] == _LOSS_KIND
+        _, resolution, resolved, task_state, attempt, retries = loss_frame
+        assert type(resolution) is NodeLostOutputResolution and type(resolved) is OutputHandoffSnapshot
+        assert resolution.publication_id == publication and resolution.node_death == death
+        assert resolution.manifest_digest == manifest.manifest_digest
+        assert resolution.owner_worker_id == target.worker_id != core.worker_id
+        assert resolution.complete == before.complete and not resolution.keep
+        resolution.validate_manifest(manifest)
+        transfer, = manifest.slots[0].transfers
+        assert all(type(reply) is protocol.ReleaseContainedReferenceReply and reply.accepted
+                   for reply in resolution.cleanup)
+        assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in resolution.cleanup} == {
+            (source_id, core.worker_id, transfer.final_hold),
+            (source_id, core.worker_id, transfer.provisional_hold),
+        }
+        assert resolved == before and resolved.adoption is not None
+        assert task_state is TaskState.SUCCEEDED and attempt == publication.attempt_id and retries == 0
+        assert _handoff(target.worker_address, publication, deadline) == resolved
         release_report.set()
         with pytest.raises(SystemTaskError, match="retired.*replica"):
             ray.get(consumer, timeout=_remaining(deadline))
@@ -367,7 +460,7 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         assert core._recovery.task_record(consumer.object_id.task_id).retries_started == 0
 
         def old_absent():
-            reply = _physical(target, refs[1].object_id, deadline)
+            reply = _physical(target, refs[0].object_id, deadline)
             return reply if not reply.found else None
 
         assert _poll_until(old_absent, deadline, "foreign owner did not autonomously collect its retired secondary").data is None
@@ -382,56 +475,49 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         assert outcome.state is protocol.LeaseExecutionState.ABANDONED and outcome.completion_status is None
         assert not outcome.descriptors and not outcome.orphan_descriptors and not outcome.cleanup_pending
 
-        def resolved_loss():
-            value = _node_loss(context, publication, target.worker_id, death, deadline)
-            return value if value.snapshot.resolution is not None else None
-
-        terminal = _poll_until(resolved_loss, deadline, "foreign owner did not resolve original output cleanup")
-        resolved = terminal.snapshot
-        assert terminal.work.action is OutputRecoveryAction.POSTCOMPLETE_RESOLVE
-        assert terminal.work.snapshot == replace(before, frozen_node_death=death)
-        assert resolved.resolution.kept_slots == (0,) and resolved.resolution.complete == before.complete
-        assert resolved.resolution.publication_id == publication and resolved.resolution.node_death == death
-        assert resolved.resolution.manifest_digest == manifest.manifest_digest
-        assert resolved.owner_death is None and resolved.resolution.owner_worker_id == target.worker_id
-        assert _owned(refs[0], core.worker_id, deadline) == healthy_before
-
         def owner_lost():
-            reply = _owned(refs[1], core.worker_id, deadline)
+            reply = _owned(refs[0], core.worker_id, deadline)
             assert reply.current_attempt == publication.attempt_id
             return reply if reply.state is protocol.OwnedObjectState.LOST else None
 
         lost = _poll_until(owner_lost, deadline, "known-successful foreign output did not settle as LOST")
         assert lost.descriptor is lost.data is None
         child_at_loss = core.owner_table.snapshot(source_id)
-        assert child_at_loss.contained_holds == frozenset((manifest.slots[0].transfers[0].final_hold,))
-        assert core.owner_table.contained_release_was_seen(source_id, manifest.slots[1].transfers[0].final_hold)
+        assert not child_at_loss.contained_holds
+        for hold in (transfer.final_hold, transfer.provisional_hold):
+            assert core.owner_table.contained_release_was_seen(source_id, hold)
 
-        # Only this public get opens targeted reconstruction after old GC.
-        rebuilt = ray.get(refs[1], timeout=_remaining(deadline))
+        # Only this public get opens whole-task reconstruction after old GC.
+        rebuilt = ray.get(refs[0], timeout=_remaining(deadline))
         restored.append(rebuilt["child"])
-        assert rebuilt["slot"] == 1 and rebuilt["padding"] == _PADDING and rebuilt["producer_pid"] == target.worker_pid
+        assert rebuilt["padding"] == _PADDING and rebuilt["producer_pid"] == target.worker_pid
         new_attempt = publication.attempt_id.next()
         assert rebuilt["attempt"] == new_attempt
-        new_publication = OutputPublicationID(rebuilt["lease_id"], TargetExecutionKey(
-            TargetOutputManifest(TaskOutputManifest.for_task(task_id, 2), (refs[1].object_id,)), new_attempt,
+        new_publication = OutputPublicationID(rebuilt["lease_id"], TaskExecutionKey(
+            TaskOutputManifest.for_task(task_id, 1), new_attempt,
         ))
-        new_owned = _owned(refs[1], core.worker_id, deadline)
+        assert new_publication.output_ids == publication.output_ids and new_publication.lease_id != publication.lease_id
+        new_owned = _owned(refs[0], core.worker_id, deadline)
         assert new_owned.state is protocol.OwnedObjectState.READY_STORED and new_owned.current_attempt == new_attempt
         assert new_owned.descriptor.node_id == target.node_id and new_owned.owner_worker_id == target.worker_id
 
-        def adopted_retry():
-            value = _recovery(context, new_publication, deadline)
-            return value if value.adopted is not None else None
-
-        new_history = _poll_until(adopted_retry, deadline, "targeted reconstruction was not adopted by its original owner")
-        assert new_history.complete is not None and new_history.owner_death is None
+        replay_frame = _receive(owner_connection, _MAX_OBSERVATION_BYTES, deadline=deadline)
+        _assert_metadata_only(replay_frame)
+        assert type(replay_frame) is tuple and len(replay_frame) == 8 and replay_frame[0] == _REPLAY_KIND
+        _, observed_new, prior_receipt, committed, new_history, state, current_attempt, retries = replay_frame
+        assert observed_new == new_publication and prior_receipt == resolution and committed is False
+        assert type(new_history) is OutputHandoffSnapshot and new_history.phase is OutputHandoffPhase.ADOPTED
+        assert state is TaskState.SUCCEEDED and current_attempt == new_attempt and retries == 1
+        assert _handoff(target.worker_address, new_publication, deadline) == new_history
+        owner_connection.close()
+        owner_connection = None
+        assert new_history.complete is not None and new_history.adoption is not None
         assert new_history.manifest.header.owner_worker_id == new_history.manifest.header.executor_worker_id == target.worker_id
-        assert new_history.manifest.slots[0].object_id == refs[1].object_id
+        assert new_history.manifest.slots[0].object_id == refs[0].object_id
         new_transfer, = new_history.manifest.slots[0].transfers
         assert new_transfer.contained_object_id == source_id and new_transfer.contained_owner_worker_id == core.worker_id
-        assert new_transfer.final_hold != manifest.slots[1].transfers[0].final_hold
-        new_replica = _physical(target, refs[1].object_id, deadline)
+        assert new_transfer.final_hold != transfer.final_hold
+        new_replica = _physical(target, refs[0].object_id, deadline)
         assert new_replica.found and new_replica.producer_attempt_id == new_attempt
         assert new_replica.checksum == new_owned.descriptor.checksum == hashlib.sha256(new_replica.data).hexdigest()
         expected_retained = protocol.TaskReferenceHold(
@@ -441,7 +527,7 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         assert new_transfer.source.original_source == protocol.TaskHoldSource(expected_retained)
         assert rebuilt["child"]._local_token is not None
         expected_local = source_before.local_tokens | frozenset((rebuilt["child"]._local_token,))
-        expected_contained = frozenset((manifest.slots[0].transfers[0].final_hold, new_transfer.final_hold))
+        expected_contained = frozenset((new_transfer.final_hold,))
 
         def source_lifetime_settled():
             snapshot = core.owner_table.snapshot(source_id)
@@ -451,11 +537,10 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
                                 and snapshot.local_tokens == expected_local
                                 and snapshot.lineage_tokens == source_before.lineage_tokens) else None
 
-        # GCS Adopted precedes the execution/finalizer tail. Wait for the real
+        # Node adoption ACK precedes the execution/finalizer tail. Wait for the real
         # source credentials to settle before comparing the complete snapshot;
         # ordinary borrower releases must not masquerade as stale-replay damage.
         source_with_new = _wait(core, source_lifetime_settled, deadline)
-        assert _owned(refs[0], core.worker_id, deadline) == healthy_before
         replay_report = _query(target.worker_address, REPORT_RETAINED_OBJECT_LOCATION_HANDLER, original_report, deadline)
         assert type(replay_report) is protocol.ReportRetainedObjectLocationReply
         assert replay_report.status is protocol.RetainedLocationReportStatus.RETIRED and replay_report.custody_transferred and not replay_report.accepted
@@ -465,14 +550,10 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         replay_drop = _query(target.node_address, DROP_OBJECT_REPLICA_HANDLER, old_drop, deadline)
         _assert_drop(replay_drop, old_drop)
         assert replay_drop == old_receipt
-        assert _physical(target, refs[1].object_id, deadline) == new_replica
-        assert _owned(refs[1], core.worker_id, deadline) == new_owned
-        assert _owned(refs[0], core.worker_id, deadline) == healthy_before
+        assert _physical(target, refs[0].object_id, deadline) == new_replica
+        assert _owned(refs[0], core.worker_id, deadline) == new_owned
         assert core.owner_table.snapshot(source_id) == source_with_new
-        assert _recovery(context, publication, deadline) == resolved
-        first = ray.get(refs[0], timeout=_remaining(deadline))
-        restored.append(first["child"])
-        assert first["slot"] == 0 and first["producer_pid"] == publisher.worker_pid
+        assert _handoff(target.worker_address, publication, deadline) == resolved
         for reference in restored:
             assert isinstance(reference, ray.ObjectRef) and reference.object_id == source_id and reference.borrower_token is None
             assert ray.get(reference, timeout=_remaining(deadline)) == _SOURCE_VALUE
@@ -480,11 +561,9 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
 
         _close_local(consumer, deadline)
         _wait(core, lambda: core.owner_table.collection_state(consumer.object_id) is ObjectCollectionState.COLLECTED, deadline)
-        _close_reference(refs[1], deadline)
-        _poll_until(lambda: value if not (value := _physical(target, refs[1].object_id, deadline)).found else None,
-                    deadline, "reconstructed foreign stored slot did not collect")
-        _wait(core, lambda: core.owner_table.snapshot(source_id).contained_holds == frozenset((manifest.slots[0].transfers[0].final_hold,)), deadline)
         _close_reference(refs[0], deadline)
+        _poll_until(lambda: value if not (value := _physical(target, refs[0].object_id, deadline)).found else None,
+                    deadline, "reconstructed foreign stored slot did not collect")
         _wait(core, lambda: not (snapshot := core.owner_table.snapshot(source_id)).contained_holds
               and not snapshot.borrowed_tokens and not snapshot.retained_tokens and not snapshot.submitted_tokens, deadline)
         assert core.owner_table.snapshot(source_id).local_tokens == source_before.local_tokens
