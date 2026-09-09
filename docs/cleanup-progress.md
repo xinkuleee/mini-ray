@@ -39,3 +39,5 @@ K3c：新Core publication13/latecleanup5/NodePG11/surviving4/coretaskretry6/owne
 K3d：NodeDeath16/recursive6/foreign8/retirement8修后通过；PG4/boundary2/ownerdeath2/CoreNodeLoss9/fencing13/terminal6/lineage4通过。NodeBlocking全部7exact过、borrower所有pure与2L1过；CorePG单一空result夹具、containedruntime2个失败ACK门禁、supervisor单一两槽wire负例已精确修待复验。ownerINLINE scratch丢失确认为真实Core错误，修复保实际owner bytes，下一快照6+9+12回归通过。
 
 K3e：确认并修复ownerINLINE真实数据仍在却因scratch丢失被误判LOST；先从既有owner完整receipt/result重组envelope，保已锁UNKNOWN不反转。receipt6+NodeLoss9+CF12、lease4/storedadopt26、owner存活34/replica20/retirement26全部过；增强后继须继承此公共修复。
+
+K3f：单次manifest校验共用path缓存、单次verify复用已得hash，缓存不跨CLI；33工具case通过、入口约1.2s。publication-source21/worker-crash16通过，旧module alias/跨版本pickle回退不恢复。

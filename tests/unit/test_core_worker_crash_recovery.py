@@ -3,12 +3,12 @@
 Function-level unit marks identify threadless reducers and fake RPCs. The
 original dependency-hold case now uses canonical submission on a pure Core,
 one unstarted Node with two passive Worker slots, and one empty 1 KiB store.
-Two tiny selected-output publications are real. A lost Worker is a declared
+Two tiny single-output publications are real. A lost Worker is a declared
 process-state input to the real Node reclaim reducer, not a real process exit.
 One delayed Push and one retry are driven explicitly; no user code, runtime
 thread, process, socket, timer, wait or public shutdown runs in that case.
-The other test bodies/IDs are unchanged; classification alone is not a passing
-claim for every historical assertion.
+All cases use accepted single-output Core state. Legacy graph/GCS publication
+transactions and the two-result partial-delete dimension are retired.
 """
 
 from __future__ import annotations
@@ -28,30 +28,28 @@ import pytest
 
 from miniray import core as core_module, node as node_module, output_protocol as wire, protocol
 from miniray.core import (
-    CoreWorker, _DelayedReadyTask, _PendingTask, _PushRequestState,
+    CoreWorker, _DelayedReadyTask, _ObjectWaiter, _PendingTask, _PushRequestState,
     _ReadyTask, _RetryInlineGc, _WAKE_COORDINATOR, _lineage_hold_token,
 )
 from miniray.errors import TaskError, WorkerDiedError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
-from miniray.node import NodeServer, _WorkerSlot
+from miniray.node import NodeServer, _LeaseRecord, _WorkerSlot
+from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_publication import (
-    OutputPublicationCompleteWitness, OutputPublicationEnvelope,
+    OutputPublicationEnvelope,
     OutputPublicationHeader, OutputPublicationID, OutputPublicationNodeIncarnation,
 )
 from miniray.output_publication_journal import OutputPublicationJournal
-from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.output_recovery import OutputPublicationRecoveryAuthority
-from miniray.ownership import ObjectCollectionState, ObjectOwnerTable, ObjectState, OutputOwnerPublicationPlan
-from miniray.recovery import RecoveryManager, TaskState
-from miniray.resources import AllocationToken, NodeSnapshot, ResourceLedger, ResourceVector
-from miniray.trace import MemoryEventSink
+from miniray.ownership import ObjectCollectionState, ObjectState
+from miniray.recovery import TaskState
+from miniray.resources import AllocationToken, HybridPolicy, NodeSnapshot, ResourceLedger, ResourceVector
 from miniray.transport import RemoteCallError, TransportConnectionError, TransportTimeout
 from tests.unit._pure_core import close_pure_core, make_pure_core
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def _no_output_runtime(monkeypatch):
     def forbidden(*_args, **_kwargs):
         pytest.fail("unified crash-recovery case attempted runtime infrastructure")
@@ -59,7 +57,8 @@ def _no_output_runtime(monkeypatch):
     for kind, method in ((threading.Thread, "start"), (threading.Thread, "join"),
                          (threading.Timer, "start"), (threading.Event, "wait"),
                          (threading.Condition, "wait"),
-                         (multiprocessing.process.BaseProcess, "start")):
+                         (multiprocessing.process.BaseProcess, "start"),
+                         (NodeServer, "__init__")):
         monkeypatch.setattr(kind, method, forbidden)
     monkeypatch.setattr(socket, "socket", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
@@ -70,26 +69,8 @@ def _no_output_runtime(monkeypatch):
 
 
 def _fixture(max_retries: int = 1):
-    core = object.__new__(CoreWorker)
-    core.node_id = NodeID.random()
-    core.node_address = ("127.0.0.1", 28001)
-    core.gcs_address = ("127.0.0.1", 28000)
-    core.job_id = JobID.random()
-    core.worker_id = WorkerID.random()
-    core.driver_task_id = TaskID.for_driver(core.job_id)
-    core._submission_index = 1
-    core._inflight_submissions = 0
-    core._accepting = True
-    core.event_sink = MemoryEventSink()
-    core._owner_table = ObjectOwnerTable()
-    core._objects = {}
-    core._stored_descriptors = {}
+    core = make_pure_core()
     core._registered_functions = set()
-    core._recovery = RecoveryManager()
-    core._state_lock = threading.RLock()
-    core._completion = threading.Condition(core._state_lock)
-    core._submissions = queue.Queue()
-    core._protocol_unresolved = {}
     task = TaskID.derive(core.job_id, core.driver_task_id, 0)
     attempt = AttemptID(task, 0)
     object_id = ObjectID.for_task(task)
@@ -100,9 +81,16 @@ def _fixture(max_retries: int = 1):
         core.worker_id, function_definition=definition, max_retries=max_retries,
     )
     pending = _PendingTask(object_id, spec)
-    core._owner_table.register(object_id, current_attempt=attempt, producer_task_spec=spec)
+    core._owner_table.register_task_outputs(spec)
     core._recovery.register_task(spec, output_ids=(object_id,), max_retries=max_retries)
-    core._objects[object_id] = type("Waiter", (), {"event": threading.Event()})()
+    core._objects[object_id] = _ObjectWaiter(threading.Event())
+    with core._state_lock:
+        core._install_task_finish_barrier_locked(pending)
+        core._accepted_task_count += 1
+        core._enqueue_reconstruction_task(pending)
+    assert core._submissions.get_nowait() is pending
+    core._submissions.task_done()
+    core._resolve_node_address = lambda node_id: core.node_address if node_id == core.node_id else pytest.fail("unknown Node")
     worker = WorkerID.random()
     grant = protocol.GrantWorkerLease(
         LeaseID.random(), task, attempt, core.node_id, worker,
@@ -112,7 +100,7 @@ def _fixture(max_retries: int = 1):
     state = _PushRequestState(
         push, grant, core.node_address, grant.worker_address, 1, True
     )
-    core._mark_protocol_unresolved(pending, "push_replay_wait")
+    core._mark_protocol_unresolved(pending, "push_replay_wait", output_candidate=OutputPublicationID(grant.lease_id, pending.execution))
     return core, pending, state
 
 
@@ -164,67 +152,80 @@ def _completed_output(core, pending, state, *, inline=False):
     )
     discovery = OutputDiscoverySession(header, inline_threshold=1024 if inline else 0)
     outputs = discovery.discover((OnceResult(),))
-    journal, recovery = OutputPublicationJournal(), OutputPublicationRecoveryAuthority()
-    store = ObjectStore(1024)
+    journal, store = OutputPublicationJournal(), ObjectStore(1024)
     ledger = ResourceLedger(ResourceVector({"CPU": 1}))
     ledger.allocate(pending.spec.resources, state.grant.allocation_token)
-
-    def unexpected(*_args, **_kwargs):
-        pytest.fail("ref-free publication attempted an unmodelled effect")
-
-    def seal(effect, descriptor, payload):
-        assert effect.publication_id == identity and effect.slot_index == 0
-        assert payload == outputs.slot_payloads[0]
-        store.put(descriptor.object_id, payload)
-        seals.append(effect)
-        return descriptor
-
-    def commit(witness):
-        assert witness == OutputPublicationCompleteWitness.for_manifest(outputs.manifest)
-        completions.append(witness)
-        assert ledger.release(state.grant.allocation_token)
-
-    adapter = OutputPublicationNodeAdapter(
-        journal, report_intent=recovery.report_intent, arm_complete=recovery.arm_complete,
-        report_terminal=recovery.report_terminal, report_rollback=recovery.report_rollback,
-        prepare_child=unexpected, promote_child=unexpected, release_child=unexpected,
-        prepare_graph=unexpected, abort_graph=unexpected, seal_replica=seal,
-        drop_replica=unexpected,
+    node = object.__new__(NodeServer)
+    node.node_id, node._node_pid, node._registration_epoch = core.node_id, 21001, 3
+    node._state_lock = threading.RLock()
+    node._object_store, node._object_manager = store, ObjectManager(node.node_id, store)
+    node._sealed_metadata, node._dropped_metadata = {}, {}
+    node._local_replica_write_claims, node._object_localization_locks = {}, {}
+    node._owner_death_fences, node._actor_workers = {}, {}
+    node._output_publication_journal, node._ledger = journal, ledger
+    node._cluster_nodes = (NodeSnapshot(node.node_id, ledger.total, ResourceVector()),)
+    node._cluster_addresses = {}
+    node._gcs_address, node._registered_with_gcs = None, False
+    node._resource_report_version = node._resource_reported_version = 0
+    node._dependency_pin_cleanups, node._pinned_transfers = {}, {}
+    node._stop_event, node._shutdown_request_id, node.event_sink = threading.Event(), None, None
+    request = protocol.RequestWorkerLease(
+        state.grant.lease_id, pending.task_id, pending.spec.attempt_id, pending.spec.resources,
+        node.node_id, core.worker_id, return_ids=pending.output_ids, requester_owner_address=core.owner_address,
     )
-    adapter.prepare(outputs.manifest, outputs.slot_payloads)
+    node._leases = {state.grant.lease_id: _LeaseRecord(
+        request, state.grant.allocation_token, state.grant, state=protocol.LeaseExecutionState.RUNNING,
+    )}
+    node._workers = {state.push.worker_id: _WorkerSlot(
+        state.push.worker_id, process=SimpleNamespace(is_alive=lambda: True),
+        address=state.grant.worker_address, pid=21002, active_lease_id=state.grant.lease_id,
+    )}
+    node._worker_order = (state.push.worker_id,)
+    def background_rpc(address, handler, request):
+        assert address == core.owner_address
+        _assert_output_metadata(request)
+        methods = {
+            wire.REGISTER_OUTPUT_HANDOFF_HANDLER: core.register_output_handoff,
+            wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: core.report_output_handoff_complete,
+            wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: core.report_output_handoff_rollback,
+        }
+        assert handler in methods
+        reply = methods[handler](request)
+        assert reply.accepted and reply.request == request
+        _assert_output_metadata(reply)
+        return reply
+    node._background_rpc = background_rpc
+    adapter = node._output_publications = node._make_output_publication_adapter()
+    original_seal = adapter._seal_replica
+    def seal(effect, descriptor, payload):
+        result = original_seal(effect, descriptor, payload)
+        seals.append(effect)
+        return result
+    adapter._seal_replica = seal
+    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads)).accepted
     discovery.release_sources_after_promotions()
-    envelope = adapter.complete(identity, commit_lease=commit)
+    completion = protocol.CompleteWorkerLease(state.grant.lease_id, pending.task_id, pending.spec.attempt_id,
+                                               state.push.worker_id, protocol.TaskReplyStatus.SUCCEEDED)
+    complete = node._handle_complete_worker_lease_inner(completion)
+    assert complete.accepted and complete.released
+    envelope = complete.output_publication
+    completions.append(envelope.complete)
     assert envelope.manifest == outputs.manifest
     assert len(envelope.results) == 1 and reductions == [True]
-    assert recovery.snapshot(identity).complete is None
+    assert core._output_handoff_table().query(identity).complete is None
     descriptors = tuple(protocol.ObjectStoreDescriptor(
         result.object_id, result.owner_worker_id, pending.spec.attempt_id,
         result.node_id, result.size_bytes, result.checksum,
     ) for result in envelope.results if result.storage is protocol.ResultStorage.OBJECT_STORE)
-
     def rpc(address, handler, request):
         calls.append((handler, request))
-        if handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER:
-            assert address == core.gcs_address
-            _assert_output_metadata(request)
-            if type(request) is wire.ReportOutputPublicationTerminal:
-                ack = recovery.report_terminal(request.witness)
-            else:
-                assert type(request) is wire.ReportOutputPublicationAdopted
-                ack = recovery.report_adopted(request.proof)
-            reply = wire.OutputRecoveryReply(request, ack)
-            _assert_output_metadata(reply)
-            return reply
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
-        assert address == core.node_address
-        assert request.proof.complete == envelope.complete
-        journal.retire_completed(request.proof)
-        return wire.AckOutputPublicationAdoptedReply(request, True)
-
+        assert address == core.node_address and request.proof.complete == envelope.complete
+        return node._handle_ack_output_publication_adopted(request)
     return SimpleNamespace(
         outputs=outputs, envelope=envelope, descriptors=descriptors, journal=journal,
-        recovery=recovery, store=store, ledger=ledger, reductions=reductions,
-        seals=seals, completions=completions, calls=calls, rpc=rpc,
+        handoffs=core._output_handoff_table(), store=store, ledger=ledger, reductions=reductions,
+        seals=seals, completions=completions, calls=calls, rpc=rpc, node=node,
     )
 
 
@@ -235,20 +236,20 @@ def _orphan_descriptor(core, pending):
     )
 
 
-def _drop_ack(
-    request: protocol.DropObjectReplica,
-    status: protocol.DropObjectReplicaStatus = (
-        protocol.DropObjectReplicaStatus.DROPPED
-    ),
-):
-    return protocol.DropObjectReplicaReply(
-        request.object_id, request.producer_attempt_id,
-        request.owner_worker_id, request.node_id, request.checksum, status,
-        None if status in (
-            protocol.DropObjectReplicaStatus.DROPPED,
-            protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
-        ) else "not dropped",
-    )
+def _orphan_store(core, descriptor):
+    node = object.__new__(NodeServer)
+    node.node_id = core.node_id
+    node._state_lock = threading.RLock()
+    node._object_store = ObjectStore(1024)
+    node._object_manager = ObjectManager(node.node_id, node._object_store)
+    node._sealed_metadata = {descriptor.object_id: (
+        descriptor.producer_attempt_id, descriptor.owner_worker_id, descriptor.size_bytes, descriptor.checksum,
+    )}
+    node._dropped_metadata, node._object_localization_locks = {}, {}
+    node._local_replica_write_claims, node._owner_death_fences = {}, {}
+    node._pinned_transfers = {}
+    node._object_store.put(descriptor.object_id, b"stored")
+    return node
 
 
 def _connect_fails(*_args):
@@ -256,10 +257,9 @@ def _connect_fails(*_args):
 
 
 def _next_pending(core: CoreWorker) -> _PendingTask:
-    while True:
-        item = core._submissions.get_nowait()
-        if isinstance(item, _PendingTask):
-            return item
+    values = _dependency_queue(core)
+    assert len(values) == 1 and isinstance(values[0], _PendingTask)
+    return values[0]
 
 
 @pytest.mark.unit
@@ -280,7 +280,7 @@ def test_worker_lost_outcome_retries_with_new_attempt_and_stable_identity(
     assert retried.spec.task_id == pending.spec.task_id
     assert retried.spec.attempt_id == pending.spec.attempt_id.next()
     assert core.owner_table.snapshot(pending.object_id).state is ObjectState.PENDING
-    assert pending.object_id not in core._protocol_unresolved
+    assert pending.task_id not in core._protocol_unresolved
     stale = protocol.TaskReply(
         pending.spec.task_id, pending.spec.attempt_id, state.push.worker_id,
         protocol.TaskReplyStatus.SYSTEM_ERROR, error=protocol.RemoteErrorInfo(
@@ -296,6 +296,7 @@ def test_worker_lost_orphan_is_persisted_dropped_then_retried(
 ) -> None:
     core, pending, state = _fixture(max_retries=1)
     descriptor = _orphan_descriptor(core, pending)
+    orphan = _orphan_store(core, descriptor)
     monkeypatch.setattr(core, "_push_task_rpc", _connect_fails)
     calls = []
 
@@ -313,11 +314,12 @@ def test_worker_lost_orphan_is_persisted_dropped_then_retried(
         assert core._recovery.task_record(
             pending.spec.task_id
         ).current_attempt == pending.spec.attempt_id
-        return _drop_ack(message)
+        return orphan._handle_drop_object_replica(message)
 
     monkeypatch.setattr(core, "_rpc", rpc)
     assert not core._replay_push(pending, state)
     retried = _next_pending(core)
+    assert orphan._object_store.used_bytes == 0
     drop = calls[1][1]
     assert isinstance(drop, protocol.DropObjectReplica)
     assert (
@@ -329,15 +331,17 @@ def test_worker_lost_orphan_is_persisted_dropped_then_retried(
     )
     assert retried.object_id == pending.object_id
     assert retried.spec.attempt_id == pending.spec.attempt_id.next()
-    assert pending.object_id not in core._protocol_unresolved
+    assert pending.task_id not in core._protocol_unresolved
 
 
+@pytest.mark.parametrize("fault", ("wrong", "pinned"))
 @pytest.mark.unit
 def test_wrong_or_retryable_drop_ack_keeps_attempt_and_cleanup_obligation(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, fault,
 ) -> None:
     core, pending, state = _fixture(max_retries=1)
     descriptor = _orphan_descriptor(core, pending)
+    orphan = _orphan_store(core, descriptor)
     monkeypatch.setattr(core, "_push_task_rpc", _connect_fails)
     outcomes = []
 
@@ -349,6 +353,11 @@ def test_wrong_or_retryable_drop_ack_keeps_attempt_and_cleanup_obligation(
                 orphan_descriptors=(descriptor,),
             )
         outcomes.append(message)
+        if fault == "pinned":
+            return protocol.DropObjectReplicaReply(
+                message.object_id, message.producer_attempt_id, message.owner_worker_id,
+                message.node_id, message.checksum, protocol.DropObjectReplicaStatus.PINNED, "pinned",
+            )
         return protocol.DropObjectReplicaReply(
             message.object_id, message.producer_attempt_id,
             message.owner_worker_id, message.node_id,
@@ -358,12 +367,13 @@ def test_wrong_or_retryable_drop_ack_keeps_attempt_and_cleanup_obligation(
 
     monkeypatch.setattr(core, "_rpc", rpc)
     assert not core._replay_push(pending, state)
-    delayed = core._submissions.get_nowait()
+    (delayed,) = _dependency_queue(core)
     assert isinstance(delayed, _DelayedReadyTask)
     cleanup = delayed.ready.push_state.orphan_cleanup
     assert cleanup is not None
     assert cleanup.drops == (outcomes[0],)
     assert cleanup.acknowledged == ()
+    assert orphan._object_store.get(pending.object_id) == b"stored"
     unresolved = core._protocol_unresolved[pending.task_id]
     assert unresolved.phase == "orphan_cleanup_wait"
     assert unresolved.obligation == cleanup
@@ -372,75 +382,10 @@ def test_wrong_or_retryable_drop_ack_keeps_attempt_and_cleanup_obligation(
     ).current_attempt == pending.spec.attempt_id
     assert core.owner_table.snapshot(pending.object_id).state is ObjectState.PENDING
 
-    monkeypatch.setattr(core, "_rpc", lambda _a, _h, request: _drop_ack(request))
+    monkeypatch.setattr(core, "_rpc", lambda _a, _h, request: orphan._handle_drop_object_replica(request))
     assert not core._replay_push(pending, delayed.ready.push_state)
     assert _next_pending(core).spec.attempt_id == pending.spec.attempt_id.next()
-
-
-@pytest.mark.unit
-def test_partial_drop_ack_replays_only_missing_replica_before_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    core, old_pending, old_state = _fixture(max_retries=1)
-    spec = replace(old_pending.spec, num_returns=2)
-    pending = _PendingTask(old_pending.object_id, spec)
-    state = replace(old_state, push=replace(old_state.push, spec=spec))
-    second_id = ObjectID(pending.spec.task_id, 1)
-    core._owner_table = ObjectOwnerTable()
-    core._owner_table.register_task_outputs(spec)
-    core._recovery = RecoveryManager()
-    core._recovery.register_task(spec, max_retries=1)
-    core._objects = {
-        object_id: type("Waiter", (), {"event": threading.Event()})()
-        for object_id in pending.output_ids
-    }
-    core._clear_protocol_unresolved(old_pending)
-    core._mark_protocol_unresolved(pending, "push_replay_wait")
-    first = _orphan_descriptor(core, pending)
-    second = protocol.ObjectStoreDescriptor(
-        second_id, core.worker_id,
-        pending.spec.attempt_id, core.node_id, 7,
-        hashlib.sha256(b"second!").hexdigest(),
-    )
-    monkeypatch.setattr(core, "_push_task_rpc", _connect_fails)
-    drops = []
-
-    def first_round(_address, handler, message):
-        if handler == "get_worker_lease_outcome":
-            return _outcome(
-                core, pending, state,
-                protocol.LeaseExecutionState.WORKER_LOST,
-                orphan_descriptors=(first, second),
-            )
-        drops.append(message)
-        if message.object_id == first.object_id:
-            return _drop_ack(message)
-        return _drop_ack(message, protocol.DropObjectReplicaStatus.PINNED)
-
-    monkeypatch.setattr(core, "_rpc", first_round)
-    assert not core._replay_push(pending, state)
-    delayed = core._submissions.get_nowait()
-    assert isinstance(delayed, _DelayedReadyTask)
-    cleanup = delayed.ready.push_state.orphan_cleanup
-    assert cleanup is not None
-    assert tuple(drop.object_id for drop in cleanup.acknowledged) == (
-        first.object_id,
-    )
-    assert core._recovery.task_record(
-        pending.spec.task_id
-    ).current_attempt == pending.spec.attempt_id
-
-    replayed = []
-
-    def second_round(_address, handler, message):
-        assert handler == "drop_object_replica"
-        replayed.append(message)
-        return _drop_ack(message)
-
-    monkeypatch.setattr(core, "_rpc", second_round)
-    assert not core._replay_push(pending, delayed.ready.push_state)
-    assert tuple(drop.object_id for drop in replayed) == (second.object_id,)
-    assert _next_pending(core).spec.attempt_id == pending.spec.attempt_id.next()
+    assert orphan._object_store.used_bytes == 0
 
 
 @pytest.mark.unit
@@ -449,6 +394,7 @@ def test_application_error_orphan_cleanup_is_terminal_without_retry(
 ) -> None:
     core, pending, state = _fixture(max_retries=3)
     descriptor = _orphan_descriptor(core, pending)
+    orphan = _orphan_store(core, descriptor)
     monkeypatch.setattr(core, "_push_task_rpc", _connect_fails)
 
     def rpc(_address, handler, message):
@@ -459,18 +405,19 @@ def test_application_error_orphan_cleanup_is_terminal_without_retry(
                 status=protocol.TaskReplyStatus.APPLICATION_ERROR,
                 orphan_descriptors=(descriptor,),
             )
-        return _drop_ack(message)
+        return orphan._handle_drop_object_replica(message)
 
     monkeypatch.setattr(core, "_rpc", rpc)
     assert core._replay_push(pending, state)
+    assert orphan._object_store.used_bytes == 0
     snapshot = core.owner_table.snapshot(pending.object_id)
     assert snapshot.state is ObjectState.ERROR
     assert isinstance(snapshot.error, TaskError)
     assert core._recovery.task_record(
         pending.spec.task_id
     ).current_attempt == pending.spec.attempt_id
-    assert core._submissions.empty()
-    assert pending.object_id not in core._protocol_unresolved
+    assert _dependency_queue(core) == ()
+    assert pending.task_id not in core._protocol_unresolved
 
 
 @pytest.mark.unit
@@ -544,7 +491,7 @@ def test_nonterminal_outcome_preserves_exact_push(
         ),
     )
     assert not core._replay_push(pending, state)
-    delayed = core._submissions.get_nowait()
+    (delayed,) = _dependency_queue(core)
     assert isinstance(delayed, _DelayedReadyTask)
     assert delayed.ready.push_state.push is state.push
     assert core.owner_table.snapshot(pending.object_id).state is ObjectState.PENDING
@@ -565,11 +512,10 @@ def test_completed_stored_result_publishes_while_worker_remains_alive(
         seen.append((handler, message))
         if handler == "get_worker_lease_outcome":
             assert address == core.node_address
-            return _outcome(
-                core, pending, state, protocol.LeaseExecutionState.COMPLETED,
-                alive=True, status=protocol.TaskReplyStatus.SUCCEEDED,
-                descriptors=(descriptor,), output_publication=publication.envelope,
-            )
+            result = publication.node._handle_get_worker_lease_outcome(message)
+            assert result.worker_alive and result.completion_status is protocol.TaskReplyStatus.SUCCEEDED
+            assert result.output_publication == publication.envelope
+            return result
         return publication.rpc(address, handler, message)
 
     monkeypatch.setattr(core, "_rpc", query)
@@ -593,14 +539,13 @@ def test_completed_stored_result_publishes_while_worker_remains_alive(
     assert publication.completions == [publication.envelope.complete]
     assert publication.ledger.available == ResourceVector({"CPU": 1})
     assert publication.journal.snapshot(publication.envelope.publication_id).retained_result_slots == ()
-    assert publication.recovery.snapshot(publication.envelope.publication_id).adopted is not None
+    assert publication.handoffs.query(publication.envelope.publication_id).adoption is not None
     assert core._recovery.task_record(pending.task_id).retries_started == 0
     assert not core._protocol_unresolved
-    assert core._submissions.empty()
+    assert _dependency_queue(core) == ()
     assert isinstance(seen[0][1], protocol.GetWorkerLeaseOutcome)
     assert [handler for handler, _request in seen] == [
-        "get_worker_lease_outcome", wire.REPORT_OUTPUT_PUBLICATION_HANDLER,
-        wire.REPORT_OUTPUT_PUBLICATION_HANDLER, wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER,
+        "get_worker_lease_outcome", wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER,
     ]
 
 
@@ -639,14 +584,14 @@ def test_completed_without_local_bytes_and_malformed_query_keep_exact_replay(
 
     monkeypatch.setattr(core, "_rpc", rpc)
     assert not core._replay_push(pending, state)
-    delayed = core._submissions.get_nowait()
+    (delayed,) = _dependency_queue(core)
     assert isinstance(delayed, _DelayedReadyTask)
     assert pending.task_id in core._protocol_unresolved
     # A matching metadata witness cannot manufacture either INLINE bytes or a
     # STORED owner membership. The live Node, not elapsed time, owns delivery.
     for _ in range(2):
         assert not core._replay_push(pending, delayed.ready.push_state)
-        delayed = core._submissions.get_nowait()
+        (delayed,) = _dependency_queue(core)
         assert isinstance(delayed, _DelayedReadyTask)
         assert delayed.ready.push_state.push is state.push
         assert delayed.ready.push_state.grant == state.grant
@@ -672,7 +617,7 @@ def test_completed_without_local_bytes_and_malformed_query_keep_exact_replay(
         assert core._stored_descriptors[pending.object_id] == publication.envelope.results[0]
         assert publication.store.get(pending.object_id) == publication.outputs.slot_payloads[0]
     assert core._recovery.task_record(pending.task_id).retries_started == 0
-    assert not core._protocol_unresolved and core._submissions.empty()
+    assert not core._protocol_unresolved and _dependency_queue(core) == ()
     assert all(request == queries[0] for request in queries)
     assert publication.reductions == [True] and len(publication.completions) == 1
 
@@ -703,7 +648,7 @@ def test_cleanup_pending_outcome_keeps_original_attempt_until_exact_ack(
     replay_state = state
     for _ in range(2):
         assert not core._replay_push(pending, replay_state)
-        delayed = core._submissions.get_nowait()
+        (delayed,) = _dependency_queue(core)
         assert isinstance(delayed, _DelayedReadyTask)
         replay_state = delayed.ready.push_state
         assert replay_state.push is state.push and replay_state.grant == state.grant
@@ -714,7 +659,7 @@ def test_cleanup_pending_outcome_keeps_original_attempt_until_exact_ack(
         assert pending.task_id in core._protocol_unresolved
     ready[0] = True
     assert not core._replay_push(pending, replay_state)
-    retried = core._submissions.get_nowait()
+    (retried,) = _dependency_queue(core)
     assert isinstance(retried, _PendingTask) and core._submissions.empty()
     assert retried.spec.attempt_id == pending.spec.attempt_id.next()
     assert retried.object_id == pending.object_id
@@ -741,7 +686,7 @@ def test_completed_application_error_detail_loss_is_not_system_retried(
     assert snapshot.state is ObjectState.ERROR
     assert isinstance(snapshot.error, TaskError)
     assert core._recovery.task_record(pending.spec.task_id).retries_started == 0
-    assert core._submissions.empty()
+    assert _dependency_queue(core) == ()
 
 
 @pytest.fixture
@@ -801,7 +746,7 @@ class _DependencyRetryFixture:
     def __init__(self, monkeypatch):
         self.core = core = make_pure_core()
         core._registered_functions = set()
-        core.gcs_address = ("dependency-recovery.invalid", 1)
+        core.gcs_address = None
         self.node = node = object.__new__(NodeServer)
         node.node_id = core.node_id
         node._node_pid, node._registration_epoch = 31801, 1
@@ -809,6 +754,7 @@ class _DependencyRetryFixture:
         node._ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         node._cluster_nodes = (NodeSnapshot(node.node_id, node._ledger.total, node._ledger.total),)
         node._cluster_addresses = {}
+        node._scheduling_policy = HybridPolicy(seed=0)
         node._shutdown_request_id, node._active_lease_id = None, None
         node._leases, node._lease_outcomes, node._lease_cancellations = {}, {}, {}
         node._lease_request_locks, node._inflight_lease_requests = {}, 0
@@ -826,24 +772,41 @@ class _DependencyRetryFixture:
         ) for index, worker in enumerate(self.workers)}
         node._sync_first_worker_compat_locked()
         self.journal = node._output_publication_journal = OutputPublicationJournal()
-        self.recovery = OutputPublicationRecoveryAuthority()
-
-        def forbidden(*_args, **_kwargs):
-            pytest.fail("tiny dependency output attempted child/graph/store work")
-
-        self.adapter = node._output_publications = OutputPublicationNodeAdapter(
-            self.journal, report_intent=self.recovery.report_intent,
-            arm_complete=self.recovery.arm_complete, report_terminal=self.recovery.report_terminal,
-            report_rollback=self.recovery.report_rollback, prepare_child=forbidden,
-            promote_child=forbidden, release_child=forbidden, prepare_graph=forbidden,
-            abort_graph=forbidden, seal_replica=forbidden, drop_replica=forbidden,
-        )
+        node._dropped_metadata, node._local_replica_write_claims = {}, {}
+        node._object_localization_locks, node._owner_death_fences = {}, {}
+        node._pinned_transfers, node._dependency_pin_cleanups, node._actor_workers = {}, {}, {}
+        node._resource_report_version = node._resource_reported_version = 0
+        node._object_manager = ObjectManager(node.node_id, node._object_store)
+        node._background_rpc = self.owner_rpc
+        self.adapter = node._output_publications = node._make_output_publication_adapter()
+        self.handoffs = core._output_handoff_table()
         self.refs, self.submissions, self.leases, self.pushes, self.queries = [], [], [], [], []
         self.replies, self.completions, self.gc_order, self.controls = {}, [], [], []
         self.active, self.prepared, self.crash_push = None, None, None
         self.dependency_id = self.hold = self.lineage = None
         monkeypatch.setattr(core, "_rpc", self.rpc)
         monkeypatch.setattr(core, "_push_task_rpc", self.push)
+        original_collect = core.owner_table.complete_output_publication_collection
+        def collect(plan):
+            result = original_collect(plan)
+            self.gc_order.append(plan.object_id)
+            assert len(self.gc_order) <= 2
+            return result
+        monkeypatch.setattr(core.owner_table, "complete_output_publication_collection", collect)
+
+    def owner_rpc(self, address, handler, request):
+        assert address == self.core.owner_address
+        _assert_output_metadata(request)
+        methods = {
+            wire.REGISTER_OUTPUT_HANDOFF_HANDLER: self.core.register_output_handoff,
+            wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: self.core.report_output_handoff_complete,
+            wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: self.core.report_output_handoff_rollback,
+        }
+        assert handler in methods
+        reply = methods[handler](request)
+        assert reply.accepted and reply.request == request, reply.error
+        _assert_output_metadata(reply)
+        return reply
 
     def submit(self, *args, max_retries):
         assert len(self.submissions) < 2
@@ -905,30 +868,9 @@ class _DependencyRetryFixture:
             assert reply.output_publication is None and reply.output_completion is None
             self.queries.append((request, reply))
             return reply
-        if handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER:
-            assert address == self.core.gcs_address
-            _assert_output_metadata(request)
-            if type(request) is wire.ReportOutputPublicationTerminal:
-                envelope = self.replies[request.witness.publication_id].output_publication
-                assert request.witness == envelope.complete
-                assert self.core.owner_table.snapshot(envelope.publication_id.output_ids[0]).state is ObjectState.PENDING
-                self.assert_holds()
-                ack = self.recovery.report_terminal(request.witness)
-            elif type(request) is wire.ReportOutputPublicationAdopted:
-                envelope = self.replies[request.proof.complete.publication_id].output_publication
-                plan = OutputOwnerPublicationPlan(envelope.manifest.execution, envelope)
-                assert self.core.owner_table.output_owner_publication_receipt(plan).committed
-                ack = self.recovery.report_adopted(request.proof)
-            else:
-                assert type(request) is wire.ReportOutputPublicationSlotCollected
-                assert self.core.owner_table.collection_state(request.proof.object_id) is ObjectCollectionState.COLLECTING
-                self.gc_order.append(request.proof.object_id)
-                assert len(self.gc_order) <= 2
-                ack = self.recovery.report_slot_collected(request.proof)
-            return wire.OutputRecoveryReply(request, ack)
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
         assert address == self.core.node_address
-        assert self.recovery.snapshot(request.proof.complete.publication_id).adopted == request.proof
+        assert self.handoffs.query(request.proof.complete.publication_id).adoption == request.proof
         return self.node._handle_ack_output_publication_adopted(request)
 
     def push(self, address, handler, push):
@@ -972,7 +914,7 @@ class _DependencyRetryFixture:
         prepared = self.node._handle_prepare_output_publication(wire.PrepareOutputPublication(
             outputs.manifest, outputs.slot_payloads,
         ))
-        assert prepared.accepted and self.recovery.snapshot(identity).armed
+        assert prepared.accepted and self.handoffs.query(identity).manifest == outputs.manifest
         assert self.node.resource_ledger.available.is_zero()
         session.release_sources_after_promotions()
         completion = protocol.CompleteWorkerLease(
@@ -1135,9 +1077,8 @@ def test_dependency_hold_survives_worker_loss_retry(monkeypatch: pytest.MonkeyPa
         assert f.node.object_store.used_bytes == 0 and not f.node._sealed_metadata
         assert not f.adapter.pending_lease_completions()
         for identity, reply in f.replies.items():
-            record = f.recovery.snapshot(identity)
-            assert record.complete == reply.output_publication.complete and record.adopted is not None
-            assert len(record.slot_collections) == 1
+            record = f.handoffs.query(identity)
+            assert record.complete == reply.output_publication.complete and record.adoption is not None
             assert not f.journal.snapshot(identity).retained_result_slots
             assert f.adapter.report_terminal(identity)
         assert not f.adapter.pending_terminal_reports()

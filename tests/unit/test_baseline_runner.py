@@ -132,6 +132,53 @@ def test_added_import_and_unreviewed_config_prevent_migration(tmp_path):
         runner._verify_review(migration, tmp_path)
 
 
+def test_one_manifest_load_checks_shared_paths_once_but_next_load_rechecks(tmp_path, monkeypatch):
+    data, record = _review_tree(tmp_path)
+    second = deepcopy(record)
+    record["selector"] += "::test_migration"
+    second["selector"] += "::test_second_reviewed_case"
+    data["reviewed_migrations"].append(second)
+    original = runner._path
+    paths = []
+
+    def checked(relative, root):
+        paths.append(relative)
+        return original(relative, root)
+
+    monkeypatch.setattr(runner, "_path", checked)
+    runner._validate_manifest(data, root=tmp_path)
+    assert len(paths) == len(set(paths))
+    assert paths.count("tests/support/helper.py") == 1
+    (tmp_path / "tests/support/helper.py").unlink()
+    with pytest.raises(ValueError, match="missing or outside"):
+        runner._validate_manifest(data, root=tmp_path)
+    assert paths.count("tests/support/helper.py") == 2
+
+
+def test_verify_reads_discovered_and_extra_hash_inputs_once_per_invocation(tmp_path, monkeypatch):
+    data, record = _review_tree(tmp_path)
+    extra = tmp_path / "golden.json"
+    extra.write_bytes(b'{"value":1}\n')
+    record["reviewed_files"]["golden.json"] = runner._review_input_hash(extra.read_bytes())
+    record["reviewed_tree_hash"] = runner._tree_hash(record["reviewed_files"])
+    migration = runner._validate_manifest(data, root=tmp_path).reviewed_migrations[0]
+    original = Path.read_bytes
+    reads = []
+
+    def read(path):
+        reads.append(path.relative_to(tmp_path).as_posix())
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    runner._verify_review(migration, tmp_path)
+    assert len(reads) == len(set(reads)) == len(record["reviewed_files"])
+    assert reads.count("tests/support/helper.py") == reads.count("golden.json") == 1
+    (tmp_path / "tests/support/helper.py").write_text("value = 2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="hash changed"):
+        runner._verify_review(migration, tmp_path)
+    assert reads.count("tests/support/helper.py") == 2
+
+
 def test_review_identity_survives_only_checkout_crlf_to_lf_changes(tmp_path):
     data, record = _review_tree(tmp_path)
     golden = tmp_path / "golden.json"

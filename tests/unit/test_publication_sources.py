@@ -1,8 +1,8 @@
-"""Pure shared-capability extraction and historical wire compatibility.
+"""Pure shared-capability extraction and current wire identity.
 
 Each case has one transfer or one slot and tiny bytes. No Core, Node, service,
-thread, process, socket, timer or wait is created. Old pickle module references
-are explicit bytes, never loaded from an external file or untrusted source.
+thread, process, socket, timer or wait is created. Old module aliases and unbound string holds are retired; current wire
+identity and exact typed-source validation remain.
 """
 
 from dataclasses import replace
@@ -18,8 +18,8 @@ import time
 import pytest
 
 from miniray import output_discovery, output_protocol, output_publication, protocol, ref_transfer
-from miniray import publication_sources as shared, stored_publication as legacy
-from miniray.contained_edges import ContainedReferenceEdge, ContainedReferenceHold, LegacyContainedReferenceHold
+from miniray import publication_sources as shared
+from miniray.contained_edges import ContainedReferenceEdge, ContainedReferenceHold
 from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
@@ -69,9 +69,7 @@ def _transfer(kind):
                 ObjectID(_id(TaskID, 0x88), 2), _id(WorkerID, 0x99), "upstream-pin",
             ))
         else:
-            assert kind == "legacy-contained"
-            original = protocol.ContainedTransferSource("upstream-pin")
-            assert type(original.hold) is LegacyContainedReferenceHold
+            raise AssertionError("unsupported source fixture")
         source = shared.BorrowedContainedSource(executor, "live-borrower", original)
     return shared.PreparedContainedTransfer(
         child, child_owner, ("127.0.0.1", 32001), source,
@@ -84,24 +82,9 @@ def _incarnation():
     return shared.PublicationNodeIncarnation(_id(NodeID, 0xAA), 12345, 7)
 
 
-@pytest.mark.parametrize("name", (
-    "OwnedContainedSource", "BorrowedContainedSource", "ContainedPublicationSource",
-    "PreparedContainedTransfer", "prepared_contained_transfer_fingerprint",
-))
-def test_historical_reexports_preserve_one_shared_type_or_function(name):
-    assert getattr(legacy, name) is getattr(shared, name)
-    if name != "ContainedPublicationSource":
-        assert getattr(shared, name).__module__ == "miniray.publication_sources"
-    assert output_discovery.PreparedContainedTransfer is shared.PreparedContainedTransfer
-    assert ref_transfer.OwnedContainedSource is shared.OwnedContainedSource
-    assert ref_transfer.BorrowedContainedSource is shared.BorrowedContainedSource
-    assert not hasattr(ref_transfer, "StoredReferenceExportSession")
-    assert output_publication.PreparedContainedTransfer is shared.PreparedContainedTransfer
-    assert output_publication.prepared_contained_transfer_fingerprint is shared.prepared_contained_transfer_fingerprint
 
 
 def test_incarnation_has_one_neutral_type_with_unchanged_death_projection():
-    assert legacy.StoredPublicationNodeIncarnation is shared.PublicationNodeIncarnation
     assert output_publication.OutputPublicationNodeIncarnation is shared.PublicationNodeIncarnation
     node = _incarnation()
     death = protocol.NodeDeathRecord(
@@ -109,7 +92,6 @@ def test_incarnation_has_one_neutral_type_with_unchanged_death_projection():
         8, -9, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed Node exit",
     )
     assert shared.PublicationNodeIncarnation.from_death(death) == node
-    assert legacy.StoredPublicationNodeIncarnation.from_death(death) == node
     assert replace(node) == node and hash(replace(node)) == hash(node)
     with pytest.raises(TypeError, match="NodeDeathRecord"):
         shared.PublicationNodeIncarnation.from_death(object())
@@ -119,13 +101,11 @@ def test_incarnation_has_one_neutral_type_with_unchanged_death_projection():
     ("owned", "968169808988c5cc2ff03f6f1f5f49baf3ed729f444570fbc8087d24c2a1a122"),
     ("task", "8270910ba04a1aab2774e021f245ac19d9abafc840fc41ffd31f825f9b0e521c"),
     ("typed-contained", "ad5916f44d98f9e4b8dcdc51f9b685c1e4260890240d563c0f2b96368cb339b9"),
-    ("legacy-contained", "62305103fd4dc97982b77bea6b744444d00c6b4f2cb5d186e7601d10c958aad1"),
 ))
 def test_source_fingerprint_preserves_v1_framing_golden(kind, expected):
     transfer = _transfer(kind)
     fingerprint = shared.prepared_contained_transfer_fingerprint(transfer)
     assert fingerprint.hex() == expected
-    assert legacy.prepared_contained_transfer_fingerprint(transfer) == fingerprint
     assert len(fingerprint) == 32
     assert transfer.edge == ContainedReferenceEdge(
         transfer.final_hold.container_object_id, transfer.contained_object_id,
@@ -156,7 +136,7 @@ def test_shared_pin_validation_does_not_import_legacy_authorities(monkeypatch, m
     )
 
 
-@pytest.mark.parametrize("kind", ("owned", "task", "typed-contained", "legacy-contained"))
+@pytest.mark.parametrize("kind", ("owned", "task", "typed-contained"))
 @pytest.mark.parametrize("version", (0, pickle.HIGHEST_PROTOCOL))
 def test_shared_values_and_pin_messages_pickle_with_exact_identity(kind, version):
     transfer = _transfer(kind)
@@ -177,32 +157,6 @@ def test_shared_values_and_pin_messages_pickle_with_exact_identity(kind, version
         )
 
 
-@pytest.mark.parametrize("kind", ("owned", "task", "typed-contained", "legacy-contained", "node"))
-def test_old_pickle_global_names_resolve_to_shared_values_without_changing_class(kind):
-    value = _incarnation() if kind == "node" else _transfer(kind)
-    encoded = pickle.dumps(value, protocol=0)
-    names = {
-        "PublicationNodeIncarnation": "StoredPublicationNodeIncarnation",
-        "OwnedContainedSource": "OwnedContainedSource",
-        "BorrowedContainedSource": "BorrowedContainedSource",
-        "PreparedContainedTransfer": "PreparedContainedTransfer",
-    }
-    # Protocol 0 spells a class reference as GLOBAL(module, name); change only
-    # those names to the historical globals while leaving every field intact.
-    for current, historical in names.items():
-        encoded = encoded.replace(
-            ("cminiray.publication_sources\n" + current + "\n").encode(),
-            ("cminiray.stored_publication\n" + historical + "\n").encode(),
-        )
-    assert b"miniray.stored_publication" in encoded
-    assert b"miniray.publication_sources" not in encoded
-    restored = pickle.loads(encoded)
-    assert type(restored) is type(value) and restored == value
-    if kind != "node":
-        assert type(restored.source) is type(value.source)
-        assert shared.prepared_contained_transfer_fingerprint(restored) == (
-            shared.prepared_contained_transfer_fingerprint(value)
-        )
 
 
 @pytest.mark.parametrize("value", (0, -1, True, 1.5))
@@ -267,3 +221,12 @@ def test_output_wire_uses_shared_leaf_and_preserves_deep_manifest_validation():
     object.__setattr__(request.manifest.slots[0].transfers[0].source, "borrower_token", "")
     with pytest.raises((TypeError, ValueError, ProtocolError), match="borrower_token"):
         pickle.loads(pickle.dumps(request))
+
+
+def test_current_modules_share_leaf_identity_and_legacy_hold_is_rejected():
+    assert output_discovery.PreparedContainedTransfer is shared.PreparedContainedTransfer
+    assert output_publication.PreparedContainedTransfer is shared.PreparedContainedTransfer
+    assert ref_transfer.OwnedContainedSource is shared.OwnedContainedSource
+    assert ref_transfer.BorrowedContainedSource is shared.BorrowedContainedSource
+    with pytest.raises(ProtocolError):
+        protocol.ContainedTransferSource("unbound-legacy-pin")

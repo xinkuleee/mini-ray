@@ -77,27 +77,36 @@ def _path(relative: str, root: Path) -> Path:
     return target
 
 
-def _selector(value, root: Path, *, exact=False) -> str:
+def _selector(value, root: Path, *, exact=False, checked_paths=None) -> str:
     selector = _text(value, "selector")
     relative, separator, node = selector.partition("::")
     if _FILE.fullmatch(relative) is None or (separator and _NODE.fullmatch(node) is None):
         raise ValueError("selection requires an explicit test file or exact test case")
     if exact and not separator:
         raise ValueError("selection requires an exact test case")
-    _path(relative, root)
+    _checked_path(relative, root, checked_paths)
     return selector
 
 
-def _selection(data, root: Path, *, exact=False) -> Selection:
+def _selection(data, root: Path, *, exact=False, checked_paths=None) -> Selection:
     if type(data) is not dict or set(data) != {"selector", "marker"}:
         raise ValueError("selection requires selector and marker only")
     marker = data["marker"]
     if type(marker) is not str or marker not in _MARKERS:
         raise ValueError("selection has an unsupported marker")
-    selector = _selector(data["selector"], root, exact=exact or marker != "unit")
+    selector = _selector(data["selector"], root, exact=exact or marker != "unit", checked_paths=checked_paths)
     if "::" not in selector and not selector.startswith("tests/unit/"):
         raise ValueError("whole-file selection requires a reviewed unit file")
     return Selection(selector, marker)
+
+
+def _checked_path(relative, root, checked_paths):
+    """Reuse only successful path checks within one manifest validation."""
+    if checked_paths is None:
+        return _path(relative, root)
+    if relative not in checked_paths:
+        checked_paths[relative] = _path(relative, root)
+    return checked_paths[relative]
 
 
 def _module_paths(module: str, root: Path) -> tuple[Path, ...]:
@@ -188,12 +197,12 @@ def review_inputs(selector: str, *, root: Path | None = None) -> dict[str, str]:
     return {name: _review_input_hash(_path(name, root).read_bytes()) for name in sorted(paths)}
 
 
-def _migration(data, root: Path) -> ReviewedMigration:
+def _migration(data, root: Path, *, checked_paths=None) -> ReviewedMigration:
     fields = {"selector", "marker", "purpose", "work_package_id", "review_source_commit",
               "reviewed_tree_hash", "reviewed_files", "cost_review"}
     if type(data) is not dict or set(data) != fields or data["purpose"] != "migration":
         raise ValueError("migration has missing, unknown or invalid fields")
-    selection = _selection({key: data[key] for key in ("selector", "marker")}, root)
+    selection = _selection({key: data[key] for key in ("selector", "marker")}, root, checked_paths=checked_paths)
     commit = _text(data["review_source_commit"], "review_source_commit")
     if _COMMIT.fullmatch(commit) is None:
         raise ValueError("review_source_commit requires a full commit SHA")
@@ -205,7 +214,7 @@ def _migration(data, root: Path) -> ReviewedMigration:
             raise ValueError("reviewed file requires a SHA256")
         if relative == "scripts/baseline_manifest.json":
             raise ValueError("manifest review cannot hash its own registry bytes")
-        _path(relative, root)
+        _checked_path(relative, root, checked_paths)
     tree_hash = data["reviewed_tree_hash"]
     if tree_hash != _tree_hash(files):
         raise ValueError("reviewed_tree_hash does not bind reviewed_files")
@@ -220,12 +229,18 @@ def _verify_review(migration: ReviewedMigration, root: Path) -> None:
     if not discovered.keys() <= reviewed.keys():
         raise ValueError("migration import/config closure changed; re-review required")
     for name, digest in reviewed.items():
-        if _review_input_hash(_path(name, root).read_bytes()) != digest:
+        # review_inputs already read and hashed the discovered closure in this
+        # invocation. Only explicitly reviewed extra data needs another read.
+        actual = discovered.get(name)
+        if actual is None:
+            actual = _review_input_hash(_path(name, root).read_bytes())
+        if actual != digest:
             raise ValueError("migration input hash changed; re-review required: " + name)
 
 
 def _validate_manifest(data, *, root: Path | None = None) -> BaselineManifest:
     root = (root or PROJECT_ROOT).resolve()
+    checked_paths = {}  # discarded on return; a later load rechecks the filesystem
     fields = {"schema_version", "edition", "pure", "smoke", "known_non_unit_in_pure", "reviewed_migrations"}
     if type(data) is not dict or set(data) != fields:
         raise ValueError("baseline manifest has missing or unknown fields")
@@ -236,16 +251,16 @@ def _validate_manifest(data, *, root: Path | None = None) -> BaselineManifest:
     for name in ("pure", "smoke", "known_non_unit_in_pure", "reviewed_migrations"):
         if type(data[name]) is not list or (name in {"pure", "smoke"} and not data[name]):
             raise ValueError(name + " must be an explicit list")
-    pure = tuple(_selector(item, root) for item in data["pure"])
+    pure = tuple(_selector(item, root, checked_paths=checked_paths) for item in data["pure"])
     if any("::" in item or not item.startswith("tests/unit/") for item in pure):
         raise ValueError("pure gate requires exact unit file paths")
-    smoke = tuple(_selection(item, root, exact=True) for item in data["smoke"])
+    smoke = tuple(_selection(item, root, exact=True, checked_paths=checked_paths) for item in data["smoke"])
     if any(item.marker == "unit" for item in smoke):
         raise ValueError("smoke gate requires a smoke marker")
-    exclusions = tuple(_selector(item, root, exact=True) for item in data["known_non_unit_in_pure"])
+    exclusions = tuple(_selector(item, root, exact=True, checked_paths=checked_paths) for item in data["known_non_unit_in_pure"])
     if len(set(exclusions)) != len(exclusions) or any(item.split("::", 1)[0] not in pure for item in exclusions):
         raise ValueError("known non-unit exclusions must be unique cases in pure files")
-    migrations = tuple(_migration(item, root) for item in data["reviewed_migrations"])
+    migrations = tuple(_migration(item, root, checked_paths=checked_paths) for item in data["reviewed_migrations"])
     selected = [Selection(item, "unit") for item in pure] + list(smoke) + [item.selection for item in migrations]
     names = [item.selector for item in selected]
     if len(set(names)) != len(names):
