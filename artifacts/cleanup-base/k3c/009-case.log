@@ -1,0 +1,330 @@
+.....FFF                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_failed_admission_keeps_live_output_until_real_retirement_and_gc[budget] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x784e9b5f6000>
+prerequisite = 'budget'
+
+    @pytest.mark.parametrize("prerequisite", ("budget", "foreign-failed"))
+    def test_failed_admission_keeps_live_output_until_real_retirement_and_gc(monkeypatch, prerequisite):
+        case = _Case()
+        core = case.core
+        if prerequisite == "budget":
+            current = core._recovery.task_record(case.pending.task_id)
+            current.retries_started = current.max_retries
+        before, record = case.metadata(), case.record()
+        renewal_calls = []
+        def failed_renewal(task, attempt):
+            assert not core._state_lock._is_owned()
+            renewal_calls.append((task, attempt))
+            return replace(case.result(task, attempt, ForeignLineageRenewalDisposition.FAILED),
+                           failure="foreign prerequisite definitively failed")
+        try:
+            with case.foreign(monkeypatch, failed_renewal):
+                with pytest.raises(SystemTaskError):
+                    case.start()
+            assert len(renewal_calls) == int(prerequisite == "foreign-failed")
+            assert case.metadata() == before and case.rpc_calls == []
+            case.assert_not_started(record)
+            # Ordinary admission reports the failure and retains the live LOST
+            # object. It has no targeted OPEN failure/error-publication latch.
+            # Explicit old-effect retirement uses the same real cleanup authority
+            # as a subsequent reconstruction; final reference release runs GC.
+            assert core._retire_lost_output_memberships(case.lost)
+            retired = core.owner_table.snapshot(case.lost)
+            assert retired.state is ObjectState.LOST and retired.error is None
+            assert retired.current_attempt == case.pending.spec.attempt_id
+            assert retired.local_tokens == frozenset(("outer0",))
+            assert retired.output_publication is None and retired.output_retirement_id is None
+            assert not retired.outgoing_contained_edges and retired.canonical_stored_result is None
+            assert not retired.locations
+            case.assert_not_started(record)
+            assert len(case.rpc_calls) == 3
+>           case.assert_collected()
+
+tests/unit/test_targeted_retirement_admission.py:324: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_targeted_retirement_admission.py:146: in assert_collected
+    core._reference_released(self.lost)
+src/miniray/core.py:4963: in _reference_released
+    plan = self._owner_table.begin_collection(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.ownership.ObjectOwnerTable object at 0x784e9ad0fa70>
+object_id = ObjectID(task_id=TaskID('02020202020202020202020202020202'), return_index=0)
+
+    def begin_collection(
+        self, object_id: ObjectID, *,
+        collection_id: str | None = None,
+        canonical_size_bytes: int | None = None,
+        canonical_checksum: str | None = None,
+    ) -> ObjectMetadataCollectionPlan | None:
+        """Atomically freeze all metadata needed by external GC work."""
+    
+        with self._lock:
+            entry = self._entry(object_id)
+            self._require_no_output_retirement_locked(entry)
+            if entry.is_live:
+                return None
+            if entry.state is ObjectState.PENDING:
+                return None
+            if entry.collection_pending:
+                assert entry.collection_plan is not None
+                return (deepcopy(entry.collection_plan)
+                        if entry.output_publication is not None else entry.collection_plan)
+            # Only an exact retired output attempt proves all old child
+            # and replica effects gone. Other LOST objects still need
+            # canonical integrity metadata; a previous epoch cannot waive it.
+            retired_output = (
+                entry.state is ObjectState.LOST
+                and (entry.object_id, entry.current_attempt) in self._retired_output_attempts
+            )
+            if retired_output and (
+                entry.output_publication is not None or entry.output_retirement_id is not None
+                or entry.inline_data is not None or entry.error is not None
+                or entry.canonical_stored_result is not None or entry.location_attempts
+                or entry.outgoing_contained_edges
+            ):
+                raise OutputOwnerRetirementConflictError("retired output regained result metadata before collection")
+            stored = (
+                entry.state is ObjectState.READY_STORED
+                or entry.state is ObjectState.LOST and not retired_output
+            )
+            if stored:
+                if not isinstance(entry.current_attempt, AttemptID):
+                    raise InvalidObjectTransitionError(
+                        f"stored object has no producer attempt: {object_id!r}"
+                    )
+                if canonical_size_bytes is None or canonical_checksum is None:
+                    raise InvalidObjectTransitionError(
+                        f"stored collection requires canonical metadata: {object_id!r}"
+                    )
+            elif canonical_size_bytes is not None or canonical_checksum is not None:
+>               raise InvalidObjectTransitionError(
+                    f"inline/error collection cannot carry stored metadata: {object_id!r}"
+                )
+E               miniray.ownership.InvalidObjectTransitionError: inline/error collection cannot carry stored metadata: ObjectID(task_id=TaskID('02020202020202020202020202020202'), return_index=0)
+
+src/miniray/ownership.py:3755: InvalidObjectTransitionError
+_ test_failed_admission_keeps_live_output_until_real_retirement_and_gc[foreign-failed] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x784e9acdc380>
+prerequisite = 'foreign-failed'
+
+    @pytest.mark.parametrize("prerequisite", ("budget", "foreign-failed"))
+    def test_failed_admission_keeps_live_output_until_real_retirement_and_gc(monkeypatch, prerequisite):
+        case = _Case()
+        core = case.core
+        if prerequisite == "budget":
+            current = core._recovery.task_record(case.pending.task_id)
+            current.retries_started = current.max_retries
+        before, record = case.metadata(), case.record()
+        renewal_calls = []
+        def failed_renewal(task, attempt):
+            assert not core._state_lock._is_owned()
+            renewal_calls.append((task, attempt))
+            return replace(case.result(task, attempt, ForeignLineageRenewalDisposition.FAILED),
+                           failure="foreign prerequisite definitively failed")
+        try:
+            with case.foreign(monkeypatch, failed_renewal):
+                with pytest.raises(SystemTaskError):
+                    case.start()
+            assert len(renewal_calls) == int(prerequisite == "foreign-failed")
+            assert case.metadata() == before and case.rpc_calls == []
+            case.assert_not_started(record)
+            # Ordinary admission reports the failure and retains the live LOST
+            # object. It has no targeted OPEN failure/error-publication latch.
+            # Explicit old-effect retirement uses the same real cleanup authority
+            # as a subsequent reconstruction; final reference release runs GC.
+            assert core._retire_lost_output_memberships(case.lost)
+            retired = core.owner_table.snapshot(case.lost)
+            assert retired.state is ObjectState.LOST and retired.error is None
+            assert retired.current_attempt == case.pending.spec.attempt_id
+            assert retired.local_tokens == frozenset(("outer0",))
+            assert retired.output_publication is None and retired.output_retirement_id is None
+            assert not retired.outgoing_contained_edges and retired.canonical_stored_result is None
+            assert not retired.locations
+            case.assert_not_started(record)
+            assert len(case.rpc_calls) == 3
+>           case.assert_collected()
+
+tests/unit/test_targeted_retirement_admission.py:324: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_targeted_retirement_admission.py:146: in assert_collected
+    core._reference_released(self.lost)
+src/miniray/core.py:4963: in _reference_released
+    plan = self._owner_table.begin_collection(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.ownership.ObjectOwnerTable object at 0x784e9ad16570>
+object_id = ObjectID(task_id=TaskID('02020202020202020202020202020202'), return_index=0)
+
+    def begin_collection(
+        self, object_id: ObjectID, *,
+        collection_id: str | None = None,
+        canonical_size_bytes: int | None = None,
+        canonical_checksum: str | None = None,
+    ) -> ObjectMetadataCollectionPlan | None:
+        """Atomically freeze all metadata needed by external GC work."""
+    
+        with self._lock:
+            entry = self._entry(object_id)
+            self._require_no_output_retirement_locked(entry)
+            if entry.is_live:
+                return None
+            if entry.state is ObjectState.PENDING:
+                return None
+            if entry.collection_pending:
+                assert entry.collection_plan is not None
+                return (deepcopy(entry.collection_plan)
+                        if entry.output_publication is not None else entry.collection_plan)
+            # Only an exact retired output attempt proves all old child
+            # and replica effects gone. Other LOST objects still need
+            # canonical integrity metadata; a previous epoch cannot waive it.
+            retired_output = (
+                entry.state is ObjectState.LOST
+                and (entry.object_id, entry.current_attempt) in self._retired_output_attempts
+            )
+            if retired_output and (
+                entry.output_publication is not None or entry.output_retirement_id is not None
+                or entry.inline_data is not None or entry.error is not None
+                or entry.canonical_stored_result is not None or entry.location_attempts
+                or entry.outgoing_contained_edges
+            ):
+                raise OutputOwnerRetirementConflictError("retired output regained result metadata before collection")
+            stored = (
+                entry.state is ObjectState.READY_STORED
+                or entry.state is ObjectState.LOST and not retired_output
+            )
+            if stored:
+                if not isinstance(entry.current_attempt, AttemptID):
+                    raise InvalidObjectTransitionError(
+                        f"stored object has no producer attempt: {object_id!r}"
+                    )
+                if canonical_size_bytes is None or canonical_checksum is None:
+                    raise InvalidObjectTransitionError(
+                        f"stored collection requires canonical metadata: {object_id!r}"
+                    )
+            elif canonical_size_bytes is not None or canonical_checksum is not None:
+>               raise InvalidObjectTransitionError(
+                    f"inline/error collection cannot carry stored metadata: {object_id!r}"
+                )
+E               miniray.ownership.InvalidObjectTransitionError: inline/error collection cannot carry stored metadata: ObjectID(task_id=TaskID('02020202020202020202020202020202'), return_index=0)
+
+src/miniray/ownership.py:3755: InvalidObjectTransitionError
+_ test_lost_retirement_ack_keeps_admission_fenced_until_exact_cleanup_replays __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x784e9b5f6d20>
+
+    def test_lost_retirement_ack_keeps_admission_fenced_until_exact_cleanup_replays(monkeypatch):
+        case = _Case()
+        core, record = case.core, case.record()
+        original = core._rpc
+        drops, statuses = [], []
+        original_member = core.owner_table.snapshot(case.lost).output_publication
+        def lose_drop_ack(address, handler, request):
+            result = original(address, handler, request)
+            if handler == "drop_object_replica":
+                drops.append(request)
+                statuses.append(result.status)
+                if len(drops) == 1:
+                    raise TimeoutError("physical retirement applied; ACK lost")
+            return result
+        monkeypatch.setattr(core, "_rpc", lose_drop_ack)
+        try:
+            assert case.start() is None
+            unresolved = core.owner_table.snapshot(case.lost)
+            assert unresolved.state is ObjectState.LOST and unresolved.error is None
+            assert unresolved.output_publication == original_member
+            assert unresolved.output_retirement_id is not None
+            plan = core._output_retirement_work[case.lost]["plan"]
+            assert plan.retirement_id == unresolved.output_retirement_id
+            assert len(core._output_retirement_work[case.lost]["child"]) == 2
+            assert not core._output_retirement_work[case.lost]["replica"]
+            case.fixture.assert_no_pins_or_bytes()
+            case.assert_not_started(record)
+            calls = tuple(case.rpc_calls)
+            with pytest.raises(TimeoutError, match="retirement did not finish"):
+                core.get(case.ref, timeout=0)
+            assert tuple(case.rpc_calls) == calls
+            case.assert_not_started(record)
+            assert core._retire_lost_output_memberships(case.lost)
+            receipt = core.owner_table.output_publication_retirement_receipt(plan)
+            assert receipt.plan == plan
+            assert drops == [drops[0]] * 2
+            assert statuses == [protocol.DropObjectReplicaStatus.DROPPED,
+                                protocol.DropObjectReplicaStatus.ALREADY_DROPPED]
+            assert sum(handler == "release_contained_reference" for handler, _ in case.rpc_calls) == 2
+            assert len(case.rpc_calls) == 4
+            case.assert_not_started(record)
+>           case.assert_collected()
+
+tests/unit/test_targeted_retirement_admission.py:370: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_targeted_retirement_admission.py:146: in assert_collected
+    core._reference_released(self.lost)
+src/miniray/core.py:4963: in _reference_released
+    plan = self._owner_table.begin_collection(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.ownership.ObjectOwnerTable object at 0x784e9a10acf0>
+object_id = ObjectID(task_id=TaskID('02020202020202020202020202020202'), return_index=0)
+
+    def begin_collection(
+        self, object_id: ObjectID, *,
+        collection_id: str | None = None,
+        canonical_size_bytes: int | None = None,
+        canonical_checksum: str | None = None,
+    ) -> ObjectMetadataCollectionPlan | None:
+        """Atomically freeze all metadata needed by external GC work."""
+    
+        with self._lock:
+            entry = self._entry(object_id)
+            self._require_no_output_retirement_locked(entry)
+            if entry.is_live:
+                return None
+            if entry.state is ObjectState.PENDING:
+                return None
+            if entry.collection_pending:
+                assert entry.collection_plan is not None
+                return (deepcopy(entry.collection_plan)
+                        if entry.output_publication is not None else entry.collection_plan)
+            # Only an exact retired output attempt proves all old child
+            # and replica effects gone. Other LOST objects still need
+            # canonical integrity metadata; a previous epoch cannot waive it.
+            retired_output = (
+                entry.state is ObjectState.LOST
+                and (entry.object_id, entry.current_attempt) in self._retired_output_attempts
+            )
+            if retired_output and (
+                entry.output_publication is not None or entry.output_retirement_id is not None
+                or entry.inline_data is not None or entry.error is not None
+                or entry.canonical_stored_result is not None or entry.location_attempts
+                or entry.outgoing_contained_edges
+            ):
+                raise OutputOwnerRetirementConflictError("retired output regained result metadata before collection")
+            stored = (
+                entry.state is ObjectState.READY_STORED
+                or entry.state is ObjectState.LOST and not retired_output
+            )
+            if stored:
+                if not isinstance(entry.current_attempt, AttemptID):
+                    raise InvalidObjectTransitionError(
+                        f"stored object has no producer attempt: {object_id!r}"
+                    )
+                if canonical_size_bytes is None or canonical_checksum is None:
+                    raise InvalidObjectTransitionError(
+                        f"stored collection requires canonical metadata: {object_id!r}"
+                    )
+            elif canonical_size_bytes is not None or canonical_checksum is not None:
+>               raise InvalidObjectTransitionError(
+                    f"inline/error collection cannot carry stored metadata: {object_id!r}"
+                )
+E               miniray.ownership.InvalidObjectTransitionError: inline/error collection cannot carry stored metadata: ObjectID(task_id=TaskID('02020202020202020202020202020202'), return_index=0)
+
+src/miniray/ownership.py:3755: InvalidObjectTransitionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_targeted_retirement_admission.py::test_failed_admission_keeps_live_output_until_real_retirement_and_gc[budget]
+FAILED tests/unit/test_targeted_retirement_admission.py::test_failed_admission_keeps_live_output_until_real_retirement_and_gc[foreign-failed]
+FAILED tests/unit/test_targeted_retirement_admission.py::test_lost_retirement_ack_keeps_admission_fenced_until_exact_cleanup_replays
+3 failed, 5 passed in 4.71s

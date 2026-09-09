@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     )
     from .output_publication_journal import (
         OutputPublicationAdoptionProof, OutputPublicationRollbackTombstone,
-        OutputPublicationSlotCleanupProof,
     )
 
 

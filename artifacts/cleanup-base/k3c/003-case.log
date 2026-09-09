@@ -1,0 +1,186 @@
+........F.FF...F                                                         [100%]
+=================================== FAILURES ===================================
+__ test_push_replay_consumes_death_before_rpc_and_uses_new_attempt_and_lease ___
+
+    def test_push_replay_consumes_death_before_rpc_and_uses_new_attempt_and_lease() -> None:
+        core = _core()
+        pending = _pending(core, max_retries=1)
+        dead = NodeID.random()
+        old_lease = LeaseID.random()
+        worker = WorkerID.random()
+        grant = protocol.GrantWorkerLease(
+            old_lease, pending.spec.task_id, pending.spec.attempt_id, dead, worker,
+            ("127.0.0.1", 28102), AllocationToken("old-dead-grant"),
+        )
+        state = _PushRequestState(
+            protocol.PushTask(old_lease, worker, pending.spec), grant,
+            ("127.0.0.1", 28103), grant.worker_address, round=1, ambiguous=True,
+        )
+        core._mark_protocol_unresolved(
+            pending, "push_replay_wait", target_node_id=dead
+        )
+        death = _death(dead, 1)
+        core.handle_node_death(death, 1, True)
+        core._classify_node_death(_NodeDeathObserved(death, 1))
+    
+        core._push_task_rpc = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("dead Worker RPC must be fenced")
+        )
+        assert core._replay_push(pending, state) is False
+        retried = _next_pending(core)
+        assert retried.object_id == pending.object_id
+        assert retried.spec.task_id == pending.spec.task_id
+        assert retried.spec.attempt_id == pending.spec.attempt_id.next()
+        assert pending.object_id not in core._protocol_unresolved
+        assert pending.object_id not in core._node_death_attempts
+    
+        leases = []
+    
+        def rpc(_address, handler, request):
+            assert handler == "request_worker_lease"
+            leases.append(request.lease_id)
+            return protocol.RejectWorkerLease(
+                request.lease_id, request.task_id, request.attempt_id,
+                protocol.LeaseRejectReason.INFEASIBLE, "stop after lease identity",
+                request.scheduling_key,
+            )
+    
+        core._rpc = rpc
+        assert core._execute(retried, retried.spec)
+>       assert len(leases) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/unit/test_core_node_death_recovery.py:516: AssertionError
+________________ test_new_lease_uses_one_migrated_home_snapshot ________________
+
+    def test_new_lease_uses_one_migrated_home_snapshot() -> None:
+        core = _core()
+        pending = _pending(core, max_retries=0)
+        migrated = _HomeRoute(
+            NodeID.random(), ("127.0.0.1", 28105), 2
+        )
+        core._home_route = migrated
+        requests = []
+    
+        def rpc(address, handler, request):
+            assert address == migrated.address
+            assert handler == "request_worker_lease"
+            requests.append(request)
+            return protocol.RejectWorkerLease(
+                request.lease_id, request.task_id, request.attempt_id,
+                protocol.LeaseRejectReason.INFEASIBLE, "done",
+                request.scheduling_key,
+            )
+    
+        core._rpc = rpc
+        assert core._execute(pending, pending.spec)
+>       assert len(requests) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/unit/test_core_node_death_recovery.py:657: AssertionError
+_____ test_known_grant_cancel_keeps_frozen_requester_after_home_migration ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74b0984053d0>
+
+    def test_known_grant_cancel_keeps_frozen_requester_after_home_migration(monkeypatch) -> None:
+        """One tiny Node: real Grant/Cancel/inventory ACK, no input owners."""
+>       from tests.unit.test_cancelled_grant_inventory import _node
+
+tests/unit/test_core_node_death_recovery.py:664: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../mini-ray-cleanup-runtime/packages/_pytest/assertion/rewrite.py:186: in exec_module
+    exec(co, module.__dict__)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Pure cancellation inventory wire and real Node reducer contracts.
+    
+    Safety: two threadless Nodes, two 1 KiB stores and two tiny dependency values.
+    At most six synchronous source pin/chunk/release calls create one actual grant.
+    No Core, GCS, user function, socket, process, thread, timer, wait or sleep runs;
+    runtime tripwires make accidental infrastructure use fail immediately. Worker
+    loss uses the real local reclaim reducer with a passive process-state fake.
+    """
+    
+    from copy import deepcopy
+    from dataclasses import fields, replace
+    import multiprocessing.process
+    import pickle
+    import socket
+    import subprocess
+    import threading
+    import time
+    from types import SimpleNamespace
+    
+    import pytest
+    
+    from miniray import node as node_module, protocol
+    from miniray.ids import (
+        AttemptID, LeaseID, NodeID, ObjectID, PlacementGroupID, TaskID, WorkerID,
+    )
+    from miniray.node import NodeServer
+    from miniray.object_manager import ObjectManager
+    from miniray.object_store import ObjectStore
+    from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
+>   from miniray.task_outputs import (
+        TargetExecutionKey, TargetOutputManifest, TaskOutputManifest,
+    )
+E   ImportError: cannot import name 'TargetExecutionKey' from 'miniray.task_outputs' (/dev/shm/mini-ray-cleanup-candidates/base-k3c-02/src/miniray/task_outputs.py)
+
+tests/unit/test_cancelled_grant_inventory.py:30: ImportError
+________ test_survivor_ambiguous_lease_cancels_before_terminal_pg_loss _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x74b09838aed0>
+
+    def test_survivor_ambiguous_lease_cancels_before_terminal_pg_loss(monkeypatch) -> None:
+        """Unknown Grant becomes a real no-replica cancellation before PG error."""
+>       from tests.unit.test_cancelled_grant_inventory import _node
+
+tests/unit/test_core_node_death_recovery.py:806: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../mini-ray-cleanup-runtime/packages/_pytest/assertion/rewrite.py:186: in exec_module
+    exec(co, module.__dict__)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Pure cancellation inventory wire and real Node reducer contracts.
+    
+    Safety: two threadless Nodes, two 1 KiB stores and two tiny dependency values.
+    At most six synchronous source pin/chunk/release calls create one actual grant.
+    No Core, GCS, user function, socket, process, thread, timer, wait or sleep runs;
+    runtime tripwires make accidental infrastructure use fail immediately. Worker
+    loss uses the real local reclaim reducer with a passive process-state fake.
+    """
+    
+    from copy import deepcopy
+    from dataclasses import fields, replace
+    import multiprocessing.process
+    import pickle
+    import socket
+    import subprocess
+    import threading
+    import time
+    from types import SimpleNamespace
+    
+    import pytest
+    
+    from miniray import node as node_module, protocol
+    from miniray.ids import (
+        AttemptID, LeaseID, NodeID, ObjectID, PlacementGroupID, TaskID, WorkerID,
+    )
+    from miniray.node import NodeServer
+    from miniray.object_manager import ObjectManager
+    from miniray.object_store import ObjectStore
+    from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
+>   from miniray.task_outputs import (
+        TargetExecutionKey, TargetOutputManifest, TaskOutputManifest,
+    )
+E   ImportError: cannot import name 'TargetExecutionKey' from 'miniray.task_outputs' (/dev/shm/mini-ray-cleanup-candidates/base-k3c-02/src/miniray/task_outputs.py)
+
+tests/unit/test_cancelled_grant_inventory.py:30: ImportError
+=========================== short test summary info ============================
+FAILED tests/unit/test_core_node_death_recovery.py::test_push_replay_consumes_death_before_rpc_and_uses_new_attempt_and_lease
+FAILED tests/unit/test_core_node_death_recovery.py::test_new_lease_uses_one_migrated_home_snapshot
+FAILED tests/unit/test_core_node_death_recovery.py::test_known_grant_cancel_keeps_frozen_requester_after_home_migration
+FAILED tests/unit/test_core_node_death_recovery.py::test_survivor_ambiguous_lease_cancels_before_terminal_pg_loss
+4 failed, 12 passed in 1.97s

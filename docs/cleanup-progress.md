@@ -33,3 +33,5 @@ K3a：objectownership8、Workerinline8/materialized7/stored25、foreignlineage6/
 K3b：contained-GC5/core-task-retry6/lease-handshake6通过；local/foreign迟到副本原两个真实smoke均通过（13.43s/18.62s），保旧epoch准确Drop与新重建bytes/hold不被晚消息破坏。
 
 K3central：6旧central/graph文件迁B26case全过，collection-policy11case通过，2纯全局图文件按B/E差异映射退休；E待迁清单保留而非忘记。single-owner-model15原函数转单输出25case通过。
+
+K3c：新Core publication13/latecleanup5/NodePG11/surviving4/coretaskretry6/ownerdefer3/journal23通过，最后2个无用SRC退休保持精确tombstone。NodeDeath12过4坏夹具、递归5过1缺descriptor、foreign4过4rawhold、retirement5过3漏loss route、PG4仅已set Event tripwire均已定位为测试接线待复验；未降校验。

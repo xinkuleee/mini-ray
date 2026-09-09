@@ -1,0 +1,32 @@
+{
+  "path": "tests/unit/test_targeted_reconstruction_first_ack.py",
+  "action": "retired_after_existing_current_gate_pass",
+  "removed_by_this_audit": true,
+  "mapping": [
+    {
+      "old": "test_targeted_terminal_error_before_first_ack_preserves_started_and_healthy_slot",
+      "line": 449,
+      "retained_replacement": "tests/unit/test_owner_reconstruction_completion_race.py::test_application_error_before_first_ack_remains_task_error_not_authority_rejection",
+      "reason": "Retain genuinequeuedSTART/historyACK and previewnoeffect; healthy sibling and targeted coordinator are explicitly retired"
+    },
+    {
+      "old": "test_targeted_success_before_outcome_construction_keeps_real_started_receipt",
+      "line": 476,
+      "retained_replacement": "tests/unit/test_owner_reconstruction_completion_race.py::test_success_before_first_reconstruction_ack_still_returns_cached_started",
+      "reason": "Retain genuinequeuedSTART/historyACK and previewnoeffect; healthy sibling and targeted coordinator are explicitly retired"
+    },
+    {
+      "old": "test_uncommitted_targeted_preview_is_not_a_started_ack",
+      "line": 502,
+      "retained_replacement": "tests/unit/test_owner_reconstruction_completion_race.py::test_uncommitted_preview_cannot_use_old_terminal_recovery_as_start_receipt",
+      "reason": "Retain genuinequeuedSTART/historyACK and previewnoeffect; healthy sibling and targeted coordinator are explicitly retired"
+    },
+    {
+      "old": "test_new_lost_slot_is_queued_not_joined_to_another_started_target",
+      "line": 538,
+      "retained_replacement": null,
+      "reason": "Entire newlostsibling/targetOPENqueue contract depends on multiple returns and targeted reconstruction; no requiredsingleoutput analogue"
+    }
+  ],
+  "evidence": "artifacts/cleanup-base/k2a/000-pure.log includes owner_reconstruction_completion_race; same runtime owner/recovery logic retained"
+}

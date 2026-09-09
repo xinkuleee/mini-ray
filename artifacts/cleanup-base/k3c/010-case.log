@@ -1,0 +1,310 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal[known-complete] _
+
+known = True
+
+    @pytest.mark.parametrize("known", (True, False), ids=("known-complete", "completion-unknown"))
+    def test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal(known):
+        core, pending, ref, key = _pg_submission()
+        try:
+            executor, child_id = _id(WorkerID, 73), ObjectID.for_task(_id(TaskID, 74))
+            transfer = PreparedContainedTransfer(
+                child_id, executor, ("child.invalid", 1234), OwnedContainedSource(executor),
+                ContainedReferenceHold(ref.object_id, executor, "pg-loss-child"),
+                ContainedReferenceHold(ref.object_id, core.worker_id, "pg-loss-child"),
+            )
+            identity = OutputPublicationID(_id(LeaseID, 75), pending.execution)
+            manifest = OutputPublicationManifest.create(OutputPublicationHeader(
+                identity, core.job_id, executor, core.worker_id,
+                OutputPublicationNodeIncarnation(key.node_id, 7101, 1),
+            ), (OutputSlotManifest(ref.object_id, protocol.ResultStorage.INLINE, 5,
+                                   hashlib.sha256(b"value").hexdigest(), (transfer,)),))
+            assert core.register_output_handoff(wire.RegisterOutputHandoff(manifest)).accepted
+            complete = OutputPublicationCompleteWitness.for_manifest(manifest)
+            if known:
+                assert core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(complete)).accepted
+            child = ObjectOwnerTable()
+            child.register(child_id, local_token="source")
+            child.publish_inline(child_id, None, b"child")
+            child.prepare_stored_contained_reference(transfer, authority_worker_id=executor)
+            child.promote_stored_contained_reference(transfer, authority_worker_id=executor)
+            calls = []
+            def release(address, handler, request):
+                assert address == transfer.contained_owner_address and handler == "release_contained_reference"
+                assert not core._state_lock._is_owned() and len(calls) < 3
+                calls.append(request)
+                changed = child.release_contained_reference(request.object_id, request.hold)
+                if len(calls) == 1:
+                    raise TimeoutError("actual child release ACK lost before PG loss")
+                return protocol.ReleaseContainedReferenceReply(request.object_id, request.owner_worker_id, request.hold, True, changed)
+            core._borrow_rpc = release
+            capacity = ResourceVector({"CPU": 1})
+            live = protocol.NodeInfo(key.node_id, 7101, 1, ("publisher.invalid", 1), capacity, capacity)
+            core._membership_epoch = 1
+            core._installed_cluster_snapshot = protocol.InstallClusterSnapshot(1, "live-pg", (live,))
+            death = protocol.NodeDeathRecord("pg-publisher-exit", key.node_id, 7101, 1, 2, 7,
+                                             protocol.NodeDeathReason.PROCESS_EXIT, "explicit member fact")
+            obligation = _OutputNodeLossObligation(identity, death)
+            before_owner = core.owner_table.snapshot(ref.object_id)
+            before_record = replace(core._recovery.task_record(pending.task_id))
+            assert not core._execute(pending, pending.spec, output_node_loss=obligation)
+            assert calls[0].hold == transfer.final_hold
+            assert child.contained_release_was_seen(child_id, transfer.final_hold)
+            assert core.owner_table.snapshot(ref.object_id) == before_owner
+            assert core._recovery.task_record(pending.task_id) == before_record
+            assert not core._finish_pending_task(pending)
+            marker = core._protocol_unresolved[pending.task_key]
+            delayed = _take_delayed(core)
+            assert delayed.ready.output_node_loss == marker.obligation == replace(obligation, round=1)
+            installed = protocol.InstallClusterSnapshot(2, "pg-node-gone", ())
+            core.handle_node_death(death, installed)
+            observed = core._submissions.get_nowait()
+            core._submissions.task_done()
+            assert observed == _NodeDeathObserved(death, installed.membership_epoch)
+            assert core._placement_group_phase_for_pending(pending) is protocol.PlacementGroupPhaseStatus.LOST
+            assert core._protocol_unresolved[pending.task_key] == marker
+            assert core.owner_table.snapshot(ref.object_id) == before_owner
+            assert core._recovery.task_record(pending.task_id) == before_record
+            _dispatch_once(core, delayed.ready)
+            assert calls[0] == calls[1] and len(calls) == 3
+            assert calls[2].hold == transfer.provisional_hold
+            assert not child.snapshot(child_id).contained_holds
+            assert child.snapshot(child_id).local_tokens == frozenset({"source"})
+            assert not core._protocol_unresolved and not core._task_finish_barriers
+            assert core._accepted_task_count == 0 and pending.task_key in core._finished_tasks
+            assert identity in core._output_loss_completed and not core._output_node_cleanup
+            record = core._recovery.task_record(pending.task_id)
+            assert record.state is (TaskState.SUCCEEDED if known else TaskState.SYSTEM_FAILED)
+            assert record.current_attempt == pending.spec.attempt_id and record.retries_started == 0
+            assert record.retries_remaining == 3
+            after = core.owner_table.snapshot(ref.object_id)
+            assert after.state is (ObjectState.LOST if known else ObjectState.ERROR)
+            assert after.inline_data is None and not after.locations
+            assert after.current_attempt == pending.spec.attempt_id
+            if not known:
+                assert isinstance(after.error, PlacementGroupLostError)
+            assert core._objects[ref.object_id].event.is_set()
+            assert core._drive_output_node_loss(pending, obligation) and len(calls) == 3
+        finally:
+>           ref.close()
+
+tests/unit/test_publication_pg_loss_paths.py:195: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/core.py:1005: in close
+    done.wait()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = (<threading.Event at 0x78d7e7552e40: set>,), kwargs = {}
+
+    def forbidden(*args, **kwargs):
+>       pytest.fail("pure PG continuation attempted runtime or unmodelled work")
+E       Failed: pure PG continuation attempted runtime or unmodelled work
+
+tests/unit/test_publication_pg_loss_paths.py:52: Failed
+_ test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal[completion-unknown] _
+
+known = False
+
+    @pytest.mark.parametrize("known", (True, False), ids=("known-complete", "completion-unknown"))
+    def test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal(known):
+        core, pending, ref, key = _pg_submission()
+        try:
+            executor, child_id = _id(WorkerID, 73), ObjectID.for_task(_id(TaskID, 74))
+            transfer = PreparedContainedTransfer(
+                child_id, executor, ("child.invalid", 1234), OwnedContainedSource(executor),
+                ContainedReferenceHold(ref.object_id, executor, "pg-loss-child"),
+                ContainedReferenceHold(ref.object_id, core.worker_id, "pg-loss-child"),
+            )
+            identity = OutputPublicationID(_id(LeaseID, 75), pending.execution)
+            manifest = OutputPublicationManifest.create(OutputPublicationHeader(
+                identity, core.job_id, executor, core.worker_id,
+                OutputPublicationNodeIncarnation(key.node_id, 7101, 1),
+            ), (OutputSlotManifest(ref.object_id, protocol.ResultStorage.INLINE, 5,
+                                   hashlib.sha256(b"value").hexdigest(), (transfer,)),))
+            assert core.register_output_handoff(wire.RegisterOutputHandoff(manifest)).accepted
+            complete = OutputPublicationCompleteWitness.for_manifest(manifest)
+            if known:
+                assert core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(complete)).accepted
+            child = ObjectOwnerTable()
+            child.register(child_id, local_token="source")
+            child.publish_inline(child_id, None, b"child")
+            child.prepare_stored_contained_reference(transfer, authority_worker_id=executor)
+            child.promote_stored_contained_reference(transfer, authority_worker_id=executor)
+            calls = []
+            def release(address, handler, request):
+                assert address == transfer.contained_owner_address and handler == "release_contained_reference"
+                assert not core._state_lock._is_owned() and len(calls) < 3
+                calls.append(request)
+                changed = child.release_contained_reference(request.object_id, request.hold)
+                if len(calls) == 1:
+                    raise TimeoutError("actual child release ACK lost before PG loss")
+                return protocol.ReleaseContainedReferenceReply(request.object_id, request.owner_worker_id, request.hold, True, changed)
+            core._borrow_rpc = release
+            capacity = ResourceVector({"CPU": 1})
+            live = protocol.NodeInfo(key.node_id, 7101, 1, ("publisher.invalid", 1), capacity, capacity)
+            core._membership_epoch = 1
+            core._installed_cluster_snapshot = protocol.InstallClusterSnapshot(1, "live-pg", (live,))
+            death = protocol.NodeDeathRecord("pg-publisher-exit", key.node_id, 7101, 1, 2, 7,
+                                             protocol.NodeDeathReason.PROCESS_EXIT, "explicit member fact")
+            obligation = _OutputNodeLossObligation(identity, death)
+            before_owner = core.owner_table.snapshot(ref.object_id)
+            before_record = replace(core._recovery.task_record(pending.task_id))
+            assert not core._execute(pending, pending.spec, output_node_loss=obligation)
+            assert calls[0].hold == transfer.final_hold
+            assert child.contained_release_was_seen(child_id, transfer.final_hold)
+            assert core.owner_table.snapshot(ref.object_id) == before_owner
+            assert core._recovery.task_record(pending.task_id) == before_record
+            assert not core._finish_pending_task(pending)
+            marker = core._protocol_unresolved[pending.task_key]
+            delayed = _take_delayed(core)
+            assert delayed.ready.output_node_loss == marker.obligation == replace(obligation, round=1)
+            installed = protocol.InstallClusterSnapshot(2, "pg-node-gone", ())
+            core.handle_node_death(death, installed)
+            observed = core._submissions.get_nowait()
+            core._submissions.task_done()
+            assert observed == _NodeDeathObserved(death, installed.membership_epoch)
+            assert core._placement_group_phase_for_pending(pending) is protocol.PlacementGroupPhaseStatus.LOST
+            assert core._protocol_unresolved[pending.task_key] == marker
+            assert core.owner_table.snapshot(ref.object_id) == before_owner
+            assert core._recovery.task_record(pending.task_id) == before_record
+            _dispatch_once(core, delayed.ready)
+            assert calls[0] == calls[1] and len(calls) == 3
+            assert calls[2].hold == transfer.provisional_hold
+            assert not child.snapshot(child_id).contained_holds
+            assert child.snapshot(child_id).local_tokens == frozenset({"source"})
+            assert not core._protocol_unresolved and not core._task_finish_barriers
+            assert core._accepted_task_count == 0 and pending.task_key in core._finished_tasks
+            assert identity in core._output_loss_completed and not core._output_node_cleanup
+            record = core._recovery.task_record(pending.task_id)
+            assert record.state is (TaskState.SUCCEEDED if known else TaskState.SYSTEM_FAILED)
+            assert record.current_attempt == pending.spec.attempt_id and record.retries_started == 0
+            assert record.retries_remaining == 3
+            after = core.owner_table.snapshot(ref.object_id)
+            assert after.state is (ObjectState.LOST if known else ObjectState.ERROR)
+            assert after.inline_data is None and not after.locations
+            assert after.current_attempt == pending.spec.attempt_id
+            if not known:
+                assert isinstance(after.error, PlacementGroupLostError)
+            assert core._objects[ref.object_id].event.is_set()
+            assert core._drive_output_node_loss(pending, obligation) and len(calls) == 3
+        finally:
+>           ref.close()
+
+tests/unit/test_publication_pg_loss_paths.py:195: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/core.py:1005: in close
+    done.wait()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = (<threading.Event at 0x78d7e7565190: set>,), kwargs = {}
+
+    def forbidden(*args, **kwargs):
+>       pytest.fail("pure PG continuation attempted runtime or unmodelled work")
+E       Failed: pure PG continuation attempted runtime or unmodelled work
+
+tests/unit/test_publication_pg_loss_paths.py:52: Failed
+_ test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority[fresh-pg-still-rejected] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78d7e7560530>
+continuation = False
+
+    @pytest.mark.parametrize("continuation", (False, True), ids=("fresh-pg-still-rejected", "deferred-system-routing-only"))
+    def test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority(monkeypatch, continuation):
+        core, pending, ref, key = _pg_submission()
+        try:
+            failure = _DeferredSystemFailure(SystemTaskError("already-known failure"), round=1) if continuation else None
+            if continuation:
+                core._mark_protocol_unresolved(pending, "system_failure_cleanup_wait", failure)
+            core._placement_group_states[(key.placement_group_id, key.attempt)] = protocol.PlacementGroupPhaseStatus.LOST
+            retry = core._retry_system_failure
+            routed = []
+            def observe(seen, error, *, deferred=None):
+                assert continuation and not routed and seen is pending and deferred is failure
+                assert error is failure.error and core._protocol_unresolved[pending.task_key].obligation is failure
+                routed.append(deferred)
+                return retry(seen, error, deferred=deferred)
+            monkeypatch.setattr(core, "_retry_system_failure", observe)
+            if not continuation:
+                monkeypatch.setattr(core, "_execute", lambda *_a, **_k: pytest.fail("fresh LOST task executed"))
+            assert not core._has_late_replica_cleanup_locked()
+            _dispatch_once(core, _ReadyTask(pending, pending.spec, system_failure=failure))
+            assert routed == ([failure] if continuation else [])
+            record = core._recovery.task_record(pending.task_id)
+            assert record.state is TaskState.SYSTEM_FAILED and isinstance(record.last_error, PlacementGroupLostError)
+            assert record.current_attempt == pending.spec.attempt_id and record.retries_started == 0 and record.retries_remaining == 3
+            assert not core._protocol_unresolved and not core._task_finish_barriers and core._accepted_task_count == 0
+            after = core.owner_table.snapshot(ref.object_id)
+            assert after.state is ObjectState.ERROR and isinstance(after.error, PlacementGroupLostError)
+            assert after.current_attempt == pending.spec.attempt_id and core._objects[ref.object_id].event.is_set()
+        finally:
+>           ref.close()
+
+tests/unit/test_publication_pg_loss_paths.py:228: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/core.py:1005: in close
+    done.wait()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = (<threading.Event at 0x78d7e7563f50: set>,), kwargs = {}
+
+    def forbidden(*args, **kwargs):
+>       pytest.fail("pure PG continuation attempted runtime or unmodelled work")
+E       Failed: pure PG continuation attempted runtime or unmodelled work
+
+tests/unit/test_publication_pg_loss_paths.py:52: Failed
+_ test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority[deferred-system-routing-only] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78d7e7562ab0>
+continuation = True
+
+    @pytest.mark.parametrize("continuation", (False, True), ids=("fresh-pg-still-rejected", "deferred-system-routing-only"))
+    def test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority(monkeypatch, continuation):
+        core, pending, ref, key = _pg_submission()
+        try:
+            failure = _DeferredSystemFailure(SystemTaskError("already-known failure"), round=1) if continuation else None
+            if continuation:
+                core._mark_protocol_unresolved(pending, "system_failure_cleanup_wait", failure)
+            core._placement_group_states[(key.placement_group_id, key.attempt)] = protocol.PlacementGroupPhaseStatus.LOST
+            retry = core._retry_system_failure
+            routed = []
+            def observe(seen, error, *, deferred=None):
+                assert continuation and not routed and seen is pending and deferred is failure
+                assert error is failure.error and core._protocol_unresolved[pending.task_key].obligation is failure
+                routed.append(deferred)
+                return retry(seen, error, deferred=deferred)
+            monkeypatch.setattr(core, "_retry_system_failure", observe)
+            if not continuation:
+                monkeypatch.setattr(core, "_execute", lambda *_a, **_k: pytest.fail("fresh LOST task executed"))
+            assert not core._has_late_replica_cleanup_locked()
+            _dispatch_once(core, _ReadyTask(pending, pending.spec, system_failure=failure))
+            assert routed == ([failure] if continuation else [])
+            record = core._recovery.task_record(pending.task_id)
+            assert record.state is TaskState.SYSTEM_FAILED and isinstance(record.last_error, PlacementGroupLostError)
+            assert record.current_attempt == pending.spec.attempt_id and record.retries_started == 0 and record.retries_remaining == 3
+            assert not core._protocol_unresolved and not core._task_finish_barriers and core._accepted_task_count == 0
+            after = core.owner_table.snapshot(ref.object_id)
+            assert after.state is ObjectState.ERROR and isinstance(after.error, PlacementGroupLostError)
+            assert after.current_attempt == pending.spec.attempt_id and core._objects[ref.object_id].event.is_set()
+        finally:
+>           ref.close()
+
+tests/unit/test_publication_pg_loss_paths.py:228: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/core.py:1005: in close
+    done.wait()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = (<threading.Event at 0x78d7e755e900: set>,), kwargs = {}
+
+    def forbidden(*args, **kwargs):
+>       pytest.fail("pure PG continuation attempted runtime or unmodelled work")
+E       Failed: pure PG continuation attempted runtime or unmodelled work
+
+tests/unit/test_publication_pg_loss_paths.py:52: Failed
+=========================== short test summary info ============================
+FAILED tests/unit/test_publication_pg_loss_paths.py::test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal[known-complete]
+FAILED tests/unit/test_publication_pg_loss_paths.py::test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal[completion-unknown]
+FAILED tests/unit/test_publication_pg_loss_paths.py::test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority[fresh-pg-still-rejected]
+FAILED tests/unit/test_publication_pg_loss_paths.py::test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority[deferred-system-routing-only]
+4 failed in 3.99s

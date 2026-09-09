@@ -25,7 +25,7 @@ from miniray.output_publication import (
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
     OutputPublicationNodeIncarnation, OutputSlotManifest,
 )
-from miniray.output_recovery import OutputRecoveryResolution
+from miniray.output_handoff import NodeLostOutputResolution
 from miniray.ownership import ObjectState, OutputOwnerPublicationPlan
 from miniray.resources import ResourceVector
 from miniray.task_outputs import TaskExecutionKey
@@ -87,9 +87,9 @@ def _retired_core():
         "metadata-publisher-exit", publisher, 1801, 1, 1, 1,
         protocol.NodeDeathReason.PROCESS_EXIT, "previous publication cleanup",
     )
-    resolution = OutputRecoveryResolution(
-        identity, manifest.manifest_digest, publisher_death, core.worker_id,
-        "metadata-only-drop-resolution", (), complete,
+    resolution = NodeLostOutputResolution(
+        identity, manifest.manifest_digest, core.worker_id, publisher_death,
+        complete=complete, keep=False,
     )
     assert core.owner_table.resolve_output_node_loss(manifest, resolution)
     assert core.owner_table.snapshot(output).state is ObjectState.LOST

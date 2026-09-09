@@ -1,0 +1,208 @@
+...FFFF.                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_foreign_reconstruction_failures_have_nondeath_typed_mapping[PUT_OBJECT-UnreconstructableObjectError] _
+
+failure = <OwnedObjectReconstructionFailure.PUT_OBJECT: 'PUT_OBJECT'>
+error_type = <class 'miniray.errors.UnreconstructableObjectError'>
+
+    @pytest.mark.parametrize(
+        ("failure", "error_type"),
+        (
+            (protocol.OwnedObjectReconstructionFailure.PUT_OBJECT,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RETRY_EXHAUSTED,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RELEASED_CREDENTIAL,
+             BorrowedObjectUnavailableError),
+            (protocol.OwnedObjectReconstructionFailure.AUTHORITY_REJECTED,
+             SystemTaskError),
+        ),
+    )
+    @pytest.mark.unit
+    def test_foreign_reconstruction_failures_have_nondeath_typed_mapping(
+        failure: protocol.OwnedObjectReconstructionFailure,
+        error_type: type[BaseException],
+    ) -> None:
+        core = object.__new__(CoreWorker)
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 0)
+        owner = WorkerID.random()
+        request = protocol.RequestOwnedObjectReconstruction(
+            ObjectID.for_task(task), owner, WorkerID.random(),
+>           protocol.ContainedTransferSource("transfer"), "borrow",
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            AttemptID(task, 0),
+        )
+
+tests/unit/test_foreign_reconstruction_runtime.py:511: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:4: in __init__
+    ???
+src/miniray/protocol.py:1581: in __post_init__
+    hold = _normalize_contained_reference_hold(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 'transfer', operation = 'contained transfer source'
+
+    def _normalize_contained_reference_hold(value: object, operation: str) -> IncomingContainedReferenceHold:
+        if type(value) is not ContainedReferenceHold:
+>           raise ProtocolError('{} requires a complete ContainedReferenceHold'.format(operation))
+E           miniray.errors.ProtocolError: contained transfer source requires a complete ContainedReferenceHold
+
+src/miniray/protocol.py:116: ProtocolError
+_ test_foreign_reconstruction_failures_have_nondeath_typed_mapping[RETRY_EXHAUSTED-UnreconstructableObjectError] _
+
+failure = <OwnedObjectReconstructionFailure.RETRY_EXHAUSTED: 'RETRY_EXHAUSTED'>
+error_type = <class 'miniray.errors.UnreconstructableObjectError'>
+
+    @pytest.mark.parametrize(
+        ("failure", "error_type"),
+        (
+            (protocol.OwnedObjectReconstructionFailure.PUT_OBJECT,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RETRY_EXHAUSTED,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RELEASED_CREDENTIAL,
+             BorrowedObjectUnavailableError),
+            (protocol.OwnedObjectReconstructionFailure.AUTHORITY_REJECTED,
+             SystemTaskError),
+        ),
+    )
+    @pytest.mark.unit
+    def test_foreign_reconstruction_failures_have_nondeath_typed_mapping(
+        failure: protocol.OwnedObjectReconstructionFailure,
+        error_type: type[BaseException],
+    ) -> None:
+        core = object.__new__(CoreWorker)
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 0)
+        owner = WorkerID.random()
+        request = protocol.RequestOwnedObjectReconstruction(
+            ObjectID.for_task(task), owner, WorkerID.random(),
+>           protocol.ContainedTransferSource("transfer"), "borrow",
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            AttemptID(task, 0),
+        )
+
+tests/unit/test_foreign_reconstruction_runtime.py:511: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:4: in __init__
+    ???
+src/miniray/protocol.py:1581: in __post_init__
+    hold = _normalize_contained_reference_hold(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 'transfer', operation = 'contained transfer source'
+
+    def _normalize_contained_reference_hold(value: object, operation: str) -> IncomingContainedReferenceHold:
+        if type(value) is not ContainedReferenceHold:
+>           raise ProtocolError('{} requires a complete ContainedReferenceHold'.format(operation))
+E           miniray.errors.ProtocolError: contained transfer source requires a complete ContainedReferenceHold
+
+src/miniray/protocol.py:116: ProtocolError
+_ test_foreign_reconstruction_failures_have_nondeath_typed_mapping[RELEASED_CREDENTIAL-BorrowedObjectUnavailableError] _
+
+failure = <OwnedObjectReconstructionFailure.RELEASED_CREDENTIAL: 'RELEASED_CREDENTIAL'>
+error_type = <class 'miniray.errors.BorrowedObjectUnavailableError'>
+
+    @pytest.mark.parametrize(
+        ("failure", "error_type"),
+        (
+            (protocol.OwnedObjectReconstructionFailure.PUT_OBJECT,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RETRY_EXHAUSTED,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RELEASED_CREDENTIAL,
+             BorrowedObjectUnavailableError),
+            (protocol.OwnedObjectReconstructionFailure.AUTHORITY_REJECTED,
+             SystemTaskError),
+        ),
+    )
+    @pytest.mark.unit
+    def test_foreign_reconstruction_failures_have_nondeath_typed_mapping(
+        failure: protocol.OwnedObjectReconstructionFailure,
+        error_type: type[BaseException],
+    ) -> None:
+        core = object.__new__(CoreWorker)
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 0)
+        owner = WorkerID.random()
+        request = protocol.RequestOwnedObjectReconstruction(
+            ObjectID.for_task(task), owner, WorkerID.random(),
+>           protocol.ContainedTransferSource("transfer"), "borrow",
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            AttemptID(task, 0),
+        )
+
+tests/unit/test_foreign_reconstruction_runtime.py:511: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:4: in __init__
+    ???
+src/miniray/protocol.py:1581: in __post_init__
+    hold = _normalize_contained_reference_hold(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 'transfer', operation = 'contained transfer source'
+
+    def _normalize_contained_reference_hold(value: object, operation: str) -> IncomingContainedReferenceHold:
+        if type(value) is not ContainedReferenceHold:
+>           raise ProtocolError('{} requires a complete ContainedReferenceHold'.format(operation))
+E           miniray.errors.ProtocolError: contained transfer source requires a complete ContainedReferenceHold
+
+src/miniray/protocol.py:116: ProtocolError
+_ test_foreign_reconstruction_failures_have_nondeath_typed_mapping[AUTHORITY_REJECTED-SystemTaskError] _
+
+failure = <OwnedObjectReconstructionFailure.AUTHORITY_REJECTED: 'AUTHORITY_REJECTED'>
+error_type = <class 'miniray.errors.SystemTaskError'>
+
+    @pytest.mark.parametrize(
+        ("failure", "error_type"),
+        (
+            (protocol.OwnedObjectReconstructionFailure.PUT_OBJECT,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RETRY_EXHAUSTED,
+             UnreconstructableObjectError),
+            (protocol.OwnedObjectReconstructionFailure.RELEASED_CREDENTIAL,
+             BorrowedObjectUnavailableError),
+            (protocol.OwnedObjectReconstructionFailure.AUTHORITY_REJECTED,
+             SystemTaskError),
+        ),
+    )
+    @pytest.mark.unit
+    def test_foreign_reconstruction_failures_have_nondeath_typed_mapping(
+        failure: protocol.OwnedObjectReconstructionFailure,
+        error_type: type[BaseException],
+    ) -> None:
+        core = object.__new__(CoreWorker)
+        job = JobID.random()
+        task = TaskID.derive(job, TaskID.for_driver(job), 0)
+        owner = WorkerID.random()
+        request = protocol.RequestOwnedObjectReconstruction(
+            ObjectID.for_task(task), owner, WorkerID.random(),
+>           protocol.ContainedTransferSource("transfer"), "borrow",
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            AttemptID(task, 0),
+        )
+
+tests/unit/test_foreign_reconstruction_runtime.py:511: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:4: in __init__
+    ???
+src/miniray/protocol.py:1581: in __post_init__
+    hold = _normalize_contained_reference_hold(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 'transfer', operation = 'contained transfer source'
+
+    def _normalize_contained_reference_hold(value: object, operation: str) -> IncomingContainedReferenceHold:
+        if type(value) is not ContainedReferenceHold:
+>           raise ProtocolError('{} requires a complete ContainedReferenceHold'.format(operation))
+E           miniray.errors.ProtocolError: contained transfer source requires a complete ContainedReferenceHold
+
+src/miniray/protocol.py:116: ProtocolError
+=========================== short test summary info ============================
+FAILED tests/unit/test_foreign_reconstruction_runtime.py::test_foreign_reconstruction_failures_have_nondeath_typed_mapping[PUT_OBJECT-UnreconstructableObjectError]
+FAILED tests/unit/test_foreign_reconstruction_runtime.py::test_foreign_reconstruction_failures_have_nondeath_typed_mapping[RETRY_EXHAUSTED-UnreconstructableObjectError]
+FAILED tests/unit/test_foreign_reconstruction_runtime.py::test_foreign_reconstruction_failures_have_nondeath_typed_mapping[RELEASED_CREDENTIAL-BorrowedObjectUnavailableError]
+FAILED tests/unit/test_foreign_reconstruction_runtime.py::test_foreign_reconstruction_failures_have_nondeath_typed_mapping[AUTHORITY_REJECTED-SystemTaskError]
+4 failed, 4 passed in 2.40s

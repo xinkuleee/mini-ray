@@ -1,0 +1,13 @@
+{
+  "source_items": [
+    "SRC-017",
+    "SRC-018"
+  ],
+  "action": "removed unused per-slot cleanup API/proof; retain adoption tombstones and owner-death/physical cleanup",
+  "evidence": [
+    "artifacts/cleanup-base/k2b/003-case.log",
+    "artifacts/cleanup-base/k2j/003-case.log",
+    "artifacts/cleanup-base/k3central/004-case.log"
+  ],
+  "no_test_references": "AST/text scan all tests contains none; current Node retire_completed/retire_owner_death paths unchanged"
+}

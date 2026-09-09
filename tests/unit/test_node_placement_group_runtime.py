@@ -21,7 +21,7 @@ from miniray.placement_group_runtime import (
 from miniray.resources import (
     AllocationState, NodeSnapshot, ResourceLedger, ResourceVector,
 )
-from tests.unit._pure_node_output import prepare_ref_free_output
+from tests.unit._pure_node_output_current import prepare_ref_free_output
 
 
 pytestmark = pytest.mark.unit
@@ -53,7 +53,6 @@ def _node() -> NodeServer:
     )
     node._worker_order = (node.worker_id,)
     node._workers = {node.worker_id: slot}
-    node._legacy_worker_compat = False
     node._worker_process = process
     node._worker_address = slot.address
     node._worker_pid = process.pid

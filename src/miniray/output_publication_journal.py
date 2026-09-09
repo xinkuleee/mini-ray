@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 from threading import RLock
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 from .ids import ObjectID, WorkerID
 from .output_publication import (
@@ -188,40 +188,7 @@ class OutputPublicationAdoptionProof(_WireValue):
         object.__setattr__(self, "complete", replace(self.complete))
         object.__setattr__(self, "owner_worker_id", _opaque(self.owner_worker_id, WorkerID, "owner_worker_id"))
         _string(self.owner_commit_id, "owner_commit_id")
-
-
-@dataclass(frozen=True)
-class OutputPublicationSlotCleanupProof(_WireValue):
-    """One exact post-Complete payload cleanup ACK supplied by the adapter.
-
-    This may retire a still-retained reply slot after its cleanup completes.
-    It is not a physical replica-delete command and cannot supersede a slot
-    already retired through an owner-adoption proof.
-    """
-
-    complete: OutputPublicationCompleteWitness
-    owner_worker_id: WorkerID
-    slot_index: int
-    object_id: ObjectID
-    cleanup_id: str
-
-    def __post_init__(self) -> None:
-        _require_type(self.complete, OutputPublicationCompleteWitness, "complete")
-        complete = replace(self.complete)
-        _uint(self.slot_index, "slot_index")
-        object_id = _object_id(self.object_id)
-        outputs = complete.publication_id.output_ids
-        if self.slot_index >= len(outputs) or outputs[self.slot_index] != object_id:
-            raise OutputPublicationConflictError("cleanup slot must identify its selected output")
-        object.__setattr__(self, "complete", complete)
-        object.__setattr__(self, "owner_worker_id", _opaque(self.owner_worker_id, WorkerID, "owner_worker_id"))
-        object.__setattr__(self, "object_id", object_id)
-        _string(self.cleanup_id, "cleanup_id")
-
-
-OutputPublicationRetirementProof = Union[
-    OutputPublicationAdoptionProof, OutputPublicationSlotCleanupProof,
-]
+OutputPublicationRetirementProof = OutputPublicationAdoptionProof
 
 
 @dataclass(frozen=True)
@@ -244,8 +211,6 @@ class OutputPublicationSlotTombstone(_WireValue):
             or proof.complete.manifest_digest != digest
             or self.slot_index >= len(publication_id.output_ids)
             or publication_id.output_ids[self.slot_index] != object_id
-            or type(proof) is OutputPublicationSlotCleanupProof
-            and (proof.slot_index != self.slot_index or proof.object_id != object_id)
         ):
             raise OutputPublicationConflictError("slot retirement proof changed its identity")
         object.__setattr__(self, "publication_id", publication_id)
@@ -255,8 +220,8 @@ class OutputPublicationSlotTombstone(_WireValue):
 
 
 def _retirement_proof(value):
-    if type(value) not in (OutputPublicationAdoptionProof, OutputPublicationSlotCleanupProof):
-        raise TypeError("proof must be an OutputPublicationAdoptionProof or OutputPublicationSlotCleanupProof")
+    if type(value) is not OutputPublicationAdoptionProof:
+        raise TypeError("proof must be an OutputPublicationAdoptionProof")
     return replace(value)
 
 
@@ -461,21 +426,6 @@ class OutputPublicationJournal:
                 record.results.pop(effect.slot_index, None)
             self._finish_rollback_if_ready(record)
             return True
-
-    def retire_slot(self, publication_id: OutputPublicationID, slot_index: int, proof: OutputPublicationRetirementProof) -> OutputPublicationSlotTombstone:
-        """Forget one Node reply-cache slot, never its physical replica.
-
-        The adapter first validates the whole-batch owner adoption or exact
-        slot cleanup reply.  The first proof remains immutable; later physical
-        GC observes the existing tombstone instead of rebinding it.  No other
-        sibling payload is changed, and pre-Complete cleanup uses rollback.
-        """
-        proof = _retirement_proof(proof)
-        with self._lock:
-            record = self._record(publication_id)
-            terminal = self._prepare_retirement(record, slot_index, proof)
-            self._commit_retirement(record, terminal)
-            return replace(terminal)
 
     def retire_completed(self, proof: OutputPublicationAdoptionProof) -> Tuple[OutputPublicationSlotTombstone, ...]:
         """Preflight all slots, then apply the same payload retirement.
@@ -719,6 +669,6 @@ __all__ = [
     "OutputPublicationEffect", "OutputPublicationAck",
     "OutputPublicationAckDisposition", "OutputPublicationRollbackPlan",
     "OutputPublicationRollbackTombstone", "OutputPublicationAdoptionProof",
-    "OutputPublicationSlotCleanupProof", "OutputPublicationSlotTombstone",
+    "OutputPublicationSlotTombstone",
     "OutputPublicationJournalSnapshot",
 ]

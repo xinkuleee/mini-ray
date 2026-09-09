@@ -1,7 +1,7 @@
 """Pure real-store composition for a publisher loss with an adopted secondary.
 
-Two tiny selected outputs, two 1 KiB in-memory stores, one threadless Core and
-one unstarted GCS. Actual Node pin/chunk/seal/grant handlers create the secondary
+One tiny stored output, two 1 KiB in-memory stores, one threadless Core and
+one actual member registry. Actual Node pin/chunk/seal/grant handlers create the secondary
 before the Core records its location. Fake transport calls those handlers
 synchronously; fault hooks run once, without a thread, wait or user execution.
 The publisher's committed death is metadata, not a real process crash.
@@ -20,17 +20,15 @@ import pytest
 from miniray import control, node as node_module, output_protocol as wire, protocol
 from miniray.core import CoreWorker, _HomeRoute, _OutputNodeLossObligation
 from miniray.ids import AttemptID, LeaseID, NodeID, TaskID
-from miniray.node import NodeServer
+from miniray.node import NodeServer, _WorkerSlot
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
-from miniray.output_recovery import OutputRecoveryOwnerDecision
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.recovery import TaskState
 from miniray.resources import ResourceVector
 from tests.unit._pure_core import close_pure_core
 from tests.unit.test_core_output_publication import _fixture as _publication
 from tests.unit.test_node_dependency_pull import _bare_node
-from tests.unit.test_output_publication_control import _Server
 
 
 pytestmark = pytest.mark.unit
@@ -54,7 +52,6 @@ def _no_runtime(monkeypatch):
         monkeypatch.setattr(socket, method, forbidden)
     monkeypatch.setattr(subprocess, "Popen", forbidden)
     monkeypatch.setattr(time, "sleep", forbidden)
-    monkeypatch.setattr(control, "TCPServer", _Server)
 
 
 class _Fixture:
@@ -63,7 +60,7 @@ class _Fixture:
         self.publication, self.source, self.core = publication, source, core
         self.pending, self.envelope = pending, reply.output_publication
         self.manifest, self.identity = self.envelope.manifest, publication.id
-        self.output = pending.output_ids[1]
+        self.output = pending.output_ids[0]
         self.calls, self.transfers = [], []
         self.source_address, self.target_address = ("source.invalid", 1), ("target.invalid", 2)
         target_id = NodeID(bytes(value ^ 1 for value in source.node_id.value))
@@ -75,25 +72,17 @@ class _Fixture:
         target._cluster_addresses = {source.node_id: self.source_address}
         target.event_sink = None
         self.target = target
-        adapter = control.PublicationControlAdapter(publication.graph)
-        # Reuse the very registry that ACKed actual Node prepare/Complete.
-        # No fabricated success snapshot or alternate publication backend.
-        adapter.output_recovery = publication.recovery
-        service = control.GCSLite(publications=adapter)
-        self.service = service
+        self.registry = control.NodeRegistry()
         for node_id, pid, address in ((target_id, 1702, self.target_address),
                                      (source.node_id, source._node_pid, self.source_address)):
-            registered = service.register_node(protocol.RegisterNode(
-                node_id, pid, address, ResourceVector({"CPU": 1}),
-            ))
-            assert registered.accepted
-        assert service.nodes.get(source.node_id).registration_epoch == source._registration_epoch
-        worker = protocol.WorkerIncarnation(
-            source.node_id, source._node_pid, source._registration_epoch, publication.values.executor, 1801,
-        )
-        assert service.register_worker_incarnation(protocol.RegisterWorkerIncarnation(worker)).accepted
+            assert self.registry.register(node_id, address, ResourceVector({"CPU": 1}), node_pid=pid)
+        assert self.registry.get(source.node_id).registration_epoch == source._registration_epoch
+        target._node_pid, target._registration_epoch = 1702, self.registry.get(target_id).registration_epoch
+        target._workers = {target.worker_id: _WorkerSlot(target.worker_id,
+            process=target._worker_process, address=target._worker_address, pid=1703)}
+        target._worker_order = (target.worker_id,)
         core.node_id, core.node_address = target_id, self.target_address
-        epoch, live = service.nodes.live_snapshot()
+        epoch, live = self.registry.live_snapshot()
         core._home_route = _HomeRoute(target_id, self.target_address, epoch)
         core._installed_cluster_snapshot = protocol.InstallClusterSnapshot(epoch, "pure-start", live)
         core._membership_epoch = epoch
@@ -118,10 +107,10 @@ class _Fixture:
 
         def lose_adopted_ack(address, handler, request):
             result = self.rpc(address, handler, request)
-            if isinstance(request, wire.ReportOutputPublicationAdopted):
+            if isinstance(request, wire.AckOutputPublicationAdopted):
                 self.adopted_acks += 1
                 assert self.adopted_acks == 1
-                raise TimeoutError("adopted fact committed before ACK loss")
+                raise TimeoutError("actual Node adoption receipt retired before ACK loss")
             return result
 
         core._rpc = lose_adopted_ack
@@ -131,7 +120,7 @@ class _Fixture:
         assert self.adopted_acks == 1 and not core._finish_pending_task(pending)
         assert core.owner_table.snapshot(self.output).state is ObjectState.READY_STORED
         assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
-        result = self.envelope.results[1]
+        result = self.envelope.results[0]
         self.descriptor = protocol.ObjectStoreDescriptor(
             self.output, core.worker_id, pending.spec.attempt_id, source.node_id,
             result.size_bytes, result.checksum,
@@ -144,8 +133,6 @@ class _Fixture:
     def rpc(self, address, handler, request):
         self.calls.append((address, handler, request))
         assert len(self.calls) <= 32
-        if address == self.core.gcs_address:
-            return self.service.handlers[handler](request)
         node = self.target if address == self.target_address else self.source
         assert address == self.address(node.node_id)
         assert not self.core._node_is_dead(node.node_id), "contacted a committed dead publisher"
@@ -166,7 +153,7 @@ class _Fixture:
         )
         grant = self.target._handle_request_lease(request)
         assert type(grant) is protocol.GrantWorkerLease
-        assert self.target.object_store.get(self.output) == self.publication.values.payloads[1]
+        assert self.target.object_store.get(self.output) == self.publication.values.payloads[0]
         self.core._validate_granted_dependencies((self.descriptor,), grant)
         assert self.core._build_location_reports((self.descriptor,), grant) == ()
         with self.core._state_lock:
@@ -184,19 +171,16 @@ class _Fixture:
 
     def lose_publisher(self):
         source = self.source
-        death_reply = self.service.publications.commit_node_death(lambda: self.service.nodes.report_death(
-            protocol.ReportNodeDeath(
-                "surviving-publication-source-exit", source.node_id, source._node_pid,
-                source._registration_epoch, 1, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed",
-            ),
-        ))
-        epoch, live = self.service.nodes.live_snapshot()
+        death_reply = self.registry.report_death(protocol.ReportNodeDeath(
+            "surviving-publication-source-exit", source.node_id, source._node_pid,
+            source._registration_epoch, 1, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed"))
+        epoch, live = self.registry.live_snapshot()
         self.core.handle_node_death(death_reply.death, protocol.InstallClusterSnapshot(epoch, "pure-after-loss", live))
         self.death = death_reply.death
         return _OutputNodeLossObligation(self.identity, self.death)
 
     def drop_secondary(self):
-        result = self.envelope.results[1]
+        result = self.envelope.results[0]
         request = protocol.DropObjectReplica(
             self.output, self.pending.spec.attempt_id, self.core.worker_id,
             self.target.node_id, result.checksum,
@@ -208,19 +192,19 @@ class _Fixture:
 
     def assert_kept(self, *, ready=True):
         snapshot = self.core.owner_table.snapshot(self.output)
-        resolution = self.service.publications.output_recovery.snapshot(self.identity).resolution
-        assert resolution.kept_slots == (0, 1)
+        resolution = self.core.owner_table._output_loss_receipts[self.identity]
+        assert resolution.keep
         assert resolution.complete == self.envelope.complete
         assert snapshot.state is (ObjectState.READY_STORED if ready else ObjectState.LOST)
         assert snapshot.current_attempt == self.pending.spec.attempt_id
-        assert snapshot.canonical_stored_result == self.envelope.results[1]
+        assert snapshot.canonical_stored_result == self.envelope.results[0]
         assert snapshot.output_publication.manifest == self.manifest
         assert snapshot.locations == (frozenset((self.target.node_id,)) if ready else frozenset())
         record = self.core._recovery.task_record(self.pending.task_id)
         assert record.state is TaskState.SUCCEEDED and record.retries_started == 0
         if ready:
-            assert self.core._stored_descriptors[self.output] == replace(self.envelope.results[1], node_id=self.target.node_id)
-            assert self.core._fetch_stored_object(self.output, snapshot) == self.publication.values.payloads[1]
+            assert self.core._stored_descriptors[self.output] == replace(self.envelope.results[0], node_id=self.target.node_id)
+            assert self.core._fetch_stored_object(self.output, snapshot) == self.publication.values.payloads[0]
         else:
             assert self.output not in self.core._stored_descriptors
         assert self.core._finish_pending_task(self.pending)
@@ -250,45 +234,36 @@ def test_adopted_output_keeps_grant_proven_secondary_and_collects_its_real_bytes
         f.close()
 
 
-@pytest.mark.parametrize("phase", ("decision-ack", "cleanup-ack", "owner-cas"))
+@pytest.mark.parametrize("phase", ("before-owner-cas", "owner-cas"))
 def test_exact_keep_replay_does_not_restore_a_secondary_lost_after_decision(monkeypatch, phase):
     f = _Fixture(monkeypatch)
     try:
         f.add_secondary()
         obligation = f.lose_publisher()
         effects = []
-        if phase == "owner-cas":
-            original = f.core.owner_table.resolve_output_node_loss
+        original = f.core.owner_table.resolve_output_node_loss
 
-            def apply_then_error(manifest, resolution, envelope, **kwargs):
-                changed = original(manifest, resolution, envelope, **kwargs)
-                if not effects:
-                    effects.append(resolution)
-                    f.drop_secondary()
-                    raise RuntimeError("owner CAS committed before local error")
-                return changed
+        def lose_secondary_at_cas(manifest, resolution, envelope, **kwargs):
+            assert resolution.keep and resolution.complete == f.envelope.complete
+            if not effects and phase == "before-owner-cas":
+                effects.append(resolution)
+                f.drop_secondary()
+                raise TimeoutError("local KEEP selected before owner CAS")
+            changed = original(manifest, resolution, envelope, **kwargs)
+            if not effects:
+                effects.append(resolution)
+                f.drop_secondary()
+                raise RuntimeError("owner CAS committed before local error")
+            return changed
 
-            monkeypatch.setattr(f.core.owner_table, "resolve_output_node_loss", apply_then_error)
-        else:
-            handler_to_lose = (wire.DECIDE_OUTPUT_NODE_LOSS_HANDLER if phase == "decision-ack"
-                               else wire.PROGRESS_OUTPUT_NODE_LOSS_HANDLER)
-
-            def applied_then_lost(address, handler, request):
-                result = f.rpc(address, handler, request)
-                if handler == handler_to_lose and not effects:
-                    effects.append(request)
-                    f.drop_secondary()
-                    raise TimeoutError("exact KEEP effect applied before ACK loss")
-                return result
-
-            f.core._rpc = applied_then_lost
+        monkeypatch.setattr(f.core.owner_table, "resolve_output_node_loss", lose_secondary_at_cas)
         assert not f.core._drive_output_node_loss(f.pending, obligation)
         assert len(effects) == 1
-        decision = f.service.publications.output_recovery.snapshot(f.identity).owner_decision
-        assert all(slot.decision is OutputRecoveryOwnerDecision.KEEP for slot in decision.slots)
+        decision = f.core._output_loss_choices[f.identity]
+        assert decision is True
         retained = f.core._protocol_unresolved[f.pending.task_key].obligation
         assert f.core._drive_output_node_loss(f.pending, retained)
-        assert f.service.publications.output_recovery.snapshot(f.identity).owner_decision == decision
+        assert f.core._output_loss_choices[f.identity] is decision
         f.assert_kept(ready=False)
         assert not f.target.object_store.contains(f.output, sealed_only=False)
         assert f.target._sealed_metadata == {}
@@ -301,10 +276,10 @@ def test_descriptor_without_a_secondary_remains_drop_after_publisher_loss(monkey
     f = _Fixture(monkeypatch)
     try:
         obligation = f.lose_publisher()
-        assert f.core.owner_table.output_owner_result(f.output) == f.envelope.results[1]
+        assert f.core.owner_table.output_owner_result(f.output) == f.envelope.results[0]
         assert f.core._drive_output_node_loss(f.pending, obligation)
-        resolved = f.service.publications.output_recovery.snapshot(f.identity).resolution
-        assert resolved.kept_slots == (0,)
+        resolved = f.core.owner_table._output_loss_receipts[f.identity]
+        assert not resolved.keep and resolved.complete == f.envelope.complete
         current = f.core.owner_table.snapshot(f.output)
         assert current.state is ObjectState.LOST and current.output_publication is None
         assert current.canonical_stored_result is None and not current.locations

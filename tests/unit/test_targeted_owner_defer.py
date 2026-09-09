@@ -1,8 +1,8 @@
-"""Pure owner-routed targeted admission across retryable preparation waits.
+"""Pure owner-routed single-output admission across retryable preparation waits.
 
-Resource review: one threadless Core/Node, one two-slot producer publication,
+Resource review: one threadless Core/Node, one single-output producer publication,
 at most two retained requester credentials, no output-contained refs, and at
-most a 4 KiB in-memory ObjectStore. One renewal WAIT or one physical-drop ACK
+most a 1 KiB in-memory ObjectStore. One renewal WAIT or one physical-drop ACK
 loss, bounded admission requests, and cached reply replay per case. No
 producer, real thread/process/socket, timer, polling or blocking wait runs.
 Owner/recovery/publication/retirement CASes are real; only transport and the
@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import protocol
 from miniray.core import CoreWorker, _PendingTask, _WAKE_COORDINATOR
 from miniray.foreign_lineage_runtime import (
     ForeignLineageRenewalDisposition, ForeignLineageRenewalResult,
@@ -32,7 +32,6 @@ from miniray.ids import AttemptID, TaskID, WorkerID
 from miniray.node import NodeServer
 from miniray.ownership import ObjectState
 from miniray.recovery import TaskState
-from miniray.targeted_reconstruction import TargetedSessionPhase
 from tests.unit._pure_core import close_pure_core
 from tests.unit.test_core_output_publication import _fixture
 
@@ -64,7 +63,7 @@ def _no_runtime(monkeypatch):
 
 
 @contextmanager
-def _partial_publication():
+def _lost_publication():
     backend, node, core, pending, reply, calls, rpc = _fixture(refs=False)
     request = None
     try:
@@ -79,10 +78,10 @@ def _partial_publication():
             assert core._submissions.get_nowait() is _WAKE_COORDINATOR
             core._submissions.task_done()
         assert core._submissions.empty()
-        lost = pending.output_ids[1]
+        lost = pending.object_id
         assert core.owner_table.snapshot(lost).output_publication is not None
         # The owner has lost the advertised location. The Node may retain an
-        # old physical replica, which real targeted retirement must delete.
+        # old physical replica, which real retirement must delete.
         assert core.owner_table.mark_lost(lost, pending.spec.attempt_id)
         requester = WorkerID(bytes.fromhex("c1" * 16))
         consumer_task = TaskID(bytes.fromhex("c2" * 16))
@@ -102,7 +101,6 @@ def _partial_publication():
         yield SimpleNamespace(
             backend=backend, node=node, core=core, pending=pending, reply=reply,
             calls=calls, rpc=rpc, request=request, lost=lost,
-            healthy=core.owner_table.snapshot(pending.output_ids[0]),
         )
     finally:
         if request is not None:
@@ -155,13 +153,9 @@ def _assert_deferred(values, reply):
     assert record.current_attempt == pending.spec.attempt_id
     assert record.state is TaskState.SUCCEEDED and record.retries_started == 0
     assert core._recovery.active_recovery(pending.task_id) is None
-    session = core._targeted_reconstruction.current_session(pending.task_id)
-    assert session.phase is TargetedSessionPhase.OPEN and session.execution is None
-    assert session.target_output_ids == (values.lost,)
-    assert session.expected_attempts == {values.lost: pending.spec.attempt_id}
+    assert not core._reconstruction_coordinator()._sessions
     assert core.owner_table.snapshot(values.lost).state is ObjectState.LOST
     assert core.owner_table.snapshot(values.lost).current_attempt == pending.spec.attempt_id
-    assert core.owner_table.snapshot(pending.output_ids[0]) == values.healthy
     assert not core._task_finish_barriers and core._accepted_task_count == 0
     queued = tuple(core._submissions.queue)
     assert len(queued) <= 2 and not any(isinstance(item, _PendingTask) for item in queued)
@@ -177,20 +171,17 @@ def _assert_started_once(values, reply):
     assert record.current_attempt == reply.reconstruction_attempt and record.retries_started == 1
     assert record.retries_remaining == pending.spec.max_retries - 1
     assert core._recovery.active_recovery(pending.task_id) == record.current_attempt
-    session = core._targeted_reconstruction.current_session(pending.task_id)
-    assert session.phase is TargetedSessionPhase.STARTED
-    assert session.execution.attempt_id == record.current_attempt
-    assert session.execution.target_output_ids == (values.lost,)
-    assert session.execution.full_output_ids == pending.full_output_ids
+    session = core._reconstruction_coordinator()._sessions[pending.task_id]
+    assert session.attempt_id == record.current_attempt
+    assert session.output_ids == (values.lost,)
     target = core.owner_table.snapshot(values.lost)
     assert target.state is ObjectState.PENDING and target.current_attempt == record.current_attempt
     assert target.output_publication is None and target.output_retirement_id is None
     assert target.retained_tokens == frozenset((values.request.credential.hold,))
-    assert core.owner_table.snapshot(pending.output_ids[0]) == values.healthy
     queued = tuple(core._submissions.queue)
     assert len(queued) <= 4
     admitted = tuple(item for item in queued if isinstance(item, _PendingTask))
-    assert len(admitted) == 1 and admitted[0].target_execution == session.execution
+    assert len(admitted) == 1 and admitted[0].spec.attempt_id == session.attempt_id
     assert core._task_finish_barriers == {values.lost: admitted[0]}
     assert core._accepted_task_count == 1
     assert not getattr(core, "_output_retirement_work", {})
@@ -206,8 +197,8 @@ def _assert_started_once(values, reply):
     assert core._recovery.task_record(pending.task_id) == before_record
 
 
-def test_owner_targeted_renewal_wait_defers_then_same_request_starts():
-    with _partial_publication() as values:
+def test_owner_renewal_wait_defers_then_same_request_starts():
+    with _lost_publication() as values:
         core, pending = values.core, values.pending
         before_owner = tuple(core.owner_table.snapshot(output) for output in pending.output_ids)
         before_record = replace(core._recovery.task_record(pending.task_id))
@@ -256,8 +247,8 @@ def test_owner_targeted_renewal_wait_defers_then_same_request_starts():
         assert not values.backend.store.contains(values.lost, sealed_only=False)
 
 
-def test_owner_targeted_retirement_drop_ack_loss_defers_then_exact_request_starts():
-    with _partial_publication() as values:
+def test_owner_retirement_drop_ack_loss_defers_then_exact_request_starts():
+    with _lost_publication() as values:
         core, pending = values.core, values.pending
         old_target = core.owner_table.snapshot(values.lost)
         before_record = replace(core._recovery.task_record(pending.task_id))
@@ -293,7 +284,7 @@ def test_owner_targeted_retirement_drop_ack_loss_defers_then_exact_request_start
         assert work["plan"].retirement_id == target.output_retirement_id
         assert work["plan"].memberships == (old_target.output_publication,)
         assert not work["replica"]  # effect is real, its ACK is still missing
-        assert values.backend.recovery.snapshot(values.backend.id).slot_collections == ()
+        assert core.owner_table.snapshot(values.lost).output_publication == old_target.output_publication
         accepted = core.request_owned_object_reconstruction(values.request)
         _assert_started_once(values, accepted)
         assert drop_requests == [drop_requests[0]] * 2
@@ -303,16 +294,14 @@ def test_owner_targeted_retirement_drop_ack_loss_defers_then_exact_request_start
         ]
         assert [handler for handler, _ in values.calls[before_calls:]] == [
             "drop_object_replica", "drop_object_replica",
-            wire.REPORT_OUTPUT_PUBLICATION_HANDLER,
         ]
-        (cleanup,) = values.backend.recovery.snapshot(values.backend.id).slot_collections
-        assert cleanup.object_id == values.lost
-        assert cleanup.cleanup_id == target.output_retirement_id
-        assert cleanup.complete.publication_id == old_target.output_publication.publication_id
+        assert values.backend.handoffs.query(values.backend.id).adoption is not None
+        assert core.owner_table.snapshot(values.lost).output_publication is None
 
 
-def test_new_owner_credential_joins_started_target_despite_finish_barrier():
-    with _partial_publication() as values:
+
+def test_new_owner_credential_joins_started_attempt_despite_finish_barrier():
+    with _lost_publication() as values:
         core, pending = values.core, values.pending
         started = core.request_owned_object_reconstruction(values.request)
         _assert_started_once(values, started)
@@ -322,8 +311,8 @@ def test_new_owner_credential_joins_started_target_despite_finish_barrier():
         try:
             assert request != values.request
             assert request.credential != values.request.credential
-            session = core._targeted_reconstruction.current_session(pending.task_id)
-            assert session.phase is TargetedSessionPhase.STARTED
+            session = core._reconstruction_coordinator()._sessions[pending.task_id]
+            assert session.attempt_id == started.reconstruction_attempt
             assert core.owner_table.snapshot(values.lost).state is ObjectState.PENDING
             assert values.lost in core._task_finish_barriers
             before_owner = tuple(core.owner_table.snapshot(output) for output in pending.output_ids)
@@ -341,8 +330,7 @@ def test_new_owner_credential_joins_started_target_despite_finish_barrier():
             assert core._recovery.task_record(pending.task_id) == before_record
             assert before_record.retries_started == 1
             assert tuple(core.owner_table.snapshot(output) for output in pending.output_ids) == before_owner
-            assert core._targeted_reconstruction.current_session(pending.task_id) is session
-            assert core._targeted_reconstruction.queued_losses(pending.task_id) == ()
+            assert core._reconstruction_coordinator()._sessions[pending.task_id] is session
             assert core._task_finish_barriers == before_barriers
             assert core._accepted_task_count == 1
             assert tuple(values.calls) == before_calls
@@ -355,83 +343,3 @@ def test_new_owner_credential_joins_started_target_despite_finish_barrier():
                 request.object_id, request.credential.hold,
             )
 
-
-def test_new_lost_sibling_is_queued_next_not_joined_to_unrelated_started_target():
-    from tests.unit.test_task_finish_barrier import _Fixture as StoredFixture
-
-    # This helper uses real discovery -> Node adapter/journal -> Core, with
-    # two stored slots. Neither loss is a forged READY_INLINE -> LOST change.
-    values = StoredFixture()
-    core = values.core
-    pending = None
-    requests = []
-    try:
-        pending, _refs = values.submit(num_returns=2)
-        values.succeed(pending, stored=True)
-        assert core._finish_pending_task(pending)
-        assert not values.queued()
-        selected, sibling = pending.output_ids
-
-        def lose_slot(output):
-            owner = core.owner_table.snapshot(output)
-            assert owner.state is ObjectState.READY_STORED
-            drop = protocol.DropObjectReplica(
-                output, owner.current_attempt, core.worker_id, core.node_id,
-                owner.canonical_stored_result.checksum,
-            )
-            reply = values.backend.node._handle_drop_object_replica(drop)
-            assert reply.status is protocol.DropObjectReplicaStatus.DROPPED
-            assert not values.backend.store.contains(output, sealed_only=False)
-            assert core.owner_table.mark_lost(output, owner.current_attempt)
-            core._stored_descriptors.pop(output, None)
-
-        lose_slot(selected)
-        first = _retained_request(core, selected, pending.spec.attempt_id, tag=0xd1)
-        requests.append(first)
-        started = core.request_owned_object_reconstruction(first)
-        assert started.disposition is protocol.OwnedObjectReconstructionDisposition.STARTED
-        coordinator = core._targeted_reconstruction
-        session = coordinator.current_session(pending.task_id)
-        assert session.phase is TargetedSessionPhase.STARTED
-        assert session.target_output_ids == (selected,)
-        assert session.execution.attempt_id == started.reconstruction_attempt
-        assert selected in core._task_finish_barriers and sibling not in core._task_finish_barriers
-        assert core.owner_table.snapshot(sibling).state is ObjectState.READY_STORED
-
-        lose_slot(sibling)
-        second = _retained_request(core, sibling, pending.spec.attempt_id, tag=0xd3)
-        requests.append(second)
-        before_owner = tuple(core.owner_table.snapshot(output) for output in pending.output_ids)
-        before_record = replace(core._recovery.task_record(pending.task_id))
-        before_calls = tuple(values.backend.calls)
-        before_queue = tuple(core._submissions.queue)
-        before_barriers = dict(core._task_finish_barriers)
-
-        for _ in range(2):
-            deferred = core.request_owned_object_reconstruction(second)
-            _assert_echo(deferred, second)
-            assert deferred.disposition is protocol.OwnedObjectReconstructionDisposition.FAILED
-            assert deferred.failure is protocol.OwnedObjectReconstructionFailure.NOT_LOST
-            assert deferred.reconstruction_attempt is None
-            assert coordinator.current_session(pending.task_id) is session
-            queued = coordinator.queued_losses(pending.task_id)
-            assert tuple((loss.object_id, loss.expected_attempt) for loss in queued) == (
-                (sibling, pending.spec.attempt_id),
-            )
-            assert tuple(core.owner_table.snapshot(output) for output in pending.output_ids) == before_owner
-            assert core._recovery.task_record(pending.task_id) == before_record
-            assert before_record.retries_started == 1
-            assert core._task_finish_barriers == before_barriers
-            assert core._accepted_task_count == 1
-            assert tuple(values.backend.calls) == before_calls
-            assert tuple(core._submissions.queue) == before_queue
-        assert core.owner_table.snapshot(sibling).output_publication is not None
-        assert core.owner_table.snapshot(sibling).output_retirement_id is None
-        assert not core._state_lock.waits
-    finally:
-        for request in requests:
-            assert core.owner_table.release_retained_reference_for_task(
-                request.object_id, request.credential.hold,
-            )
-        if pending is not None:
-            values.close_refs(pending)

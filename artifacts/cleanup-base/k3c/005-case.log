@@ -1,0 +1,68 @@
+....F.                                                                   [100%]
+=================================== FAILURES ===================================
+________ test_recursive_chain_requeues_dependency_first_with_stable_ids ________
+
+    @pytest.mark.unit
+    def test_recursive_chain_requeues_dependency_first_with_stable_ids() -> None:
+        core = make_pure_core()
+        runtime = PureReferenceOutputRuntime(core)
+        leaf, leaf_ref = _accepted(core,lambda:1,max_retries=2)
+        middle, middle_ref = _accepted(core,lambda value:value+1,(leaf_ref,),max_retries=2)
+        root, root_ref = _accepted(core,lambda value:value+1,(middle_ref,),max_retries=2)
+        pendings = (leaf, middle, root)
+        refs = (leaf_ref, middle_ref, root_ref)
+        try:
+            for index, pending in enumerate(pendings):
+>               _publish_small_stored(runtime,pending,index+1)
+
+tests/unit/test_core_reconstruction_runtime.py:211: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_core_reconstruction_runtime.py:84: in _publish_small_stored
+    reply=runtime.complete(protocol.PushTask(LeaseID.random(),WorkerID.random(),pending.spec),
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+<string>:7: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PushTask(lease_id=LeaseID('14597ea39f31b3b9e55dcfd245e18746'), worker_id=WorkerID('cc1f1b65233cda52b090a475423f2d6f'),...ae444e50f1382e9f6a4fc363daf36b7c0b55da037d752d268c1'), kwargs=(), max_retries=2, scheduling_key=None), dependencies=())
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.lease_id, LeaseID):
+            raise ProtocolError("push lease_id must be a LeaseID")
+        if not isinstance(self.worker_id, WorkerID):
+            raise ProtocolError("push worker_id must be a WorkerID")
+        if not isinstance(self.spec, TaskSpec):
+            raise ProtocolError("push spec must be a TaskSpec")
+        dependencies = _validate_dependencies(self.dependencies, "push task")
+        references = tuple(
+            argument
+            for argument in (
+                self.spec.args + tuple(value for _, value in self.spec.kwargs)
+            )
+            if isinstance(argument, RefArg)
+        )
+        reference_owners = {}
+        for reference in references:
+            previous_owner = reference_owners.setdefault(
+                reference.object_id, reference.owner_worker_id
+            )
+            if previous_owner != reference.owner_worker_id:
+                raise ProtocolError(
+                    "push task dependency arguments name conflicting owners "
+                    "for one object"
+                )
+        dependency_owners = {
+            dependency.object_id: dependency.owner_worker_id
+            for dependency in dependencies
+        }
+        if dependency_owners != reference_owners:
+>           raise ProtocolError(
+                "push task dependencies must exactly cover its top-level "
+                "RefArgs"
+            )
+E           miniray.errors.ProtocolError: push task dependencies must exactly cover its top-level RefArgs
+
+src/miniray/protocol.py:2512: ProtocolError
+=========================== short test summary info ============================
+FAILED tests/unit/test_core_reconstruction_runtime.py::test_recursive_chain_requeues_dependency_first_with_stable_ids
+1 failed, 5 passed in 1.78s
