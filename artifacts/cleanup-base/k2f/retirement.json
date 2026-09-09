@@ -1,0 +1,137 @@
+[
+  {
+    "path": "tests/unit/test_actor_safety_classification.py",
+    "action": "delete",
+    "sha256_before": "763069fe03e2e6daf4e45c8a413263735c23f616bf30ed56c950dc1838079555",
+    "physical_lines": 126,
+    "reason": "Retired exact historical selector/marker name lock; current schema/unknown-selection/hash/process cleanup contracts passed K1 and K1-03. No product semantic assertion.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/000-pure.log",
+      "artifacts/cleanup-base/k1/base-k1-03/000-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_actor_safety_classification.py"
+  },
+  {
+    "path": "tests/unit/test_legacy_runtime_safety_classification.py",
+    "action": "delete",
+    "sha256_before": "6662686176181de0a422d5c88e6ebb96b3829d9f08a9f8419b7eea61f97ee1ce",
+    "physical_lines": 355,
+    "reason": "Retired exact historical selector/marker name lock; current schema/unknown-selection/hash/process cleanup contracts passed K1 and K1-03. No product semantic assertion.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/000-pure.log",
+      "artifacts/cleanup-base/k1/base-k1-03/000-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_legacy_runtime_safety_classification.py"
+  },
+  {
+    "path": "tests/unit/test_observability_safety_classification.py",
+    "action": "delete",
+    "sha256_before": "c7965853a24ddf242431f92b691d780150ba0c06b36b9bd9f47a3d75b4e13dca",
+    "physical_lines": 140,
+    "reason": "Retired exact historical selector/marker name lock; current schema/unknown-selection/hash/process cleanup contracts passed K1 and K1-03. No product semantic assertion.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/000-pure.log",
+      "artifacts/cleanup-base/k1/base-k1-03/000-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_observability_safety_classification.py"
+  },
+  {
+    "path": "tests/unit/test_placement_node_safety_classification.py",
+    "action": "delete",
+    "sha256_before": "ba7f55e90b15f3fceb2c8663900b1c9e61453473ec12a6b0e2126e6d1e5c16fb",
+    "physical_lines": 379,
+    "reason": "Retired exact historical selector/marker name lock; current schema/unknown-selection/hash/process cleanup contracts passed K1 and K1-03. No product semantic assertion.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/000-pure.log",
+      "artifacts/cleanup-base/k1/base-k1-03/000-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_placement_node_safety_classification.py"
+  },
+  {
+    "path": "tests/unit/test_recovery_safety_classification.py",
+    "action": "delete",
+    "sha256_before": "6ec6890b132ea5ec826d48d0866acbeefce78eb4ccbf5232b6b7e964fae8d752",
+    "physical_lines": 79,
+    "reason": "Retired exact historical selector/marker name lock; current schema/unknown-selection/hash/process cleanup contracts passed K1 and K1-03. No product semantic assertion.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/000-pure.log",
+      "artifacts/cleanup-base/k1/base-k1-03/000-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_recovery_safety_classification.py"
+  },
+  {
+    "path": "tests/unit/test_reference_safety_classification.py",
+    "action": "delete",
+    "sha256_before": "2b53b957fd282333b43c7d6c35c22055edfd5ae199a6e7ef39e3d0a080ffe31b",
+    "physical_lines": 379,
+    "reason": "Retired exact historical selector/marker name lock; current schema/unknown-selection/hash/process cleanup contracts passed K1 and K1-03. No product semantic assertion.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/000-pure.log",
+      "artifacts/cleanup-base/k1/base-k1-03/000-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_reference_safety_classification.py"
+  },
+  {
+    "path": "tests/unit/test_worker_safety_classification.py",
+    "action": "delete",
+    "sha256_before": "95cd41892498e039ebbd193d9b009b43f52016482c4f006cdea643a2d319374f",
+    "physical_lines": 205,
+    "reason": "Retired exact historical selector/marker name lock; current schema/unknown-selection/hash/process cleanup contracts passed K1 and K1-03. No product semantic assertion.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/000-pure.log",
+      "artifacts/cleanup-base/k1/base-k1-03/000-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_worker_safety_classification.py"
+  },
+  {
+    "path": "tests/unit/test_runtime_state.py",
+    "action": "delete",
+    "sha256_before": "d625415c5cc9a3ac036a9b72422da6f553ffd2e6691b632f6a7c383a2be07e17",
+    "physical_lines": 135,
+    "reason": "Disconnected Allocation/RuntimeState facade; direct ResourceLedger debt/yield/release7cases, new late-token3cases and actual Node post-exit reducer1case plus actual Nodecrash smoke preserve retained invariants. No claim dead Node runs local cleanup.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/001-case.log",
+      "artifacts/cleanup-base/k2b/001-case.log",
+      "artifacts/cleanup-base/k2b/002-case.log",
+      "artifacts/cleanup-base/k2f/node-crash.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_runtime_state.py"
+  },
+  {
+    "path": "src/miniray/runtime_state.py",
+    "action": "delete",
+    "sha256_before": "703903b1b1e4fc5bd54eb52de73b546d6d10d19f725ec57ecf021c08b897e83f",
+    "physical_lines": 401,
+    "reason": "Disconnected Allocation/RuntimeState facade; direct ResourceLedger debt/yield/release7cases, new late-token3cases and actual Node post-exit reducer1case plus actual Nodecrash smoke preserve retained invariants. No claim dead Node runs local cleanup.",
+    "evidence": [
+      "artifacts/cleanup-base/k1/base-k1-01/001-case.log",
+      "artifacts/cleanup-base/k2b/001-case.log",
+      "artifacts/cleanup-base/k2b/002-case.log",
+      "artifacts/cleanup-base/k2f/node-crash.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:src/miniray/runtime_state.py"
+  },
+  {
+    "path": "tests/unit/test_multi_return_submission_transaction.py",
+    "action": "delete",
+    "sha256_before": "4ff7a4bf0998884026a23fbadb829e2dd66f767a2b514388fa9481e7e5b4f11e",
+    "physical_lines": 323,
+    "reason": "Three-output submission transaction retired; all six original fault boundaries migrated to legal single-output owner/recovery/queue rollback and passed.",
+    "evidence": [
+      "artifacts/cleanup-base/k2b/004-case.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_multi_return_submission_transaction.py"
+  },
+  {
+    "path": "tests/unit/test_actor_arguments.py",
+    "action": "delete",
+    "sha256_before": "f8a102e8fa25e32f029f73af131bfdfc450a16028cb5088fdcc8952df352dfd9",
+    "physical_lines": 414,
+    "reason": "Retired Actor Ref lifetime authority; current constructor/method/result rejection5cases and ordinary Actor restart smoke passed; no new Actor Ref support.",
+    "evidence": [
+      "artifacts/cleanup-base/k2b/000-case.log",
+      "artifacts/cleanup-base/k2b/005-smoke.log"
+    ],
+    "historical_source": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6:tests/unit/test_actor_arguments.py"
+  }
+]
