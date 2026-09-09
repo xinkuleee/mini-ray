@@ -1,12 +1,18 @@
-"""Pure saga contracts for foreign-input lineage reconstruction."""
+"""Finite pure foreign-input renewal/collection contracts for one output.
+
+Two distinct input owners/roles remain independent. RPC callbacks supply
+explicit reducer replies; collection receipts activate only after real local
+owner and RecoveryManager commits. No runtime constructor, network, thread,
+process, timer or wait is used.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import RLock
 
 import pytest
 
-from miniray.contained_edges import ObjectMetadataCollectionPlan
 from miniray.foreign_lineage import (
     ForeignLineageCollectionReceipt, ForeignLineageEdge,
     ForeignLineagePreparedCollectionReceipt, ForeignLineageRegistry,
@@ -18,7 +24,7 @@ from miniray.foreign_lineage_runtime import (
     ForeignLineageRuntime,
     ForeignLineageRuntimeError,
 )
-from miniray.ids import AttemptID, ObjectID, TaskID, WorkerID
+from miniray.ids import AttemptID, JobID, ObjectID, TaskID, WorkerID
 from miniray.protocol import (
     GetRetainedOwnedObjectReply, OwnedObjectReconstructionDisposition,
     OwnedObjectReconstructionFailure,
@@ -26,10 +32,11 @@ from miniray.protocol import (
     ReplaceRetainedObjectDisposition, ReplaceRetainedObjectFailure,
     ReplaceRetainedObjectForTaskReply,
     RequestOwnedObjectReconstructionReply, TaskReferenceHold,
-    TaskReferenceHoldKind,
+    TaskReferenceHoldKind, TaskSpec, FunctionKey,
 )
-from miniray.recovery import CollectedObjectForgetPlan
-from miniray.ownership import DeadWorkerReferenceRecord
+from miniray.recovery import RecoveryManager
+from miniray.ownership import DeadWorkerReferenceRecord, ObjectOwnerTable
+from miniray.resources import ResourceVector
 
 
 
@@ -48,6 +55,11 @@ class _Harness:
     reconstruct_calls: list[ObjectID]
     release_calls: list[object]
     dead: set[WorkerID]
+    owner: ObjectOwnerTable
+    recovery: RecoveryManager
+    spec: TaskSpec
+    composition_lock: object
+    collection_receipt: ForeignLineageCollectionReceipt | None = None
 
 
 def _harness(
@@ -58,7 +70,7 @@ def _harness(
     registry = ForeignLineageRegistry()
     task_id = TaskID.random()
     borrower = WorkerID.random()
-    outputs = (ObjectID.for_task(task_id, 0), ObjectID.for_task(task_id, 1))
+    outputs = (ObjectID.for_task(task_id, 0),)
     edges = tuple(
         ForeignLineageEdge(
             task_id, ObjectID.for_task(TaskID.random()), WorkerID.random(),
@@ -127,27 +139,40 @@ def _harness(
             if worker_id in dead else None
         ),
     )
+    job = JobID.random()
+    spec = TaskSpec(job, task_id, AttemptID(task_id, 0),
+                    FunctionKey(job, __name__, "producer", "1"), (), 1,
+                    ResourceVector(), borrower)
+    owner = ObjectOwnerTable()
+    owner.register_task_outputs(spec)
+    assert owner.publish_inline(outputs[0], spec.attempt_id, b"completed-output")
+    recovery = RecoveryManager()
+    recovery.register_task(spec)
+    recovery.record_task_success(task_id, spec.attempt_id)
     return _Harness(
         registry, runtime, task_id, outputs, edges, states, attempts,
         replace_calls, get_calls, reconstruct_calls, release_calls, dead,
+        owner, recovery, spec, RLock(),
     )
 
 
-def _receipt(
-    harness: _Harness, output_id: ObjectID, *, final: bool
-) -> ForeignLineageCollectionReceipt:
-    return ForeignLineageCollectionReceipt(
-        ForeignLineagePreparedCollectionReceipt(
-        harness.task_id, output_id,
-        ObjectMetadataCollectionPlan(
-            output_id, "collection-{}".format(output_id.return_index),
-            AttemptID(harness.task_id, 0), (), None
-        ),
-        CollectedObjectForgetPlan(
-            output_id, "task", harness.task_id, final, None
-        ),
-        )
-    )
+def _receipt(harness: _Harness) -> ForeignLineageCollectionReceipt:
+    if harness.collection_receipt is not None:
+        return harness.collection_receipt
+    output_id = harness.outputs[0]
+    with harness.composition_lock:
+        owner_plan = harness.owner.begin_collection(output_id, collection_id="actual-output-gc")
+        assert owner_plan is not None
+        recovery_plan = harness.recovery.validate_forget_collected_object(
+            output_id, expected_task_spec=harness.spec,
+            expected_attempt=harness.spec.attempt_id)
+        harness.owner.validate_complete_collection(owner_plan)
+        prepared = ForeignLineagePreparedCollectionReceipt(
+            harness.task_id, output_id, owner_plan, recovery_plan)
+        assert harness.owner.complete_collection(owner_plan).collected
+        assert harness.recovery.commit_forget_collected_object(recovery_plan)
+    harness.collection_receipt = ForeignLineageCollectionReceipt(prepared)
+    return harness.collection_receipt
 
 
 @pytest.mark.unit
@@ -266,8 +291,13 @@ def test_owner_stopped_after_ambiguous_send_keeps_convergence_obligation() -> No
     assert first.disposition is ForeignLineageRenewalDisposition.WAITING
     assert second.disposition is ForeignLineageRenewalDisposition.FAILED
     assert second.obligations_pending
-    with pytest.raises(ForeignLineageRuntimeError, match="durable convergence"):
-        harness.runtime.abandon_renewal(harness.task_id, attempt)
+    with pytest.raises(ForeignLineageRuntimeError, match="not ready"):
+        harness.runtime.complete_renewal(harness.task_id, attempt)
+    receipt = _receipt(harness)
+    with pytest.raises(ForeignLineageRuntimeError, match="ambiguity"):
+        harness.runtime.drive_collection(harness.task_id, receipt)
+    assert not harness.runtime.drive_shutdown().complete
+    assert harness.release_calls == []
     # Endpoint shutdown never installs a death tombstone.
     assert not harness.registry.owner_is_dead(edge.owner_worker_id)
 
@@ -311,7 +341,7 @@ def test_later_already_replaced_ack_clears_prior_owner_stopped_failure() -> None
 
 
 @pytest.mark.unit
-def test_partial_ack_and_definitive_failure_cannot_abandon_mixed_registry() -> None:
+def test_partial_ack_failure_collects_exact_mixed_holds_only_after_authority_commit() -> None:
     harness = _harness()
     failed = max(
         harness.edges,
@@ -337,14 +367,22 @@ def test_partial_ack_and_definitive_failure_cannot_abandon_mixed_registry() -> N
 
     assert result.disposition is ForeignLineageRenewalDisposition.FAILED
     assert len(result.acknowledged) == 1
-    with pytest.raises(ForeignLineageRuntimeError, match="durable convergence"):
-        harness.runtime.abandon_renewal(harness.task_id, attempt)
+    with pytest.raises(ForeignLineageRuntimeError, match="not ready"):
+        harness.runtime.complete_renewal(harness.task_id, attempt)
     assert harness.runtime.has_pending_obligations()
     record = harness.registry.snapshot(harness.task_id)
     assert record is not None
     assert {edge.hold.origin_attempt_id for edge in record.edges} == {
         AttemptID(harness.task_id, 0), attempt,
     }
+    receipt = _receipt(harness)
+    collected = harness.runtime.drive_collection(harness.task_id, receipt)
+    assert collected.disposition is ForeignLineageCollectionDisposition.COMPLETE
+    assert {(request.object_id, request.hold) for request in harness.release_calls} == {
+        (edge.dependency_object_id, edge.hold) for edge in record.edges}
+    assert len(harness.release_calls) == 2
+    assert harness.runtime.drive_collection(harness.task_id, receipt) == collected
+    assert len(harness.release_calls) == 2 and not harness.runtime.has_pending_obligations()
 
 
 @pytest.mark.unit
@@ -370,14 +408,21 @@ def test_remote_owner_dead_reply_does_not_install_local_death_or_discharge() -> 
 
     assert result.disposition is ForeignLineageRenewalDisposition.FAILED
     assert not harness.registry.owner_is_dead(edge.owner_worker_id)
-    with pytest.raises(ForeignLineageRuntimeError, match="durable convergence"):
-        harness.runtime.abandon_renewal(
+    with pytest.raises(ForeignLineageRuntimeError, match="not ready"):
+        harness.runtime.complete_renewal(
             harness.task_id, AttemptID(harness.task_id, 1)
         )
+    assert not harness.runtime.drive_shutdown().complete
+    assert harness.release_calls == []
+    collected = harness.runtime.drive_collection(harness.task_id, _receipt(harness))
+    assert collected.disposition is ForeignLineageCollectionDisposition.COMPLETE
+    assert len(harness.release_calls) == 1
+    assert harness.release_calls[0].hold.origin_attempt_id == AttemptID(harness.task_id, 1)
+    assert not harness.registry.owner_is_dead(edge.owner_worker_id)
 
 
 @pytest.mark.unit
-def test_committed_owner_death_is_terminal_and_clears_ambiguous_rpc() -> None:
+def test_committed_owner_death_clears_ambiguity_but_waits_for_collection_commit() -> None:
     harness = _harness((ForeignLineageRole.TOP_LEVEL,))
     edge = harness.edges[0]
     harness.runtime._replace = lambda *_args: (_ for _ in ()).throw(
@@ -393,7 +438,14 @@ def test_committed_owner_death_is_terminal_and_clears_ambiguous_rpc() -> None:
     assert second.disposition is ForeignLineageRenewalDisposition.FAILED
     assert not second.obligations_pending
     assert harness.registry.owner_is_dead(edge.owner_worker_id)
-    assert harness.runtime.abandon_renewal(harness.task_id, attempt)
+    with pytest.raises(ForeignLineageRuntimeError, match="not ready"):
+        harness.runtime.complete_renewal(harness.task_id, attempt)
+    assert not harness.runtime.drive_shutdown().complete
+    collected = harness.runtime.drive_collection(harness.task_id, _receipt(harness))
+    assert collected.disposition is ForeignLineageCollectionDisposition.COMPLETE
+    assert harness.release_calls == []
+    assert harness.registry.snapshot(harness.task_id) is None
+    assert harness.runtime.drive_shutdown().complete
 
 
 @pytest.mark.unit
@@ -420,7 +472,7 @@ def test_ready_result_is_fenced_when_death_mutates_session_before_commit() -> No
 
 
 @pytest.mark.unit
-def test_final_sibling_collection_releases_current_replacement_holds_once() -> None:
+def test_single_output_collection_releases_all_current_input_holds_once() -> None:
     harness = _harness()
     attempt = AttemptID(harness.task_id, 1)
     assert harness.runtime.drive_renewal(
@@ -428,24 +480,10 @@ def test_final_sibling_collection_releases_current_replacement_holds_once() -> N
     ).disposition is ForeignLineageRenewalDisposition.READY
     harness.runtime.complete_renewal(harness.task_id, attempt)
 
-    not_final = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[0], final=False
-        )
-    )
-    assert not_final.disposition is ForeignLineageCollectionDisposition.NOT_FINAL
     assert harness.release_calls == []
-
-    final = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[1], final=True
-        )
-    )
-    replay = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[1], final=True
-        )
-    )
+    receipt = _receipt(harness)
+    final = harness.runtime.drive_collection(harness.task_id, receipt)
+    replay = harness.runtime.drive_collection(harness.task_id, receipt)
     assert final.disposition is ForeignLineageCollectionDisposition.COMPLETE
     assert replay.disposition is ForeignLineageCollectionDisposition.COMPLETE
     assert replay == final
@@ -470,25 +508,12 @@ def test_collection_ambiguity_replays_only_missing_release_and_blocks_shutdown()
         )
 
     harness.runtime._release = flaky
-    first = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[0], final=False
-        )
-    )
-    assert first.disposition is ForeignLineageCollectionDisposition.NOT_FINAL
-    first = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[1], final=True
-        )
-    )
+    receipt = _receipt(harness)
+    first = harness.runtime.drive_collection(harness.task_id, receipt)
     assert first.disposition is ForeignLineageCollectionDisposition.PENDING
     assert harness.runtime.has_pending_obligations()
 
-    second = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[1], final=True
-        )
-    )
+    second = harness.runtime.drive_collection(harness.task_id, receipt)
     assert second.disposition is ForeignLineageCollectionDisposition.COMPLETE
     assert calls[0] == calls[1]
     assert not harness.runtime.has_pending_obligations()
@@ -501,17 +526,7 @@ def test_dead_owner_discharges_final_release_without_rpc() -> None:
     edge = harness.edges[0]
     harness.dead.add(edge.owner_worker_id)
 
-    result = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[0], final=False
-        )
-    )
-    assert result.disposition is ForeignLineageCollectionDisposition.NOT_FINAL
-    result = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[1], final=True
-        )
-    )
+    result = harness.runtime.drive_collection(harness.task_id, _receipt(harness))
 
     assert result.disposition is ForeignLineageCollectionDisposition.COMPLETE
     assert harness.release_calls == []
@@ -540,18 +555,8 @@ def test_shutdown_converges_ambiguous_replacement_before_current_hold_release() 
     shutdown_pass = harness.runtime.drive_shutdown()
     assert not shutdown_pass.complete
     assert harness.release_calls == []
-    # Only an authoritative final-sibling collection proof may release holds.
-    final = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[0], final=False
-        )
-    )
-    assert final.disposition is ForeignLineageCollectionDisposition.NOT_FINAL
-    final = harness.runtime.drive_collection(
-        harness.task_id, _receipt(
-            harness, harness.outputs[1], final=True
-        )
-    )
+    # Only the unique output's committed owner/recovery proof releases holds.
+    final = harness.runtime.drive_collection(harness.task_id, _receipt(harness))
 
     assert final.disposition is ForeignLineageCollectionDisposition.COMPLETE
     assert calls == 2

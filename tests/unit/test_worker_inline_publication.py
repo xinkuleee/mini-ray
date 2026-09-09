@@ -1,4 +1,4 @@
-"""Pure Worker INLINE result contracts on unified selected-output publication.
+"""Pure Worker INLINE result contracts on single-output owner-led publication.
 
 The historical filename remains; no OPEN/PREPARE_INLINE success backend is
 mocked. Reused fixtures forbid runtime creation, sockets and real waits.
@@ -141,7 +141,7 @@ def test_trusted_prepare_rejection_becomes_cached_system_error_after_compensatio
         prepared_records.append(f.pending)
         return wire.PreparedOutputPublicationReply(
             request.request_identity, False, wire.OutputPublicationRPCErrorKind.INVALID_STATE,
-            "contained cycle rejected",
+            "contained pin admission rejected",
         )
 
     def complete(request):
@@ -154,7 +154,7 @@ def test_trusted_prepare_rejection_becomes_cached_system_error_after_compensatio
     f.on_prepare, f.on_complete = prepare, complete
     reply = f.worker._handle_push_task(f.push)
     assert reply.status is protocol.TaskReplyStatus.SYSTEM_ERROR
-    assert reply.error is not None and "contained cycle rejected" in reply.error.message
+    assert reply.error is not None and "contained pin admission rejected" in reply.error.message
     assert not reply.results and not hasattr(reply, "contained_edges")
     assert reply.output_publication is None
     assert not hasattr(reply, "inline_publication") and not hasattr(reply, "stored_publication")

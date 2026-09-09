@@ -5,6 +5,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.object_store import (
     IncompleteObjectError,
     InvalidWriteError,
@@ -121,6 +122,8 @@ def test_reference_tokens_keep_object_live_until_every_reason_is_released() -> N
         producer_task_spec="task-spec-placeholder",
         local_token="driver-handle",
     )
+    # Collection requires a terminal value as well as zero references.
+    assert table.publish_inline(object_id, attempt_0, b"retained-value")
 
     submitted_hold = TaskReferenceHold(
         TaskReferenceHoldKind.SUBMITTED,
@@ -131,22 +134,24 @@ def test_reference_tokens_keep_object_live_until_every_reason_is_released() -> N
     assert table.add_submitted_reference(object_id, submitted_hold)
     assert not table.add_submitted_reference(object_id, submitted_hold)
     assert table.add_borrowed_reference(object_id, "borrower:1")
-    assert table.add_contained_reference(object_id, "container:outer")
+    contained = ContainedReferenceHold(ObjectID.for_task(TaskID.random()), WorkerID.random(), "container:outer")
+    assert table.add_contained_reference(object_id, contained)
 
     assert table.release_local_reference(object_id, "driver-handle")
     assert table.is_live(object_id)
-    assert not table.collect_if_unused(object_id)
+    assert table.begin_collection(object_id) is None
 
     assert table.release_submitted_reference(object_id, submitted_hold)
     assert not table.release_submitted_reference(object_id, submitted_hold)
     assert table.release_borrowed_reference(object_id, "borrower:1")
     assert table.is_live(object_id)  # The nested/contained edge remains.
-    assert table.release_contained_reference(object_id, "container:outer")
+    assert table.release_contained_reference(object_id, contained)
     assert not table.is_live(object_id)
 
     snapshot = table.snapshot(object_id)
     assert snapshot.is_reconstructible
-    assert table.collect_if_unused(object_id)
+    plan = table.begin_collection(object_id, collection_id="all-reference-reasons-released")
+    assert plan is not None and table.complete_collection(plan).collected
     assert not table.contains(object_id)
 
 
@@ -285,16 +290,19 @@ def test_generic_reference_api_keeps_token_namespaces_independent() -> None:
         kind for kind in ReferenceKind
         if kind not in (ReferenceKind.SUBMITTED, ReferenceKind.RETAINED)
     )
+    contained = ContainedReferenceHold(ObjectID.for_task(TaskID.random()), WorkerID.random(), "same-token")
+    tokens = {kind: (contained if kind is ReferenceKind.CONTAINED else "same-token") for kind in generic_kinds}
     for kind in generic_kinds:
-        assert table.add_reference(object_id, kind, "same-token")
+        assert table.add_reference(object_id, kind, tokens[kind])
     snapshot = table.snapshot(object_id)
     assert snapshot.local_tokens == frozenset({"same-token"})
     assert not snapshot.submitted_tokens
     assert snapshot.borrowed_tokens == frozenset({"same-token"})
     assert snapshot.contained_tokens == frozenset({"same-token"})
+    assert snapshot.contained_holds == frozenset({contained})
 
     for kind in generic_kinds:
-        assert table.release_reference(object_id, kind, "same-token")
+        assert table.release_reference(object_id, kind, tokens[kind])
     assert not table.is_live(object_id)
 
     for task_kind in (ReferenceKind.SUBMITTED, ReferenceKind.RETAINED):

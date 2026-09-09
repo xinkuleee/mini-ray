@@ -42,7 +42,7 @@ from miniray.runtime_binding import (
     current_core_worker,
     current_execution_context,
 )
-from miniray.stored_publication import (
+from miniray.publication_sources import (
     OwnedContainedSource, PreparedContainedTransfer,
 )
 from miniray.trace import EventSink, MemoryEventSink, NonOwningEventSink
@@ -96,10 +96,17 @@ def _bare_embedded_worker() -> WorkerServer:
     worker.gcs_address = ("127.0.0.1", 19003)
     worker.inline_threshold = 1024
     worker._embedded_core_lock = threading.Lock()
+    worker._embedded_core_drain_lock = threading.Lock()
     worker._embedded_core = None
     worker._embedded_core_job_id = None
     worker._embedded_core_stopped = False
     worker._worker_core_enabled = True
+    worker._lifecycle = threading.Condition(threading.RLock())
+    worker._accepted_pushes = {}
+    worker._push_obligations = set()
+    worker._accepting_tasks = True
+    worker._active_tasks = 0
+    worker._owner_retain_admission_open = True
     worker.event_sink = MemoryEventSink(
         clock_ns=lambda: 1, process_id=lambda: 7001
     )
@@ -805,12 +812,16 @@ def _draining_worker(core: _DrainCore) -> WorkerServer:
     worker._lifecycle = threading.Condition(threading.RLock())
     worker._accepting_tasks = True
     worker._active_tasks = 0
+    worker._accepted_pushes = {}
+    worker._push_obligations = set()
     worker._stop_event = threading.Event()
     worker._request_timeout = 1.0
     worker._embedded_core_lock = threading.Lock()
+    worker._embedded_core_drain_lock = threading.Lock()
     worker._embedded_core = core
     worker._embedded_core_job_id = JobID.random()
     worker._embedded_core_stopped = False
+    worker._owner_retain_admission_open = True
     return worker
 
 
@@ -1508,6 +1519,8 @@ def test_closed_admission_still_serves_exact_completed_push_replay() -> None:
     worker._replies = {key: cached}
     worker._cached_pushes = {key: push}
     worker._completion_acked = {key}
+    worker._accepted_pushes = {key: push}
+    worker._push_obligations = set()
 
     assert worker._handle_push_task(push) is cached
     assert worker._active_tasks == 0

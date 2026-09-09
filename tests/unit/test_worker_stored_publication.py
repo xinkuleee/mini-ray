@@ -1,9 +1,9 @@
-"""Pure Worker/Node contracts for the unified selected-output publication.
+"""Pure Worker/Node contracts for the single-output owner-led publication.
 
 The historical filename no longer exercises a Worker-owned stored saga.
 Workers discover once and retain custody; the real Node adapter owns every
 publication effect. Existing fixtures provide only in-memory RPC callbacks,
-at most four logical outputs, two selected slots and four child transfers.
+one output, at most two child transfers, and a 1 KiB Node store.
 No Core, server, process, thread, socket or background waiter is started.
 """
 
@@ -20,15 +20,16 @@ import pytest
 
 from miniray import output_protocol as wire, protocol
 from miniray.core import ObjectRef
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import LeaseID, ObjectID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationConflictError, OutputPublicationManifest,
 )
 from miniray.ownership import ConflictingBorrowerTokenError, DeadWorkerReferenceError
-from miniray.stored_publication import BorrowedContainedSource, OwnedContainedSource
+from miniray.publication_sources import BorrowedContainedSource, OwnedContainedSource
 from miniray.transport import TransportError
 from miniray.worker import COMPLETE_WORKER_LEASE_HANDLER, START_WORKER_LEASE_HANDLER
-from tests.unit.test_output_publication_node import _Fixture as _NodeFixture
+from tests.unit.test_output_publication_node_server import _node
 from tests.unit.test_worker_unified_output import (
     _Fixture as _WorkerFixture, _borrowed_fixture,
 )
@@ -64,15 +65,37 @@ def _no_runtime(monkeypatch):
         monkeypatch.setattr(target, forbidden)
 
 
-@pytest.mark.parametrize("target", (False, True))
-def test_worker_discovers_once_without_rpc_and_preserves_complete_sources(monkeypatch, target):
-    worker = _WorkerFixture(monkeypatch, lambda: None, count=4 if target else 2,
-                            threshold=0, target=target)
+
+class _NodeFixture:
+    """Use the existing exact Node lease/journal/owner fixture, not a new backend."""
+
+    def __init__(self, *, stored=True):
+        self.fixture, self.node, self.record, self.completion = _node(stored=stored)
+        self.values = self.fixture.values
+        self.manifest, self.id = self.fixture.manifest, self.fixture.id
+        self.adapter, self.journal = self.fixture.adapter, self.fixture.journal
+        self.child_owners, self.store = self.fixture.child_owners, self.fixture.store
+        self.events, self.ledger = self.fixture.events, self.fixture.ledger
+
+    def prepare(self):
+        request = wire.PrepareOutputPublication(self.manifest, self.values.payloads)
+        assert self.node._handle_prepare_output_publication(request).accepted
+
+    def complete(self):
+        reply = self.node._handle_complete_worker_lease_inner(self.completion)
+        assert reply.accepted
+        return reply.output_publication
+
+
+@pytest.mark.parametrize("stored", (False, True))
+def test_worker_discovers_once_without_rpc_and_preserves_complete_sources(monkeypatch, stored):
+    worker = _WorkerFixture(monkeypatch, lambda: None, threshold=0 if stored else 65536)
     owned = ObjectRef(ObjectID.for_task(TaskID.random()), worker.worker.worker_id,
                       worker.worker.address)
     borrowed = ObjectRef(ObjectID.for_task(TaskID.random()), WorkerID.random(),
                          ("127.0.0.1", 30140))
-    source = protocol.ContainedTransferSource("upstream-borrowed-child")
+    source = protocol.ContainedTransferSource(ContainedReferenceHold(
+        ObjectID.for_task(TaskID.random()), borrowed.owner_worker_id, "upstream-borrowed-child"))
     borrowed._borrower_token = "accepted-borrower"
     borrowed._borrow_source = source
     reductions = []
@@ -88,30 +111,26 @@ def test_worker_discovers_once_without_rpc_and_preserves_complete_sources(monkey
 
     discovery = worker.worker._output_discovery_session(worker.push, worker.incarnation)
     values = (Once("owned", owned), Once("borrowed", borrowed))
-    batch = discovery.discover(values)
+    batch = discovery.discover((values,))
     assert reductions == ["owned", "borrowed"]
     assert worker.calls == worker.prepares == worker.executions == []
     assert discovery.source_references == (owned, borrowed)
     assert discovery.discovered is batch
     assert batch.manifest.header.node_incarnation == worker.incarnation
-    assert tuple(slot.object_id.return_index for slot in batch.manifest.slots) == (
-        (1, 3) if target else (0, 1)
-    )
-    first, second = batch.manifest.slots
-    assert len(first.transfers) == len(second.transfers) == 1
-    assert first.transfers[0].source == OwnedContainedSource(worker.worker.worker_id)
-    assert second.transfers[0].source == BorrowedContainedSource(
-        worker.worker.worker_id, borrowed.borrower_token, source,
-    )
-    assert second.transfers[0].contained_owner_address == borrowed.owner_address
-    for slot, payload in zip(batch.manifest.slots, batch.slot_payloads):
-        transfer = slot.transfers[0]
+    slot, = batch.manifest.slots
+    assert slot.object_id.return_index == 0
+    assert slot.tier is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
+    first, second = slot.transfers
+    assert first.source == OwnedContainedSource(worker.worker.worker_id)
+    assert second.source == BorrowedContainedSource(worker.worker.worker_id, borrowed.borrower_token, source)
+    assert second.contained_owner_address == borrowed.owner_address
+    for transfer in slot.transfers:
         assert transfer.provisional_hold.container_owner_worker_id == worker.worker.worker_id
         assert transfer.final_hold.container_owner_worker_id == worker.push.spec.owner_worker_id
         assert transfer.final_hold.container_object_id == slot.object_id
-        assert transfer.final_hold.transfer_token.encode() in payload
+        assert transfer.final_hold.transfer_token.encode() in batch.slot_payloads[0]
     with pytest.raises(RuntimeError, match="one-shot"):
-        discovery.discover(values)
+        discovery.discover((values,))
     assert reductions == ["owned", "borrowed"]
     discovery.release_sources_after_promotions()
     discovery.release_sources_after_promotions()
@@ -150,7 +169,8 @@ def test_child_owner_rejects_stale_or_rebound_borrowed_capability_without_a_pin(
     assert isinstance(transfer.source, BorrowedContainedSource)
     if invalid == "source":
         transfer = replace(transfer, source=replace(
-            transfer.source, original_source=protocol.ContainedTransferSource("another-source"),
+            transfer.source, original_source=protocol.ContainedTransferSource(ContainedReferenceHold(
+                ObjectID.for_task(TaskID.random()), node.values.owner, "another-source")),
         ))
     elif invalid == "token":
         transfer = replace(transfer, source=replace(transfer.source, borrower_token="another-token"))
@@ -173,9 +193,9 @@ def test_child_owner_rejects_stale_or_rebound_borrowed_capability_without_a_pin(
     assert node.events == [] and node.store.used_bytes == 0
 
 
-@pytest.mark.parametrize("target", (False, True))
-def test_node_owns_intent_prepare_graph_materialize_promote_arm_order(monkeypatch, target):
-    node = _NodeFixture(target=target)
+@pytest.mark.parametrize("stored", (False, True))
+def test_node_owns_owner_prepare_materialize_promote_order(monkeypatch, stored):
+    node = _NodeFixture(stored=stored)
     real_ack = node.journal.ack_materialized
 
     def materialized(ack, descriptor):
@@ -185,54 +205,49 @@ def test_node_owns_intent_prepare_graph_materialize_promote_arm_order(monkeypatc
 
     monkeypatch.setattr(node.journal, "ack_materialized", materialized)
     node.prepare()
-    assert node.events == [
-        "intent", "prepare", "prepare", "prepare", "prepare",
-        "graph", "materialize:0", "seal", "materialize:1",
-        "promote", "promote", "promote", "promote", "arm",
-    ]
+    assert node.events == ["owner-register", "prepare", "prepare", "materialize:0", "promote", "promote"]
     snapshot = node.journal.snapshot(node.id)
     assert snapshot.ready_to_complete and snapshot.complete is None
-    assert node.recovery.snapshot(node.id).armed and node.releases == 0
-    for slot in node.manifest.slots:
-        for transfer in slot.transfers:
-            holds = node.child_owners[transfer.contained_owner_worker_id].snapshot(
-                transfer.contained_object_id,
-            ).contained_holds
-            assert transfer.final_hold in holds and transfer.provisional_hold not in holds
+    assert node.fixture.handoffs.query(node.id).manifest == node.manifest
+    assert node.fixture.handoffs.query(node.id).complete is None
+    assert node.record.state is protocol.LeaseExecutionState.RUNNING
+    for transfer in node.manifest.slots[0].transfers:
+        holds = node.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
+        assert transfer.final_hold in holds and transfer.provisional_hold not in holds
     assert node.complete() == node.values.envelope
-    assert node.events[-1] == "commit" and node.releases == 1
+    assert node.record.state is protocol.LeaseExecutionState.COMPLETED
     assert node.ledger.available == node.ledger.total
-    assert "terminal" not in node.events
+    assert "complete-report" not in node.events
     assert node.adapter.pending_terminal_reports() == (node.values.witness,)
 
 
-@pytest.mark.parametrize("stage", ("intent", "prepare", "graph", "seal", "promote", "arm"))
+@pytest.mark.parametrize("stage", ("owner-register", "prepare", "seal", "promote"))
 def test_node_effect_ack_loss_replays_exact_metadata_not_worker_steps(monkeypatch, stage):
     node = _NodeFixture()
-    attribute = {
-        "intent": "_report_intent", "prepare": "_prepare_child",
-        "graph": "_prepare_graph", "seal": "_seal_replica",
-        "promote": "_promote_child", "arm": "_arm_complete",
-    }[stage]
+    attribute = {"owner-register": "_register_owner", "prepare": "_prepare_child",
+                 "seal": "_seal_replica", "promote": "_promote_child"}[stage]
     callback = getattr(node.adapter, attribute)
     calls = []
 
     def observe(*args):
         calls.append(args)
-        return callback(*args)
+        result = callback(*args)
+        if len(calls) == 1:
+            raise TimeoutError("effect ACK lost: " + stage)
+        return result
 
     monkeypatch.setattr(node.adapter, attribute, observe)
-    node.fault = stage
     with pytest.raises(TimeoutError, match=stage):
         node.prepare()
     assert node.journal.snapshot(node.id).complete is None
-    assert node.releases == 0
+    assert node.record.state is protocol.LeaseExecutionState.RUNNING
     node.prepare()
     assert calls[0] == calls[1]
     before = tuple(node.events)
     node.prepare()
     assert tuple(node.events) == before
-    assert node.complete() == node.values.envelope and node.releases == 1
+    assert node.complete() == node.values.envelope
+    assert node.ledger.available == node.ledger.total
 
 
 @pytest.mark.parametrize("phase", ("prepare", "complete"))
@@ -298,10 +313,10 @@ def test_wrong_batch_ack_cannot_advance_to_complete_or_release_sources(monkeypat
 
 
 @pytest.mark.parametrize("changed", ("source", "tier"))
-def test_batch_digest_binds_later_slot_metadata_before_any_replay_effect(changed):
+def test_batch_digest_binds_child_source_and_tier_before_any_replay_effect(changed):
     node = _NodeFixture()
     node.prepare()
-    last = node.manifest.slots[1]
+    last = node.manifest.slots[0]
     if changed == "source":
         transfer = last.transfers[1]
         last = replace(last, transfers=(last.transfers[0], replace(
@@ -309,7 +324,7 @@ def test_batch_digest_binds_later_slot_metadata_before_any_replay_effect(changed
         )))
     else:
         last = replace(last, tier=protocol.ResultStorage.INLINE)
-    changed_manifest = OutputPublicationManifest.create(node.manifest.header, (node.manifest.slots[0], last))
+    changed_manifest = OutputPublicationManifest.create(node.manifest.header, (last,))
     assert changed_manifest.publication_id == node.id
     assert changed_manifest.manifest_digest != node.manifest.manifest_digest
     before = node.journal.snapshot(node.id), tuple(node.events), node.store.used_bytes
@@ -321,7 +336,7 @@ def test_batch_digest_binds_later_slot_metadata_before_any_replay_effect(changed
 
 def test_later_serialization_failure_creates_no_node_publication_or_pin(monkeypatch):
     values, sessions, reductions = [], [], []
-    worker = _WorkerFixture(monkeypatch, lambda: tuple(values), count=2, threshold=0)
+    worker = _WorkerFixture(monkeypatch, lambda: tuple(values), threshold=0)
     child = ObjectRef(ObjectID.for_task(TaskID.random()), worker.worker.worker_id, worker.worker.address)
 
     class Bad:
