@@ -6,8 +6,8 @@ really drops its replica. The real reconstruction admission then queues the next
 synchronous callback completes that exact Attempt before returning its START
 outcome to the owner reducer. Success uses the same publication path; an
 application failure uses Core's actual atomic terminal-error reducer. No user
-function, scheduler, physical Worker, StartLease RPC or GCS publication
-service is executed.
+function, scheduler, physical Worker, StartLease RPC or GCS service is
+executed. Publication coordination runs the real synchronous GCS reducer.
 
 The borrower has an actually acquired capability from an explicit typed
 container hold. Its outer identity is a pure protocol fixture, not a public
@@ -16,7 +16,8 @@ observes the Core lock at the pre-admission owner/recovery metadata pair. It
 does not simulate concurrent execution by publishing under a re-entrant lock.
 
 Per case: one Task/one slot, at most two Attempts/publications, one 4-KiB
-store, <=128 bytes per published result and <=32 observations per channel. All
+store, <=128 bytes per result, <=32 owner/output observations and <=64 exact
+publication exchanges through the real authority. All
 transport is exact synchronous routing. Runtime constructors, threads, sockets,
 processes, timers and real waits are forbidden. Cleanup releases real handles
 and the export capability; it does not finish unresolved Tasks, drain queued

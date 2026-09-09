@@ -1,7 +1,7 @@
 # mini-ray 与 Ray Core 的职责映射
 
-日期：2026-09-09。本页对应已独立通过约定验收的基础版；**本地固定标记为`teaching-base-v0.1`，第二阶段尚未实施**。
-同版318项纯合同、32个真实smoke及七个main产物的结果和范围统一查 [验收账本](acceptance-baseline.md)。
+日期：2026-09-09。本页对应已独立通过约定验收的基础版；**本地固定标记为`teaching-base-v0.1`，增强版`teaching-enhanced-v0.2`两项协议已同版验收**。
+基础标记的同版318项纯合同、32个真实smoke及七个main产物见[基础账本](acceptance-baseline.md)；当前增强结果见[增强账本](acceptance-enhanced.md)。相对源码链接跟随检出版本。
 
 Ray 源码对照固定为 **c3162dce8d064824293875c5d0bbfd76a54e04ce**；本轮已核对本地 [ray checkout](C:/Users/t-hdong/Desktop/gao/ray) 的 HEAD。
 下表链接到该本地 checkout 的实际文件；[固定版本上游树](https://github.com/ray-project/ray/tree/c3162dce8d064824293875c5d0bbfd76a54e04ce) 用于以后检出相同布局。
@@ -22,7 +22,7 @@ Ray 源码对照固定为 **c3162dce8d064824293875c5d0bbfd76a54e04ce**；本轮�
 | Placement Group | [placement.py](../src/miniray/placement.py)、[placement_group_runtime.py](../src/miniray/placement_group_runtime.py)、[control.py](../src/miniray/control.py) | [gcs_placement_group_scheduler.cc](C:/Users/t-hdong/Desktop/gao/ray/src/ray/gcs/gcs_placement_group_scheduler.cc)、[placement_group_resource_manager.cc](C:/Users/t-hdong/Desktop/gao/ray/src/ray/raylet/placement_group_resource_manager.cc) | bundle 全 commit 前不可见；Node reservation 才是物理资源。mini 至多两个 bundle、两种 STRICT 策略、Node loss→LOST |
 
 [固定版本 Task lifecycle 文档](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/doc/source/ray-core/internals/task-lifecycle.rst) 可与七个 [教学示例](learning-path.md) 对照。
-GCS 不逐个调度普通 Task，不等于 Ray 普通 Task 永不访问 GCS；本版去掉的是 mini 自创的逐结果发布门禁。
+GCS 不逐个调度普通 Task，不等于 Ray 普通 Task 永不访问 GCS；基础标记退出了mini自创逐结果发布门禁；增强主线把它作为明确的mini研究协议加入，不能混称Ray原始流程。
 
 ## 基础版普通结果怎样发布
 
@@ -66,11 +66,11 @@ owner-led 并不意味着无握手、无清单、无收据；必要的未知效�
 
 ## 第二阶段：明确的 mini 协议研究
 
-第二阶段在固定基础版之后增加 GCS 普通结果发布事务和全局 ObjectID 图防环，两项都属于已确定交付范围。
+第二阶段已在固定基础版之后接入GCS普通结果发布事务和全局ObjectID图防环，两项均已在最终增强snapshot03按有限合同同版验收。
 前者为特定故障窗口增加存活的发布事实副本，后者对受支持引用边增加全局 PREPARED/COMMITTED 准入和成环拒绝；二者也增加同步依赖、补偿与退休责任。
 Ray 的 ReferenceCounter 不等于 mini 自创全局图；增强版的价值是比较协议保证和代价，不是“更接近生产 Ray”。
 
-图证据必须分层：公共无环结果/GC 可证明接线；旧 metadata 请求经过真实 GCS handler 的环拒绝只证明控制协议；公共 API 合法完整成环与真实并发请求仍须按增强版计划证明。
+当前真实公共API已证明：put/Task无环发布与GC；B=put([A])之后重建A返回B形成两对象环候选；两Node四对象并发预约联合判环。证据分层与固定snapshot见增强账本，旧metadata-only请求不再承担公共可达性证明。
 不能用可变 Python list 修改已 put 的 immutable 值、手造 ObjectRef 或伪 borrower 来补可达性。
 固定基础版持续作为首次学习入口；增强版沿同一实现主线演进，不在产品中长期保留双后端。
-具体窗口、未决项和两版交界见 [两阶段计划 §10](redesign-plan.md)，当前通过范围仍以 [验收账本](acceptance-baseline.md) 为准。
+具体窗口、未决项和两版交界见 [两阶段计划 §10](redesign-plan.md)，当前增强通过范围以[增强账本](acceptance-enhanced.md)为准。

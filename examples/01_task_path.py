@@ -1,4 +1,4 @@
-"""The smallest complete Task path and its stable logical identities."""
+"""One Task through the enhanced publication path and its stable identities."""
 
 from __future__ import annotations
 
@@ -61,14 +61,19 @@ def main() -> None:
         worker_pid, value = ray.get(result_ref, timeout=_remaining(deadline))
         assert worker_pid == context.worker_pid and value == 49
         print("executor PID:  ", worker_pid, "result:", value)
-        # Core submit -> Node lease -> direct Worker push -> owner publication.
-        # Node registers the cleanup manifest at this Driver's OwnerService
-        # before completing the output; ordinary publication has no GCS gate.
+        # Owner registration precedes GCS INTENT/PREPARED/ARMED. Node Complete
+        # records execution success and releases resources locally. Accurate
+        # GCS TERMINAL/COMMITTED receipts then permit the owner's READY CAS;
+        # ADOPTED acknowledges that fact before Node reply custody retires.
         contract = load_trace_contract(SUCCESS_TRACE_CONTRACT)
         print("\nCanonical trace (volatile IDs and timestamps omitted):")
         print(_canonical_trace(contract, str(result_ref.object_id.task_id), deadline))
         print("register_output_handoff: Node -> OwnerService; transport_ok is an RPC observation.")
+        print("GCS C0/C1/C2/C4/C5/C7: INTENT/PREPARED/ARMED/TERMINAL/COMMITTED/ADOPTED.")
+        print("All six stages use enhanced_publication; stage events name actual accepted receipts.")
+        print("TERMINAL shown here is the owner's exact replay; the Node also reports Complete independently.")
         print("owner_ready: owner CAS/wake; payload_retired: reply custody, not object GC.")
+        print("GCS stores metadata, not result bytes; teaching-base-v0.1 keeps the base learning path.")
     finally:
         cleanup_deadline = time.monotonic() + _CLEANUP_SECONDS
         try:

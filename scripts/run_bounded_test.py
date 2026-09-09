@@ -23,6 +23,11 @@ from typing import Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_NODE_IDS = frozenset(
     {
+        "tests/integration/test_enhanced_terminal_loss_path.py::test_local_complete_without_gcs_terminal_becomes_unknown_after_node_loss",
+        "tests/integration/test_enhanced_terminal_loss_path.py::test_gcs_terminal_ack_lost_preserves_success_but_not_bytes_after_node_loss",
+        "tests/integration/test_enhanced_cycle_path.py::test_public_put_and_task_graphs_commit_then_release",
+        "tests/integration/test_enhanced_cycle_path.py::test_public_reconstruction_rejects_reachable_two_object_cycle",
+        "tests/integration/test_enhanced_cycle_path.py::test_concurrent_real_reservations_reject_one_four_object_cycle",
         "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
         "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
         "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",

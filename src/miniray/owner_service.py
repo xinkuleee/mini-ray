@@ -196,7 +196,9 @@ class OwnerService:
                 INSTALL_ACTOR_STATE_HANDLER: core.install_actor_state,
         }
         from . import output_protocol as output_wire
+        from .enhanced_publication import ABORT_OWNER_PUBLICATION_HANDLER
         for handler, method in (
+            (ABORT_OWNER_PUBLICATION_HANDLER, "abort_owner_publication"),
             (output_wire.REGISTER_OUTPUT_HANDOFF_HANDLER, "register_output_handoff"),
             (output_wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, "report_output_handoff_complete"),
             (output_wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER, "report_output_handoff_rollback"),

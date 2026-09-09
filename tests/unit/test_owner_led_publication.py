@@ -1,4 +1,8 @@
-"""Owner/Node/child-table composition without sockets, threads, or GCS."""
+"""Owner/Node/child/GCS reducer composition without sockets or threads.
+
+The GCS callbacks invoke the actual publication authority. Preparation facts
+come from the real Node journal after the real child-table operations below.
+"""
 
 from dataclasses import replace
 
@@ -6,6 +10,7 @@ import cloudpickle
 import pytest
 
 from miniray import output_protocol as wire, protocol
+from miniray import enhanced_publication as enhanced
 from miniray.core import ObjectRef
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_discovery import OutputDiscoverySession
@@ -48,12 +53,22 @@ class _Publication:
         self.events = []
         self.releases = []
         self.fail_once = set()
+        self.publication = enhanced.TaskPublication(self.manifest, ("owner.invalid", 31002))
+        self.authority = enhanced.PublicationAuthority()
         self.adapter = OutputPublicationNodeAdapter(
             self.journal, register_owner=self.register, report_complete=self.report_complete,
             report_rollback=self.report_rollback, prepare_child=self.prepare_child,
             promote_child=self.promote_child, release_child=self.release_child,
             seal_replica=self.unexpected_replica, drop_replica=self.unexpected_replica,
+            publication_value=lambda manifest: enhanced.TaskPublication(manifest, self.publication.owner_address),
+            publication_rpc=self.authority.apply, abort_owner=self.abort_owner,
         )
+
+    def abort_owner(self, publication, scope):
+        assert publication == self.publication
+        assert scope == self.journal.rollback_scope(self.identity)
+        self.handoffs.abort_manifest(self.manifest, "publisher-rollback")
+        return enhanced.OwnerAbortReceipt(publication.reference, self.owner, scope.rollback_id)
 
     def lose_reply(self, phase):
         if phase in self.fail_once:
@@ -147,6 +162,7 @@ def test_reference_free_complete_releases_locally_before_owner_reporting():
     assert p.adapter.pending_terminal_reports() == (envelope.complete,)
     assert p.adapter.pending_lease_completions() == ()
     assert p.adapter.report_terminal(p.identity)
+    assert p.authority.query(enhanced.GetPublication(p.publication.reference)).snapshot.complete == envelope.complete
     assert p.handoffs.query(p.identity).complete == envelope.complete
     assert p.handoffs.query(p.identity).phase is OutputHandoffPhase.PENDING
     p.discovery.release_sources_after_promotions()

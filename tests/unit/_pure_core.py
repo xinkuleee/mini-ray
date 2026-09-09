@@ -16,7 +16,8 @@ import weakref
 import cloudpickle
 import pytest
 
-from miniray import protocol
+from miniray import enhanced_publication, protocol
+from miniray.control import NodeRegistry
 from miniray.core import CoreWorker, _LocalReferenceRelease, _RetryInlineGc, _RetryReplicaCleanup
 from miniray.ids import JobID, NodeID, TaskID, WorkerID
 from miniray.ownership import ObjectOwnerTable
@@ -29,6 +30,24 @@ def _unexpected_effect(*_args, **_kwargs):
     # pytest.fail is not an Exception, so best-effort production RPC/finalizer
     # handlers cannot silently turn an unexpected effect into a passing test.
     pytest.fail("pure Core fixture attempted unmodelled RPC/thread/timer work")
+
+
+def pure_publication_rpc(core, address, handler, request):
+    """Route exact publication operations through the real pure reducer.
+
+    This fixture has no live membership service. Its one pure Node registration
+    is diagnostic metadata for actual small-store fixtures, never a proof that
+    a process ran. Every unrelated RPC remains forbidden.
+    """
+    if address != core.gcs_address:
+        return _unexpected_effect(address, handler, request)
+    if handler == enhanced_publication.PUBLICATION_HANDLER:
+        return core._pure_publication_authority.apply(request)
+    if handler == "get_node_state" and type(request) is protocol.GetNodeState:
+        if request.node_id != core.node_id:
+            return _unexpected_effect(address, handler, request)
+        return core._pure_node_registry.get_state_reply(request)
+    return _unexpected_effect(address, handler, request)
 
 
 class SynchronousReferenceMailbox:
@@ -102,8 +121,9 @@ class SynchronousReferenceMailbox:
 def make_pure_core() -> CoreWorker:
     """Construct only the authorities touched by reconstruction contracts.
 
-    Addresses are inert protocol metadata, not listeners.  Every transport
-    boundary rejects calls unless a test installs an exact typed fake reply.
+    Addresses are inert protocol metadata, not listeners. Publication calls
+    run the actual GCS reducer; other transport boundaries reject calls unless
+    a test supplies its explicitly bounded local authority or exact fixture.
     Missing state fails normally instead of inheriting new constructor effects.
     """
 
@@ -120,6 +140,9 @@ def make_pure_core() -> CoreWorker:
     core._put_index = 0
     core._reference_index = 0
     core._owner_table = ObjectOwnerTable()
+    core._pure_publication_authority = enhanced_publication.PublicationAuthority()
+    core._pure_node_registry = NodeRegistry()
+    core._pure_node_registry.register(core.node_id, core.node_address, ResourceVector({"CPU": 1}), node_pid=21001)
     core._recovery = RecoveryManager()
     core._objects = {}
     core._stored_descriptors = {}
@@ -152,7 +175,7 @@ def make_pure_core() -> CoreWorker:
     core._sink_closed = False
     core.event_sink = MemoryEventSink()
     core._reference_mailbox = SynchronousReferenceMailbox(core)
-    core._rpc = _unexpected_effect
+    core._rpc = lambda address, handler, request: pure_publication_rpc(core, address, handler, request)
     core._borrow_rpc = _unexpected_effect
     core._borrow_rpc_with_deadline = _unexpected_effect
     core._push_task_rpc = _unexpected_effect

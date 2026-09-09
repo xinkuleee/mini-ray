@@ -276,9 +276,13 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
     from miniray.output_publication_node import OutputPublicationNodeAdapter
     from miniray.ownership import ObjectOwnerTable
     from miniray import protocol
+    from miniray import enhanced_publication as enhanced
     from miniray.transport import TransportTimeout
     f = _Fixture()
     core = _rollback_core(f)
+    core.owner_address = ("owner.invalid", 1234)
+    authority = enhanced.PublicationAuthority()
+    publication = enhanced.TaskPublication(f.manifest, core.owner_address)
     child = ObjectOwnerTable()
     child.register(f.child, current_attempt=AttemptID(f.child.task_id, 0))
     child.publish_inline(f.child, AttemptID(f.child.task_id, 0), b"child")
@@ -313,11 +317,18 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
     def forbidden(*args, **kwargs):
         pytest.fail("unreached publication effect")
 
+    def abort_owner(value, scope):
+        reply = core.abort_owner_publication(enhanced.AbortOwnerPublication(value, scope))
+        assert reply.accepted, reply.error
+        return reply.receipt
+
     journal = _journal(f)
     adapter = OutputPublicationNodeAdapter(
         journal, register_owner=register, report_complete=forbidden, report_rollback=report,
         prepare_child=prepare, promote_child=forbidden, release_child=release,
         seal_replica=forbidden, drop_replica=forbidden,
+        publication_value=lambda manifest: enhanced.TaskPublication(manifest, core.owner_address),
+        publication_rpc=authority.apply, abort_owner=abort_owner,
     )
     with pytest.raises(TransportTimeout, match="registration"):
         adapter.prepare(f.manifest, (b"value",))
@@ -339,6 +350,7 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
     assert f.table.query(f.identity).phase is OutputHandoffPhase.ABORTED
     assert adapter.rollback(f.identity, "partial-child") == completed
     assert len(releases) == 1
+    assert not authority.query(enhanced.GetPublication(publication.reference)).snapshot.graph_active
 
 
 @pytest.mark.parametrize("invalid", ("wrong-owner", "absent-child-index", "unregistered-effect"))

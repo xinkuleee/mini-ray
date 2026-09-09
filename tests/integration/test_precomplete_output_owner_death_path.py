@@ -14,8 +14,8 @@ death, read-only GCS membership confirms the surviving Nodes have acknowledged
 the existing owner-wide fences. Only then is the publication gate opened: Node
 cleanup needs Prepare's adapter ticket and cannot release children while that
 gate remains held. The resumed Prepare must be fenced; local Node cleanup must
-obtain the same live executor's actual Finalize ACK. There is no GCS publication
-record, graph query or test-driven cleanup RPC.
+obtain the same live executor's actual Finalize ACK. Enhanced GCS queries prove
+the reservation and its exact child-hold retirement; no query drives cleanup.
 
 Node-entry observers do no scheduling or cleanup. They check returned spawn
 identities, actual status replies, rejection/Finalize results, and after the
@@ -42,6 +42,7 @@ import pytest
 
 import miniray as ray
 from miniray import api as api_module, node as node_module, output_protocol as wire, protocol
+from miniray import enhanced_publication as enhanced
 from miniray.api import _get_runtime
 from miniray.core import CoreWorker, _worker_death_reference_id
 from miniray.control import GET_NODES_HANDLER, GET_WORKER_STATE_HANDLER
@@ -107,6 +108,16 @@ def _handoff(owner_address, publication_id, deadline):
     assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
     assert reply.snapshot is not None and reply.snapshot.publication_id == publication_id
     _assert_metadata_only(reply)
+    return reply.snapshot
+
+
+def _publication(context, reference, deadline):
+    request = enhanced.GetPublication(reference)
+    reply = _query(context.gcs_address, enhanced.PUBLICATION_HANDLER, request, deadline)
+    assert type(reply) is enhanced.PublicationReply and reply.request == request and reply.accepted
+    if reply.snapshot is not None:
+        assert reply.snapshot.reference == reference
+        _assert_metadata_only(reply.snapshot)
     return reply.snapshot
 
 
@@ -388,6 +399,17 @@ def _run_precomplete_owner_death(phase):
         assert manifest.header.executor_worker_id == executor_node.worker_id
         assert before.phase is OutputHandoffPhase.PENDING
         assert before.complete is before.adoption is before.abort_reason is None
+        reference = enhanced.PublicationRef(publication, arrival.manifest_digest)
+        central_before = _publication(context, reference, deadline)
+        if promoted:
+            assert central_before is not None and central_before.publication.manifest == manifest
+            assert central_before.graph_active and central_before.forward_open
+            assert central_before.receipt(enhanced.PublicationStage.PREPARED) is not None
+            assert central_before.complete is central_before.adoption is None
+        else:
+            # This checkpoint precedes C0; the later death fence must still
+            # bind a full manifest rather than treating absence as cleanup.
+            assert central_before is None
         (slot,) = manifest.slots
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE and slot.object_id == output_id
         assert len(_PADDING) < slot.size_bytes < 32 * 1024
@@ -464,6 +486,26 @@ def _run_precomplete_owner_death(phase):
                         and not observation_errors)
 
         _poll_until(child_holds_released, deadline, "Node did not acknowledge both exact child releases")
+
+        def graph_retired():
+            snapshot = _publication(context, reference, deadline)
+            return snapshot if snapshot is not None and snapshot.receipt(enhanced.PublicationStage.RETIRED) is not None else None
+
+        central_after = _poll_until(graph_retired, deadline, "GCS did not retire the dead owner's exact child graph")
+        assert central_after.publication.manifest == manifest
+        assert central_after.fence == death and not central_after.forward_open and not central_after.graph_active
+        assert central_after.complete is central_after.adoption is None
+        closure = central_after.closed_holds
+        assert closure is not None and closure.reference == reference and closure.child_deaths == ()
+        assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in closure.releases} == {
+            (source.object_id, core.worker_id, transfer.final_hold),
+            (source.object_id, core.worker_id, transfer.provisional_hold),
+        }
+        assert all(reply.accepted for reply in closure.releases)
+        with observation_lock:
+            # Duplicate Node/GCS progress can turn APPLIED into replay, so
+            # compare complete hold identities and acceptance, not released.
+            assert {reply.hold for reply in closure.releases} == set(observed_releases)
         executor_after = _worker_state(context, executor_node.worker_id, deadline)
         assert executor_after.state is protocol.WorkerMembershipState.ALIVE
         assert executor_after.incarnation == executor_before.incarnation and executor_after.death is None
@@ -516,6 +558,7 @@ def _run_precomplete_owner_death(phase):
         pids.update(final_live_pids)
         assert len(pids) == 6 and not _pid_exists(owner_node.worker_pid)
         assert not runtime.node_deaths  # Neither live Node was the injected target.
+        assert _publication(context, reference, deadline) == central_after
     finally:
         cleanup_deadline = time.monotonic() + 3.0
         api_module._node_process_main = original_entry

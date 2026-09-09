@@ -1,0 +1,10 @@
+{
+  "source_archive": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\stage2-validation-03\\project.tar",
+  "source_archive_sha256": "f3782f572b96233e8f9bae3a7915b8a7f3534904c11f857621df367aa530344a",
+  "source_snapshot": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\stage2-validation-03\\snapshot.json",
+  "runtime_archive": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\linux-validation-runtime-executable.tar",
+  "runtime_archive_sha256": "146439268a4588c18c6302b8d3a8fb467f73346af00c7e0f1cc480a14f93206e",
+  "uv_archive": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\stage1-dependency-repro\\uv-0.11.26-linux-musl.tar.gz",
+  "uv_archive_sha256": "62bf1a53501adf4083224b69b33737450ac516935f5a5e483e9dfaf2665084de",
+  "scope": "Exact enhanced source snapshot; install/import only, no tests; awaiting root serial validation completion before execution."
+}

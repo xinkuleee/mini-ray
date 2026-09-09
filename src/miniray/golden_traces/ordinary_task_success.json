@@ -1,9 +1,9 @@
 {
   "schema": "miniray.trace-contract/v1",
   "name": "ordinary_task_success",
-  "title": "ordinary task: direct submission, owner handoff, result readiness and custody retirement",
+  "title": "ordinary task: central publication receipts, owner readiness and reply custody retirement",
   "participants": {
-    "gcs": "GCS-lite",
+    "gcs": "GCS publication coordinator",
     "core_worker": "Owner CoreWorker",
     "node": "NodeServer",
     "worker": "Execution Worker",
@@ -180,6 +180,114 @@
       "show_fields": [
         "storage"
       ]
+    },
+    {
+      "key": "gcs_intent",
+      "component": "gcs",
+      "event": "enhanced_publication_stage",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "object_id": "$object_id",
+        "stage": "INTENT",
+        "request_type": "BeginPublication"
+      },
+      "show_fields": [
+        "stage",
+        "request_type"
+      ]
+    },
+    {
+      "key": "gcs_prepared",
+      "component": "gcs",
+      "event": "enhanced_publication_stage",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "object_id": "$object_id",
+        "stage": "PREPARED",
+        "request_type": "PrepareGraph"
+      },
+      "show_fields": [
+        "stage",
+        "request_type"
+      ]
+    },
+    {
+      "key": "gcs_armed",
+      "component": "gcs",
+      "event": "enhanced_publication_stage",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "object_id": "$object_id",
+        "stage": "ARMED",
+        "request_type": "ArmTask"
+      },
+      "show_fields": [
+        "stage",
+        "request_type"
+      ]
+    },
+    {
+      "key": "gcs_terminal",
+      "component": "gcs",
+      "event": "enhanced_publication_stage",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "object_id": "$object_id",
+        "stage": "TERMINAL",
+        "request_type": "RecordTerminal"
+      },
+      "show_fields": [
+        "stage",
+        "request_type"
+      ]
+    },
+    {
+      "key": "gcs_committed",
+      "component": "gcs",
+      "event": "enhanced_publication_stage",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "object_id": "$object_id",
+        "stage": "COMMITTED",
+        "request_type": "CommitGraph"
+      },
+      "show_fields": [
+        "stage",
+        "request_type"
+      ]
+    },
+    {
+      "key": "gcs_adopted",
+      "component": "gcs",
+      "event": "enhanced_publication_stage",
+      "fields": {
+        "task_id": "$task_id",
+        "attempt_id": "$attempt_id",
+        "lease_id": "$lease_id",
+        "manifest_digest": "$manifest_digest",
+        "object_id": "$object_id",
+        "stage": "ADOPTED",
+        "request_type": "RecordAdoption"
+      },
+      "show_fields": [
+        "stage",
+        "request_type"
+      ]
     }
   ],
   "rpcs": [
@@ -254,6 +362,60 @@
       "after_event": "owner_ready",
       "before_event": "task_finished",
       "reply_event": "payload_retired",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "gcs_intent_rpc",
+      "client": "node",
+      "server": "gcs",
+      "handler": "enhanced_publication",
+      "server_event": "gcs_intent",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "gcs_prepared_rpc",
+      "client": "node",
+      "server": "gcs",
+      "handler": "enhanced_publication",
+      "server_event": "gcs_prepared",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "gcs_armed_rpc",
+      "client": "node",
+      "server": "gcs",
+      "handler": "enhanced_publication",
+      "server_event": "gcs_armed",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "gcs_terminal_rpc",
+      "client": "core_worker",
+      "server": "gcs",
+      "handler": "enhanced_publication",
+      "server_event": "gcs_terminal",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "gcs_committed_rpc",
+      "client": "core_worker",
+      "server": "gcs",
+      "handler": "enhanced_publication",
+      "server_event": "gcs_committed",
+      "round_trip": true,
+      "reply_ok": "true"
+    },
+    {
+      "key": "gcs_adopted_rpc",
+      "client": "core_worker",
+      "server": "gcs",
+      "handler": "enhanced_publication",
+      "server_event": "gcs_adopted",
       "round_trip": true,
       "reply_ok": "true"
     }
@@ -342,6 +504,42 @@
     {
       "before": "owner_ready",
       "after": "retire_rpc.request_sent"
+    },
+    {
+      "before": "register_handoff_rpc.reply_received",
+      "after": "gcs_intent_rpc.request_sent"
+    },
+    {
+      "before": "gcs_intent_rpc.reply_received",
+      "after": "gcs_prepared_rpc.request_sent"
+    },
+    {
+      "before": "gcs_prepared_rpc.reply_received",
+      "after": "gcs_armed_rpc.request_sent"
+    },
+    {
+      "before": "gcs_armed_rpc.reply_received",
+      "after": "prepare_rpc.reply_sent"
+    },
+    {
+      "before": "push_rpc.reply_received",
+      "after": "gcs_terminal_rpc.request_sent"
+    },
+    {
+      "before": "gcs_terminal_rpc.reply_received",
+      "after": "gcs_committed_rpc.request_sent"
+    },
+    {
+      "before": "gcs_committed_rpc.reply_received",
+      "after": "owner_ready"
+    },
+    {
+      "before": "owner_ready",
+      "after": "gcs_adopted_rpc.request_sent"
+    },
+    {
+      "before": "gcs_adopted_rpc.reply_received",
+      "after": "retire_rpc.request_sent"
     }
   ],
   "forbidden": [
@@ -394,13 +592,31 @@
     "prepare_rpc.request_sent",
     "register_handoff_rpc.request_sent",
     "register_handoff_rpc.reply_received",
+    "gcs_intent_rpc.request_sent",
+    "gcs_intent",
+    "gcs_intent_rpc.reply_received",
+    "gcs_prepared_rpc.request_sent",
+    "gcs_prepared",
+    "gcs_prepared_rpc.reply_received",
+    "gcs_armed_rpc.request_sent",
+    "gcs_armed",
+    "gcs_armed_rpc.reply_received",
     "prepare_rpc.reply_received",
     "complete_rpc.request_sent",
     "node_complete",
     "complete_rpc.reply_received",
     "worker_succeeded",
     "push_rpc.reply_received",
+    "gcs_terminal_rpc.request_sent",
+    "gcs_terminal",
+    "gcs_terminal_rpc.reply_received",
+    "gcs_committed_rpc.request_sent",
+    "gcs_committed",
+    "gcs_committed_rpc.reply_received",
     "owner_ready",
+    "gcs_adopted_rpc.request_sent",
+    "gcs_adopted",
+    "gcs_adopted_rpc.reply_received",
     "retire_rpc.request_sent",
     "retire_rpc.reply_received",
     "payload_retired",

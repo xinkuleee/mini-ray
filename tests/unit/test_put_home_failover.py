@@ -21,6 +21,7 @@ import cloudpickle
 import pytest
 
 from miniray import control, core as core_module, node as node_module, protocol, transport, worker
+from miniray import enhanced_publication as enhanced
 from miniray.control import NodeRegistry
 from miniray.core import CoreWorker, _HomeRoute, _NodeDeathObserved, _WAKE_COORDINATOR
 from miniray.ids import AttemptID, NodeID, ObjectID, TaskID
@@ -39,6 +40,9 @@ class _Homes:
     def __init__(self):
         self.core = core = make_pure_core()
         self.registry = NodeRegistry()
+        self.authority = enhanced.PublicationAuthority()
+        self.gcs_calls = []
+        core.gcs_address = ("gcs.invalid", 23000)
         self.nodes, self.references, self.calls = [], [], []
         self.deaths, self.mode, self.failed_seals = [], None, 0
         for index in range(2):
@@ -100,6 +104,13 @@ class _Homes:
         self.deaths.append(result.death)
 
     def rpc(self, address, handler, request):
+        if address == self.core.gcs_address:
+            assert len(self.gcs_calls) < 32, "put home graph requests must stay bounded"
+            self.gcs_calls.append((handler, request))
+            if handler == enhanced.PUBLICATION_HANDLER:
+                return self.authority.apply(request)
+            assert handler == "get_node_state"
+            return self.registry.get_state_reply(request)
         assert len(self.calls) < 5
         target, = [node for node in self.nodes if node.address == address]
         assert not self.core._node_is_dead(target.node_id), "never access the dead Node fixture"
@@ -156,6 +167,8 @@ class _Homes:
             if not self.core._node_is_dead(node.node_id):
                 assert node.object_store.used_bytes == 0 and not node._sealed_metadata
         close_pure_core(self.core)
+        assert all(snapshot.receipt(enhanced.PublicationStage.RETIRED) is not None
+                   for snapshot in self.authority.snapshots())
 
 
 @pytest.fixture

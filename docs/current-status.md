@@ -1,21 +1,21 @@
 # 当前实现状态与历史记录
 
-日期：2026-09-09。**第一阶段基础版已独立通过约定验收；本地提交/标记为`teaching-base-v0.1`，第二阶段尚未实施。**
-两阶段顺序以 [redesign-plan.md](redesign-plan.md) 为准；当前实际结果、证据层级和有限剩余项以 [acceptance-baseline.md](acceptance-baseline.md) 为唯一验收账本。
+日期：2026-09-09。**第一阶段基础版已独立通过约定验收；本地提交/标记为`teaching-base-v0.1`，增强版`teaching-enhanced-v0.2`两项机制也已通过约定同版验收。**
+两阶段顺序以 [redesign-plan.md](redesign-plan.md) 为准；基础版固定结果见[acceptance-baseline.md](acceptance-baseline.md)，当前增强结果、证据层级及剩余项见[acceptance-enhanced.md](acceptance-enhanced.md)。
 本页不累计旧 pass 数表示完成度，也不把不同修改时点的结果当成同一最终版本通过。
 
-## 当前基础实现
+## 两版共同基础与当前增强
 
 | 领域 | 当前已接入的范围 | 尚不能据此声称 |
 |---|---|---|
 | Task / 执行 | 单输出；真实 spawn；1–2 逻辑 Node；dependency gate、lease/spillback、Core→Worker direct Push；动态子任务与 CPU yield | K0/K1 全部历史组合或生产 Ray API 兼容 |
 | owner-led 普通结果 | owner 待交接清单与精确收据；Node 物化/Complete；child owner holds；owner 原子可见与独立托管退休 | 无 ACK/补偿，或 Node Complete 就等于当前 bytes 可读 |
-| GCS 边界 | 成员、死亡事实、owner-wide Node fence、Actor 与 PG；普通结果 GCS 阶段事务和全局 contained graph 已退出活动实现 | 第二阶段两项增强已完成 |
+| GCS增强 | 当前主线加入普通结果INTENT/ARM/terminal/adopted、图PREPARED/COMMITTED/fence/退休；owner、Node和child职责保留 | GCS可以恢复bytes/接管owner，或所有历史故障组合均已验证 |
 | 对象与引用 | INLINE/STORED、immutable bytes、pin/pull、typed hold/source、独立 borrower、nested refs；显式含 Ref put 接线与补偿 | close/shutdown 已证明所有实体 GC，或 put 可以 lineage 重建 |
 | 恢复 | 单输出 whole retry/reconstruction；B1 真实 START/JOIN 准入事实、B2 完整 drop 请求绑定；准确 Complete 与 UNKNOWN/LOST 分开 | 精确一次外部副作用、任意故障交错或 owner 接管 |
 | Actor / PG | 串行 Actor、同 Node 有限 restart、typed 构造/启动失败、Node loss 终态；PG 至多两个 bundle、STRICT_PACK/STRICT_SPREAD、2PC/LOST | Actor migration、引用参数/值内 Ref、soft PG 优化或 bundle 重排 |
 
-独立多返回槽、targeted/sibling 恢复、自动 StoredArg lift、Actor migration、全局图及 GCS 普通发布权威已从基础版范围退出。
+两版均退出独立多返回槽、targeted/sibling恢复、自动StoredArg lift和Actor migration；全局图与GCS普通发布在固定基础版退出、在当前增强主线启用。
 对应旧测试的共享不变量按验收账本迁移，退役协议专属断言不自动成为新门禁；历史 manifest 不是当前基础回归入口。
 
 最终snapshot03归档SHA256为`42fa8b6406ae5672b434b1b479aa08ca3c36faab131429ea287970bf135cd5d0`。
@@ -24,13 +24,14 @@
 B04 adoption ACK-loss、B06 Task foreign nested replay的有限缺口均在本版复验闭合。
 Linux/Windows已分别完成相同锁文件的frozen安装和import；安装不扩大Windows运行时支持，远端CI尚未执行。
 
-2026-09-09活动源码为56个Python文件、59,386物理行、48,555代码行，比原始代码行减少12.03%。
+固定基础版源码为56个Python文件、59,386物理行、48,555代码行，比原始代码行减少12.03%。
 Core、Node、wire责任仍集中，紧凑代码量目标尚未达成；成本及低置信度预算校准见[两阶段计划§8](redesign-plan.md)。
 
 ## 阶段交界
 
 基础版以本地提交/标记`teaching-base-v0.1`固定源码、依赖和证据；通过该标记独立检出，之后进入第二阶段。
-第二阶段尚未实现，接下来按计划E0–E4加入两项增强并验收，不恢复退出能力、不长期保留双后端。
+增强版snapshot03 SHA256为`f3782f572b96233e8f9bae3a7915b8a7f3534904c11f857621df367aa530344a`；**377 passed / 1 deselected，37smoke全部通过**，七个原main的stdout/canonical trace已保存。见[增强结果](../artifacts/stage2-enhanced/results.json)、[环境](../artifacts/stage2-enhanced/environment.json)、[示例产物](../artifacts/stage2-enhanced/example-output/)。W1–W4和U1–U5有限义务在该版闭合，增强固定标记为`teaching-enhanced-v0.2`。
+增强源码实数50,277代码行、61,440物理行，比基础增加1,722代码行；**紧凑规模目标未达成**，Core/Node/wire集中与阅读成本仍是债务。两阶段合同完成不等于全旧测试绿色或全部代码量合理。
 基础标记持续作为首次学习入口，新增保证和组合测试不回写成本版交付条件。
 
 阅读当前运行路径从 [learning-path.md](learning-path.md) 开始；职责与简化对照见 [production-ray-mapping.md](production-ray-mapping.md)。

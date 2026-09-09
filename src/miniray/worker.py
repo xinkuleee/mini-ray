@@ -404,6 +404,7 @@ class WorkerServer:
                 "register_output_handoff": lambda request: self._handle_output_handoff("register_output_handoff", request),
                 "report_output_handoff_complete": lambda request: self._handle_output_handoff("report_output_handoff_complete", request),
                 "report_output_handoff_rollback": lambda request: self._handle_output_handoff("report_output_handoff_rollback", request),
+                "abort_owner_publication": lambda request: self._handle_output_handoff("abort_owner_publication", request),
                 "get_output_handoff": lambda request: self._handle_output_handoff("get_output_handoff", request),
                 REQUEST_OWNED_OBJECT_RECONSTRUCTION_HANDLER: (
                     self._handle_request_owned_object_reconstruction
@@ -1500,6 +1501,9 @@ class WorkerServer:
         from .output_protocol import OutputHandoffReply
         core = self._borrow_owner_core()
         if core is None:
+            if method == "abort_owner_publication":
+                from .enhanced_publication import AbortOwnerPublicationReply
+                return AbortOwnerPublicationReply(request, False, error="object owner CoreWorker is not available")
             return OutputHandoffReply(request, False, error="object owner CoreWorker is not available")
         return getattr(core, method)(request)
 

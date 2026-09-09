@@ -6,7 +6,7 @@
 
 第一阶段保持单输出、真实多进程、对象所有权与 nested refs，退出独立多返回槽与 targeted reconstruction 等范围；第二阶段只增加上述两项协议保证，不自动恢复其它退出或延期能力。两阶段均在同一仓库、同一实现主线上推进。
 
-这是按用户最新决定修订的实施计划，第一阶段已按本计划独立完成约定行为验收；当前证据与剩余项见 [验收账本](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/acceptance-baseline.md)。下文状态表保留设计合同，不能替代实际测试；第二阶段尚未实施。此前“仅文档、不改源码/测试、不提交”的限制属于计划修订轮，已由后续实施指令推进到实现阶段。旧 [correction-plan.md](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/correction-plan.md) 作为历史设计来源；其中等待确认的旧流程不覆盖本次已确定的两阶段顺序。下文 §1–9 说明第一阶段基础版本；§10 说明第二阶段增强版本及两阶段交付衔接。文中“本版”未另行限定时指第一阶段。
+这是按用户最新决定修订的实施计划，第一阶段已按本计划独立完成约定行为验收；当前证据与剩余项见 [验收账本](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/acceptance-baseline.md)。下文状态表保留设计合同，不能替代实际测试；第二阶段两项机制已在增强snapshot03同版通过约定验收，固定标记为`teaching-enhanced-v0.2`。此前“仅文档、不改源码/测试、不提交”的限制属于计划修订轮，已由后续实施指令推进到实现阶段。旧 [correction-plan.md](C:/Users/t-hdong/Desktop/gao/mini-ray/docs/correction-plan.md) 作为历史设计来源；其中等待确认的旧流程不覆盖本次已确定的两阶段顺序。下文 §1–9 说明第一阶段基础版本；§10 说明第二阶段增强版本及两阶段交付衔接。文中“本版”未另行限定时指第一阶段。
 
 ## 0. 两阶段总览
 
@@ -397,7 +397,7 @@ Windows 在修好平台清理之前不声明完整运行时可用；macOS/Python
 
 术语统一：**owner** 指 outer ObjectRef 的逻辑所有者；**publisher** 指执行并持有序列化源的 Worker；**Node** 指承载该执行的 NodeManager/Store，两者死亡不能混称。执行成功、Node Complete、owner READY、当前 bytes 可用、回复托管退休、对象 GC 是不同事实。READY 后可能变 LOST/进入新 attempt/GC，历史成功与 adoption 收据仍不可改写。
 
-以下 §10.2–10.4 是拟定合同；具体 wire、取消与 Complete 的线性化、死亡传播和收据格式仍须按 §10.7 验证。计划中的职责完整不等于已有实现正确。
+以下§10.2–10.4仍是增强版合同；当前实现和分层证据见[增强验收账本](acceptance-enhanced.md)。W1/W3/W4有限组合、W2准确知识差异、owner死亡与公共图实验均已纳入增强snapshot03同版验收：377项纯合同、37个smoke、七个原main产物。以下合同有对应分层证据，不外推所有故障组合。
 
 ### 10.2 增强版的交付顺序
 
@@ -410,7 +410,7 @@ Windows 在修好平台清理之前不声明完整运行时可用；macOS/Python
 5. **C5：GCS 将该准确图预留提交为 COMMITTED**；**C6：owner 校验当前 attempt 和可用结果，原子提交 READY、outgoing edges、Task 状态转换与 exact adoption receipt**。C5/C6 不是跨进程原子事务，间隙按 W3 处理；不能把 graph COMMITTED 当作 owner 已接管。
 6. **C7：GCS 幂等接受源自 C6 的 adopted 收据**。本计划将正常回复托管退休许可绑定准确C6及C7 ACK；C7回复未知先查询/精确重放，不能回滚C6，也不能把READY写成尚未成功。死亡/撤销路径凭§10.3的准确清理证据退休，无需等待已死owner发adopted。后续 outer GC/旧 epoch 退休按 W4 释放对应 holds/图 membership/副本责任，再确认各自清理完成。
 
-**C6-L：已知执行成功但载荷丢失的替代本地提交。**若owner尚未C6，已有准确C3/C4且所有可用bytes确实丢失，则owner在自身权威内校验完整身份、当前attempt与撤销选择，原子记录该执行已成功、结果LOST和恢复所需状态；不伪造READY/adoption，不仅因记录该事实再扣预算。旧交接由W2/W4收口，随后真实准入下一次重建才按既定预算记账。C6-L不替代已存在的C6历史，也不能重新打开已退休旧epoch；具体收据及与取消的顺序列为U1待验证。
+**C6-L：已知执行成功但载荷丢失的替代本地提交。**若owner尚未C6，已有准确C3/C4且所有可用bytes确实丢失，则owner在自身权威内校验完整身份、当前attempt与撤销选择，原子记录该执行已成功、结果LOST和恢复所需状态；不伪造READY/adoption，不仅因记录该事实再扣预算。旧交接由W2/W4收口，随后真实准入下一次重建才按既定预算记账。C6-L不替代已存在的C6历史，也不能重新打开已退休旧epoch；具体收据及与取消的有限顺序由U1对应证据验证。
 
 C0–C7与C6-L是本计划的提交点标签，不要求按标签各建通用状态机或服务。每个效果权威仍依据当前 attempt/incarnation/tombstone 判定准入；查询历史只返回历史，绝不重新产生效果。owner端的C6/C6-L与本地撤销选择共享一个提交序列，Node端的取消与Complete也必须在本地序列化；GCS不替代这两个裁决。
 
@@ -426,20 +426,20 @@ Task 首次发布与重建必须使用同一 contained-edge 入口。若第一�
 | owner 权威死亡、GCS 存活 | GCS 按 C0 已登记清单及同一死亡记录协调遗留效果；Node/child owner仍是各自资源/引用真相的提交者 | GCS 只接续协调，不取得 ObjectRef owner 身份、不发布 READY；不能等已死 owner 发 ACK 才清理。Driver owner 无法取得适用死亡证据时依 job 终止处理，不由 RPC 超时猜死 |
 | GCS 暂不可达或自身退出 | 未满足 GCS 门禁的前进操作有限等待/报 unavailable并保留义务；Node 已发生 Complete 的资源释放与有据的本地清理继续。确认 GCS 退出后 launcher 终止 job并清理受管进程 | 不因 GCS 查询失败撤销已 READY 对象；不另选 GCS 或恢复丢失内存表；强制退出只证明进程停止，未证实的分布式 GC 不报 clean |
 
-**撤销与边移除的拟定顺序：**owner 活时先原子确定该交接未 adoption 且关闭迟到 C6，再通知 GCS 关闭该身份的新准入/图 commit；owner 死时由权威死亡事实关闭其前进权限。Node 取消与 Complete 必须裁决出一个真实结果；已 Complete 的执行不能回写为“未执行”。随后对可能已发出的 child 操作安装准确 Release/tombstone，释放该 publication 的有效 holds/outgoing 边。GCS 必须继续把仍可能有效的边计入防环，直到这些边解除且不能复活，才最终移除 PREPARED 预约或 RELEASE 已 COMMITTED membership。先 fence 不等于先抹图，fence 也不能代替已有资源释放。
+**撤销与边移除的实施顺序：**owner 活时先原子确定该交接未 adoption 且关闭迟到 C6，再通知 GCS 关闭该身份的新准入/图 commit；owner 死时由权威死亡事实关闭其前进权限。Node 取消与 Complete 必须裁决出一个真实结果；已 Complete 的执行不能回写为“未执行”。随后对可能已发出的 child 操作安装准确 Release/tombstone，释放该 publication 的有效 holds/outgoing 边。GCS 必须继续把仍可能有效的边计入防环，直到这些边解除且不能复活，才最终移除 PREPARED 预约或 RELEASE 已 COMMITTED membership。先 fence 不等于先抹图，fence 也不能代替已有资源释放。
 
-PREPARED 的最终 ABORT 可留下墓碑；COMMITTED 只能记录 RELEASED/已退休并保留历史 commit，不能倒退成“从未提交”。提前关闭前进权限与最终图边移除是两个事实，不能复用一个即时清表操作冒充。具体 wire 如何表达这个区分、以及 GCS/owner 同时处理死亡与提交的顺序，仍是 U1/U2 待验证项。
+PREPARED 的最终 ABORT 可留下墓碑；COMMITTED 只能记录 RELEASED/已退休并保留历史 commit，不能倒退成“从未提交”。提前关闭前进权限与最终图边移除是两个事实，不能复用一个即时清表操作冒充。实际wire以独立FENCED/RETIRED收据表达这个区分；GCS/owner死亡、提交与准确重放的所选顺序已由U1/U2有限证据验证。
 
 **收据退休规则：**每项 effect 仅凭准确 ACK、适用的权威死亡事实，或可核查的“效果已解除且不能再生效”证明退休。Node 死亡可解除该 Node 私有内存/副本义务，不能解除存活 child owner 的 hold；child owner 死亡可按既定 owner-failure 合同处理其对象，不能拿它替其它参与方清账。普通 borrower 的独立生命周期不随 outer graph membership 一起清除。载荷缓存、活动义务与紧凑历史收据分别退休；exact commit/abort/release/adoption 收据保存到该 incarnation/job 关闭并处理完已接受请求，或明确的重放退休协议结束，不任意 TTL 丢弃。
 
 ### 10.4 四个关键窗口的状态与责任表
 
-本表绑定 §10.2 提交点与 §10.3 推进方；W1–W4 是有限验收窗口，不是再展开 storage×owner×fault 的组合矩阵。所有行均为拟定目标，当前未以新实现证明。
+本表绑定 §10.2 提交点与 §10.3 推进方；W1–W4 是有限验收窗口，不是再展开 storage×owner×fault 的组合矩阵。下列窗口已按增强账本指定的纯/组合/真实进程层级验证；行中每种死亡分支不因此被扩写成全部真实故障组合。
 
 | 窗口 | 权威事实与记录位置 | 允许的下一步 / 提交点 | ACK 丢失后的查询或准确重放 |
 |---|---|---|---|
 | **W1 图 PREPARED，child 交接失败** | GCS 有 C0 清单和 C1 预约；owner 有 pending；child owner 可能已安装部分 holds；Worker/Node 仍有源/局部效果。没有成功 Complete 的推断 | 可重试错误只重放同一 child 操作；确定失败则 owner 原子选择撤销并关闭 C6，GCS关闭前进准入；Node 裁决取消/Complete，随后精确 Release。不得继续 ARM/graph COMMIT/READY | 查询或重放每个完整 child request；超时不算失败或无效果。对已发送而未知的 Acquire/promote，Release-before-late-operation 必须产生拒绝或历史回复，不能复活 hold |
-| **W2 Node Complete，terminal 回复未知** | Node 有 C3、资源已释放；GCS 可能已完成 C4，只是 ACK 未到。owner 尚无 adoption 事实 | 查询 GCS 同一 publication；已有 C4则继续 C5/C6，未记录但存活持有者有准确 C3则重放 terminal。合法 bytes 缺失时由owner提交C6-L并收口旧交接，再按既定规则准入重建；不能仅因 ACK 丢失重执行或双重释放资源 | 记录缺席不推翻存活准确 C3；查询不可达保留未决。迟到 terminal 可保存历史成功事实，但若撤销/新 attempt 已封闭旧前进权限，不能恢复 C5/C6；具体接纳规则待 U1 验证 |
+| **W2 Node Complete，terminal 回复未知** | Node 有 C3、资源已释放；GCS 可能已完成 C4，只是 ACK 未到。owner 尚无 adoption 事实 | 查询 GCS 同一 publication；已有 C4则继续 C5/C6，未记录但存活持有者有准确 C3则重放 terminal。合法 bytes 缺失时由owner提交C6-L并收口旧交接，再按既定规则准入重建；不能仅因 ACK 丢失重执行或双重释放资源 | 记录缺席不推翻存活准确 C3；查询不可达保留未决。迟到 terminal 可保存历史成功事实，但若撤销/新 attempt 已封闭旧前进权限，不能恢复 C5/C6；接纳规则由U1的准确历史/fence证据验证 |
 | **W3 图 COMMITTED，owner 尚未 READY或其ACK未知** | GCS 有 C4/C5；owner 可能仍 pending，也可能 C6已提交但回复丢失；Node/Worker可能仍托管payload。图 commit不证明 owner adoption | 查询 owner 的 **exact adoption/撤销 receipt**，不只看当前 READY/LOST；已有C6则报告C7/重放ACK；仍pending且current/bytes/holds合法则幂等CAS；确定不能发布时原子选择撤销/退休，禁止迟到CAS | owner暂不可达不能当未接管，不能抢先释放child。GCS graph commit查询与owner receipt查询各验证自己的事实；重放不得再建图边或重复owner提交 |
 | **W4 owner READY后重建/GC/迟到commit** | owner保留旧C6，GCS保留旧C5/C7及release历史；同ObjectID当前可能LOST、新attempt或已GC。现存bytes由当前Node/owner证明 | GC或重建先关闭旧epoch交接并收口其义务，再退旧图membership；最小方案在旧责任解除屏障后才准入新publication，不新增原子跨epoch图替换协议。等待旧清理不重复扣执行预算 | 旧commit/release/adopted查询返回绑定旧epoch的历史事实；旧commit不能插回旧边，旧Release不能删新边。准确历史ACK不证明当前值可取，也不重新准入Task |
 
@@ -454,25 +454,31 @@ W1–W4 按 owner/publisher/Node 角色分别定义责任，不要求为表中�
 
 ### 10.5 全局防环的可达场景与入口覆盖
 
-**原始版本的静态证据能定位到真实GCS handler上的最小成环协议实验，不能证明公共API已能形成完整引用环。**以下链接均固定到改造前版本`ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e`；基础版已经退出这些端点。旧文件或旧checkpoint不能认证第二阶段，新实现须重验适用的真实路径。
+**公共API可达成环候选与真实并发预留现已证明。**增强snapshot01
+`b6da4a46b3877dac9252e2a50a56af58e05adaf3589ef3ec613dfe5f49ae9d7c`上的三个真实图切片通过；
+实现入口是[真实图测试](../tests/integration/test_enhanced_cycle_path.py)和[普通Worker函数](../tests/integration/_cycle_runtime_state.py)。
+旧metadata-only控制实验保留历史来源，但不再用它承担公共可达性证明。这些入口后来在最终增强snapshot03全体同版复验通过。
 
-| 场景 | 最小构造与真实经过的边界 | 证据等级与尚未证明的部分 |
+| 场景 | 最小构造与真实经过的边界 | 已有证据与边界 |
 |---|---|---|
-| **R1 无环公共发布与GC** | `child = ray.put(普通值)`；现有remote函数接收`[child]`并返回`{"child": container[0]}`，产生单outer→child；实际get、close、owner GC使graph COMMIT/RELEASE可观察。[现有入口](https://github.com/xinkuleee/mini-ray/blob/ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e/tests/integration/test_contained_cycle_control_path.py#L268) | 测试源码使用公共API及真实引用/Node发布链；它证明正向接线与回收，不证明成环，第二阶段需在自己的commit复验 |
-| **R2 最小两对象成环的真实协议实验** | 在真实注册Node/Worker的GCS进程上，用已有typed协议登记两个仅metadata清单：pA声称A→B，pB声称B→A；真实TCP先PREPARE(pA)，再PREPARE(pB)，后者应回CYCLE；准确ABORT(pA)后pB可预留。GCS handler调用adapter在同一锁中检查并安装预约 | [清单构造](https://github.com/xinkuleee/mini-ray/blob/ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e/tests/integration/test_contained_cycle_control_path.py#L108)、[真实PREPARE/拒绝](https://github.com/xinkuleee/mini-ray/blob/ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e/tests/integration/test_contained_cycle_control_path.py#L223)、[生产adapter](https://github.com/xinkuleee/mini-ray/blob/ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e/src/miniray/control.py#L254)。A/B不是已注册public ObjectRef，source凭证是模型输入；没有真实child Acquire、bytes、ARM或Complete。因此是可追踪的图控制协议场景，不是合法应用已发布A↔B，也不能拿它证明W1清理 |
-| **R3 并发预留** | 基于R2的相反方向请求，拟用两个有界TCP请求并发进入真实GCS PREPARE，屏障放在客户端发送前，不替换GCS判环/锁/回复；预期一方PREPARED，一方CYCLE，不能都成功 | **真实并发TCP尚待验证**。现有R2是顺序调用；[现有两线程Barrier测试](https://github.com/xinkuleee/mini-ray/blob/ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e/tests/unit/test_contained_cycle_policy.py#L105)只并发调用同内存authority，标heavy，不能冒充R3。既有临界区逻辑只是静态依据 |
-| **R4 公共API完整成环 / 自环** | 首次发布的A→B→A候选须说明双方如何合法取得对方Ref且不只是互相等待；自环候选须合法拿到自身输出句柄；重建候选须说明旧ObjectID的新child集合怎样经过旧责任屏障、保持真实引用凭证。这里列的是可达性调查方向，不是已成立的构造 | **未证明可达，也未证明不可达**。不得凭手造ObjectID、detached ObjectRef、伪borrower、Actor引用邮箱或新增“设置结果”API制造例子。先在已支持操作及完整借用链内找路径；找到才写可运行教材，找不到就诚实保留为图控制实验的边界，而非扩公共API |
+| R1无环公共发布/GC | child=put(普通值)，contained put和Task返回child；实际持有、get、close、child Release、bytes/图退休 | 1 passed / 5.62s；Task有准确Complete/adoption，put无Task执行事实；证明两入口接线/回收 |
+| R2两对象成环候选 | 单普通Worker先产生stored A₀；后续Task合法借入A并保存真正Worker-owned B=put([A])，图B→A已提交；whole reconstruction A₁返回B，C1实际拒绝A→B | 1 passed / 8.41s；A₁无PREPARED/ARM/COMMITTED/Complete/adoption，实际空rollback scope证明无child/materialization效果；B释放后A可GC |
+| R3并发预留 | 两Node各一Worker保留X=put([B])、Y=put([A])；ray.wait触发既有whole reconstruction，候选A→X与B→Y在C1竞争，联合为A→X→B→Y→A | 1 passed / 15.25s；两次发送前与两次原回复后有限屏障，观察恰一PREPARED/graph_active和一CYCLE，且双方均未ARM/COMMITTED/Complete/adoption；败方rollback、胜方READY，最终全图退休 |
+| R4公共API自环/首次发布互环 | R2已证明利用稳定ObjectID、真实保活和whole替换的公共两对象环候选；没有变更已发布bytes或手造引用 | 自环、两对象首次发布互环尚未证明，亦非新增门禁；不扩API制造需求 |
 
-R2 使用的生产入口确实会执行图准入，因此比直接调用 DFS 更接近真实控制面；它仍不能补足公共引用生命周期的可达性。其metadata权限/校验与第二阶段最终handler是否一致也须在E2复核；不得为让旧控制实验继续通过而放松生产身份或child校验。如果更严格的有效请求前置使R2在入口被拒绝，应报告为可达性未决并寻找既有合法路径，不把提前拒绝冒充防环成功。
+R2/R3使用可导入模块中的普通函数，持久Worker局部变量只保留真正owner-local put句柄，不保留已结束Task的临时borrower。
+被测GCS锁、判环、Node交接和原始回复不替换；屏障只允许观察真实阶段。成环候选被拒绝，不表示运行时先发布了一个实际引用环。
+R3在胜方仍PREPARED时观察，证明全局判环包含有效预约，不能缩写为仅已COMMITTED边的竞争。
 
-不能用 `x=[]; a=put(x); ...; x.append(b)` 证明ObjectID环：put已序列化不可变值，修改原Python容器不会修改a。归档快照曾拒绝含Ref值；现有支持也不会改变对象不可变性。普通Python自引用list/dict由序列化器处理，不产生等价ObjectID边；互相等待的Task依赖环也不等于结果中的contained环。[Python容器环的现有纯合同](https://github.com/xinkuleee/mini-ray/blob/ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e/tests/unit/test_contained_cycle_policy.py#L55)只能证明序列化区别。
+不能用`x=[]; a=put(x); x.append(b)`证明ObjectID环：put已经序列化immutable值，修改原Python容器不会修改a。
+Python list自环、Task互等依赖和ObjectID contained环是三件不同的事；未使用detached ObjectRef、伪borrower、Actor邮箱或新增设置结果API。
 
 | contained-edge入口/退出 | 两阶段范围及第二阶段覆盖要求 |
 |---|---|
 | Task首次结果，包括直接返回child Ref或容器内Ref，INLINE/STORED | 支持；由同一序列化manifest产生边，C1准入、C5提交、C6可见，不按storage分出后端；Task嵌套参数的临时Task hold本身不是新outer结果边 |
 | put普通值 | 当前支持；没有contained边，不伪造graph边或Task lease |
-| put含Ref值 | 当前第一阶段已接通；E2须以真实put operation/owner安装身份进入同一图协议。图增量按U4落实，不能把基础引用测试冒充全局图覆盖，也不另添API |
-| 单输出whole reconstruction产生新结果/新child集合 | 必须覆盖；沿W4旧责任收口屏障后以新publication/epoch准入，不恢复targeted，不绕开全局图直接替换outgoing |
+| put含Ref值 | 增强版已以真实put operation/owner安装身份接入同一图协议，R1/R2/R3给出真实接线与GC证据；最终同版复验已通过，不能把基础引用测试冒充图证据 |
+| 单输出whole reconstruction产生新结果/新child集合 | 已沿W4旧责任屏障接入，R2/R3真实到达新publication/epoch；最终同版复验已通过，不恢复targeted或绕开图替换outgoing |
 | outer GC、交接撤销、owner death | 按W1/W3/W4释放准确旧图membership；记录退休不依赖独立borrower全部消失，且旧消息不能复活已退休边 |
 | Actor参数/结果内Ref、任意脱管序列化等不支持入口 | 维持明确拒绝，不为成环实验新增能力或把它们排除后仍声称全API图覆盖 |
 
@@ -482,7 +488,7 @@ R2 使用的生产入口确实会执行图准入，因此比直接调用 DFS 更
 |---|---|---|
 | E0 接收已验收基础版，落实有限设计问题 | 检查§0证据包；将U1–U5分配到相应提交点/参与方/证据；锁定W1–W4和R1–R3所需的有限选择器与成本 | P5已经独立完成；未决问题不回写成基础版缺陷；每项新增保证有具体边界，未证可达的公共环例子不写成可用示例 |
 | E1 GCS发布事务 | 复用单对象交接，加入C0/C2/C4/C7及准确查询/撤销/退休 | 无child普通成功确实经过门禁；W2事实/ACK/死亡分支及owner-death协调有有限证据；INTENT/ARM不能证明成功 |
-| E2 全局图防环 | C1/C5与真实Task及所有最终支持的put/reconstruction入口接线；图保守占用/释放按W1/W3/W4 | R1正向接线、R2适用的真实协议拒绝、R3真实并发预留；纯图算法测试另报层级。公共API成环仍未证则明确边界，不虚构或新增API |
+| E2 全局图防环 | C1/C5与真实Task及所有最终支持的put/reconstruction入口接线；图保守占用/释放按W1/W3/W4 | R1正向接线、R2真实公共成环候选拒绝、R3真实并发预留均需在最终版复验；纯算法另报层级，R4未证自环不虚构或新增API |
 | E3 两项组合窗口 | 只取W1–W4中尚未由E1/E2覆盖的交接窗口，复用既有owner/publisher死亡切片 | 预约失败与hold补偿、图commit/ownerCAS间隙、旧epoch晚消息各有责任闭合证据；不假成功/clean，不双清账，不扩全故障乘积 |
 | E4 增强版验收与教材 | 在增强版同一提交复验保留基础行为＋新增保证＋组合窗口，保存对应环境/依赖/trace/结果 | 两项都真实启用，所选合同内已知缺陷关闭；如可达性/责任问题仍影响宣称的保证，保持第二阶段未完成，不用纯模型顶替；基础版入口持续可运行可发现 |
 
@@ -497,21 +503,27 @@ R2 使用的生产入口确实会执行图准入，因此比直接调用 DFS 更
 
 Δ的核心成对实验：Node退出、owner未提交且无其它存活准确成功收据，基础版判UNKNOWN；增强版只有GCS真实接受terminal时判已知成功。两版都必须另报bytes可用性；已知成功且无bytes仍为LOST，不能把“知道成功”归一成“get成功”。若GCS未接受terminal，增强版也不能凭INTENT/ARM升级；预算与旧attempt fencing按明确不同路径检查。基础版没有图端点，不为两版对照给它新增空端点；图拒绝实验与基础版不提供该全局保证的事实对照即可，不能虚构基础版public成环成功。
 
-### 10.7 实施前/对应提交点必须验证的有限问题
+### 10.7 有限实施义务的关闭记录
 
-| 编号 | 未决内容 | 在哪里落实，什么证据才能关闭 |
+| 编号 | 实施义务 | 增强snapshot03关闭依据 |
 |---|---|---|
-| U1 取消、Complete、迟到terminal | owner撤销与C6/C6-L、Node取消与C3、GCS事实查询/迟到历史报告的线性化；未adoption但已知成功无bytes的owner本地LOST提交；不能由晚收terminal重新开放已撤销epoch | 基础版先落实准确Complete对应的LOST转换，E1在编码相关边界前接GCS收据；W2有限竞争/回复丢失证据确认不伪READY/adoption，执行事实、前进权限、旧责任收口与预算分开 |
-| U2 图commit/释放与ownerCAS | C5后owner未接管或ACK未知；前进fence与保守图占用分开，COMMITTED只能准确release；旧责任屏障怎样避免新epoch被旧Release误删 | E2/E3落实参与方接口，不全堆Core；W1/W3/W4的真实或小组合观察覆盖已确定窗口，未获清理证据不得抹图/报clean |
-| U3 死亡后的协调记录与存活性 | owner活/死的驱动切换、Node保留的源/Complete、GCS按INTENT协调的记录与退休、Driver owner与GCS自身死亡边界 | 基础版公共清理接口先闭合，E1扩展现有GCS协调；复用有限owner/publisher死亡场景验证，不能新增owner接管/持久服务填空 |
-| U4 含Ref的put与其它入口覆盖 | 基础版已实现含Ref的put、无lease身份、hold获取/失败回滚和owner安装；第二阶段必须复用这些责任，图覆盖不能漏入口 | 基础版验收账本确认该入口的真实证据后，E2为其接同一图子协议。Task stored outer证据可复用不变量，但不能替代put自身接线；此问题不授权新增API或静默扩scope |
-| U5 成环可达性 | R2 metadata控制路径在新校验下是否仍合法；R3真实并发TCP；R4公共API合法完整环未证 | E2沿既有支持API/生产handler复核请求、身份、并发与cleanup；找到才写公共例子，否则明确协议实验边界。不得放松生产校验、伪造borrower/ACK或新增API制造可达性 |
+| U1 取消、Complete、迟到terminal | owner撤销与C6/C6-L、Node取消与C3、GCS事实查询/迟到历史报告的线性化；未adoption但已知成功无bytes的owner本地LOST提交；不能由晚收terminal重新开放已撤销epoch | 基础版已落实C6-L；增强snapshot02的真实W2两切片证明未收terminal→UNKNOWN、真实接受但回复丢失→已知成功LOST，bytes/预算/前进权限分开。最终snapshot03已同版复验，不外推任意网络故障 |
+| U2 图commit/释放与ownerCAS | C5后owner未接管或ACK未知；前进fence与保守图占用分开，COMMITTED只能准确release；旧责任屏障怎样避免新epoch被旧Release误删 | 窄owner client、GCS reducer/control和Node journal保留职责；W1/W3/W4真实authority组合纳入最终纯批次，R1/R2/R3真实进程覆盖图/GC接线。fence不抹图，准确child清理后才退休 |
+| U3 死亡后的协调记录与存活性 | owner活/死的驱动切换、Node保留的源/Complete、GCS按INTENT协调的记录与退休、Driver owner与GCS自身死亡边界 | GCS在既有死亡驱动中推进准确清单；最终owner死亡、publisher Node-loss真实切片与9个control/10个owner退休合同验证所选责任，完整child死亡proof匹配已安装fence；无owner接管或持久服务 |
+| U4 含Ref的put与其它入口覆盖 | 基础版已实现含Ref的put、无lease身份、hold获取/失败回滚和owner安装；第二阶段必须复用这些责任，图覆盖不能漏入口 | 最终R1公共put/Task正向与GC、R2/R3借用put保活及whole替换同时通过，put无Task Complete/adoption；独立无lease身份和owner安装复用基础责任，没有新增API |
+| U5 成环可达性 | R1/R2/R3公共put、Task、whole重建及并发预约已在snapshot01真实通过；R4自环/首次发布互环仍未证明 | 有限公共可达性责任已关闭，最终增强版已同版复验上述三切片；没有放松身份校验、伪borrower/ACK或新增API。未证场景如实限定，不追加门禁 |
 
-这些问题是已确定两项交付的证明责任，不是重新讨论是否需要第二阶段。部分场景不可达本身不授权新增能力；若证据不足影响增强保证的真实性，明确记录未完成项并解决相关设计，不能冒称已证明，也不能反过来阻塞基础版独立发布。
+U1–U5在本版选择的有限合同内均已满足；不存在必须实施后再补的未决发布窗口。R4自环、首次发布互环和更宽故障矩阵未证明，不作为新增门槛，也不授权新增能力。该结论是有限证据充分，不是形式化证明或任意故障保证；基础历史交付不被改写。
 
 ### 10.8 代码预算与两版教学入口
 
 两组数字均为**低置信度设计预算**：基础版约1.4–2.2万代码行，增强版总量约2.5–3万代码行。它们不是实测预测、硬上限或第二阶段必然增量，测试/文档另计；不能用增强版预算放宽基础版范围。按§8在基础版单输出普通值及含引用值的完整发布/读取/回收路径跑通后首次重新估算，P5/E0绑定实数，E2按实际新增消息、状态、同步依赖与补偿成本复核。超预算解释成本并更新估算，不删必要校验、清理或测试凑数。
+
+最终增强源码实测**50,277代码行、61,440物理行、59个Python文件**，较基础48,555代码行增加1,722行（3.55%）。
+统计见[增强规模证据](../artifacts/stage2-enhanced/complexity.json)。增量来自独立GCS/图metadata authority、owner client、死亡协调、
+Node收据及Core的窄交接/退休接线；每次普通成功新增六种GCS阶段RPC，未知回复与cleanup亦有额外查询。
+**紧凑规模目标没有达成。**两阶段有限协议合同和范围纠偏已交付，但Core/Node/wire集中及整体阅读成本仍是保留债务；
+不把预算改大就宣布体量合理，也不把所有现存代码当必要，更不通过删校验/清理/测试凑行数。
 
 增强版成为最新版本后，README仍明确推荐“先检出固定基础版学习Ray Core”，附该版依赖/命令/示例/源码入口；增强版另附“mini中央事务与防环实验”入口及两版语义/trace差异。历史基础trace只能归属于其固定版本，不能伪装成增强版实时路径。通过版本检出进行比较，不在产品中常驻双后端，也不把基础版降格为缺必要机制的旧原型。
 

@@ -1,8 +1,9 @@
 """Tiny synchronous INLINE output handoffs for pure Core contracts.
 
 At most four publications, one output each, and 1 KiB per output. Real discovery,
-Node journal/adapter and actual Core owner-handoff callbacks produce the
-envelope; Core adoption/GC methods remain the owner authority. No Worker/Core constructor,
+Node journal/adapter, the actual pure GCS publication reducer, and Core
+owner-handoff callbacks produce the envelope; Core adoption/GC remain the
+owner authority. No Worker/Core constructor,
 transport, thread, timer, sleep or value materialization is hidden here.
 """
 
@@ -10,7 +11,7 @@ from dataclasses import fields, is_dataclass
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import enhanced_publication as enhanced, output_protocol as wire, protocol
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_publication import (
@@ -22,6 +23,7 @@ from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.output_handoff import OutputHandoffPhase
 from miniray.ownership import ObjectCollectionState, OutputOwnerPublicationPlan
 from miniray.task_outputs import TaskExecutionKey
+from tests.unit._pure_core import pure_publication_rpc
 
 
 def _metadata(value):
@@ -48,10 +50,12 @@ class PureOutputRuntime:
         self.gcs_address = core.gcs_address
         self.owner_address = core.owner_address
         assert self.owner_address is not None
-        self.incarnation = OutputPublicationNodeIncarnation(core.node_id, 21001, 3)
+        registered = core._pure_node_registry.get_state_reply(protocol.GetNodeState(core.node_id))
+        self.incarnation = OutputPublicationNodeIncarnation(core.node_id, registered.node_pid, registered.registration_epoch)
         self.journal = OutputPublicationJournal()
         self.pushes, self.replies = {}, {}
         self.completions, self.calls = [], []
+        self.publication_calls = []
         self.discoveries = 0
 
         def forbidden(*_args, **_kwargs):
@@ -59,11 +63,28 @@ class PureOutputRuntime:
 
         self.adapter = OutputPublicationNodeAdapter(
             self.journal, register_owner=self._register_owner,
+            publication_value=lambda manifest: enhanced.TaskPublication(manifest, self.owner_address),
+            publication_rpc=self._publication_rpc, abort_owner=self._abort_owner,
             report_complete=self._report_complete,
             report_rollback=self._report_rollback,
             prepare_child=forbidden, promote_child=forbidden, release_child=forbidden,
             seal_replica=forbidden, drop_replica=forbidden,
         )
+
+    def _publication_rpc(self, request):
+        assert len(self.publication_calls) < 64
+        _metadata(request)
+        reply = pure_publication_rpc(self.core, self.gcs_address, enhanced.PUBLICATION_HANDLER, request)
+        self.publication_calls.append((request, reply))
+        _metadata(reply)
+        return reply
+
+    def _abort_owner(self, publication, rollback):
+        request = enhanced.AbortOwnerPublication(publication, rollback)
+        reply = self.core.abort_owner_publication(request)
+        assert type(reply) is enhanced.AbortOwnerPublicationReply and reply.request == request
+        assert reply.accepted and reply.receipt is not None and reply.adoption is None
+        return reply.receipt
 
     def _owner_rpc(self, request, method):
         _metadata(request)
@@ -104,7 +125,8 @@ class PureOutputRuntime:
         return snapshot
 
     def handles(self, handler):
-        return handler in (wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, "get_worker_deaths")
+        return handler in (wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, "get_worker_deaths",
+                           enhanced.PUBLICATION_HANDLER, "get_node_state")
 
     def complete(self, push, values, *, inline_threshold=1024):
         """Return one exact cached TaskReply; replay never repeats discovery."""
@@ -153,6 +175,11 @@ class PureOutputRuntime:
 
     def rpc(self, address, handler, request):
         assert self.handles(handler)
+        if handler == enhanced.PUBLICATION_HANDLER:
+            assert address == self.gcs_address
+            return self._publication_rpc(request)
+        if handler == "get_node_state":
+            return pure_publication_rpc(self.core, address, handler, request)
         self.calls.append((handler, request))
         _metadata(request)
         if handler == "get_worker_deaths":
@@ -169,6 +196,11 @@ class PureOutputRuntime:
         assert self.core.owner_table.output_owner_publication_receipt(
             OutputOwnerPublicationPlan(envelope.manifest.execution, envelope),
         ).committed
+        gcs = self.core._pure_publication_authority.query(enhanced.GetPublication(
+            enhanced.PublicationRef(identity, envelope.manifest.manifest_digest))).snapshot
+        assert gcs is not None and gcs.adoption == request.proof
+        assert request.gcs_adoption == gcs.receipt(enhanced.PublicationStage.ADOPTED)
+        assert request.gcs_adoption is not None
         self.journal.retire_completed(request.proof)
         result = wire.AckOutputPublicationAdoptedReply(request, True)
         _metadata(result)

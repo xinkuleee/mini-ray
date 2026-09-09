@@ -24,7 +24,12 @@
     "tests/unit/test_put_owner_edges.py",
     "tests/unit/test_put_reference_runtime.py",
     "tests/unit/test_baseline_runner.py",
-    "tests/unit/test_put_home_failover.py"
+    "tests/unit/test_put_home_failover.py",
+    "tests/unit/test_enhanced_publication.py",
+    "tests/unit/test_enhanced_node_publication.py",
+    "tests/unit/test_enhanced_publication_control.py",
+    "tests/unit/test_enhanced_owner_retirement.py",
+    "tests/unit/test_enhanced_owner_client.py"
   ],
   "smoke": [
     "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
@@ -58,6 +63,11 @@
     "tests/integration/test_put_contained_ref_path.py::test_stored_put_dependency_survives_consumer_reconstruction",
     "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
     "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
-    "tests/integration/test_runner_process_tree_path.py::test_timeout_cleanup_reaps_owned_parent_and_detached_grandchild"
+    "tests/integration/test_runner_process_tree_path.py::test_timeout_cleanup_reaps_owned_parent_and_detached_grandchild",
+    "tests/integration/test_enhanced_cycle_path.py::test_public_put_and_task_graphs_commit_then_release",
+    "tests/integration/test_enhanced_cycle_path.py::test_public_reconstruction_rejects_reachable_two_object_cycle",
+    "tests/integration/test_enhanced_cycle_path.py::test_concurrent_real_reservations_reject_one_four_object_cycle",
+    "tests/integration/test_enhanced_terminal_loss_path.py::test_local_complete_without_gcs_terminal_becomes_unknown_after_node_loss",
+    "tests/integration/test_enhanced_terminal_loss_path.py::test_gcs_terminal_ack_lost_preserves_success_but_not_bytes_after_node_loss"
   ]
 }

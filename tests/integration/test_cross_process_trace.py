@@ -186,11 +186,40 @@ def test_one_task_emits_cross_process_golden_trace_and_cleans_up() -> None:
         assert golden.ok, golden.explain()
         publication_keys = (
             "prepare_rpc", "register_handoff_rpc", "complete_rpc", "retire_rpc",
+            "gcs_intent_rpc", "gcs_prepared_rpc", "gcs_armed_rpc",
+            "gcs_terminal_rpc", "gcs_committed_rpc", "gcs_adopted_rpc",
         )
         publication_requests = tuple(golden.rpc_matches[key][0] for key in publication_keys)
         assert all(record.event == "rpc_request_sent" for record in publication_requests)
         assert len({record.event_id for record in publication_requests}) == len(publication_keys)
         assert len({dict(record.fields)["rpc_id"] for record in publication_requests}) == len(publication_keys)
+        stage_keys = ("gcs_intent", "gcs_prepared", "gcs_armed",
+                      "gcs_terminal", "gcs_committed", "gcs_adopted")
+        stage_events = tuple(golden.event_matches[key][0] for key in stage_keys)
+        stage_fields = tuple(dict(event.fields) for event in stage_events)
+        assert tuple(fields["stage"] for fields in stage_fields) == (
+            "INTENT", "PREPARED", "ARMED", "TERMINAL", "COMMITTED", "ADOPTED",
+        )
+        assert tuple(fields["request_type"] for fields in stage_fields) == (
+            "BeginPublication", "PrepareGraph", "ArmTask", "RecordTerminal", "CommitGraph", "RecordAdoption",
+        )
+        # These sequence values are real GCS acceptance receipts, not trace
+        # arrival ordering. Exact terminal replays preserve their old sequence.
+        stage_sequences = tuple(int(fields["sequence"]) for fields in stage_fields)
+        assert all(0 < left < right for left, right in zip(stage_sequences, stage_sequences[1:]))
+        assert len({fields["manifest_digest"] for fields in stage_fields}) == 1
+        assert all(fields["object_id"] == str(ref.object_id) for fields in stage_fields)
+        for key, event in zip(stage_keys, stage_events):
+            sent, received, reply_sent, reply_received = golden.rpc_matches[key + "_rpc"]
+            assert dict(sent.fields)["handler"] == "enhanced_publication"
+            assert event.component == received.component == reply_sent.component == "gcs"
+            assert received.process_sequence < event.process_sequence < reply_sent.process_sequence
+        actual_terminal_events = [record for record in records
+                                  if record.component == "gcs" and record.event == "enhanced_publication_stage"
+                                  and dict(record.fields).get("task_id") == task_id
+                                  and dict(record.fields).get("stage") == "TERMINAL"]
+        assert actual_terminal_events
+        assert {dict(record.fields)["sequence"] for record in actual_terminal_events} == {stage_fields[3]["sequence"]}
         task_records = _records_for_task(records, task_id)
         dependency_ready = tuple(
             record for record in task_records
@@ -223,6 +252,8 @@ def test_one_task_emits_cross_process_golden_trace_and_cleans_up() -> None:
         # the later object_ready completion-tail observation.
         owner_publication_tail = (
             golden.event_matches["owner_ready"][0],
+            golden.rpc_matches["gcs_adopted_rpc"][0],
+            golden.rpc_matches["gcs_adopted_rpc"][3],
             golden.rpc_matches["retire_rpc"][0],
             golden.rpc_matches["retire_rpc"][3],
             golden.event_matches["payload_retired"][0],

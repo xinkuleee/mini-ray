@@ -21,12 +21,15 @@ import time
 import pytest
 
 from miniray import core as core_module, node as node_module, protocol, transport
+from miniray import enhanced_publication as enhanced
+from miniray.control import NodeRegistry
 from miniray.core import CoreWorker, _ReleaseBorrowedReference
 from miniray.ids import AttemptID, ObjectID, TaskID
 from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.ownership import ObjectCollectionState, ObjectState
+from miniray.resources import ResourceVector
 from tests.unit._pure_core import (
     SynchronousReferenceMailbox, close_pure_core, make_pure_core,
 )
@@ -52,6 +55,7 @@ class _Runtime:
     def __init__(self):
         self.owner, self.borrower = make_pure_core(), make_pure_core()
         self.cores = (self.owner, self.borrower)
+        self.borrower.job_id = self.owner.job_id
         self.borrower.node_id = self.owner.node_id
         self.owner.owner_address = ("owner-a.invalid", 1001)
         self.borrower.owner_address = ("owner-b.invalid", 1002)
@@ -63,10 +67,16 @@ class _Runtime:
         node._sealed_metadata = {}
         node._dropped_metadata = {}
         node._object_localization_locks = {}
+        self.registry = NodeRegistry()
+        self.registry.register_message(protocol.RegisterNode(
+            node.node_id, 1001, self.owner.node_address, ResourceVector({"CPU": 1})))
+        self.authority = enhanced.PublicationAuthority()
+        self.gcs_calls = []
         self.references, self.calls = [], []
         self.before = self.after = None
         for core in self.cores:
             core._reference_mailbox = _Mailbox(core)
+            core.gcs_address = ("gcs.invalid", 1003)
             core._rpc = core._borrow_rpc = self.rpc
             core._borrow_rpc_with_deadline = self.owner_rpc
 
@@ -79,6 +89,13 @@ class _Runtime:
         return self.rpc(address, handler, request)
 
     def rpc(self, address, handler, request):
+        if address == self.owner.gcs_address:
+            assert len(self.gcs_calls) < 160, "put graph composition exceeded finite metadata budget"
+            self.gcs_calls.append((handler, request))
+            if handler == enhanced.PUBLICATION_HANDLER:
+                return self.authority.apply(request)
+            assert handler == "get_node_state"
+            return self.registry.get_state_reply(request)
         assert len(self.calls) < 128, "put composition exceeded its finite RPC budget"
         self.calls.append((handler, request))
         if self.before is not None:
@@ -163,6 +180,8 @@ class _Runtime:
             assert not core._object_gc_obligations
             close_pure_core(core)
         assert self.store.used_bytes == 0
+        assert all(snapshot.receipt(enhanced.PublicationStage.RETIRED) is not None
+                   for snapshot in self.authority.snapshots())
 
 
 @pytest.fixture

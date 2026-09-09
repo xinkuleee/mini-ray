@@ -232,6 +232,7 @@ class AckOutputPublicationAdopted(_WireValue):
     """Owner proof permitting Node-local reply payload retirement after CAS."""
 
     proof: "OutputPublicationAdoptionProof"
+    gcs_adoption: object = None
 
     def __post_init__(self):
         from .output_publication_journal import OutputPublicationAdoptionProof
@@ -239,6 +240,13 @@ class AckOutputPublicationAdopted(_WireValue):
         object.__setattr__(self, "proof", _copy(
             self.proof, OutputPublicationAdoptionProof, "adoption proof"
         ))
+        if self.gcs_adoption is not None:
+            from .enhanced_publication import PublicationReceipt, PublicationStage, PublicationRef
+            receipt = _copy(self.gcs_adoption, PublicationReceipt, "GCS adoption receipt")
+            if (receipt.stage is not PublicationStage.ADOPTED
+                    or receipt.reference != PublicationRef(self.proof.complete.publication_id, self.proof.complete.manifest_digest)):
+                raise ProtocolError('GCS adoption receipt must match the exact owner proof')
+            object.__setattr__(self, "gcs_adoption", receipt)
 
     @property
     def request_identity(self):
@@ -296,8 +304,16 @@ class FinalizeOutputOwnerDeath(_WireValue):
 class FinalizeOutputOwnerDeathReply(_WireValue):
     request: FinalizeOutputOwnerDeath
     cleaned: bool
+    closed_holds: object = None
 
     def __post_init__(self):
         object.__setattr__(self, "request", _copy(self.request, FinalizeOutputOwnerDeath, "request"))
         if type(self.cleaned) is not bool:
             raise ProtocolError("owner cleanup flag must be bool")
+        if self.closed_holds is not None:
+            from .enhanced_publication import ClosedContainedHolds, PublicationRef
+            closed = _copy(self.closed_holds, ClosedContainedHolds, "closed child holds")
+            manifest = self.request.manifest
+            if not self.cleaned or closed.reference != PublicationRef(manifest.publication_id, manifest.manifest_digest):
+                raise ProtocolError('owner cleanup child receipt changed publication identity')
+            object.__setattr__(self, "closed_holds", closed)

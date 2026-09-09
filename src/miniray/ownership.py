@@ -53,6 +53,8 @@ from .protocol import (
     TaskReferenceHold,
     TaskReferenceHoldKind,
     TaskSpec,
+    WorkerDeathReason,
+    WorkerDeathRecord,
 )
 from .task_outputs import (
     TaskExecutionKey,
@@ -642,7 +644,7 @@ class OutputOwnerPublicationRetirementReceipt:
     """Exact terminal cleanup ACK, never proof that remote effects ran here."""
 
     plan: OutputOwnerPublicationRetirementPlan
-    released_edges: tuple[ReleaseContainedReferenceReply, ...]
+    released_edges: tuple[ReleaseContainedReferenceReply | WorkerDeathRecord, ...]
     dropped_replicas: tuple[DropObjectReplicaReply | NodeDeathRecord, ...]
     disposition: OutputOwnerPublicationDisposition
 
@@ -2447,13 +2449,16 @@ class ObjectOwnerTable:
 
     def complete_output_publication_retirement(
         self, plan: OutputOwnerPublicationRetirementPlan, *,
-        released_edges: tuple[ReleaseContainedReferenceReply, ...],
+        released_edges: tuple[ReleaseContainedReferenceReply | WorkerDeathRecord, ...],
         dropped_replicas: tuple[DropObjectReplicaReply | NodeDeathRecord, ...],
     ) -> OutputOwnerPublicationRetirementReceipt:
         """Clear only retired result effects after every exact cleanup ACK.
 
         Core must first execute and validate child/replica callbacks and commit
-        any Node death proof. For secondary locations whose incarnation is not
+        death proofs. A child death is accepted only when this owner already
+        installed the fence for that complete immutable Worker death record.
+        It settles the missing child authority, not a fabricated Release ACK.
+        For secondary locations whose incarnation is not
         in the publication, Core owns that death-to-replica epoch check. These
         typed proofs establish identity, not independent remote authority here.
         """
@@ -2464,6 +2469,13 @@ class ObjectOwnerTable:
         )
         plan = receipt.plan
         with self._lock:
+            for proof in receipt.released_edges:
+                if type(proof) is WorkerDeathRecord:
+                    installed = self._dead_worker_cleanups.get(proof.worker_id)
+                    if installed is None or installed.death_id != _retirement_child_death_id(proof):
+                        raise OutputOwnerRetirementConflictError(
+                            "child death must match the installed immutable owner fence"
+                        )
             previous = self._output_retirement_receipts.get(plan.retirement_id)
             if previous is not None:
                 if previous != receipt:
@@ -4084,8 +4096,18 @@ def _validate_output_retirement_proofs(plan, released_edges, dropped_replicas):
         raise OutputOwnerRetirementConflictError("retirement requires every child release ACK")
     releases = []
     for reply, expected in zip(replies, expected_releases):
+        if type(reply) is WorkerDeathRecord:
+            from .death_proofs import owner_death
+            reply = owner_death(reply)
+            if (reply.worker_id != expected.owner_worker_id or reply.reason not in (
+                    WorkerDeathReason.PROCESS_EXIT, WorkerDeathReason.NODE_EXIT)):
+                raise OutputOwnerRetirementConflictError(
+                    "child death must identify the final hold's confirmed owner exit"
+                )
+            releases.append(reply)
+            continue
         if type(reply) is not ReleaseContainedReferenceReply:
-            raise TypeError("child cleanup requires ReleaseContainedReferenceReply")
+            raise TypeError("child cleanup requires ReleaseContainedReferenceReply or WorkerDeathRecord")
         if type(reply.hold) is not ContainedReferenceHold:
             raise TypeError("child cleanup requires the exact final contained hold")
         reply = replace(reply)
@@ -4099,6 +4121,19 @@ def _validate_output_retirement_proofs(plan, released_edges, dropped_replicas):
         ))
     replicas = _validate_output_retirement_replica_proofs(plan, dropped_replicas)
     return tuple(releases), replicas
+
+
+def _retirement_child_death_id(death: WorkerDeathRecord) -> str:
+    """Match the complete proof identity installed by Core's death consumer.
+
+    This local comparison imports no Core and does not discover or declare
+    death. Every field is bound to the previously installed owner-table fence.
+    """
+    return "worker-death:v1:{}:{}:{}:{}:{}:{}:{}:{}:{}".format(
+        death.death_epoch, death.worker_id.hex, death.node_id.hex,
+        death.node_pid, death.node_registration_epoch, death.worker_pid,
+        death.exit_code, death.reason.value, death.detection_id,
+    )
 
 
 def _validate_output_retirement_replica_proofs(plan, dropped_replicas):

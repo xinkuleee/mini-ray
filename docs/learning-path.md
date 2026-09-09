@@ -1,8 +1,8 @@
-# mini-ray 基础版学习路径
+# mini-ray 两阶段学习路径
 
-日期：2026-09-09。**基础版已独立通过约定验收；本地固定标记为`teaching-base-v0.1`，第二阶段尚未实施**。
+日期：2026-09-09。**基础版已独立通过约定验收；本地固定标记为`teaching-base-v0.1`，增强标记`teaching-enhanced-v0.2`也已通过约定同版验收**。
 固定同版证据及范围以 [验收账本](acceptance-baseline.md) 为准；本页是源码导读，不把旧 checkpoint 当作当前版本通过。
-七个示例和引用实验使用同一个真实后端，没有另一套演示运行时。
+七个示例和引用实验使用同一个真实后端，没有另一套演示运行时。下面前三遍按基础标记阅读，末节再回到主线研究增强协议；相对源码链接跟随当前检出版本。
 
 ## 先读清楚四个职责
 
@@ -42,7 +42,7 @@ runner 超时表示实验失败，强制终止不证明 clean shutdown；get/clo
 入口：[01_task_path.py](../examples/01_task_path.py)。一次 remote 返回一个 ObjectRef；tuple/list 是其完整值，不拆成多个返回槽。
 调用 remote 在返回前完成参数序列化及持有准备，但不等待用户函数执行；get 读取结果，wait 只观察状态。
 源码顺序：[api.py](../src/miniray/api.py) → [core.py](../src/miniray/core.py) 的 submit → [ids.py](../src/miniray/ids.py) / [task_outputs.py](../src/miniray/task_outputs.py) → [worker.py](../src/miniray/worker.py)。
-观察稳定 TaskID/ObjectID 与不同执行 AttemptID；成功 trace 使用 [当前黄金合同](../src/miniray/golden_traces/ordinary_task_success.json)，不经过 GCS INTENT/ARM/terminal/adopted。
+观察稳定 TaskID/ObjectID 与不同执行 AttemptID；成功 trace 使用 [当前黄金合同](../src/miniray/golden_traces/ordinary_task_success.json)，在基础标记中不经过GCS INTENT/ARM/terminal/adopted；增强版真实路径包含这些事件，不能归一化抹除。
 
 ### 2. Lease、spillback 与直接提交
 
@@ -125,9 +125,22 @@ Worker 在 Complete 后退出且 TaskReply 丢失的实验，证明从 Node 托�
 [adoption ACK-loss实验](../tests/integration/test_output_retirement_ack_path.py)在snapshot03复验了owner READY、真实回复退休、精确ACK重放及GC屏障；该一次丢包切片通过，固定同版证据见验收账本。
 实际故障切片、纯组合证据与未证明交界只以 [验收账本](acceptance-baseline.md) 为准，不扩成全部交错矩阵。
 
-## 第二阶段的学习位置
+## 第四遍：回到主线研究增强协议
 
-基础版封版并保存可检出的源码、环境、依赖和证据后，才实施两项已确定的增强：GCS 普通结果发布事务与全局 ObjectID 图防环。
-增强版研究多一个存活发布事实来源与全局图预留，以及它们的同步协调/补偿代价；它不比基础版“更像 Ray”。
-固定基础版仍是第一次学习入口，增强版另提供协议增量与语义差异；不长期维护双后端。
-完整职责对应见 [Ray 映射](production-ray-mapping.md)，阶段顺序见 [两阶段计划](redesign-plan.md)。
+基础标记`teaching-base-v0.1`已经独立交付。完成前三遍后，在干净工作树执行`git switch --detach teaching-enhanced-v0.2`阅读固定增强实现；
+增强版的377项纯合同、37smoke及七个main产物见[增强账本](acceptance-enhanced.md)，基础版历史结果不代替增强版同版证据。
+
+先读[enhanced_publication.py](../src/miniray/enhanced_publication.py)：INTENT/PREPARED/ARM只允许下一步；准确Node Complete形成terminal；
+图COMMITTED不等于owner READY；fence与RETIRED分开，历史收据不能复活旧边。再读[control组合](../src/miniray/enhanced_publication_control.py)
+和[owner client](../src/miniray/enhanced_publication_client.py)，最后回Node journal及Core实际CAS/GC边界。
+
+普通Task采用强制GCS门禁，put仅复用图协议且无Task Complete/adoption；child holds、bytes、资源和owner可见性仍各归原权威。
+W2观察Node退出后GCS是否真的接受terminal：有准确事实时已知成功但bytes缺失仍LOST，没有时UNKNOWN。W3/W4观察图提交、owner CAS、
+托管退休和旧epoch清理，不把历史成功等同当前可读取。
+
+[真实图实验](../tests/integration/test_enhanced_cycle_path.py)从公共put/Task/reconstruction到达成环候选：B真实持有A，A重建返回B时被拒绝；
+两个Node的A→X与B→Y并发预留与已有X→B、Y→A合并时只能一方获准。导入模块仅保存真实Worker-owned put，
+没有新增设置结果API、伪造borrower或用Python list环替代ObjectID环。可达性与清理已获有限真实证据，自环/首次发布互环不作已证明声明。
+
+这是mini自定义保证及同步/补偿成本的教学增量，不称为更接近生产Ray。固定基础版持续作为首次学习入口；同一主线演进，
+不在运行时保留长期双后端。完整职责与差异见[Ray映射](production-ray-mapping.md)和[两阶段计划§10](redesign-plan.md)。

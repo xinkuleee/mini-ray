@@ -2,6 +2,8 @@
 
 Each case owns one threadless Core, at most one Task and one inline put.
 Values are <=256 bytes; no Node, Worker, socket, timer or task function runs.
+The one optional put uses the actual pure GCS graph reducer through exact
+in-process request routing; no successful publication reply is fabricated.
 The positive case checks actual queue admission, then uses an explicit local
 error for terminal cleanup. Rejections must never create an implicit put.
 """

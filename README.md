@@ -5,8 +5,8 @@ mini-SGLang 与 SGLang、nano-vLLM 与 vLLM：保留可沿源码追踪的关键�
 读者可以从一次 `.remote()` 追到 Worker lease、直接提交、对象传输、引用保活和有限故障恢复。
 
 **第一阶段基础版已独立通过约定验收：318项纯合同通过、32个真实smoke通过，七个原main产物已保存。**
-本地固定提交/标记为`teaching-base-v0.1`；第二阶段协议增强版尚未实施，仍是确定交付项。
-范围与证据见[两阶段计划](docs/redesign-plan.md)、[验收账本](docs/acceptance-baseline.md)和[基础版证据包](artifacts/stage1-baseline/)。
+基础版固定为`teaching-base-v0.1`（`69106772567a4131f5ec76e898a3c4bf3bb6dbe6`）。**增强版`teaching-enhanced-v0.2`也已通过约定验收：377项纯合同、37个真实smoke及七个原main。两阶段按顺序独立完成。**
+范围见[两阶段计划](docs/redesign-plan.md)，结果分别见[基础账本](docs/acceptance-baseline.md)、[增强账本](docs/acceptance-enhanced.md)。[基础版证据包](artifacts/stage1-baseline/)保持固定。
 
 首次学习推荐固定基础版。在干净工作树检出：
 
@@ -15,21 +15,21 @@ git switch --detach teaching-base-v0.1
 uv sync --frozen --extra test --python 3.12
 ```
 
-即使增强版后来成为最新版本，这个标记仍用于学习本README所述的owner-led路径；不要用增强版实时trace替换基础版历史证据。
+增强版成为最新版本后，这个标记仍用于学习本README所述的owner-led路径；不要用增强版实时trace替换基础版历史证据。
 
 ## 两个教学版本
 
 | 版本 | 教学目的 | 交付顺序 |
 |---|---|---|
 | 第一阶段：基础教学版 | 理解 Ray Core 的执行、调度、对象、引用和恢复机制；普通结果由 owner、Node 与 child owner 分工交接 | 独立验收，固定源码版本、依赖、示例和测试证据，作为推荐的首次学习入口 |
-| 第二阶段：协议增强版 | 在基础版上研究 mini 自定义的 GCS 普通结果发布事务与全局 ObjectID 引用图防环 | **确定交付两项能力**，在基础版固定后实施，验收各自保证与组合窗口 |
+| 第二阶段：协议增强版 | 在基础版上研究 mini 自定义的 GCS 普通结果发布事务与全局 ObjectID 引用图防环 | 两项均已实现并按有限合同验收；标记`teaching-enhanced-v0.2`保留保证与组合窗口证据 |
 
 增强版增加中央发布事实和全局成环拒绝，也增加同步依赖、故障补偿与收据管理成本。
 它不代表“更接近生产 Ray”，基础版保留所选机制必需的正确性逻辑。
 不因进入第二阶段而恢复多返回槽、targeted reconstruction 或其他已退出能力，也不长期维护两套运行时后端。
 增强版成为最新版本后，固定基础版仍保留清晰的学习入口。
 
-## 当前基础版范围
+## 两版共同范围
 
 | 机制 | 保留的行为与边界 |
 |---|---|
@@ -58,7 +58,7 @@ Task 参数只有 InlineArg 和显式对象依赖 RefArg。累计按值参数超
 项目不提供生产部署、GCS 持久恢复/HA、已死 owner 接管或任意网络分区恢复。
 受管进程 fail-stop 与有限回复丢失是本版故障范围；外部副作用不具有 exactly-once 保证。
 
-## 从一次任务理解职责
+## 基础版：从一次任务理解职责
 
 1. Core 为 Task 和唯一输出分配稳定身份，登记依赖与引用生命期，再向 Node 申请 Worker lease。
 2. Node 根据本地资源与依赖决定 grant 或 spillback。Core 取得 grant 后直接向目标 Worker 提交任务。
@@ -68,7 +68,7 @@ Task 参数只有 InlineArg 和显式对象依赖 RefArg。累计按值参数超
 
 执行成功、结果可见、bytes 可用、回复托管退休、对象 GC 是五件不同的事。
 成功元数据无法恢复已丢失的 bytes，超时也不能证明远端没有发生效果；未知效果必须保留精确清理责任。
-GCS 仍负责成员/死亡事实、Actor 与 PG 控制，其存在不意味着普通结果逐项通过中央发布事务。
+在基础标记中，GCS负责成员/死亡事实、Actor与PG控制，普通结果不逐项经过中央事务。以下源码表链接当前工作树；阅读上述基础路径须先检出基础标记。
 
 | 阅读位置 | 关注的职责 |
 |---|---|
@@ -80,9 +80,26 @@ GCS 仍负责成员/死亡事实、Actor 与 PG 控制，其存在不意味着�
 | [object_store.py](src/miniray/object_store.py)、[object_manager.py](src/miniray/object_manager.py) | 字节、副本与跨 Node 传输 |
 | [reconstruction_runtime.py](src/miniray/reconstruction_runtime.py)、[actor_worker.py](src/miniray/actor_worker.py)、[placement_group_runtime.py](src/miniray/placement_group_runtime.py) | whole replay、串行 Actor 和硬约束 PG |
 
+## 增强版：在同一职责边界增加两项保证
+
+当前主线的普通Task成功路径必须经过GCS INTENT、图PREPARED、ARM、准确terminal、图COMMITTED和adopted。
+Node Complete仍在本地一次释放资源；owner在图提交后唯一执行READY/outgoing/recovery CAS；准确C7 ACK后才允许Node回复托管退休。
+put使用同一图协议的独立put身份和真实child/Seal收据，不生成Task Complete或adoption。重建先收口旧epoch，再预留新图边。
+
+新增源码入口是[enhanced_publication.py](src/miniray/enhanced_publication.py)的metadata/图authority、
+[enhanced_publication_control.py](src/miniray/enhanced_publication_control.py)的成员和死亡清理组合、
+[enhanced_publication_client.py](src/miniray/enhanced_publication_client.py)的owner同步调用；它们不接管owner、bytes或资源账本。
+
+增强版增加存活的成功事实来源和全局成环拒绝；普通成功也因此增加同步GCS依赖、未知回复等待、精确补偿及收据退休。
+INTENT/ARM不能证明执行成功；GCS知道成功但bytes全失仍为LOST，不能凭metadata返回值。没有HA、持久恢复或owner接管。
+
+真实公共API成环候选已经到达生产图入口：Worker先保留`B = put([A])`，重建A时返回B，产生A→B→A候选而被C1拒绝；
+两Node的四对象并发实验验证PREPARED预约也参与联合判环。它们没有修改已序列化Python容器、手造Ref或调用DFS，详见增强账本。
+W2准确terminal知识差异、所选owner死亡切片、全部37个smoke和29文件纯合同已在增强snapshot03同版通过。研究增量时检出`teaching-enhanced-v0.2`；[增强证据包](artifacts/stage2-enhanced/)保存源码hash、结果、环境和七个main产物。
+
 ## 七个示例的阅读顺序
 
-七个入口继续使用原示例 main；当前版本的执行结果和剩余缺口只记录在验收账本中。
+七个入口继续使用原示例main；固定基础结果查基础账本，当前增强结果及待办查增强账本。两版trace保留真实语义差异。
 
 | 顺序 | 原示例 | 要回答的问题 |
 |---|---|---|
@@ -101,7 +118,7 @@ GCS 仍负责成员/死亡事实、Actor 与 PG 控制，其存在不意味着�
 
 完整进程验收使用 **Linux / WSL 的 Linux 环境**，以 Python 3.12 为基线。
 原生 Windows 当前只承担已审查的纯合同与小型无后台组合验证，不能据此声称多进程运行时已在 Windows 验收。
-包元数据目前限定Python3.12；封版时还需固定依赖解析结果，其他Python版本不在当前验证范围。
+包元数据限定Python3.12，依赖解析与安装证据已随版本固定，其他Python版本不在当前验证范围。
 
 在 Linux 仓库根目录，使用 `uv 0.11.26` 和已安装的 Python 3.12，按仓库锁文件安装：
 
@@ -111,8 +128,8 @@ source .venv/bin/activate
 python scripts/run_baseline.py --list
 ```
 
-锁文件安装与 CI 执行是封版记录的一部分；当前实际执行环境、结果和安装验证状态见验收账本。
-基础版入口只读取 [显式清单](scripts/baseline_manifest.json)。以下先运行固定纯合同批次，再运行原示例 1；
+锁文件安装、实际执行环境与结果见各版账本；远端CI配置已提供，本次没有推送或远端CI运行声明。
+同一runner在各检出版本读取各自[显式清单](scripts/baseline_manifest.json)。基础学习须留在固定标记，协议研究再检出`teaching-enhanced-v0.2`。以下先运行固定纯合同批次，再运行原示例 1；
 其余 smoke 使用清单中的完整 selector，每次运行一个：
 
 ```bash
@@ -133,11 +150,11 @@ python -m pytest -m unit tests/unit/test_single_output_contract.py -q -p no:cach
 ```
 
 基础版已在snapshot03同一固定源码复验约定纯合同、32个真实切片与七个示例；结果、平台、依赖及退出证据随版本保存。
-测试输入SHA256为`42fa8b6406ae5672b434b1b479aa08ca3c36faab131429ea287970bf135cd5d0`；测试后仅汇总文档/证据，运行时源码、测试与runner保持该输入版本。
-当前校准为 **48,555 代码行 / 59,386 物理行**，较原始 55,196 代码行减少 **12.03%**。
+测试输入SHA256为`42fa8b6406ae5672b434b1b479aa08ca3c36faab131429ea287970bf135cd5d0`；该结果仅属于基础标记；当前增强主线的源码、测试与runner已经继续演进。
+固定基础版校准为 **48,555 代码行 / 59,386 物理行**，较原始 55,196 代码行减少 **12.03%**。
 这是行为范围收缩后的实施中测量，仍明显超过 1.4–2.2 万行低置信度设计预算，不能宣称已达到紧凑教学代码目标；
 成本归属、职责审查及后续估算见两阶段计划 §8。必要校验、清理与测试不因行数预算而删除。
-旧 K0/K1、中央发布事务和多输出进度记录保存在 Git 与历史文档中；当前交付依据是两阶段计划和第一阶段验收账本。
+增强版实测**50,277代码行 / 61,440物理行**，比基础版增加1,722代码行（3.55%）。**紧凑代码量目标尚未达成**：本次完成范围与协议纠偏，Core/Node/wire集中和整体阅读成本仍是保留债务；不把有限测试通过说成全历史测试通过或规模已合理。旧K0/K1历史不覆盖两阶段计划和各版账本。
 
 ## License
 

@@ -1,0 +1,5 @@
+stable TaskID: 592d03a327d80007636ffb865b136918
+stable ObjectID: 592d03a327d80007636ffb865b136918:0
+observed AttemptID: 592d03a327d80007636ffb865b136918:0 -> 592d03a327d80007636ffb865b136918:1
+attempt numbers: 0 -> 1
+value after reconstruction: {'payload': 'large-enough-for-the-object-store'}
