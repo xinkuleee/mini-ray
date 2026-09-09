@@ -6331,10 +6331,6 @@ class StoredPublicationRPCErrorKind(str, Enum):
     INTERNAL = "INTERNAL"
 
 
-class StoredPublicationQueryDisposition(str, Enum):
-    FOUND = "FOUND"
-    NOT_FOUND = "NOT_FOUND"
-    REJECTED = "REJECTED"
 
 
 def _validate_publication_wire_error(

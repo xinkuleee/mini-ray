@@ -21,3 +21,5 @@ K2d/e切片：cluster19、worker locality重试1、lease inventory39/registry13�
 K2g：原adopted-owner与四个publisher死亡窗口在当前B handoff/Node/实际bytes路径全部通过；不以纯模型替代。finish11/lostlock4/deadline7/entryfailure7通过；foreignwait4通过1因fixture未消费put唤醒失败，已修待重验。
 
 K2h：foreignwait修fixture后5通过；Task真实Seal/Drop/owner rollback未知组合1通过；explicit put含PENDING Ref跨Node导入真实smoke1通过。core-owner6通过1仅旧错误文案待同步，未记整体通过。
+
+K2i：core-owner7、sourceRef/Taskseal2、NodeMember6、NodeWorkerDeath8通过。关联6个旧SRC接口删除并AST核验，Node5未执行因父fixture规范hash变化被正确拒绝，下一冻结重登后验收。

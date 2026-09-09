@@ -1,0 +1,2 @@
+usage: run_baseline.py [-h] (--list | --pure | --smoke EXACT | --case EXACT)
+run_baseline.py: error: migration input hash changed; re-review required: tests/unit/test_output_publication.py

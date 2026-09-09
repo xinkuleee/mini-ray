@@ -336,6 +336,12 @@ def test_unexpected_exit_reclaims_locally_and_replays_one_frozen_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     node, incarnation, process, lease = _death_node()
+
+    def forbidden_stop(*_args, **_kwargs):
+        pytest.fail("passive Worker-exit reduction must not run a Worker stop path")
+
+    monkeypatch.setattr(node, "_stop_workers", forbidden_stop)
+    monkeypatch.setattr(node, "_stop_worker_slot", forbidden_stop)
     calls: list[protocol.ReportWorkerDeath] = []
     phase = 0
 

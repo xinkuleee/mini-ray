@@ -27,13 +27,16 @@ from miniray.core import (
     ObjectRef,
     RemoteFunctionDefinition,
     _DelayedReadyTask,
-    _PendingTask,
     _WAKE_COORDINATOR,
 )
 from miniray.errors import SystemTaskError
 from miniray.ids import JobID, LeaseID, NodeID, TaskID, WorkerID
+from miniray.lease_dependencies import LeaseDependencyCustody
+from miniray.node import NodeServer, _WorkerSlot
+from miniray.object_store import ObjectStore
 from miniray.ownership import ObjectCollectionState, ObjectState
-from miniray.resources import ResourceVector
+from miniray.resources import NodeSnapshot, ResourceLedger, ResourceVector
+from miniray.transfer_pins import TransferPinOutbox
 from tests.unit._pure_core import close_pure_core, make_pure_core
 from tests.unit._pure_output_runtime import PureOutputRuntime
 
@@ -71,6 +74,70 @@ def _core_without_runtime() -> CoreWorker:
 
 def _definition(core: CoreWorker) -> RemoteFunctionDefinition:
     return RemoteFunctionDefinition.from_callable(lambda value: value, core.job_id)
+
+
+def _claim_accepted(core, pending):
+    """Claim the real FIFO item without executing a coordinator or user code."""
+    count = core._submissions.qsize()
+    assert 0 < count <= 16
+    claimed = []
+    for _ in range(count):
+        item = core._submissions.get_nowait()
+        core._submissions.task_done()
+        if item is not _WAKE_COORDINATOR:
+            claimed.append(item)
+    assert claimed == [pending]
+    assert core._task_finish_barriers[pending.object_id] == pending
+    assert not core._submissions.unfinished_tasks
+
+
+def _submit_accepted(core, args=(), *, max_retries=0):
+    accepted = core._accepted_task_count
+    pending, reference = core._register_submission(
+        _definition(core), args, {}, ResourceVector(),
+        max_retries=max_retries, _enqueue=True,
+    )
+    _claim_accepted(core, pending)
+    assert core._accepted_task_count == accepted + 1
+    return pending, reference
+
+
+class _AliveLeaseWorker:
+    pid = 4242
+
+    def is_alive(self):
+        return True
+
+
+def _cancellation_node(node_id, worker_id):
+    """Empty-dependency lease authority with one passive, existing Worker."""
+    node = object.__new__(NodeServer)
+    node.node_id, node.worker_id = node_id, worker_id
+    node._state_lock = threading.RLock()
+    node._scheduling_lock = threading.Lock()
+    node._gcs_lifecycle_lock = threading.Lock()
+    node._stop_event = threading.Event()
+    node._shutdown_request_id = None
+    node._gcs_address, node._registered_with_gcs = None, False
+    total = ResourceVector({"CPU": 1})
+    node._ledger = ResourceLedger(total)
+    node._cluster_nodes = (NodeSnapshot(node_id, total, total),)
+    node._cluster_addresses = {}
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(
+        worker_id, process=_AliveLeaseWorker(), address=("worker.invalid", 31), pid=4242,
+    )}
+    node.num_workers_per_node = 1
+    node._leases, node._lease_outcomes = {}, {}
+    node._lease_cancellations, node._lease_request_locks = {}, {}
+    node._inflight_lease_requests = 0
+    node._lease_dependency_custody = LeaseDependencyCustody(node_id)
+    node._source_pin_releases = TransferPinOutbox()
+    node._dependency_pin_cleanups = {}
+    node._object_store = ObjectStore(1024)
+    node._sealed_metadata = {}
+    node.event_sink = None
+    return node
 
 
 def _outputs(core):
@@ -182,22 +249,19 @@ def test_object_ref_pickle_contains_only_logical_handle() -> None:
 def test_dependency_is_protected_until_dispatch_releases_hold() -> None:
     core = _core_without_runtime()
     outputs = _outputs(core)
-    dependency, dependency_ref = core._register_submission(
-        _definition(core), (), {}, ResourceVector()
-    )
+    dependency, dependency_ref = _submit_accepted(core)
     assert core._publish_reply(dependency, _reply(core, outputs, dependency, 9))
     assert core._finish_pending_task(dependency)
-    consumer, consumer_ref = core._register_submission(
-        _definition(core), (dependency_ref,), {}, ResourceVector()
-    )
+    consumer, consumer_ref = _submit_accepted(core, (dependency_ref,))
 
     try:
         assert consumer.dependency_hold is not None
-        args, kwargs, protected = core._resolve_task_dependencies(
-            consumer.spec, consumer.dependency_hold
-        )
-        assert args == (9,)
-        assert kwargs == {}
+        prepared, descriptors, protected = core._prepare_task_dependencies(consumer.spec)
+        assert len(prepared.args) == 1 and type(prepared.args[0]) is protocol.InlineArg
+        assert cloudpickle.loads(prepared.args[0].data) == 9
+        assert prepared.kwargs == () and descriptors == ()
+        assert prepared.task_id == consumer.spec.task_id
+        assert prepared.attempt_id == consumer.spec.attempt_id
         assert protected == (dependency.object_id,)
         assert core.owner_table.snapshot(
             dependency.object_id
@@ -228,22 +292,17 @@ def test_dependency_is_protected_until_dispatch_releases_hold() -> None:
 def test_reply_publishes_owner_state_before_waking_and_fences_stale_attempt(monkeypatch) -> None:
     core = _core_without_runtime()
     outputs = _outputs(core)
-    pending, ref = core._register_submission(
-        _definition(core), (), {}, ResourceVector(), max_retries=1
-    )
-    failure = SystemTaskError("advance to a current retry attempt")
-    recovery_plan = core._recovery_manager().validate_task_failure(
-        pending.spec.task_id, pending.spec.attempt_id, failure, error=failure
-    )
-    next_attempt = recovery_plan.decision.attempt_id
-    assert next_attempt == pending.spec.attempt_id.next()
-    owner_plan = core.owner_table.validate_advance_task_outputs(
-        pending.execution, next_attempt
-    )
-    core.owner_table.commit_validated_advance_task_outputs(owner_plan)
-    core._recovery_manager().commit_transition(recovery_plan)
+    pending, ref = _submit_accepted(core, max_retries=1)
+    # A genuinely prepared old delivery can arrive after a retry. Register it
+    # while its accepted attempt is still current; no stale admission is faked.
     payload = cloudpickle.dumps(42)
     stale_reply = _reply(core, outputs, pending, 42)
+    failure = SystemTaskError("advance to a current retry attempt")
+    assert not core._retry_system_failure(pending, failure)
+    current = core._task_finish_barriers[pending.object_id]
+    _claim_accepted(core, current)
+    next_attempt = current.spec.attempt_id
+    assert next_attempt == pending.spec.attempt_id.next()
     try:
         before_calls = tuple(outputs.calls)
         assert not core._publish_reply(pending, stale_reply)
@@ -251,9 +310,6 @@ def test_reply_publishes_owner_state_before_waking_and_fences_stale_attempt(monk
         assert not core._objects[pending.object_id].event.is_set()
         assert tuple(outputs.calls) == before_calls and not core._protocol_unresolved
 
-        current = _PendingTask(
-            pending.object_id, replace(pending.spec, attempt_id=next_attempt),
-        )
         current_reply = _reply(core, outputs, current, 42)
         observed = []
         original_wake = core._wake_object
@@ -291,13 +347,11 @@ def test_shutdown_error_fences_a_late_successful_reply() -> None:
     a legal Complete envelope. A live Push/adoption instead prevents shutdown
     from choosing ERROR; publication continuations have separate regressions.
     """
-    from tests.unit.test_cancelled_grant_inventory import _node
-
     core = _core_without_runtime()
     pending, ref = core._register_submission(
         _definition(core), (), {}, ResourceVector()
     )
-    node = _node(core.node_id, WorkerID.random())
+    node = _cancellation_node(core.node_id, WorkerID.random())
     lease_request = protocol.RequestWorkerLease(
         LeaseID.random(), pending.task_id, pending.spec.attempt_id,
         pending.spec.resources, core.node_id, core.worker_id,
@@ -359,7 +413,7 @@ def test_shutdown_error_fences_a_late_successful_reply() -> None:
         assert not core._protocol_unresolved
         before = core.owner_table.snapshot(pending.object_id)
         before_recovery = replace(core._recovery.task_record(pending.task_id))
-        with pytest.raises(SystemTaskError, match="exact selected-output envelope"):
+        with pytest.raises(SystemTaskError, match="exact single-output envelope"):
             core._publish_reply(pending, late_reply)
         snapshot = core.owner_table.snapshot(pending.object_id)
         assert snapshot.state is ObjectState.ERROR
@@ -385,9 +439,7 @@ def test_shutdown_error_fences_a_late_successful_reply() -> None:
 def test_successful_reply_fences_a_late_shutdown_error() -> None:
     core = _core_without_runtime()
     outputs = _outputs(core)
-    pending, ref = core._register_submission(
-        _definition(core), (), {}, ResourceVector()
-    )
+    pending, ref = _submit_accepted(core)
     payload = cloudpickle.dumps(42)
     reply = _reply(core, outputs, pending, 42)
     try:

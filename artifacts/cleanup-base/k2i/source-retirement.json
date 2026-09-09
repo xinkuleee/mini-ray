@@ -1,0 +1,44 @@
+[
+  {
+    "path": "src/miniray/core.py",
+    "symbol": "CoreWorker._resolve_task_dependencies",
+    "physical_lines": 91,
+    "original_sha256": "52342b2508c021e6700cc9dab82dcc2e524490f34ee00f5aa44318f380eb7ca7",
+    "proof": "coreowner7/nodelease4/recovery13/NodeMember6/NodeWorker8 pure; monitor1; original adopted-owner and fourpublisher smokes passed. Actual generic-stop transport spy replaces dead-helper spy."
+  },
+  {
+    "path": "src/miniray/node.py",
+    "symbol": "NodeServer._legacy_unregister_from_gcs_best_effort",
+    "physical_lines": 29,
+    "original_sha256": "f0394f709c44539129e1896d69f4f5349bb0e268ce048b286e7e9641691fd3bd",
+    "proof": "coreowner7/nodelease4/recovery13/NodeMember6/NodeWorker8 pure; monitor1; original adopted-owner and fourpublisher smokes passed. Actual generic-stop transport spy replaces dead-helper spy."
+  },
+  {
+    "path": "src/miniray/node.py",
+    "symbol": "NodeServer._stop_worker",
+    "physical_lines": 5,
+    "original_sha256": "f0394f709c44539129e1896d69f4f5349bb0e268ce048b286e7e9641691fd3bd",
+    "proof": "coreowner7/nodelease4/recovery13/NodeMember6/NodeWorker8 pure; monitor1; original adopted-owner and fourpublisher smokes passed. Actual generic-stop transport spy replaces dead-helper spy."
+  },
+  {
+    "path": "src/miniray/recovery.py",
+    "symbol": "RecoveryManager.validate_terminal_reconstruction_failure",
+    "physical_lines": 46,
+    "original_sha256": "376eca4f9917e04797d5a6f455c7a651f335f57611d2e0966bf2ddc6e03f456f",
+    "proof": "coreowner7/nodelease4/recovery13/NodeMember6/NodeWorker8 pure; monitor1; original adopted-owner and fourpublisher smokes passed. Actual generic-stop transport spy replaces dead-helper spy."
+  },
+  {
+    "path": "src/miniray/recovery.py",
+    "symbol": "FAIL_RECONSTRUCTION_TARGETS",
+    "physical_lines": 1,
+    "original_sha256": "376eca4f9917e04797d5a6f455c7a651f335f57611d2e0966bf2ddc6e03f456f",
+    "proof": "coreowner7/nodelease4/recovery13/NodeMember6/NodeWorker8 pure; monitor1; original adopted-owner and fourpublisher smokes passed. Actual generic-stop transport spy replaces dead-helper spy."
+  },
+  {
+    "path": "src/miniray/protocol.py",
+    "symbol": "StoredPublicationQueryDisposition",
+    "physical_lines": 4,
+    "original_sha256": "ba04a91c6b2c2e0689344b125488a5a0d6bc3e148355fb218f15832e75da9b1a",
+    "proof": "coreowner7/nodelease4/recovery13/NodeMember6/NodeWorker8 pure; monitor1; original adopted-owner and fourpublisher smokes passed. Actual generic-stop transport spy replaces dead-helper spy."
+  }
+]

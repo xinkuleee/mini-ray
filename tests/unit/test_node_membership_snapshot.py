@@ -216,7 +216,9 @@ def test_generic_stop_does_not_publish_expected_membership_death(
     # This metadata-only Node has no transfer readers. The real stop path now
     # inspects their registry before the existing stubbed release hook.
     node._pinned_transfers = {}
-    node._legacy_unregister_from_gcs_best_effort = lambda: calls.append("unregister")
+    # Observe the real transport boundary; an unused helper spy cannot prove
+    # that generic stop refrained from publishing a membership death.
+    node._background_rpc = lambda *args, **kwargs: calls.append((args, kwargs))
     node._release_all_transfer_pins = lambda: None
     node._server.stop = lambda: None
     node._stop_all_actor_workers = lambda *_args: ()

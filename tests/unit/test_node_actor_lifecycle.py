@@ -321,7 +321,6 @@ def test_forced_actor_stop_reclaims_token_but_node_finalize_is_unclean(
             RuntimeError("actor shutdown unreachable")
         ),
     )
-    monkeypatch.setattr(node, "_legacy_unregister_from_gcs_best_effort", lambda: None)
 
     reply = node._handle_finalize_shutdown(protocol.FinalizeShutdown("epoch"))
 

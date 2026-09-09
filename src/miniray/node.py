@@ -758,35 +758,6 @@ class NodeServer:
                 )
                 self._registered_with_gcs = True
 
-    def _legacy_unregister_from_gcs_best_effort(self) -> None:
-        """Deprecated pre-sentinel exit path retained for protocol study only.
-
-        The runtime never calls this helper.  Driver-owned Process sentinels are
-        the sole authority that can commit EXPECTED or PROCESS_EXIT death facts.
-        """
-        # Serialize against startup registration so a concurrent stop cannot
-        # leave a node registered after its process exits.
-        with self._gcs_lifecycle_lock:
-            with self._state_lock:
-                if self._gcs_address is None or not self._registered_with_gcs:
-                    return
-                gcs_address = self._gcs_address
-                self._registered_with_gcs = False
-            try:
-                self._background_rpc(
-                    gcs_address,
-                    GCS_UNREGISTER_NODE_HANDLER,
-                    protocol.UnregisterNode(
-                        self.node_id, self._node_pid, self._registration_epoch,
-                        "node-unregister-{}-{}".format(
-                            self.node_id, self._registration_epoch
-                        ),
-                    ),
-                )
-            except Exception:
-                # Cluster shutdown may stop GCS concurrently.  Membership expires
-                # with that process, so cleanup remains best effort here.
-                return
 
     def _report_resources_to_gcs_best_effort(self) -> bool:
         """Compatibility spelling for the versioned report flusher."""
@@ -3439,11 +3410,6 @@ class NodeServer:
             thread.join()
         return tuple(results[worker_id] for worker_id in order)
 
-    def _stop_worker(self) -> tuple[Optional[int], Optional[int], bool, bool]:
-        """Compatibility wrapper returning the first ordinary Worker result."""
-
-        result = self._stop_workers()[0]
-        return result.pid, result.exitcode, result.clean, result.forced
 
     def _handle_seal_object(self, request: object) -> object:
         if type(request) is not protocol.SealObject:

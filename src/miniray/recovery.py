@@ -64,7 +64,6 @@ class RecoveryAction(str, Enum):
     FENCE_STALE_ATTEMPT = "FENCE_STALE_ATTEMPT"
     START_RECONSTRUCTION = "START_RECONSTRUCTION"
     JOIN_RECONSTRUCTION = "JOIN_RECONSTRUCTION"
-    FAIL_RECONSTRUCTION_TARGETS = "FAIL_RECONSTRUCTION_TARGETS"
     UNRECONSTRUCTABLE_OBJECT = "UNRECONSTRUCTABLE_OBJECT"
 
 
@@ -756,52 +755,6 @@ class RecoveryManager:
             task_id, before, after, active_before, active_after, decision
         )
 
-    def validate_terminal_reconstruction_failure(
-        self, task_id: TaskID, attempt_id: AttemptID, error: object = None
-    ) -> RecoveryTransitionPlan:
-        """End one targeted reconstruction without poisoning its task.
-
-        A physical targeted attempt may fail after some healthy siblings from
-        older attempts remain usable.  Marking the whole TaskID SYSTEM_FAILED
-        would make a later loss of those siblings unreconstructable even when
-        retry budget remains.  This transition therefore clears only the
-        active execution marker, restores the logical task to SUCCEEDED, and
-        retains the already-consumed retry count.  The owner independently
-        records ERROR on exactly the failed target slots.
-        """
-
-        record = self.task_record(task_id)
-        before = self._copy_record(record)
-        after = self._copy_record(before)
-        active_before = self._active_recoveries.get(task_id)
-        if not record.is_current(attempt_id):
-            decision = self._with_lineage(record._fenced(
-                attempt_id,
-                "targeted terminal failure came from a stale attempt",
-            ))
-            return RecoveryTransitionPlan(
-                task_id, before, after, active_before, active_before, decision
-            )
-        if active_before != attempt_id or record.state is not TaskState.RETRY_PENDING:
-            raise RecoveryStateError(
-                "targeted terminal failure requires its active reconstruction"
-            )
-        after.state = TaskState.SUCCEEDED
-        after.last_error = error
-        decision = self._with_lineage(RecoveryDecision(
-            RecoveryAction.FAIL_RECONSTRUCTION_TARGETS,
-            task_id=task_id,
-            attempt_id=attempt_id,
-            failure_kind=FailureKind.SYSTEM,
-            error=error,
-            reason=(
-                "targeted reconstruction ended; healthy siblings retain "
-                "their lineage and remaining retry budget"
-            ),
-        ))
-        return RecoveryTransitionPlan(
-            task_id, before, after, active_before, None, decision
-        )
 
     @staticmethod
     def _copy_record(record: TaskRecord) -> TaskRecord:
