@@ -1,0 +1,538 @@
+........................................................................ [ 21%]
+........................................................................ [ 43%]
+........................................................................ [ 65%]
+........................................................................ [ 87%]
+.............................EEEEEEEEEF..                                [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_membership_child_death_drains_core_node_loss_without_dead_rpc[PROCESS_EXIT] _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x7809040efb30>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...8c2f6f9b1b5aa9ad362a08a93f1e3')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_membership_child_death_drains_core_node_loss_without_dead_rpc[NODE_EXIT] _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x78090418f110>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...511b4dfcd596294f7493c1e1f114b')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_membership_death_cache_detaches_input_and_rejects_conflicting_replay _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x7809025a2b40>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...3f87cb26369077fdae9b64c748ccf')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_unproven_child_death_leaves_core_cleanup_pending[missing] _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x780902ea9580>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...481266cf9b29cd3f14c9cbf76ffee')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_unproven_child_death_leaves_core_cleanup_pending[timeout] _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x780902ea5cd0>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...017911a48ba50e4598a97e98148f1')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_unproven_child_death_leaves_core_cleanup_pending[expected] _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x78090295eab0>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...f556d1f775b27e179d96507f42519')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_unproven_child_death_leaves_core_cleanup_pending[other-owner] _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x780902962ab0>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...0f8cbfb99de2a2707125e22604392')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_late_envelope_does_not_reverse_unknown_cleanup_or_consume_budget_twice _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x7809040ec2f0>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...4353b3e508a1cf1f7c774760074fa')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+_ ERROR at setup of test_known_inline_envelope_keeps_actual_bytes_and_child_holds _
+
+    @pytest.fixture
+    def publication():
+>       value = _CorePublication()
+                ^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x780902ed6ae0>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...9592860513945fa2525e8bfb8b3c0')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+=================================== FAILURES ===================================
+______ test_dead_child_retirement_blocks_reconstruction_until_replica_ack ______
+
+    def test_dead_child_retirement_blocks_reconstruction_until_replica_ack():
+>       f = _CorePublication(stored=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_common_cleanup_progress.py:299: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_common_cleanup_progress._CorePublication object at 0x780902e6d160>
+
+    def __init__(self, *, stored=False):
+        self.core = make_pure_core()
+        definition = self.core.define_remote_function(lambda: None)
+        self.pending, self.ref = self.core._register_submission(
+            definition, (), {}, ResourceVector(), num_returns=1, max_retries=1,
+        )
+        self.child_owner = _id(WorkerID, 41)
+        self.publisher = _id(NodeID, 42)
+        self.child = ObjectID.for_task(_id(TaskID, 43))
+        self.transfer = PreparedContainedTransfer(
+            self.child, self.child_owner, ("child.invalid", 1234),
+            OwnedContainedSource(self.child_owner),
+            ContainedReferenceHold(self.ref.object_id, self.child_owner, "common-cleanup"),
+            ContainedReferenceHold(self.ref.object_id, self.core.worker_id, "common-cleanup"),
+        )
+        payload = b"one published result"
+        tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
+        self.slot = OutputSlotManifest(
+            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
+            (self.transfer,),
+        )
+        self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
+        self.manifest = OutputPublicationManifest.create(
+            OutputPublicationHeader(
+                self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
+                OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
+            ), (self.slot,),
+        )
+        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
+        descriptor = protocol.ResultDescriptor(
+            self.ref.object_id, tier, len(payload), self.core.worker_id,
+            self.publisher, self.slot.checksum, None if stored else payload,
+        )
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
+>       assert registered.accepted and registered.snapshot.manifest == self.manifest
+E       AssertionError: assert (False)
+E        +  where False = OutputHandoffReply(request=RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(pub...ed656c732bd3b1ce8193bf1c3339c')), accepted=False, snapshot=None, error='output handoff has no accepted task execution').accepted
+
+tests/unit/test_common_cleanup_progress.py:117: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_common_cleanup_progress.py::test_dead_child_retirement_blocks_reconstruction_until_replica_ack
+ERROR tests/unit/test_common_cleanup_progress.py::test_membership_child_death_drains_core_node_loss_without_dead_rpc[PROCESS_EXIT]
+ERROR tests/unit/test_common_cleanup_progress.py::test_membership_child_death_drains_core_node_loss_without_dead_rpc[NODE_EXIT]
+ERROR tests/unit/test_common_cleanup_progress.py::test_membership_death_cache_detaches_input_and_rejects_conflicting_replay
+ERROR tests/unit/test_common_cleanup_progress.py::test_unproven_child_death_leaves_core_cleanup_pending[missing]
+ERROR tests/unit/test_common_cleanup_progress.py::test_unproven_child_death_leaves_core_cleanup_pending[timeout]
+ERROR tests/unit/test_common_cleanup_progress.py::test_unproven_child_death_leaves_core_cleanup_pending[expected]
+ERROR tests/unit/test_common_cleanup_progress.py::test_unproven_child_death_leaves_core_cleanup_pending[other-owner]
+ERROR tests/unit/test_common_cleanup_progress.py::test_late_envelope_does_not_reverse_unknown_cleanup_or_consume_budget_twice
+ERROR tests/unit/test_common_cleanup_progress.py::test_known_inline_envelope_keeps_actual_bytes_and_child_holds
+1 failed, 319 passed, 1 deselected, 9 errors in 13.08s
