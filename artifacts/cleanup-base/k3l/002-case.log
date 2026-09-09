@@ -1,0 +1,2 @@
+usage: run_baseline.py [-h] (--list | --pure | --smoke EXACT | --case EXACT)
+run_baseline.py: error: --case requires an exact registered gate or migration selector

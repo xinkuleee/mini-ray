@@ -1,11 +1,10 @@
 """Unified Node publication contracts with three opt-in thread lock probes.
 
-The historical filename retains no single-return OPEN/claim adapter. A detached
-real Node journal/store/ledger and in-memory child/GCS reducers replace it.
-Normal Complete is local; the historical external-ACK probe now checks the
-terminal outbox, and the outcome probe checks delivery after local validation.
-Missing INTENT uses an exact rollback tombstone, not a new forward INTENT;
-known local Complete, not a GCS reply alone, authorizes lease reconciliation.
+One stored output and two child owners use actual Node journal, Store,
+resource ledger and owner handoff reducers without runtime constructors.
+Normal Complete is local; its owner report remains a separate outbox.
+Unknown registration is compensated by exact rollback, never a new forward
+request. Three original bounded thread lock probes remain opt-in L1.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from miniray.output_publication_journal import (
     OutputPublicationAdoptionProof, OutputPublicationJournalState, OutputPublicationStage,
 )
 from miniray.output_publication_node import OutputPublicationRemoteError
-from miniray.output_recovery import OutputRecoveryDisposition, UnknownOutputRecoveryError
+from miniray.output_handoff import OutputHandoffPhase
 from tests.unit.test_output_publication_node_server import _node
 
 
@@ -72,7 +71,7 @@ def _outcome_request(fixture, record):
     values = fixture.values
     return protocol.GetWorkerLeaseOutcome(
         values.lease, values.task, values.attempt, values.executor, values.owner,
-        fixture.id.output_ids, target_execution=record.request.target_execution,
+        fixture.id.output_ids,
         scheduling_key=record.request.scheduling_key,
     )
 
@@ -141,9 +140,9 @@ def _probe_state_lock_from_thread(node: NodeServer) -> bool:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("target", (False, True))
-def test_prepare_requires_exact_running_selected_lease_and_replays(target):
-    fixture, node, record, complete = _node(target=target)
+@pytest.mark.parametrize("refs", (False, True))
+def test_prepare_requires_exact_running_single_output_lease_and_replays(refs):
+    fixture, node, record, complete = _node(refs=refs, stored=True)
     request, first = _prepare(fixture, node)
     effects = tuple(fixture.events)
     replay = node._handle_prepare_output_publication(request)
@@ -173,7 +172,7 @@ def test_prepare_fences_executor_owner_node_attempt_and_return_manifest(field):
     elif field == "attempt":
         header = replace(header, publication_id=replace(fixture.id, execution=fixture.id.execution.for_attempt(fixture.values.attempt.next())))
     else:
-        record.request = replace(record.request, return_ids=record.request.return_ids[:1])
+        record.request = replace(record.request, return_ids=())
     manifest = OutputPublicationManifest.create(header, fixture.manifest.slots)
     request = wire.PrepareOutputPublication(manifest, fixture.values.payloads)
     reply = node._handle_prepare_output_publication(request)
@@ -184,27 +183,27 @@ def test_prepare_fences_executor_owner_node_attempt_and_return_manifest(field):
 
 
 @pytest.mark.unit
-def test_one_prepare_orders_all_child_graph_materialize_promote_arm_effects(monkeypatch):
+def test_one_prepare_orders_owner_child_materialize_and_promotion_effects(monkeypatch):
     fixture, node, record, _complete = _node()
     seal = fixture.adapter._seal_replica
 
     def observe_seal(effect, descriptor, payload):
         snapshot = fixture.journal.snapshot(fixture.id)
-        assert len([ack for ack in snapshot.acknowledgements if ack.effect.stage is OutputPublicationStage.PREPARE]) == 4
-        assert any(ack.effect.stage is OutputPublicationStage.GRAPH_PREPARE for ack in snapshot.acknowledgements)
+        assert len([ack for ack in snapshot.acknowledgements if ack.effect.stage is OutputPublicationStage.PREPARE]) == 2
+        assert any(ack.effect.stage is OutputPublicationStage.OWNER_REGISTER for ack in snapshot.acknowledgements)
+        assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
         fixture.events.append("seal")
         return seal(effect, descriptor, payload)
 
     monkeypatch.setattr(fixture.adapter, "_seal_replica", observe_seal)
     request, reply = _prepare(fixture, node)
-    assert fixture.events == ["intent", "prepare", "prepare", "prepare", "prepare", "graph", "seal",
-                              "promote", "promote", "promote", "promote", "arm"]
+    assert fixture.events == ["owner-register", "prepare", "prepare", "seal", "promote", "promote"]
     assert reply.request_identity.publication_id == fixture.id
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.ready_to_complete and snapshot.complete is None
-    assert snapshot.manifest.to_graph_manifest().ordered_edges == tuple(edge for slot in fixture.manifest.slots for edge in slot.edges)
-    assert tuple(fixture.journal.materialized_result(fixture.id, index) for index in (0, 1)) == fixture.values.results
-    assert fixture.store.get(fixture.id.output_ids[1]) == fixture.values.payloads[1]
+    assert snapshot.manifest.ordered_edges == fixture.manifest.slots[0].edges
+    assert (fixture.journal.materialized_result(fixture.id, 0),) == fixture.values.results
+    assert fixture.store.get(fixture.id.output_ids[0]) == fixture.values.payloads[0]
     assert record.completion is None
     before = tuple(fixture.events)
     assert node._handle_prepare_output_publication(request).accepted
@@ -226,7 +225,7 @@ def test_success_complete_and_adoption_require_bound_prepared_publication():
 
 
 @pytest.mark.unit
-def test_failed_complete_records_exact_rollback_when_initial_intent_was_not_applied(monkeypatch):
+def test_failed_complete_records_rollback_when_owner_registration_was_not_applied(monkeypatch):
     fixture, node, record, complete = _node()
     reports, intent_calls = [], []
     real_report = fixture.adapter._report_rollback
@@ -241,12 +240,11 @@ def test_failed_complete_records_exact_rollback_when_initial_intent_was_not_appl
             raise TimeoutError("rollback report unavailable")
         return real_report(tombstone, manifest=manifest)
 
-    monkeypatch.setattr(fixture.adapter, "_report_intent", unavailable)
+    monkeypatch.setattr(fixture.adapter, "_register_owner", unavailable)
     monkeypatch.setattr(fixture.adapter, "_report_rollback", report)
     prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
     assert not prepared.accepted and record.output_publication_id == fixture.id
-    with pytest.raises(UnknownOutputRecoveryError):
-        fixture.recovery.snapshot(fixture.id)
+    assert fixture.handoffs.query(fixture.id) is None
     releases = _track_releases(node, monkeypatch)
     failed = replace(complete, status=protocol.TaskReplyStatus.SYSTEM_ERROR)
     with pytest.raises(TimeoutError, match="rollback report unavailable"):
@@ -261,8 +259,8 @@ def test_failed_complete_records_exact_rollback_when_initial_intent_was_not_appl
     reply = node._handle_complete_worker_lease_inner(failed)
     assert reply.accepted and not reply.released
     assert reports[0] == reports[1] and intent_calls == [fixture.manifest]
-    assert fixture.recovery.snapshot(fixture.id).rollback == snapshot.rollback_tombstone
-    assert fixture.recovery.snapshot(fixture.id).complete is None
+    assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ABORTED
+    assert fixture.handoffs.query(fixture.id).complete is None
     assert not node._handle_get_worker_lease_outcome(_outcome_request(fixture, record)).cleanup_pending
     assert node._handle_complete_worker_lease_inner(failed).accepted
     assert len(releases) == 1 and len(reports) == 2
@@ -271,56 +269,57 @@ def test_failed_complete_records_exact_rollback_when_initial_intent_was_not_appl
 
 
 @pytest.mark.unit
-def test_failed_complete_after_lost_intent_ack_retains_exact_cleanup_history(monkeypatch):
+def test_failed_complete_after_lost_owner_registration_ack_retains_cleanup_history(monkeypatch):
     fixture, node, record, complete = _node()
     manifests = []
-    original = fixture.adapter._report_intent
+    original = fixture.adapter._register_owner
 
     def applied_without_ack(manifest):
         manifests.append(manifest)
         original(manifest)
         raise TimeoutError("intent ACK lost after apply")
 
-    monkeypatch.setattr(fixture.adapter, "_report_intent", applied_without_ack)
+    monkeypatch.setattr(fixture.adapter, "_register_owner", applied_without_ack)
     with pytest.raises(TimeoutError, match="intent ACK lost"):
         node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
-    assert fixture.recovery.snapshot(fixture.id).manifest == fixture.manifest
-    assert fixture.events == ["intent"]
+    assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
+    assert fixture.events == ["owner-register"]
     failed = replace(complete, status=protocol.TaskReplyStatus.SYSTEM_ERROR)
     reply = node._handle_complete_worker_lease_inner(failed)
     assert reply.accepted and reply.released
     assert manifests == [fixture.manifest]  # rollback does not authorize new forward work
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.rollback.effects == () and snapshot.complete is None
-    assert fixture.recovery.snapshot(fixture.id).rollback == snapshot.rollback_tombstone
+    assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ABORTED
     assert node._handle_complete_worker_lease_inner(failed).accepted
-    assert fixture.events == ["intent", "rollback-report"]
+    assert fixture.events == ["owner-register", "rollback-report"]
     fixture.assert_no_pins_or_bytes()
 
 
 @pytest.mark.unit
-def test_prepare_exactly_replays_intent_after_applied_ack_was_lost(monkeypatch):
+def test_prepare_exactly_replays_owner_registration_after_applied_ack_was_lost(monkeypatch):
     fixture, node, record, _complete = _node()
     reports, dispositions = [], []
-    original = fixture.adapter._report_intent
+    original = fixture.adapter._register_owner
 
     def report(manifest):
         reports.append(manifest)
         acknowledgement = original(manifest)
-        dispositions.append(acknowledgement.disposition)
+        dispositions.append(fixture.handoffs.query(fixture.id))
         if len(reports) == 1:
             raise TimeoutError("intent ACK lost after apply")
         return acknowledgement
 
-    monkeypatch.setattr(fixture.adapter, "_report_intent", report)
+    monkeypatch.setattr(fixture.adapter, "_register_owner", report)
     request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
     with pytest.raises(TimeoutError, match="intent ACK lost"):
         node._handle_prepare_output_publication(request)
-    assert fixture.events == ["intent"] and fixture.store.used_bytes == 0
+    assert fixture.events == ["owner-register"] and fixture.store.used_bytes == 0
     assert record.output_publication_id == fixture.id
     assert node._handle_prepare_output_publication(request).accepted
     assert reports == [fixture.manifest, fixture.manifest]
-    assert dispositions == [OutputRecoveryDisposition.APPLIED, OutputRecoveryDisposition.ALREADY_RECORDED]
+    assert len(dispositions) == 2 and dispositions[0] == dispositions[1]
+    assert dispositions[0].manifest == fixture.manifest and dispositions[0].complete is None
     assert fixture.journal.snapshot(fixture.id).ready_to_complete
 
 
@@ -331,9 +330,9 @@ def test_stored_complete_releases_state_lock_around_external_terminal_ack():
     _prepare(fixture, node)
     first = node._handle_complete_worker_lease_inner(complete)
     assert first.accepted and first.released and record.completion == complete
-    assert "terminal" not in fixture.events
+    assert "complete-report" not in fixture.events
     observed = []
-    original = fixture.adapter._report_terminal
+    original = fixture.adapter._report_complete
 
     def report(witness):
         assert record.state is protocol.LeaseExecutionState.COMPLETED
@@ -343,7 +342,7 @@ def test_stored_complete_releases_state_lock_around_external_terminal_ack():
         observed.append(_probe_state_lock_from_thread(node))
         return original(witness)
 
-    fixture.adapter._report_terminal = report
+    fixture.adapter._report_complete = report
     node._drive_output_publications()
     assert observed == [True]
     assert fixture.adapter.pending_terminal_reports() == ()
@@ -357,9 +356,6 @@ def test_complete_gate_runs_after_node_commit_before_reply(monkeypatch):
     fixture, node, record, request = _node(refs=False)
     _prepare(fixture, node)
     node._output_publication_gate = gates.OutputPublicationGate(gates.OutputPublicationGateConfig(0, ("127.0.0.1", 32112)))
-    node._background_rpc = lambda _a, _h, message, **_opts: wire.OutputRecoveryReply(
-        message, fixture.recovery.report_terminal(message.witness),
-    )
     sent = []
 
     class Connection:
@@ -377,7 +373,7 @@ def test_complete_gate_runs_after_node_commit_before_reply(monkeypatch):
             assert record.completion == request and record.output_complete_inflight is None
             assert fixture.ledger.available == fixture.ledger.total
             assert not node._state_lock._is_owned() and not fixture.journal._lock._is_owned()
-            assert fixture.recovery.snapshot(fixture.id).complete == fixture.values.witness
+            assert fixture.handoffs.query(fixture.id).complete == fixture.values.witness
             sent.append(payload)
 
         def recv(self, size):
@@ -400,9 +396,6 @@ def test_complete_gate_failure_is_sticky_and_never_rolls_back(monkeypatch):
     fixture, node, record, request = _node(refs=False)
     _prepare(fixture, node)
     node._output_publication_gate = gates.OutputPublicationGate(gates.OutputPublicationGateConfig(0, ("127.0.0.1", 32113)))
-    node._background_rpc = lambda _a, _h, message, **_opts: wire.OutputRecoveryReply(
-        message, fixture.recovery.report_terminal(message.witness),
-    )
     calls = []
 
     def fail_connect(*_args, **_kwargs):
@@ -418,7 +411,7 @@ def test_complete_gate_failure_is_sticky_and_never_rolls_back(monkeypatch):
     assert record.completion == request and record.output_complete_inflight is None
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.complete == fixture.values.witness and snapshot.rollback is None
-    assert snapshot.retained_result_slots == (0, 1) and fixture.ledger.available == fixture.ledger.total
+    assert snapshot.retained_result_slots == (0,) and fixture.ledger.available == fixture.ledger.total
 
 
 @pytest.mark.unit
@@ -446,7 +439,7 @@ def test_local_complete_witness_wins_after_worker_loss_without_second_release(mo
     _interrupt_local_release(fixture, node, complete, monkeypatch)
     assert node._release_record_locked(record, protocol.LeaseExecutionState.WORKER_LOST)
     node._workers[fixture.values.executor].process.is_alive = lambda: False
-    assert fixture.recovery.snapshot(fixture.id).complete is None
+    assert fixture.handoffs.query(fixture.id).complete is None
     reply = node._handle_complete_worker_lease_inner(complete)
     assert reply.accepted and not reply.released
     assert reply.output_publication == fixture.values.envelope
@@ -519,7 +512,7 @@ def test_publication_step_external_effect_does_not_hold_node_state_lock():
 
     fixture.adapter._prepare_child = prepare
     _prepare(fixture, node)
-    assert observed == [True] and fixture.events.count("prepare") == 4
+    assert observed == [True] and fixture.events.count("prepare") == 2
 
 
 @pytest.mark.unit
@@ -581,7 +574,7 @@ def test_successful_unclaimed_publication_is_retained_but_blocks_finalize(monkey
     node._drive_output_publications()
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.state is OutputPublicationJournalState.COMPLETED
-    assert snapshot.retained_result_slots == (0, 1) and snapshot.rollback is None
+    assert snapshot.retained_result_slots == (0,) and snapshot.rollback is None
     assert fixture.adapter.pending_terminal_reports() == ()
     assert not node._output_publications_clean_locked()
     request = protocol.BeginDrain("retained-output-drain", "pure publication boundary")
@@ -635,11 +628,11 @@ def _clean_publication_fixture():
 
 def _cleanliness_snapshot(fixture, record):
     return (
-        fixture.journal.snapshot(fixture.id), fixture.recovery.snapshot(fixture.id),
+        fixture.journal.snapshot(fixture.id), fixture.handoffs.query(fixture.id),
         fixture.ledger.snapshot(), replace(record), tuple(fixture.events),
         fixture.adapter.pending_terminal_reports(), fixture.adapter.pending_lease_completions(),
         fixture.adapter.pending_rollbacks(), frozenset(fixture.adapter._tickets),
-        fixture.store.get(fixture.id.output_ids[1]),
+        fixture.store.get(fixture.id.output_ids[0]),
     )
 
 
@@ -750,11 +743,11 @@ def test_promotion_transport_ambiguity_propagates_and_exact_prepare_resumes():
     assert not snapshot.ready_to_complete and snapshot.complete is None
     assert record.state is protocol.LeaseExecutionState.RUNNING and record.completion is None
     assert not any(ack.effect.stage is OutputPublicationStage.PROMOTE for ack in snapshot.acknowledgements)
-    stored_bytes = fixture.store.get(fixture.id.output_ids[1])
+    stored_bytes = fixture.store.get(fixture.id.output_ids[0])
     assert node._handle_prepare_output_publication(request).accepted
     assert fixture.journal.snapshot(fixture.id).ready_to_complete
-    assert fixture.events.count("prepare") == 4 and fixture.events.count("promote") == 5
-    assert fixture.store.get(fixture.id.output_ids[1]) == stored_bytes
+    assert fixture.events.count("prepare") == 2 and fixture.events.count("promote") == 3
+    assert fixture.store.get(fixture.id.output_ids[0]) == stored_bytes
 
 
 @pytest.mark.unit

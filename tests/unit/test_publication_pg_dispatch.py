@@ -1,12 +1,12 @@
 """A dispatch replay must finish existing publication after another PG Node dies.
 
-One threadless Core, one tiny input put and one single-slot INLINE publication
+One threadless Core, one tiny input put and one single-output INLINE publication
 use the real discovery/journal/adapter and owner/recovery authorities. A full
 two-bundle scheduling manifest and typed survivor snapshot model the other
 bundle's Node death; the publication's own Node stays alive. No Node/Core/GCS
 constructor, socket, thread, sleep, user execution or physical allocation runs.
 
-An actual terminal/adopted ACK is lost after its effect. Only then does the
+An actual local Complete/adoption callback fails after its effect. Only then does the
 existing adoption retry meet PG LOST in the real dispatch loop. Its finite
 queue contains that original ReadyTask followed by STOP, never an empty wait.
 The two phases distinguish PENDING before owner CAS from already READY with
@@ -83,7 +83,7 @@ def _take_adoption_retry(core):
     return retry
 
 
-@pytest.mark.parametrize("lost_ack", ("terminal", "adopted"))
+@pytest.mark.parametrize("lost_ack", ("complete", "adopted"))
 def test_publication_replay_survives_other_bundle_node_loss_before_dispatch(lost_ack):
     core = make_pure_core()
     source = output = None
@@ -124,33 +124,38 @@ def test_publication_replay_survives_other_bundle_node_loss_before_dispatch(lost
         identity = reply.output_publication.publication_id
         assert reply.output_publication.manifest.header.node_incarnation.node_id == core.node_id
         assert outputs.journal.snapshot(identity).complete == reply.output_publication.complete
-        assert outputs.recovery.snapshot(identity).complete is None
+        assert core._output_handoff_table().query(identity).complete is None
         assert outputs.discoveries == len(outputs.completions) == 1
         assert sum(slot.size_bytes for slot in reply.output_publication.manifest.slots) < 1024
         lost = []
         calls = []
-        chosen_type = wire.ReportOutputPublicationTerminal if lost_ack == "terminal" else wire.ReportOutputPublicationAdopted
-
-        def lose_one_ack(address, handler, request):
-            assert len(calls) < 8
-            calls.append((handler, request))
-            result = outputs.rpc(address, handler, request)
-            if type(request) is chosen_type and not lost:
-                assert type(result) is wire.OutputRecoveryReply and result.accepted
-                lost.append((request, result))
-                raise TransportTimeout("publication fact applied but ACK was lost")
+        handoffs = core._output_handoff_table()
+        method_name = "record_complete" if lost_ack == "complete" else "adopt"
+        original = getattr(handoffs, method_name)
+        callback_requests = []
+        def lose_one_callback(value):
+            callback_requests.append(value)
+            result = original(value)
+            if not lost:
+                lost.append((value, result))
+                raise TransportTimeout("local publication fact applied before callback failure")
             return result
-
-        core._rpc = lose_one_ack
+        setattr(handoffs, method_name, lose_one_callback)
+        def observe_rpc(address, handler, request):
+            assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
+            calls.append((handler, request))
+            assert len(calls) <= 1
+            return outputs.rpc(address, handler, request)
+        core._rpc = observe_rpc
         assert not core._publish_reply(
             pending, reply, expected_node_id=core.node_id, expected_lease_id=push.lease_id,
         )
         assert len(lost) == 1
         before = core.owner_table.snapshot(output.object_id)
-        assert before.state is (ObjectState.PENDING if lost_ack == "terminal" else ObjectState.READY_INLINE)
+        assert before.state is (ObjectState.PENDING if lost_ack == "complete" else ObjectState.READY_INLINE)
         assert before.error is None
-        assert outputs.recovery.snapshot(identity).complete == reply.output_publication.complete
-        assert (outputs.recovery.snapshot(identity).adopted is not None) is (lost_ack == "adopted")
+        assert handoffs.query(identity).complete == reply.output_publication.complete
+        assert (handoffs.query(identity).adoption is not None) is (lost_ack == "adopted")
         assert outputs.journal.snapshot(identity).retained_result_slots == (0,)
         assert not core._finish_pending_task(pending)
         assert core._accepted_task_count == 1 and core._task_finish_barriers[output.object_id] == pending
@@ -187,8 +192,8 @@ def test_publication_replay_survives_other_bundle_node_loss_before_dispatch(lost
         assert after.inline_data == reply.results[0].inline_data
         assert after.current_attempt == pending.spec.attempt_id
         assert after.output_publication.publication_id == identity
-        history = outputs.recovery.snapshot(identity)
-        assert history.adopted is not None and history.adopted.complete == reply.output_publication.complete
+        history = handoffs.query(identity)
+        assert history.adoption is not None and history.adoption.complete == reply.output_publication.complete
         assert not outputs.journal.snapshot(identity).retained_result_slots
         assert outputs.discoveries == len(outputs.pushes) == len(outputs.completions) == 1
         assert not core._protocol_unresolved and not core._task_finish_barriers
@@ -198,7 +203,8 @@ def test_publication_replay_survives_other_bundle_node_loss_before_dispatch(lost
         source_after = core.owner_table.snapshot(source.object_id)
         assert not source_after.submitted_tokens and source_after.lineage_tokens == source_before.lineage_tokens
         assert sum(handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER for handler, _request in calls) == 1
-        assert sum(type(request) is chosen_type for _handler, request in calls) == 2
+        assert len(lost) == 1 and callback_requests == [callback_requests[0]] * 2
+        assert lost[0][0] == (reply.output_publication.complete if lost_ack == "complete" else history.adoption)
 
         _close_local(output)
         core._reference_mailbox.drain()

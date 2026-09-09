@@ -1,9 +1,9 @@
 """Unified Node publication contracts migrated from the former INLINE path.
 
-The exact legacy source and old-to-new coverage map are preserved under
-``docs/history/retired-node-publication``.  Pure cases use two tiny slots and
-real journal/owner/store reducers without a Node constructor or I/O.  The one
-explicit loopback case retains the original bounded cross-thread outbox race.
+Historical source is recoverable through docs/history-index.md. Pure cases
+use one tiny INLINE result and two child-owner tables with real local
+journal/owner reducers; no Node constructor or I/O. One separately marked
+loopback case preserves the original bounded cross-thread outbox race.
 """
 
 from __future__ import annotations
@@ -18,13 +18,16 @@ import time
 import pytest
 
 from miniray import output_protocol as wire, protocol
-from miniray.contained_cycle import ContainedGraphTransactionState
 from miniray.output_publication import OutputPublicationManifest
 from miniray.output_publication_journal import (
     OutputPublicationAdoptionProof, OutputPublicationJournalState,
 )
 from miniray.resources import ResourceVector
-from tests.unit.test_output_publication_node_server import _node
+from tests.unit.test_output_publication_node_server import _node as _single_node
+
+
+def _node(*, refs=True):
+    return _single_node(refs=refs, stored=False)
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +56,6 @@ def _query(fixture, record):
     return protocol.GetWorkerLeaseOutcome(
         identity.lease_id, identity.task_id, identity.attempt_id,
         fixture.values.executor, fixture.values.owner, identity.output_ids,
-        target_execution=record.request.target_execution,
     )
 
 
@@ -86,54 +88,55 @@ def test_open_prepare_bind_order_and_authority_exclusion():
     assert _prepare(fixture, node).accepted
     assert record.output_publication_id == fixture.id
     assert fixture.events == [
-        "intent", "prepare", "prepare", "prepare", "prepare",
-        "graph", "promote", "promote", "promote", "promote", "arm",
+        "owner-register", "prepare", "prepare", "promote", "promote",
     ]
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.ready_to_complete and snapshot.complete is None
-    assert snapshot.materialized_slots == (0, 1)
-    assert fixture.recovery.snapshot(fixture.id).armed
-    assert fixture.graph.snapshot().manifests[0].state is ContainedGraphTransactionState.PREPARED
+    assert snapshot.materialized_slots == (0,)
+    assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
+    assert fixture.handoffs.query(fixture.id).complete is None
+    assert fixture.store.used_bytes == 0
     assert fixture.ledger.available == ResourceVector()
 
 
 @pytest.mark.unit
-def test_open_ack_loss_replays_exact_intent_before_any_effect():
+def test_owner_registration_ack_loss_replays_exact_manifest_before_any_effect():
     fixture, node, record, _complete = _node()
-    fixture.fault = "intent"
-    with pytest.raises(TimeoutError, match="intent"):
+    fixture.fault = "owner-register"
+    with pytest.raises(TimeoutError, match="owner-register"):
         _prepare(fixture, node)
     assert record.output_publication_id == fixture.id
-    assert fixture.events == ["intent"]
+    assert fixture.events == ["owner-register"]
     assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
     assert _prepare(fixture, node).accepted
-    assert fixture.events[:2] == ["intent", "intent"]
-    assert fixture.events.count("prepare") == 4
+    assert fixture.events[:2] == ["owner-register", "owner-register"]
+    assert fixture.events.count("prepare") == 2
 
 
 @pytest.mark.unit
-def test_prepared_ack_loss_keeps_effects_and_exact_replay_only_reports():
+def test_promotion_ack_loss_keeps_effects_and_replays_only_missing_promotions():
     fixture, node, _record, _complete = _node()
-    fixture.fault = "arm"
-    with pytest.raises(TimeoutError, match="arm"):
+    fixture.fault = "promote"
+    with pytest.raises(TimeoutError, match="promote"):
         _prepare(fixture, node)
     before = tuple(fixture.events)
-    assert fixture.recovery.snapshot(fixture.id).armed
+    first = fixture.manifest.slots[0].transfers[0]
+    assert first.final_hold in fixture.child_owners[first.contained_owner_worker_id].snapshot(first.contained_object_id).contained_holds
     assert not fixture.journal.snapshot(fixture.id).ready_to_complete
     assert _prepare(fixture, node).accepted
-    assert tuple(fixture.events) == before + ("arm",)
+    assert tuple(fixture.events) == before + ("promote", "promote")
     assert fixture.journal.snapshot(fixture.id).ready_to_complete
 
 
 @pytest.mark.unit
 def test_complete_still_requires_the_exact_prepared_ack():
     fixture, node, record, complete = _node()
-    fixture.fault = "arm"
+    fixture.fault = "promote"
     with pytest.raises(TimeoutError):
         _prepare(fixture, node)
     rejected = node._handle_complete_worker_lease_inner(complete)
     assert not rejected.accepted and not rejected.released
-    assert "ARM ACK" in rejected.error
+    assert "effect ACK" in rejected.error
     assert record.state is protocol.LeaseExecutionState.RUNNING
     assert record.output_complete_inflight is None
     assert fixture.journal.snapshot(fixture.id).complete is None
@@ -151,7 +154,7 @@ def test_complete_replay_and_outcome_return_without_any_gcs_io(monkeypatch):
     def forbidden(*_args, **_kwargs):
         pytest.fail("Complete/outcome attempted GCS or resource-report I/O")
 
-    monkeypatch.setattr(fixture.adapter, "_report_terminal", forbidden)
+    monkeypatch.setattr(fixture.adapter, "_report_complete", forbidden)
     monkeypatch.setattr(node, "_background_rpc", forbidden)
     monkeypatch.setattr(node, "_flush_pending_resource_report", forbidden)
     first = node._handle_complete_worker_lease_inner(complete)
@@ -160,8 +163,8 @@ def test_complete_replay_and_outcome_return_without_any_gcs_io(monkeypatch):
     assert first.accepted and first.released and replay.accepted and not replay.released
     assert first.output_publication == replay.output_publication == outcome.output_publication == fixture.values.envelope
     assert outcome.state is protocol.LeaseExecutionState.COMPLETED
-    assert len(outcome.descriptors) == 1 and outcome.orphan_descriptors == ()
-    assert fixture.graph.snapshot().manifests[0].state is ContainedGraphTransactionState.PREPARED
+    assert outcome.descriptors == () and outcome.orphan_descriptors == ()
+    assert fixture.handoffs.query(fixture.id).complete is None
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
     assert node._workers[fixture.values.executor].active_lease_id is None
     assert record.completion == complete and record.output_complete_inflight is None
@@ -171,7 +174,7 @@ def test_complete_replay_and_outcome_return_without_any_gcs_io(monkeypatch):
 
 
 @pytest.mark.unit
-def test_prepare_rejects_rebound_selected_manifest_before_any_effect():
+def test_prepare_rejects_rebound_single_manifest_before_any_effect():
     fixture, node, record, _complete = _node(refs=False)
     assert _prepare(fixture, node).accepted
     before = fixture.journal.snapshot(fixture.id)
@@ -205,7 +208,7 @@ def test_prepare_failure_is_trusted_only_after_explicit_rollback():
     assert snapshot.rollback_tombstone is not None and snapshot.complete is None
     assert fixture.adapter.rollback_reported(fixture.id)
     fixture.assert_no_pins_or_bytes()
-    assert fixture.events.count("abort") == 1
+    assert fixture.events.count("rollback-report") == 1
     assert _clean(node)
 
 
@@ -237,8 +240,11 @@ def test_aborted_ack_loss_keeps_shutdown_dirty_until_exact_replay():
 def test_worker_loss_resumes_an_ambiguous_explicit_abort():
     fixture, node, record, _complete = _node()
     assert _prepare(fixture, node).accepted
-    fixture.fault = "abort"
-    with pytest.raises(TimeoutError, match="abort"):
+    fixture.fault = "release"
+    # First bounded turn discards the INLINE result; the next turn sends the
+    # first exact child Release and loses its reply after the effect.
+    assert fixture.adapter.rollback(fixture.id, "explicit-abort-before-worker-loss", max_effects=1) is None
+    with pytest.raises(TimeoutError, match="release"):
         fixture.adapter.rollback(fixture.id, "explicit-abort-before-worker-loss", max_effects=1)
     before = fixture.journal.snapshot(fixture.id).rollback
     assert before is not None
@@ -246,7 +252,7 @@ def test_worker_loss_resumes_an_ambiguous_explicit_abort():
     assert record.state is protocol.LeaseExecutionState.WORKER_LOST
     _drive_until_done(node)
     assert fixture.journal.snapshot(fixture.id).rollback == before
-    assert fixture.events.count("abort") == 2
+    assert fixture.events.count("release") == 5
     fixture.assert_no_pins_or_bytes()
     assert _clean(node)
 
@@ -270,17 +276,17 @@ def test_terminal_ack_loss_keeps_only_background_report_pending():
     fixture, node, record, complete = _node()
     assert _prepare(fixture, node).accepted
     assert node._handle_complete_worker_lease_inner(complete).accepted
-    fixture.fault = "terminal"
+    fixture.fault = "complete-report"
     assert not node._drive_output_publications()
-    assert fixture.recovery.snapshot(fixture.id).complete == fixture.values.witness
+    assert fixture.handoffs.query(fixture.id).complete == fixture.values.witness
     assert fixture.adapter.pending_terminal_reports() == (fixture.values.witness,)
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
     assert record.output_complete_inflight is None
     replay = node._handle_complete_worker_lease_inner(complete)
     assert replay.accepted and not replay.released and replay.output_publication == fixture.values.envelope
-    assert fixture.events.count("terminal") == 1
+    assert fixture.events.count("complete-report") == 1
     assert node._drive_output_publications()
-    assert fixture.events.count("terminal") == 2
+    assert fixture.events.count("complete-report") == 2
     assert not fixture.adapter.pending_terminal_reports()
     _adopt(fixture, node)
     assert _clean(node)
@@ -291,14 +297,14 @@ def test_outcome_keeps_success_after_terminal_ack_loss_and_worker_loss():
     fixture, node, record, complete = _node()
     assert _prepare(fixture, node).accepted
     assert node._handle_complete_worker_lease_inner(complete).accepted
-    fixture.fault = "terminal"
+    fixture.fault = "complete-report"
     assert not node._drive_output_publications()
     assert not _lose_worker(fixture, node)
     outcome = node._handle_get_worker_lease_outcome(_query(fixture, record))
     assert outcome.state is protocol.LeaseExecutionState.COMPLETED
     assert outcome.completion_status is protocol.TaskReplyStatus.SUCCEEDED
     assert outcome.output_publication == fixture.values.envelope and not outcome.worker_alive
-    assert fixture.events.count("terminal") == 1
+    assert fixture.events.count("complete-report") == 1
     assert record.completion == complete
 
 
@@ -321,7 +327,7 @@ def test_worker_loss_after_complete_boundary_preserves_success(observer):
     assert record.completion == complete and record.output_complete_inflight is None
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
     assert fixture.journal.snapshot(fixture.id).rollback is None
-    assert fixture.graph.snapshot().manifests[0].state is ContainedGraphTransactionState.PREPARED
+    assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
 
 
 @pytest.mark.unit
@@ -339,7 +345,7 @@ def test_background_terminal_failure_releases_interrupted_local_completion(monke
         assert node._workers[fixture.values.executor].active_lease_id is None
         raise TimeoutError("terminal metadata unavailable")
 
-    monkeypatch.setattr(fixture.adapter, "_report_terminal", unavailable)
+    monkeypatch.setattr(fixture.adapter, "_report_complete", unavailable)
     assert not node._drive_output_publications()
     assert calls == [fixture.values.witness]
     assert record.completion == complete and record.output_complete_inflight is None
@@ -396,7 +402,7 @@ def test_terminal_callback_can_read_exact_local_complete_without_another_rpc(mon
     fixture, node, record, complete = _node()
     assert _prepare(fixture, node).accepted
     assert node._handle_complete_worker_lease_inner(complete).accepted
-    original = fixture.adapter._report_terminal
+    original = fixture.adapter._report_complete
     calls = []
 
     def read_before_reply(witness):
@@ -409,7 +415,7 @@ def test_terminal_callback_can_read_exact_local_complete_without_another_rpc(mon
         assert replay.output_publication == outcome.output_publication == fixture.values.envelope
         return original(witness)
 
-    monkeypatch.setattr(fixture.adapter, "_report_terminal", read_before_reply)
+    monkeypatch.setattr(fixture.adapter, "_report_complete", read_before_reply)
     assert node._drive_output_publications()
     assert calls == [fixture.values.witness]
 
@@ -430,7 +436,7 @@ def test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_cus
         ), 1, 7, protocol.WorkerDeathReason.PROCESS_EXIT,
     )
     cleanup = wire.FinalizeOutputOwnerDeath(fixture.manifest, death)
-    original = fixture.adapter._report_terminal
+    original = fixture.adapter._report_complete
     reports = []
     worker_acks = []
 
@@ -438,7 +444,7 @@ def test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_cus
         assert address == record.grant.worker_address
         assert handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER and request == cleanup
         worker_acks.append(request)
-        return wire.FinalizeOutputOwnerDeathReply(request, True)
+        return wire.FinalizeOutputOwnerDeathReply(request, finish_cleanup)
 
     def fence_after_apply(witness):
         reports.append(witness)
@@ -447,8 +453,7 @@ def test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_cus
             "owner-terminal-fence", death, node.node_id,
         )).accepted
         if finish_cleanup:
-            # GCS has completed the physical replica portion before finalize.
-            # This no-ref batch needs no invented child/graph cleanup shortcut.
+            # This no-ref INLINE value has no physical replica or child cleanup.
             for slot in fixture.manifest.slots:
                 if slot.object_id in node._sealed_metadata:
                     reply = node._handle_drop_object_replica(protocol.DropObjectReplica(
@@ -459,7 +464,7 @@ def test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_cus
         return acknowledgement
 
     monkeypatch.setattr(node, "_background_rpc", worker_rpc)
-    monkeypatch.setattr(fixture.adapter, "_report_terminal", fence_after_apply)
+    monkeypatch.setattr(fixture.adapter, "_report_complete", fence_after_apply)
     node._drive_output_publications()
     assert reports == [fixture.values.witness]
     snapshot = fixture.journal.snapshot(fixture.id)
@@ -479,13 +484,16 @@ def test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_cus
         assert _clean(node)
         assert node._drive_output_publications()
     else:
-        assert snapshot.retained_result_slots == (0, 1)
+        assert snapshot.retained_result_slots == (0,)
         assert not fixture.adapter.owner_death_finished(fixture.id)
         assert not _clean(node)
         # Progress completion is not clean-shutdown/custody completion.  The
         # already reported true Complete stays true while owner cleanup waits.
         node._drive_output_publications()
-        assert fixture.journal.snapshot(fixture.id) == snapshot
+        after = fixture.journal.snapshot(fixture.id)
+        assert after.complete == snapshot.complete and after.rollback_tombstone is None
+        assert not fixture.adapter.owner_death_finished(fixture.id)
+        assert worker_acks == [cleanup]
         assert not _clean(node)
     assert reports == [fixture.values.witness]
 
@@ -524,7 +532,7 @@ def test_supervisor_flushes_completion_metadata_without_starting_threads():
     assert len(waits) == len(reports) == 1
     assert reports[0].available_resources == ResourceVector({"CPU": 1})
     assert not fixture.adapter.pending_terminal_reports()
-    assert fixture.recovery.snapshot(fixture.id).complete == fixture.values.witness
+    assert fixture.handoffs.query(fixture.id).complete == fixture.values.witness
 
 
 @pytest.mark.loopback_smoke
@@ -538,7 +546,7 @@ def test_pending_terminal_rpc_does_not_lock_out_complete_or_outcome():
     replies = []
     outcomes = []
     driver_results = []
-    original = fixture.adapter._report_terminal
+    original = fixture.adapter._report_complete
 
     def block(witness):
         entered.set()
@@ -561,7 +569,7 @@ def test_pending_terminal_rpc_does_not_lock_out_complete_or_outcome():
     try:
         assert _prepare(fixture, node).accepted
         assert node._handle_complete_worker_lease_inner(complete).accepted
-        fixture.adapter._report_terminal = block
+        fixture.adapter._report_complete = block
         driver = threading.Thread(target=drive, daemon=True, name="output-terminal-report")
         reader = threading.Thread(target=read, daemon=True, name="output-terminal-reader")
         threads.extend((driver, reader))
