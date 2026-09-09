@@ -19,3 +19,5 @@ K2c迁移前置：foreign-lineage4、owner API10、owned-drop8、owner-service4�
 K2d/e切片：cluster19、worker locality重试1、lease inventory39/registry13、Node monitor1、Node lease4、recovery13通过。worker locality初次Node启动超时原日志保留。core-owner4个fixture未完成真实准入导致失败，待修；该file与5个SRC死亡smoke尚未验收，不删除关联SRC。
 
 K2g：原adopted-owner与四个publisher死亡窗口在当前B handoff/Node/实际bytes路径全部通过；不以纯模型替代。finish11/lostlock4/deadline7/entryfailure7通过；foreignwait4通过1因fixture未消费put唤醒失败，已修待重验。
+
+K2h：foreignwait修fixture后5通过；Task真实Seal/Drop/owner rollback未知组合1通过；explicit put含PENDING Ref跨Node导入真实smoke1通过。core-owner6通过1仅旧错误文案待同步，未记整体通过。

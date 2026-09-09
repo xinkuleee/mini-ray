@@ -1,0 +1,21 @@
+{
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-libc",
+  "packages": {
+    "pytest": "8.4.2",
+    "cloudpickle": "3.1.2",
+    "packaging": "26.3",
+    "pluggy": "1.6.0",
+    "iniconfig": "2.3.0",
+    "pygments": "2.21.0"
+  },
+  "source": {
+    "branch": "refs/heads/teaching-base",
+    "head": "87a63ade49353ce973463f3ce1a88fb924d50f5d",
+    "working_tree_status": " M scripts/baseline_manifest.json\n M tests/unit/test_core_owner_integration.py\n M tests/unit/test_foreign_wait_drop.py\n M tests/unit/test_node_actor_lifecycle.py\n M tests/unit/test_node_publication_owner_death_finalize.py\n M tests/unit/test_node_worker_death_runtime.py\n M tests/unit/test_output_dead_child_cleanup.py\n M tests/unit/test_output_owner_death_node.py\n M tests/unit/test_output_publication.py\n M tests/unit/test_output_publication_node_server.py\n M tests/unit/test_output_replica_node.py\n?? tests/integration/test_pending_put_reference_path.py\n?? tests/unit/test_task_output_seal_cleanup.py\n",
+    "archive_sha256": "4d544749a926c483784432069d5dbf612f2ed2a8f28f71e5a13d69dd56909d49",
+    "file_count": 488,
+    "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+  },
+  "selection_mode": "case"
+}

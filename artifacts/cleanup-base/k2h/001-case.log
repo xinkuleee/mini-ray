@@ -1,0 +1,204 @@
+.....F.                                                                  [100%]
+=================================== FAILURES ===================================
+______________ test_shutdown_error_fences_a_late_successful_reply ______________
+
+    @pytest.mark.unit
+    def test_shutdown_error_fences_a_late_successful_reply() -> None:
+        """A cancelled lease cannot authorize a late success before local finish.
+    
+        The old descriptor-only success is now a malformed protocol delivery, not
+        a legal Complete envelope. A live Push/adoption instead prevents shutdown
+        from choosing ERROR; publication continuations have separate regressions.
+        """
+        core = _core_without_runtime()
+        pending, ref = core._register_submission(
+            _definition(core), (), {}, ResourceVector()
+        )
+        node = _cancellation_node(core.node_id, WorkerID.random())
+        lease_request = protocol.RequestWorkerLease(
+            LeaseID.random(), pending.task_id, pending.spec.attempt_id,
+            pending.spec.resources, core.node_id, core.worker_id,
+            target_node_id=core.node_id, return_ids=pending.output_ids,
+        )
+        grant = node._handle_request_lease(lease_request)
+        assert type(grant) is protocol.GrantWorkerLease
+        cancellations, receipts = [], []
+    
+        def rpc(address, handler, request):
+            assert address == core.node_address
+            if handler == "cancel_worker_lease":
+                reply = node._handle_cancel_worker_lease(request)
+                assert reply.accepted and reply.cancelled
+                assert reply.retired_grant == grant
+                assert reply.dependency_inventory.descriptors == ()
+                cancellations.append(reply)
+                return reply
+            assert handler == protocol.ACK_LEASE_DEPENDENCY_CUSTODY_HANDLER
+            assert request.inventory == cancellations[0].dependency_inventory
+            reply = node._handle_ack_lease_dependency_custody(request)
+            assert reply.accepted
+            receipts.append(reply)
+            return reply
+    
+        core._rpc = rpc
+        shutdown_error = SystemTaskError(
+            "CoreWorker shutdown timed out before task completion"
+        )
+        try:
+            assert core._begin_known_grant_cancellation(
+                pending, pending.spec, (), core.node_address, grant, lease_request, shutdown_error,
+            )
+            assert len(cancellations) == len(receipts) == 1
+            assert not node._dependency_custody_registry_locked().has_pending()
+            assert node._leases[grant.lease_id].state is protocol.LeaseExecutionState.ABANDONED
+            assert node.resource_ledger.available == node.resource_ledger.total
+            late_start = node._handle_start_worker_lease(protocol.StartWorkerLease(
+                grant.lease_id, pending.task_id, pending.spec.attempt_id, grant.worker_id,
+            ))
+            assert not late_start.accepted and late_start.state is protocol.LeaseExecutionState.ABANDONED
+            late_complete = node._handle_complete_worker_lease(protocol.CompleteWorkerLease(
+                grant.lease_id, pending.task_id, pending.spec.attempt_id,
+                grant.worker_id, protocol.TaskReplyStatus.SUCCEEDED,
+            ))
+            assert not late_complete.accepted and late_complete.output_publication is None
+            assert node.object_store.used_bytes == 0
+            payload = cloudpickle.dumps(42)
+            late_reply = protocol.TaskReply(
+                pending.task_id, pending.spec.attempt_id, grant.worker_id,
+                protocol.TaskReplyStatus.SUCCEEDED, (protocol.ResultDescriptor(
+                    pending.object_id, protocol.ResultStorage.INLINE, len(payload),
+                    core.worker_id, core.node_id, hashlib.sha256(payload).hexdigest(), payload,
+                ),),
+            )
+            # ERROR is authoritative, but its task has not crossed finish yet.
+            # No successful Node Complete or GCS publication was manufactured.
+            assert pending.task_key not in core._finished_tasks
+            assert not core._protocol_unresolved
+            before = core.owner_table.snapshot(pending.object_id)
+            before_recovery = replace(core._recovery.task_record(pending.task_id))
+            with pytest.raises(SystemTaskError, match="exact selected-output envelope"):
+>               core._publish_reply(pending, late_reply)
+
+tests/unit/test_core_owner_integration.py:417: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.core.CoreWorker object at 0x789a534f3c50>
+pending = _PendingTask(object_id=ObjectID(task_id=TaskID('870ddb057ab9adf3b456508ad2828e0a'), return_index=0), spec=TaskSpec(job...e0a'), return_index=0),)), attempt_id=AttemptID(task_id=TaskID('870ddb057ab9adf3b456508ad2828e0a'), attempt_number=0)))
+reply = TaskReply(task_id=TaskID('870ddb057ab9adf3b456508ad2828e0a'), attempt_id=AttemptID(task_id=TaskID('870ddb057ab9adf3b45...f7aa1184fc92930c5991e8062007e075c072101275ed291ea', inline_data=b'\x80\x05K*.'),), error=None, output_publication=None)
+
+    def _publish_reply(
+        self, pending: _PendingTask, reply: object, *,
+        expected_node_id: Optional[NodeID] = None,
+        expected_lease_id: Optional[LeaseID] = None,
+    ) -> bool:
+        """Publish ordinary Task results through the single-output path."""
+        if (not isinstance(reply, protocol.TaskReply)
+                or reply.task_id != pending.task_id
+                or reply.attempt_id != pending.spec.attempt_id):
+            return False
+        reply = replace(reply)
+        if reply.status is not protocol.TaskReplyStatus.SUCCEEDED:
+            return self._publish_task_error(
+                pending, _remote_error(reply),
+                failure_kind=FailureKind.APPLICATION
+                if reply.status is protocol.TaskReplyStatus.APPLICATION_ERROR else None,
+            )
+        envelope = reply.output_publication
+        if (type(envelope) is not OutputPublicationEnvelope
+                or envelope.manifest.execution != pending.execution
+                or envelope.manifest.header.owner_worker_id != self.worker_id
+                or envelope.manifest.header.job_id != pending.spec.job_id
+                or envelope.manifest.header.executor_worker_id != reply.worker_id
+                or expected_lease_id is not None and envelope.publication_id.lease_id != expected_lease_id
+                or expected_node_id is not None and envelope.manifest.header.node_incarnation.node_id != expected_node_id):
+>           raise SystemTaskError("ordinary Task success requires its exact single-output envelope")
+E           miniray.errors.SystemTaskError: ordinary Task success requires its exact single-output envelope
+
+src/miniray/core.py:11684: SystemTaskError
+
+During handling of the above exception, another exception occurred:
+
+    @pytest.mark.unit
+    def test_shutdown_error_fences_a_late_successful_reply() -> None:
+        """A cancelled lease cannot authorize a late success before local finish.
+    
+        The old descriptor-only success is now a malformed protocol delivery, not
+        a legal Complete envelope. A live Push/adoption instead prevents shutdown
+        from choosing ERROR; publication continuations have separate regressions.
+        """
+        core = _core_without_runtime()
+        pending, ref = core._register_submission(
+            _definition(core), (), {}, ResourceVector()
+        )
+        node = _cancellation_node(core.node_id, WorkerID.random())
+        lease_request = protocol.RequestWorkerLease(
+            LeaseID.random(), pending.task_id, pending.spec.attempt_id,
+            pending.spec.resources, core.node_id, core.worker_id,
+            target_node_id=core.node_id, return_ids=pending.output_ids,
+        )
+        grant = node._handle_request_lease(lease_request)
+        assert type(grant) is protocol.GrantWorkerLease
+        cancellations, receipts = [], []
+    
+        def rpc(address, handler, request):
+            assert address == core.node_address
+            if handler == "cancel_worker_lease":
+                reply = node._handle_cancel_worker_lease(request)
+                assert reply.accepted and reply.cancelled
+                assert reply.retired_grant == grant
+                assert reply.dependency_inventory.descriptors == ()
+                cancellations.append(reply)
+                return reply
+            assert handler == protocol.ACK_LEASE_DEPENDENCY_CUSTODY_HANDLER
+            assert request.inventory == cancellations[0].dependency_inventory
+            reply = node._handle_ack_lease_dependency_custody(request)
+            assert reply.accepted
+            receipts.append(reply)
+            return reply
+    
+        core._rpc = rpc
+        shutdown_error = SystemTaskError(
+            "CoreWorker shutdown timed out before task completion"
+        )
+        try:
+            assert core._begin_known_grant_cancellation(
+                pending, pending.spec, (), core.node_address, grant, lease_request, shutdown_error,
+            )
+            assert len(cancellations) == len(receipts) == 1
+            assert not node._dependency_custody_registry_locked().has_pending()
+            assert node._leases[grant.lease_id].state is protocol.LeaseExecutionState.ABANDONED
+            assert node.resource_ledger.available == node.resource_ledger.total
+            late_start = node._handle_start_worker_lease(protocol.StartWorkerLease(
+                grant.lease_id, pending.task_id, pending.spec.attempt_id, grant.worker_id,
+            ))
+            assert not late_start.accepted and late_start.state is protocol.LeaseExecutionState.ABANDONED
+            late_complete = node._handle_complete_worker_lease(protocol.CompleteWorkerLease(
+                grant.lease_id, pending.task_id, pending.spec.attempt_id,
+                grant.worker_id, protocol.TaskReplyStatus.SUCCEEDED,
+            ))
+            assert not late_complete.accepted and late_complete.output_publication is None
+            assert node.object_store.used_bytes == 0
+            payload = cloudpickle.dumps(42)
+            late_reply = protocol.TaskReply(
+                pending.task_id, pending.spec.attempt_id, grant.worker_id,
+                protocol.TaskReplyStatus.SUCCEEDED, (protocol.ResultDescriptor(
+                    pending.object_id, protocol.ResultStorage.INLINE, len(payload),
+                    core.worker_id, core.node_id, hashlib.sha256(payload).hexdigest(), payload,
+                ),),
+            )
+            # ERROR is authoritative, but its task has not crossed finish yet.
+            # No successful Node Complete or GCS publication was manufactured.
+            assert pending.task_key not in core._finished_tasks
+            assert not core._protocol_unresolved
+            before = core.owner_table.snapshot(pending.object_id)
+            before_recovery = replace(core._recovery.task_record(pending.task_id))
+>           with pytest.raises(SystemTaskError, match="exact selected-output envelope"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: Regex pattern did not match.
+E            Regex: 'exact selected-output envelope'
+E            Input: 'ordinary Task success requires its exact single-output envelope'
+
+tests/unit/test_core_owner_integration.py:416: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_core_owner_integration.py::test_shutdown_error_fences_a_late_successful_reply
+1 failed, 6 passed in 3.79s

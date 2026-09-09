@@ -25,6 +25,8 @@ import cloudpickle
 import pytest
 
 from miniray import protocol
+from miniray.contained_edges import ContainedReferenceHold
+from miniray.ids import ObjectID, TaskID
 from miniray.core import (
     CoreWorker, ObjectRef, _PendingTask, _ReleaseBorrowedReference,
     _RetryInlineGc, _WAKE_COORDINATOR,
@@ -264,12 +266,18 @@ class _WaitDrop:
         assert snapshot.state is ObjectState.READY_STORED and snapshot.producer_task_spec is None
         assert snapshot.output_publication is None
         assert self.owner._recovery.reconstruction_snapshot(local.object_id).is_put
+        # Put completion wakes the existing coordinator without admitting a
+        # Task. Consume only its exact control sentinel through the fixture's
+        # bounded FIFO reader; a queued Task remains an assertion failure.
+        _drain_wakes(self.owner)
         assert self.owner._accepted_task_count == 0 and self.owner._submissions.empty()
         return entry
 
     def borrow(self, local, *, index, pending):
         assert len(self.borrowings) < 3 and len(self.pins) < 3
-        source = protocol.ContainedTransferSource("transfer-{}".format(index))
+        source = protocol.ContainedTransferSource(ContainedReferenceHold(
+            ObjectID.for_task(TaskID.random()), self.owner.worker_id, "transfer-{}".format(index),
+        ))
         token = "borrow-{}".format(index)
         pin = protocol.ReleaseContainedReference(local.object_id, self.owner.worker_id, source.hold)
         assert self.owner.owner_table.add_contained_reference(local.object_id, source.hold)
@@ -381,8 +389,9 @@ class _WaitDrop:
         assert self.backend.store.capacity_bytes == 4096 and self.backend.store.used_bytes == 0
         assert not self.backend.node._sealed_metadata
         for identity in self.backend.completed:
-            snapshot = self.backend.recovery.snapshot(identity)
-            assert len(snapshot.slot_collections) == 1
+            snapshot = self.backend.handoff_snapshot(identity)
+            assert snapshot.complete is not None and snapshot.adoption is not None
+            assert self.owner.owner_table.collection_state(identity.output_ids[0]) is ObjectCollectionState.COLLECTED
             assert not self.backend.journal.snapshot(identity).retained_result_slots
         assert not self.backend.adapter.pending_terminal_reports()
         for core in self.cores:
