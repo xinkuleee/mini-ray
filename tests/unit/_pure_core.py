@@ -161,7 +161,6 @@ def make_pure_core() -> CoreWorker:
     core._schedule_reference_event = _unexpected_effect
     core._ensure_foreign_lineage_runtime()
     core._reconstruction_coordinator()
-    core._targeted_reconstruction_coordinator()
     return core
 
 

@@ -1,9 +1,11 @@
-# mini-ray K0＋K1 设计
+# mini-ray K0＋K1 历史设计
 
-> **归档说明（2026-09-08）**：本页描述现有实现及历史设计，不表示纠偏方案已经实施。
-> 新的 S1–S4 取舍、责任交接生命周期与有限交付基线见
-> [correction-plan.md](correction-plan.md)；是否实施仍等待明确确认。
-> 当前代码／未验证草稿边界见 [handoff.md](handoff.md)。
+> **归档说明（2026-09-09）**：下文是基础版改造前的 K0/K1 历史规格及当时记录，原始源码版本为
+> `ef16ebc26a2621e9730a8fc6a85cab4cbcabd01e`。其中“当前”“已接通”、旧文件/行号、GCS 发布、
+> global DAG、multi-return/targeted 和 Actor migration 均按该历史上下文理解，不描述活动源码。
+> 第一阶段 owner-led 基础版已在实现与验收，第二阶段两项增强是确定交付。
+> 当前范围见 [两阶段计划](redesign-plan.md)，运行路径见 [学习入口](learning-path.md)，
+> 实际证据及未完成项见 [验收账本](acceptance-baseline.md)。旧 correction-plan/handoff 不再决定实施授权。
 
 > 状态：设计规格与当前实现说明，v0.1 建设中。本页显式标为“当前已接通”的路径
 > 已有对应测试证据；其余“应”“必须”和流程图表示 K0＋K1 目标语义，不表示已经

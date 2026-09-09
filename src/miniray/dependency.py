@@ -22,7 +22,7 @@ from typing import Callable, Hashable, Iterable, Sequence, Union
 import cloudpickle
 
 from .protocol import (
-    ContainedTransferSource, InlineArg, NestedReferenceTransfer, RefArg, StoredArg, TaskArg,
+    ContainedTransferSource, InlineArg, NestedReferenceTransfer, RefArg, TaskArg,
 )
 from .ref_transfer import ExportedReference, ImportCallback
 
@@ -423,45 +423,20 @@ def decode_task_argument(
     argument: TaskArg,
     *,
     materialize_ref: Callable[[ObjectIDLike, WorkerIDLike], object] | None = None,
-    materialize_stored: (
-        Callable[[ObjectIDLike, WorkerIDLike], bytes] | None
-    ) = None,
     import_nested_ref: Union[
         ImportNestedReference, NestedReferenceImportSession, None
     ] = None,
 ) -> object:
-    """Decode one worker argument.
+    """Decode a value or materialize a top-level reference.
 
-    ``materialize_ref`` returns the decoded value of a top-level ``RefArg``.
-    ``materialize_stored`` instead returns an undecoded argument byte stream.
-    These contracts must not be mixed: a user's value may itself be bytes.
-    Neither loader is called for a nested ``ContainedRef``.
+    The materializer returns the decoded object value, even for store-backed
+    dependencies. Nested handles use the importer without becoming execution
+    dependencies.
     """
 
     if isinstance(argument, InlineArg):
         return decode_inline_argument(
             argument, import_nested_ref=import_nested_ref
-        )
-    if isinstance(argument, StoredArg):
-        if materialize_stored is None:
-            raise UnresolvedDependencyError(
-                "stored by-value dependency is unresolved: {!r}".format(
-                    argument.object_id
-                )
-            )
-        payload = materialize_stored(
-            argument.object_id, argument.owner_worker_id
-        )
-        if not isinstance(payload, bytes):
-            raise ArgumentEncodingError(
-                "StoredArg materializer must return serialized bytes"
-            )
-        return decode_inline_argument(
-            InlineArg(
-                payload, serializer=argument.serializer,
-                nested_refs=argument.nested_refs,
-            ),
-            import_nested_ref=import_nested_ref,
         )
     if isinstance(argument, RefArg):
         if materialize_ref is None:
@@ -470,7 +445,7 @@ def decode_task_argument(
             )
         return materialize_ref(argument.object_id, argument.owner_worker_id)
     raise TypeError(
-        "argument must be an InlineArg, RefArg, or StoredArg"
+        "argument must be an InlineArg or RefArg"
     )
 
 
@@ -478,9 +453,6 @@ def decode_task_arguments(
     arguments: Sequence[TaskArg],
     *,
     materialize_ref: Callable[[ObjectIDLike, WorkerIDLike], object],
-    materialize_stored: (
-        Callable[[ObjectIDLike, WorkerIDLike], bytes] | None
-    ) = None,
     import_nested_ref: Union[
         ImportNestedReference, NestedReferenceImportSession, None
     ] = None,
@@ -501,7 +473,6 @@ def decode_task_arguments(
             decode_task_argument(
                 argument,
                 materialize_ref=materialize_ref,
-                materialize_stored=materialize_stored,
                 import_nested_ref=session,
             )
             for argument in arguments
@@ -528,7 +499,7 @@ def top_level_references(arguments: Iterable[TaskArg]) -> tuple[ContainedRef, ..
     refs = tuple(
         ContainedRef(argument.object_id, argument.owner_worker_id)
         for argument in arguments
-        if isinstance(argument, (RefArg, StoredArg))
+        if isinstance(argument, RefArg)
     )
     _validate_reference_owners(refs)
     result: list[ContainedRef] = []
@@ -554,7 +525,7 @@ def nested_references(
     result: list[NestedReferenceTransfer] = []
     by_object: dict[ObjectIDLike, NestedReferenceTransfer] = {}
     for argument in arguments:
-        if not isinstance(argument, (InlineArg, StoredArg)):
+        if not isinstance(argument, InlineArg):
             continue
         for reference in argument.nested_refs:
             previous = by_object.get(reference.object_id)
@@ -574,9 +545,6 @@ def resolve_task_arguments(
     *,
     is_ready: Callable[[ObjectIDLike], bool],
     materialize_ref: Callable[[ObjectIDLike, WorkerIDLike], object],
-    materialize_stored: (
-        Callable[[ObjectIDLike, WorkerIDLike], bytes] | None
-    ) = None,
     import_nested_ref: Union[
         ImportNestedReference, NestedReferenceImportSession, None
     ] = None,
@@ -597,7 +565,6 @@ def resolve_task_arguments(
         decode_task_arguments(
             arguments,
             materialize_ref=materialize_ref,
-            materialize_stored=materialize_stored,
             import_nested_ref=import_nested_ref,
         ),
     )

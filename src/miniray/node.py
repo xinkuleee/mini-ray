@@ -1,11 +1,9 @@
 """Node-local resources, worker leases, object storage and transfer.
 
-NodeServer manages one or two ordinary Worker slots, root and placement-group
-bundle ledgers, sealed replicas, and dependency localization. Ordinary PushTask
-submission goes directly from the submitter to its Worker; the Node nevertheless
-handles object bytes and output-publication payloads. Publication Prepare uses
-GCS INTENT/ARM ACKs before local Complete releases a lease; the later terminal
-report has its own outbox. Dedicated Actor Workers are outside the ordinary pool.
+NodeServer owns a small Worker pool, resource ledgers, sealed replicas and
+dependency localization. The submitter pushes tasks directly to Workers.
+The Node registers each result with its owner before child effects, commits
+Complete locally, and independently reports the exact receipt to that owner.
 """
 
 from __future__ import annotations
@@ -27,10 +25,8 @@ from typing import Optional
 from . import ids, protocol, resources
 from .errors import ObjectStoreError
 from .control import (
-    ABORT_CONTAINED_GRAPH_HANDLER,
     GET_NODE_STATE_HANDLER as GCS_GET_NODE_STATE_HANDLER,
     GET_WORKER_STATE_HANDLER as GCS_GET_WORKER_STATE_HANDLER,
-    PREPARE_CONTAINED_GRAPH_HANDLER,
     REGISTER_WORKER_INCARNATION_HANDLER as GCS_REGISTER_WORKER_INCARNATION_HANDLER,
     REPORT_WORKER_DEATH_HANDLER as GCS_REPORT_WORKER_DEATH_HANDLER,
 )
@@ -90,6 +86,16 @@ from .task_outputs import TaskExecutionKey, TaskOutputManifest
 
 
 REQUEST_LEASE_HANDLER = "request_worker_lease"
+
+
+class _ActorWorkerStartupError(RuntimeError):
+    """A typed failure sent by the child before endpoint publication."""
+
+    def __init__(self, failure, detail):
+        super().__init__(detail)
+        self.failure = failure
+
+
 CANCEL_LEASE_HANDLER = "cancel_worker_lease"
 RELEASE_LEASE_HANDLER = "release_worker_lease"
 START_WORKER_LEASE_HANDLER = "start_worker_lease"
@@ -158,7 +164,7 @@ class _LeaseRecord:
     blocking_sequence: int = -1
     blocking_open: bool = False
     cpu_yielded: bool = False
-    # Unified selected-output binding; payloads belong to its journal only.
+    # Single-output binding; payloads belong to its journal only.
     output_publication_id: Optional[OutputPublicationID] = None
     output_complete_inflight: Optional[protocol.CompleteWorkerLease] = None
 
@@ -1106,47 +1112,53 @@ class NodeServer:
         )
         return reply
 
-    # -- selected-output publication ------------------------------------
+    # -- single-output publication --------------------------------------
 
     def _make_output_publication_adapter(self) -> OutputPublicationNodeAdapter:
         from . import output_protocol as wire
 
-        def report(message):
-            with causal_scope(current_cause_id()):
-                reply = self._stored_gcs_rpc(wire.REPORT_OUTPUT_PUBLICATION_HANDLER, message)
-                if type(reply) is not wire.OutputRecoveryReply or reply.request != message:
-                    raise OutputPublicationConflictError("output recovery reply changed request identity")
-                if reply.ack is None:
-                    raise OutputPublicationRemoteError(reply.error or "output recovery rejected")
-                try:
-                    acknowledged = reply.ack.snapshot.publication_id
-                    self._emit("output_publication_ack",
-                               stage=reply.ack.stage.value, accepted=reply.accepted,
-                               task_id=str(acknowledged.task_id),
-                               attempt_id=str(acknowledged.attempt_id),
-                               lease_id=str(acknowledged.lease_id),
-                               manifest_digest=reply.ack.snapshot.manifest_digest)
-                except BaseException:
-                    pass
-                # The adapter still validates stage, forward permission and
-                # journal progress; this received-ACK event replaces none of it.
-                return reply.ack
+        def owner_request(manifest, handler, message):
+            with self._state_lock:
+                record = self._output_lease_record_locked(manifest)
+                address = record.request.requester_owner_address
+            if address is None:
+                raise OutputPublicationRemoteError('executable lease has no owner endpoint')
+            reply = self._background_rpc(address, handler, message)
+            if type(reply) is not wire.OutputHandoffReply:
+                raise OutputPublicationConflictError('owner returned an invalid handoff reply')
+            reply = replace(reply)
+            if reply.request != message or not reply.accepted:
+                raise OutputPublicationRemoteError(reply.error or 'owner rejected output handoff')
+            return reply
+
+        def register(manifest):
+            from .output_handoff import OutputHandoffPhase
+            reply = owner_request(manifest, wire.REGISTER_OUTPUT_HANDOFF_HANDLER, wire.RegisterOutputHandoff(manifest))
+            if reply.snapshot.manifest != manifest or reply.snapshot.phase is not OutputHandoffPhase.PENDING:
+                raise OutputPublicationRemoteError('owner registration is not forward permission')
+
+        def complete(witness):
+            manifest = self._output_publication_journal.snapshot(witness.publication_id).manifest
+            reply = owner_request(manifest, wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, wire.ReportOutputHandoffComplete(witness))
+            if reply.snapshot.complete != witness:
+                raise OutputPublicationConflictError('owner Complete receipt changed identity')
+
+        def rollback(tombstone, *, manifest):
+            from .output_handoff import OutputHandoffPhase
+            reply = owner_request(manifest, wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER, wire.ReportOutputHandoffRollback(manifest, tombstone))
+            if reply.snapshot.phase is not OutputHandoffPhase.ABORTED:
+                raise OutputPublicationRemoteError('owner did not fence rolled-back handoff')
 
         return OutputPublicationNodeAdapter(
-            self._output_publication_journal,
-            report_intent=lambda manifest: report(wire.ReportOutputPublicationIntent(manifest)),
-            arm_complete=lambda publication_id, digest: report(wire.ArmOutputPublication(publication_id, digest)),
-            report_terminal=lambda witness: report(wire.ReportOutputPublicationTerminal(witness)),
-            report_rollback=lambda tombstone, *, manifest: report(wire.ReportOutputPublicationRollback(tombstone, manifest)),
+            self._output_publication_journal, register_owner=register,
+            report_complete=complete, report_rollback=rollback,
             prepare_child=lambda address, request: self._background_rpc(address, PREPARE_STORED_CONTAINED_PIN_HANDLER, request),
             promote_child=lambda address, request: self._background_rpc(address, PROMOTE_STORED_CONTAINED_PIN_HANDLER, request),
             release_child=self._release_output_child_pin,
-            prepare_graph=lambda request: self._stored_gcs_rpc(PREPARE_CONTAINED_GRAPH_HANDLER, request),
-            abort_graph=lambda request: self._stored_gcs_rpc(ABORT_CONTAINED_GRAPH_HANDLER, request),
             seal_replica=self._seal_output_publication_replica,
             drop_replica=self._drop_output_publication_replica,
             test_checkpoint=(self._test_output_publication_checkpoint
-                             if getattr(self, "_output_publication_gate", None) is not None else None),
+                             if getattr(self, '_output_publication_gate', None) is not None else None),
         )
 
     @staticmethod
@@ -1227,7 +1239,7 @@ class NodeServer:
         self, owner_worker_id: ids.WorkerID,
     ) -> protocol.GetWorkerStateReply | None:
         """Read GCS death authority without holding a Node/journal lock."""
-        from .output_recovery import _owner_death
+        from .death_proofs import owner_death as _owner_death
 
         owner_worker_id = _output_opaque(owner_worker_id, ids.WorkerID, "child owner")
         with self._state_lock:
@@ -1280,15 +1292,8 @@ class NodeServer:
         if record is None:
             raise OutputPublicationConflictError("output publication has no local lease")
         request = record.request
-        if (request.task_id != identity.task_id or request.attempt_id != identity.attempt_id
-                or request.requester_worker_id != header.owner_worker_id
-                or record.grant.worker_id != header.executor_worker_id
-                or record.grant.node_id != header.node_incarnation.node_id
-                or request.return_ids != identity.output_ids
-                or (request.target_execution is None) != (type(identity.execution) is TaskExecutionKey)
-                or (request.target_execution is not None and request.target_execution != identity.execution)
-                or header.node_incarnation != OutputPublicationNodeIncarnation(
-                    self.node_id, self._node_pid, self._registration_epoch)):
+        if ((request.task_id != identity.task_id) or (request.attempt_id != identity.attempt_id) or (request.requester_worker_id != header.owner_worker_id) or (record.grant.worker_id != header.executor_worker_id) or (record.grant.node_id != header.node_incarnation.node_id) or (request.return_ids != identity.output_ids) or (header.node_incarnation != OutputPublicationNodeIncarnation(
+                    self.node_id, self._node_pid, self._registration_epoch))):
             raise OutputPublicationConflictError("output manifest changed lease execution binding")
         if record.output_publication_id not in (None, identity):
             raise OutputPublicationConflictError("lease output publication was rebound")
@@ -1368,9 +1373,7 @@ class NodeServer:
 
         with journal.linearize(identity), self._state_lock:
             record = self._output_lease_record_locked(manifest)
-            if (not self._lease_identity_matches(record, request.task_id, request.attempt_id, request.worker_id)
-                    or request.scheduling_key != record.request.scheduling_key
-                    or request.target_execution != record.request.target_execution):
+            if ((not self._lease_identity_matches(record, request.task_id, request.attempt_id, request.worker_id)) or (request.scheduling_key != record.request.scheduling_key)):
                 return self._completion_reply(request, record.state, accepted=False, released=False, error="output Complete identity mismatch")
             snapshot = journal.snapshot(identity)
             expected = record.completion or record.output_complete_inflight
@@ -1380,7 +1383,7 @@ class NodeServer:
                 return self._completion_reply(request, record.state, accepted=False, released=False, error="successful output cannot roll back")
             if (snapshot.complete is None and request.status is protocol.TaskReplyStatus.SUCCEEDED
                     and not snapshot.ready_to_complete):
-                return self._completion_reply(request, record.state, accepted=False, released=False, error="output Complete requires every effect and ARM ACK")
+                return self._completion_reply(request, record.state, accepted=False, released=False, error="output Complete requires owner registration and every local/child effect ACK")
             if (snapshot.complete is None and request.status is protocol.TaskReplyStatus.SUCCEEDED
                     and record.state is not protocol.LeaseExecutionState.RUNNING):
                 # A pre-boundary local exception may have left this proposal,
@@ -1444,18 +1447,13 @@ class NodeServer:
             manifest = snapshot.manifest
             with self._state_lock:
                 record = self._output_lease_record_locked(manifest)
-                if (request.task_id != identity.task_id or request.attempt_id != identity.attempt_id
-                        or request.executor_worker_id != manifest.header.executor_worker_id
-                        or request.owner_worker_id != manifest.header.owner_worker_id
-                        or request.object_ids != identity.output_ids
-                        or request.target_execution != record.request.target_execution
-                        or request.scheduling_key != record.request.scheduling_key):
+                if ((request.task_id != identity.task_id) or (request.attempt_id != identity.attempt_id) or (request.executor_worker_id != manifest.header.executor_worker_id) or (request.owner_worker_id != manifest.header.owner_worker_id) or (request.object_ids != identity.output_ids) or (request.scheduling_key != record.request.scheduling_key)):
                     raise OutputPublicationConflictError("output outcome query changed execution")
                 if snapshot.complete is not None:
                     completion = protocol.CompleteWorkerLease(
                         identity.lease_id, identity.task_id, identity.attempt_id,
                         manifest.header.executor_worker_id, protocol.TaskReplyStatus.SUCCEEDED,
-                        record.request.scheduling_key, record.request.target_execution,
+                        record.request.scheduling_key,
                     )
                     self._commit_output_lease_locked(manifest, completion)
                 state, completion = record.state, record.completion
@@ -1472,7 +1470,7 @@ class NodeServer:
                     and not self._output_publications.rollback_reported(identity)):
                 # CPU release is already real, but the failed publication is
                 # not safe for owner retry until every compensation and its
-                # GCS ACK converges. Keep execution/resource truth terminal,
+                # owner ACK converges. Keep execution/resource truth terminal,
                 # but expose the outstanding cleanup barrier so Core stays on
                 # the exact Push/outcome recovery path instead of retrying.
                 return protocol.GetWorkerLeaseOutcomeReply(
@@ -1480,7 +1478,7 @@ class NodeServer:
                     request.owner_worker_id, request.object_ids, self.node_id, True, worker_alive,
                     state=state, completion_status=None if completion is None else completion.status,
                     cleanup_pending=True,
-                    scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+                    scheduling_key=request.scheduling_key,
                 )
             envelope = None
             if snapshot.complete is not None:
@@ -1502,7 +1500,7 @@ class NodeServer:
                 request.owner_worker_id, request.object_ids, self.node_id, True, worker_alive,
                 state=state, completion_status=None if completion is None else completion.status,
                 descriptors=descriptors, scheduling_key=request.scheduling_key,
-                target_execution=request.target_execution, output_publication=envelope,
+                 output_publication=envelope,
                 output_completion=snapshot.complete if envelope is None else None,
             )
 
@@ -1543,10 +1541,23 @@ class NodeServer:
             record = self._leases.get(identity.lease_id)
             if record is None or record.output_publication_id != identity:
                 raise OutputPublicationConflictError("owner cleanup changed lease identity")
-            if record.state in (protocol.LeaseExecutionState.GRANTED, protocol.LeaseExecutionState.RUNNING):
+            if snapshot.complete is not None:
+                completion = protocol.CompleteWorkerLease(
+                    identity.lease_id, identity.task_id, identity.attempt_id,
+                    manifest.header.executor_worker_id, protocol.TaskReplyStatus.SUCCEEDED,
+                    record.request.scheduling_key,
+                )
+                # Death retires custody, never rewrites an existing Complete.
+                if record.state is protocol.LeaseExecutionState.RUNNING:
+                    self._release_record_locked(record, protocol.LeaseExecutionState.COMPLETED)
+                elif record.state in (protocol.LeaseExecutionState.WORKER_LOST, protocol.LeaseExecutionState.ABANDONED):
+                    record.state = protocol.LeaseExecutionState.COMPLETED
+                record.completion = completion
+                record.output_complete_inflight = None
+            elif record.state in (protocol.LeaseExecutionState.GRANTED, protocol.LeaseExecutionState.RUNNING):
                 # The exact owner fence makes result publication irrevocably
-                # impossible.  Retire this lease locally after global child/
-                # graph cleanup; never allow its delayed Complete to win.
+                # impossible. Retire this lease after exact child-hold cleanup;
+                # never allow its delayed Complete to win.
                 self._release_record_locked(record, protocol.LeaseExecutionState.ABANDONED)
                 record.output_complete_inflight = None
         # No admitted publisher can create new bytes after its owner fence.
@@ -1640,20 +1651,20 @@ class NodeServer:
                 if record is None or record.output_publication_id != identity:
                     clean = False
                     continue
-                if manifest.header.owner_worker_id in getattr(self, "_owner_death_fences", {}):
-                    # GCS owns this independent terminal. A temporarily busy
-                    # Worker-finalize ACK must not start an ordinary rollback
-                    # merely because owner cleanup already abandoned the lease.
-                    clean = False
-                    continue
+                owner_death = getattr(self, "_owner_death_fences", {}).get(manifest.header.owner_worker_id)
                 state = record.state
                 completion = record.completion or record.output_complete_inflight
             try:
+                if owner_death is not None:
+                    from . import output_protocol as wire
+                    reply = self._handle_finalize_output_owner_death(wire.FinalizeOutputOwnerDeath(manifest, owner_death))
+                    clean = reply.cleaned and clean
+                    continue
                 if snapshot.complete is not None:
                     request = protocol.CompleteWorkerLease(
                         identity.lease_id, identity.task_id, identity.attempt_id,
                         manifest.header.executor_worker_id, protocol.TaskReplyStatus.SUCCEEDED,
-                        record.request.scheduling_key, record.request.target_execution,
+                        record.request.scheduling_key,
                     )
 
                     def commit(_witness):
@@ -1679,21 +1690,14 @@ class NodeServer:
         return (clean and not adapter.pending_terminal_reports()
                 and not adapter.pending_lease_completions() and not adapter.pending_rollbacks())
 
-    def _stored_gcs_rpc(self, handler: str, request: object) -> object:
-        gcs_address = getattr(self, "_gcs_address", None)
-        if gcs_address is None:
-            raise RuntimeError(
-                "stored publication requires a configured GCS address"
-            )
-        return self._background_rpc(gcs_address, handler, request)
 
     def _validate_output_replica_effect(
         self, effect: OutputPublicationEffect, expected_stage: OutputPublicationStage,
     ):
         """Validate local storage authority, with the journal serializer held.
 
-        Indices are selected-slot ordinals, not ObjectID return indices.  This
-        reads the existing journal only; it never begins or ACKs an effect.
+        The single result has slot index zero. This reads the existing journal
+        only; it never begins or ACKs an effect.
         Callers must not enter from under ``_state_lock``.
         """
         if type(effect) is not OutputPublicationEffect:
@@ -1761,7 +1765,7 @@ class NodeServer:
                     )
                     or len(payload) != slot.size_bytes
                     or hashlib.sha256(payload).hexdigest() != slot.checksum):
-                raise OutputPublicationConflictError("replica bytes or descriptor changed its selected slot")
+                raise OutputPublicationConflictError("replica bytes or descriptor changed its output slot")
             object_id = slot.object_id
             expected_metadata = (
                 effect.publication_id.attempt_id, descriptor.owner_worker_id,
@@ -2258,7 +2262,7 @@ class NodeServer:
                         self, "_owner_death_fences", {}
                     ):
                         # Retired delivery bytes do not discharge the later
-                        # owner-wide child/graph cleanup acknowledged by GCS.
+                        # owner-death child, replica and Worker custody cleanup.
                         return False
                     if snapshot.complete is not None:
                         # Every selected payload needs its immutable adoption /
@@ -3456,8 +3460,19 @@ class NodeServer:
         return result.pid, result.exitcode, result.clean, result.forced
 
     def _handle_seal_object(self, request: object) -> object:
-        if not isinstance(request, protocol.SealObject):
+        if type(request) is not protocol.SealObject:
             raise TypeError("seal_object expects SealObject")
+        # Pickle does not run dataclass validation. Freeze the full identity
+        # and verify bytes before reading fences or creating a local replica.
+        if type(request.data) is not bytes:
+            raise TypeError("seal_object data must be bytes")
+        if type(request.checksum) is not str:
+            raise TypeError("seal_object checksum must be a string")
+        request = protocol.SealObject(
+            _output_object_id(request.object_id), _output_attempt(request.attempt_id),
+            _output_opaque(request.owner_worker_id, ids.WorkerID, "seal owner"),
+            request.data, request.checksum,
+        )
 
         with self._state_lock:
             owner_fence = getattr(self, "_owner_death_fences", {}).get(
@@ -3481,9 +3496,16 @@ class NodeServer:
             )
             if (dropped_metadata is not None and request.attempt_id.attempt_number
                     <= dropped_metadata[0].attempt_number):
+                absence_fenced = (
+                    dropped_metadata == (request.attempt_id, request.owner_worker_id, request.checksum)
+                    and self._replica_drop_completed_locked(protocol.DropObjectReplica(
+                        request.object_id, request.attempt_id, request.owner_worker_id, self.node_id, request.checksum,
+                    ))
+                )
                 return protocol.SealObjectReply(
                     request.object_id, False, self.node_id, len(request.data),
                     request.checksum, error="producer attempt was fenced by replica deletion",
+                    absence_fenced=absence_fenced,
                 )
             if request.object_id in getattr(self, "_local_replica_write_claims", {}):
                 return protocol.SealObjectReply(
@@ -3517,6 +3539,14 @@ class NodeServer:
             try:
                 self._object_store.put(request.object_id, request.data)
             except Exception as exc:
+                absence_fenced = False
+                if not self._object_store.contains(request.object_id, sealed_only=False):
+                    # Exact failed one-shot writes leave a tombstone so an
+                    # unknown duplicate cannot materialize after rejection.
+                    self._finish_replica_drop_locked(protocol.DropObjectReplica(
+                        request.object_id, request.attempt_id, request.owner_worker_id, self.node_id, request.checksum,
+                    ))
+                    absence_fenced = True
                 return protocol.SealObjectReply(
                     request.object_id,
                     False,
@@ -3524,6 +3554,7 @@ class NodeServer:
                     len(request.data),
                     request.checksum,
                     error="{}: {}".format(type(exc).__name__, exc),
+                    absence_fenced=absence_fenced,
                 )
             self._sealed_metadata[request.object_id] = metadata
             return protocol.SealObjectReply(
@@ -4576,7 +4607,7 @@ class NodeServer:
             )
         try:
             # Pickle may bypass dataclass __post_init__; rebuild the complete
-            # cross-Node proof before any resource or process side effect.
+            # restart proof before any resource or process side effect.
             request = replace(request)
         except Exception as exc:
             return self._rejected_actor_worker(
@@ -4610,7 +4641,10 @@ class NodeServer:
                     if previous.request == request:
                         return previous.reply
                 if self._stop_event.is_set() or self._shutdown_request_id is not None:
-                    return self._rejected_actor_worker(request, "node is shutting down")
+                    return self._rejected_actor_worker(
+                        request, "node is shutting down",
+                        failure=protocol.ActorWorkerFailure.NODE_STOPPING,
+                    )
                 if previous is not None:
                     return self._rejected_actor_worker(
                         request,
@@ -4625,90 +4659,39 @@ class NodeServer:
                             request, "initial actor generation is stale"
                         )
                 else:
-                    restart = request.restart
-                    if isinstance(restart, protocol.ActorNodeLossRecord):
-                        # A committed Node-loss proof is the cross-Node
-                        # authorization.  This survivor deliberately has no
-                        # local predecessor tombstone; the proof itself carries
-                        # the immutable lifetime spec and old physical identity.
-                        if restart.node_id == self.node_id:
-                            return self._rejected_actor_worker(
-                                request, "Actor Node-loss migration must cross Nodes"
-                            )
-                        if request.route_epoch != restart.route_epoch + 2:
-                            return self._rejected_actor_worker(
-                                request,
-                                "migration route epoch is not the GCS-authorized successor",
-                            )
-                        if any(
-                            death.node_id == self.node_id
-                            for death in request.migration_failures
-                        ):
-                            return self._rejected_actor_worker(
-                                request, "migration target is already fenced DEAD"
-                            )
-                        local_pid = getattr(self, "_node_pid", os.getpid())
-                        local_epoch = getattr(self, "_registration_epoch", 0)
-                        installed = getattr(
-                            self, "_installed_snapshot_nodes", None
+                    previous_generation = ids.ActorGeneration(
+                        request.actor_id, request.generation.generation - 1
+                    )
+                    previous_outcome = self._actor_generation_outcomes.get(
+                        previous_generation
+                    )
+                    if (
+                        previous_outcome is None
+                        or request.restart != previous_outcome.exit_record
+                    ):
+                        return self._rejected_actor_worker(
+                            request,
+                            "restart proof is not this Node's exact prior tombstone",
                         )
-                        if installed is not None:
-                            local = next(
-                                (item for item in installed if item.node_id == self.node_id),
-                                None,
-                            )
-                            if (
-                                local is None
-                                or local.node_pid != local_pid
-                                or local.registration_epoch != local_epoch
-                            ):
-                                return self._rejected_actor_worker(
-                                    request,
-                                    "migration target Node incarnation is not installed",
-                                )
-                        seen_ids = getattr(self, "_actor_worker_ids_seen", set())
-                        seen_pids = getattr(self, "_actor_worker_pids_seen", set())
-                        if (
-                            restart.worker_id in seen_ids
-                            or restart.worker_pid in seen_pids
-                        ):
-                            return self._rejected_actor_worker(
-                                request,
-                                "migration source incarnation was already local",
-                            )
-                    else:
-                        previous_generation = ids.ActorGeneration(
-                            request.actor_id, request.generation.generation - 1
+                    if request.route_epoch != request.restart.route_epoch + 2:
+                        return self._rejected_actor_worker(
+                            request,
+                            "restart route epoch is not the GCS-authorized successor",
                         )
-                        previous_outcome = self._actor_generation_outcomes.get(
-                            previous_generation
+                    if not self._same_actor_lifetime_spec(
+                        previous_outcome.request, request
+                    ):
+                        return self._rejected_actor_worker(
+                            request, "actor restart changed immutable metadata"
                         )
-                        if (
-                            previous_outcome is None
-                            or request.restart != previous_outcome.exit_record
-                        ):
-                            return self._rejected_actor_worker(
-                                request,
-                                "restart proof is not this Node's exact prior tombstone",
-                            )
-                        if request.route_epoch != request.restart.route_epoch + 2:
-                            return self._rejected_actor_worker(
-                                request,
-                                "restart route epoch is not the GCS-authorized successor",
-                            )
-                        if not self._same_actor_lifetime_spec(
-                            previous_outcome.request, request
-                        ):
-                            return self._rejected_actor_worker(
-                                request, "actor restart changed immutable metadata"
-                            )
                 allocation_token = resources.AllocationToken.random()
                 allocated = self._ledger.try_allocate(
                     request.resources, allocation_token
                 )
                 if allocated is None:
                     return self._rejected_actor_worker(
-                        request, "actor lifetime resources are unavailable"
+                        request, "actor lifetime resources are unavailable",
+                        failure=protocol.ActorWorkerFailure.CAPACITY_UNAVAILABLE,
                     )
                 self._refresh_local_cached_availability_locked()
 
@@ -4720,16 +4703,6 @@ class NodeServer:
                     or startup.worker_pid != getattr(process, "pid", None)
                 ):
                     raise RuntimeError("actor worker returned inconsistent startup identity")
-                if (
-                    isinstance(request.restart, protocol.ActorNodeLossRecord)
-                    and (
-                        startup.worker_id == request.restart.worker_id
-                        or startup.worker_pid == request.restart.worker_pid
-                    )
-                ):
-                    raise RuntimeError(
-                        "actor migration reused the dead source Worker incarnation"
-                    )
                 reply = protocol.ReserveActorWorkerReply(
                     request.actor_id,
                     request.generation,
@@ -4749,7 +4722,10 @@ class NodeServer:
                         self._stop_event.is_set()
                         or self._shutdown_request_id is not None
                     ):
-                        raise RuntimeError("node began shutting down during actor creation")
+                        raise _ActorWorkerStartupError(
+                            protocol.ActorWorkerFailure.NODE_STOPPING,
+                            "node began shutting down during actor creation",
+                        )
                     if startup.worker_id in self._actor_worker_ids_seen:
                         raise RuntimeError(
                             "actor restart reused a physical WorkerID"
@@ -4774,7 +4750,9 @@ class NodeServer:
                     self._refresh_local_cached_availability_locked()
                 self._report_resources_to_gcs_best_effort()
                 return self._rejected_actor_worker(
-                    request, "{}: {}".format(type(exc).__name__, exc)
+                    request, "{}: {}".format(type(exc).__name__, exc),
+                    failure=(exc.failure if isinstance(exc, _ActorWorkerStartupError)
+                             else protocol.ActorWorkerFailure.STARTUP_FAILED),
                 )
 
     @staticmethod
@@ -4825,7 +4803,10 @@ class NodeServer:
                 raise RuntimeError("actor worker did not report readiness before timeout")
             ok, value = parent_connection.recv()
             if not ok:
-                raise RuntimeError("actor worker failed during startup:\n{}".format(value))
+                if not isinstance(value, protocol.ActorWorkerStartupFailure):
+                    raise RuntimeError("actor worker returned an invalid startup failure")
+                value = replace(value)
+                raise _ActorWorkerStartupError(value.failure, value.error)
             if not isinstance(value, protocol.ActorWorkerStartup):
                 raise RuntimeError("actor worker returned an invalid startup descriptor")
             return value, process
@@ -4837,10 +4818,11 @@ class NodeServer:
 
     @staticmethod
     def _rejected_actor_worker(
-        request: protocol.ReserveActorWorkerRequest, error: str
+        request: protocol.ReserveActorWorkerRequest, error: str, *, failure=None,
     ) -> protocol.ReserveActorWorkerReply:
         return protocol.ReserveActorWorkerReply(
-            request.actor_id, request.generation, accepted=False, error=error
+            request.actor_id, request.generation, accepted=False, error=error,
+            failure=(protocol.ActorWorkerFailure.INVALID_REQUEST if failure is None else failure),
         )
 
     def _stop_actor_process_best_effort(
@@ -5531,7 +5513,7 @@ class NodeServer:
                     target_node_id=selected_node_id,
                     target_address=addresses.get(selected_node_id),
                     reason="hybrid policy selected a different node",
-                    target_execution=request.target_execution,
+
                 )
                 with self._state_lock:
                     if (
@@ -5674,7 +5656,7 @@ class NodeServer:
                     allocation_token=allocated,
                     dependencies=localized_dependencies,
                     scheduling_key=scheduling_key,
-                    target_execution=request.target_execution,
+
                 )
                 record = _LeaseRecord(
                     request=request,
@@ -6048,28 +6030,25 @@ class NodeServer:
                     accepted=False,
                     error="unknown worker lease",
                     scheduling_key=request.scheduling_key,
-                    target_execution=request.target_execution,
+
                 )
-            if not self._lease_identity_matches(
+            if (not self._lease_identity_matches(
                 record, request.task_id, request.attempt_id, request.worker_id
-            ) or (
-                request.scheduling_key != record.request.scheduling_key
-                or request.target_execution != record.request.target_execution
-            ):
+            )) or ((request.scheduling_key != record.request.scheduling_key)):
                 return protocol.StartWorkerLeaseReply(
                     request.lease_id,
                     record.state,
                     accepted=False,
                     error="worker lease execution identity does not match grant",
                     scheduling_key=request.scheduling_key,
-                    target_execution=request.target_execution,
+
                 )
             if record.state is protocol.LeaseExecutionState.GRANTED:
                 if record.request.requester_worker_id in getattr(self, "_dead_dependency_submitters", {}):
                     self._release_record_locked(record, protocol.LeaseExecutionState.ABANDONED)
                     return protocol.StartWorkerLeaseReply(
                         request.lease_id, record.state, False, "dependency submitter is confirmed dead",
-                        scheduling_key=request.scheduling_key, target_execution=request.target_execution,
+                        scheduling_key=request.scheduling_key,
                     )
                 record.state = protocol.LeaseExecutionState.RUNNING
                 self._emit(
@@ -6096,7 +6075,7 @@ class NodeServer:
                 return protocol.StartWorkerLeaseReply(
                     request.lease_id, record.state, accepted=True,
                     scheduling_key=request.scheduling_key,
-                    target_execution=request.target_execution,
+
                     node_incarnation=incarnation,
                 )
             return protocol.StartWorkerLeaseReply(
@@ -6105,7 +6084,7 @@ class NodeServer:
                 accepted=False,
                 error="worker lease cannot start from {}".format(record.state.value),
                 scheduling_key=request.scheduling_key,
-                target_execution=request.target_execution,
+
             )
 
     def _release_record_locked(
@@ -6425,7 +6404,7 @@ class NodeServer:
             released,
             error,
             scheduling_key=request.scheduling_key,
-            target_execution=request.target_execution,
+
             output_publication=output_publication,
             output_completion=output_completion,
         )
@@ -6479,14 +6458,11 @@ class NodeServer:
             snapshot = self._output_publication_journal.snapshot(identity)
             if snapshot.complete is not None or record.state is not protocol.LeaseExecutionState.RUNNING:
                 raise RuntimeError("output preparation gate requires a RUNNING publication")
-            if phase is OutputPublicationGatePhase.AFTER_INTENT_ACK:
-                effect = OutputPublicationEffect(identity, manifest.manifest_digest, OutputPublicationStage.INTENT)
+            if phase is OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK:
+                effect = OutputPublicationEffect(identity, manifest.manifest_digest, OutputPublicationStage.OWNER_REGISTER)
                 ready = (self._output_publication_journal.acknowledged(effect)
-                         and all(item.stage is OutputPublicationStage.INTENT for item in snapshot.intents))
+                         and all(item.stage is OutputPublicationStage.OWNER_REGISTER for item in snapshot.intents))
             elif phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK:
-                ready = (snapshot.ready_to_arm
-                         and not any(item.stage is OutputPublicationStage.ARM_COMPLETE for item in snapshot.intents))
-            elif phase is OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE:
                 ready = snapshot.ready_to_complete
             else:
                 raise ValueError("preparation checkpoint cannot report Complete")
@@ -6502,7 +6478,7 @@ class NodeServer:
         """Pause Complete AND outcome delivery after local resource release.
 
         Only a configured gate synchronously reports terminal metadata. The
-        normal Complete path never waits for this test-only GCS dependency.
+        normal Complete path never waits for this test-only owner report.
         Both leaders and followers revalidate the owner/incarnation after the
         gate opens, without holding any authority lock during its wait.
         """
@@ -6541,24 +6517,8 @@ class NodeServer:
 
         def ensure_terminal(deadline: float) -> None:
             validate_delivery()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("output gate terminal report exceeded its deadline")
-            request = wire.ReportOutputPublicationTerminal(witness)
-            response = self._background_rpc(
-                self._gcs_address, wire.REPORT_OUTPUT_PUBLICATION_HANDLER, request,
-                connect_timeout=min(0.5, remaining), request_timeout=remaining, deadline=deadline,
-            )
-            if type(response) is not wire.OutputRecoveryReply:
-                raise RuntimeError("output gate terminal report returned an invalid ACK")
-            response = replace(response)
-            from .output_recovery import OutputRecoveryStage
-            if (response.request != request or not response.accepted
-                    or response.ack.stage is not OutputRecoveryStage.TERMINAL
-                    or response.ack.snapshot.manifest != manifest
-                    or response.ack.snapshot.complete != witness):
-                raise RuntimeError("output gate terminal report did not ACK the exact witness")
-            validate_delivery()
+            if deadline <= time.monotonic() or not self._output_publications.report_terminal(identity):
+                raise RuntimeError('owner Complete report remains pending')
 
         validate_delivery()
         gate.checkpoint(OutputPublicationGateArrival.from_manifest(
@@ -6587,12 +6547,9 @@ class NodeServer:
                     released=False,
                     error="unknown worker lease",
                 )
-            if not self._lease_identity_matches(
+            if (not self._lease_identity_matches(
                 record, request.task_id, request.attempt_id, request.worker_id
-            ) or (
-                request.scheduling_key != record.request.scheduling_key
-                or request.target_execution != record.request.target_execution
-            ):
+            )) or ((request.scheduling_key != record.request.scheduling_key)):
                 return self._completion_reply(
                     request,
                     record.state,
@@ -6669,7 +6626,7 @@ class NodeServer:
                 worker_alive=False,
                 error=detail,
                 scheduling_key=request.scheduling_key,
-                target_execution=request.target_execution,
+
             )
 
         with self._state_lock:
@@ -6697,10 +6654,6 @@ class NodeServer:
             if request.object_ids != record.request.return_ids:
                 return missing(
                     "worker lease outcome return manifest does not match grant"
-                )
-            if request.target_execution != record.request.target_execution:
-                return missing(
-                    "worker lease outcome target execution does not match grant"
                 )
 
             slot = self._workers.get(request.executor_worker_id)
@@ -6759,7 +6712,7 @@ class NodeServer:
                 completion_status=completion_status,
                 orphan_descriptors=tuple(matching_descriptors),
                 scheduling_key=request.scheduling_key,
-                target_execution=request.target_execution,
+
             )
 
     def _handle_release_lease(self, request: object) -> object:
@@ -7377,7 +7330,7 @@ class NodeServer:
             reason=reason,
             detail=detail,
             scheduling_key=request.scheduling_key,
-            target_execution=request.target_execution,
+
         )
 
     def _emit(self, name: str, **attributes: object) -> None:

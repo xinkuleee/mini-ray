@@ -1,11 +1,9 @@
-"""Pure identities for one atomic, possibly mixed-tier output publication.
+"""Pure identities for one ordinary task's output publication.
 
-An execution publishes its selected return slots as one immutable manifest.
+An execution publishes its single output as one immutable manifest.
 The manifest and Complete witness carry only identities and integrity metadata;
 only the data-plane envelope contains INLINE payloads.  These values do not
-implement publication effects, authorize a Complete, or enable multi-return
-contained references in the runtime.  Existing single-slot paths are migrated
-separately.
+implement publication effects or authorize a Complete.
 
 Validation rebuilds nested protocol values instead of trusting ``frozen=True``:
 deserialization or an effect-then-error test can supply a modified dataclass.
@@ -17,11 +15,10 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, fields, replace
-from typing import Optional, Tuple, Union
+from typing import Tuple
 
-from .contained_cycle import ContainedGraphManifest
 from .contained_edges import (
-    ContainedReferenceEdge, ContainedReferenceHold, LegacyContainedReferenceHold,
+    ContainedReferenceEdge, ContainedReferenceHold,
 )
 from .ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from .protocol import (
@@ -32,18 +29,16 @@ from .publication_sources import (
     BorrowedContainedSource, OwnedContainedSource, PreparedContainedTransfer,
     PublicationNodeIncarnation, prepared_contained_transfer_fingerprint,
 )
-from .task_outputs import (
-    TargetExecutionKey, TargetOutputManifest, TaskExecutionKey, TaskOutputManifest,
-)
+from .task_outputs import TaskExecutionKey, TaskOutputManifest
 
 
-ExecutionKey = Union[TaskExecutionKey, TargetExecutionKey]
+ExecutionKey = TaskExecutionKey
 # This publication spelling and the historical stored alias share one physical
-# identity type without importing either legacy journal or recovery authority.
+# identity type without importing a journal or recovery authority.
 OutputPublicationNodeIncarnation = PublicationNodeIncarnation
 
-_GRAPH_DOMAIN = b"miniray-output-publication-graph-v1\0"
-_MANIFEST_DOMAIN = b"miniray-output-publication-manifest-v1\0"
+_HANDOFF_DOMAIN = b"miniray-output-publication-handoff-v1\0"
+_MANIFEST_DOMAIN = b"miniray-output-publication-manifest-v2\0"
 
 
 class OutputPublicationError(ValueError):
@@ -117,21 +112,8 @@ def _full_manifest(value: object) -> TaskOutputManifest:
 
 
 def _execution(value: object) -> ExecutionKey:
-    if type(value) is TaskExecutionKey:
-        return TaskExecutionKey(_full_manifest(value.manifest), _attempt(value.attempt_id))
-    if type(value) is TargetExecutionKey:
-        _require_type(value.manifest, TargetOutputManifest, "target output manifest")
-        manifest = value.manifest
-        return TargetExecutionKey(
-            TargetOutputManifest(
-                _full_manifest(manifest.full_manifest),
-                tuple(_object_id(item) for item in _sequence(
-                    manifest.target_output_ids, "target_output_ids"
-                )),
-            ),
-            _attempt(value.attempt_id),
-        )
-    raise TypeError("execution must be a TaskExecutionKey or TargetExecutionKey")
+    _require_type(value, TaskExecutionKey, "execution")
+    return TaskExecutionKey(_full_manifest(value.manifest), _attempt(value.attempt_id))
 
 
 def _node_incarnation(value: object) -> OutputPublicationNodeIncarnation:
@@ -159,14 +141,7 @@ def _source(value: object):
     _require_type(value, BorrowedContainedSource, "contained source")
     original = value.original_source
     if type(original) is ContainedTransferSource:
-        original_hold = original.hold
-        if type(original_hold) is LegacyContainedReferenceHold:
-            original_hold = LegacyContainedReferenceHold(
-                _string(original_hold.transfer_token, "legacy source token")
-            )
-        else:
-            original_hold = _hold(original_hold)
-        original = ContainedTransferSource(original_hold)
+        original = ContainedTransferSource(_hold(original.hold))
     elif type(original) is TaskHoldSource:
         hold = original.hold
         _require_type(hold, TaskReferenceHold, "task source hold")
@@ -229,17 +204,9 @@ def _feed_object(digest, object_id: ObjectID) -> None:
 def _feed_publication(digest, publication_id: "OutputPublicationID") -> None:
     _framed(digest, bytes(publication_id.lease_id))
     execution = publication_id.execution
-    _framed(digest, b"task" if type(execution) is TaskExecutionKey else b"target")
     _framed(digest, bytes(execution.task_id))
     _framed(digest, _uint(execution.attempt_id.attempt_number, "attempt_number"))
-    full = publication_id.full_output_ids
-    selected = publication_id.output_ids
-    _framed(digest, _uint(len(full), "full output count"))
-    for object_id in full:
-        _feed_object(digest, object_id)
-    _framed(digest, _uint(len(selected), "selected output count"))
-    for object_id in selected:
-        _feed_object(digest, object_id)
+    _feed_object(digest, publication_id.output_ids[0])
 
 
 def _manifest_digest(
@@ -273,7 +240,7 @@ class _ValidatedWireValue:
 
 @dataclass(frozen=True)
 class OutputPublicationID(_ValidatedWireValue):
-    """One lease execution, including its complete and selected slot IDs."""
+    """One lease execution authorized for the task's single output."""
 
     lease_id: LeaseID
     execution: ExecutionKey
@@ -292,24 +259,20 @@ class OutputPublicationID(_ValidatedWireValue):
 
     @property
     def full_output_ids(self) -> Tuple[ObjectID, ...]:
-        return (
-            self.execution.output_ids if type(self.execution) is TaskExecutionKey
-            else self.execution.full_output_ids
-        )
+        return self.execution.output_ids
 
     @property
     def output_ids(self) -> Tuple[ObjectID, ...]:
-        return (
-            self.execution.output_ids if type(self.execution) is TaskExecutionKey
-            else self.execution.target_output_ids
-        )
+        return self.execution.output_ids
 
     @property
-    def graph_transaction_id(self) -> str:
+    def transaction_id(self) -> str:
+        """Stable namespace for exact handoff tokens, not commit authority."""
+
         validated = replace(self)
-        digest = hashlib.sha256(_GRAPH_DOMAIN)
+        digest = hashlib.sha256(_HANDOFF_DOMAIN)
         _feed_publication(digest, validated)
-        return "output-publication-graph:" + digest.hexdigest()
+        return "output-publication-handoff:" + digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -376,7 +339,7 @@ def _validate_manifest_inputs(header: object, slots: object):
     slots = tuple(copied)
     if tuple(slot.object_id for slot in slots) != header.publication_id.output_ids:
         raise OutputPublicationConflictError(
-            "slots must exactly match the ordered selected execution outputs"
+            "slots must exactly match the single execution output"
         )
     child_owners = {}
     for slot in slots:
@@ -412,7 +375,7 @@ def _validate_manifest_inputs(header: object, slots: object):
 
 @dataclass(frozen=True)
 class OutputPublicationManifest(_ValidatedWireValue):
-    """One metadata-only atomic publication, including empty-edge slots."""
+    """One metadata-only publication, including an output without references."""
 
     header: OutputPublicationHeader
     slots: Tuple[OutputSlotManifest, ...]
@@ -448,19 +411,6 @@ class OutputPublicationManifest(_ValidatedWireValue):
     def ordered_edges(self) -> Tuple[ContainedReferenceEdge, ...]:
         return tuple(edge for slot in self.slots for edge in slot.edges)
 
-    def to_graph_manifest(self) -> Optional[ContainedGraphManifest]:
-        """Project one multi-container batch; no refs means no graph effect."""
-
-        validated = replace(self)
-        edges = validated.ordered_edges
-        if not edges:
-            return None
-        return ContainedGraphManifest(
-            validated.publication_id.graph_transaction_id, validated.publication_id,
-            validated.header.owner_worker_id, validated.manifest_digest, edges,
-        )
-
-
 @dataclass(frozen=True)
 class OutputPublicationCompleteWitness(_ValidatedWireValue):
     """Byte-free identity of a successful Complete, not a liveness oracle."""
@@ -490,7 +440,7 @@ class OutputPublicationCompleteWitness(_ValidatedWireValue):
 
 @dataclass(frozen=True)
 class OutputPublicationEnvelope(_ValidatedWireValue):
-    """Data-plane handoff: all selected results from one exact Complete."""
+    """Data-plane handoff: the result from one exact Complete."""
 
     manifest: OutputPublicationManifest
     complete: OutputPublicationCompleteWitness
@@ -511,7 +461,7 @@ class OutputPublicationEnvelope(_ValidatedWireValue):
         results = tuple(_descriptor(item) for item in _sequence(self.results, "results"))
         if tuple(item.object_id for item in results) != manifest.publication_id.output_ids:
             raise OutputPublicationConflictError(
-                "results must exactly match the ordered selected execution outputs"
+                "results must exactly match the single execution output"
             )
         for slot, descriptor in zip(manifest.slots, results):
             if (

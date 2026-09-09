@@ -1,7 +1,7 @@
 """One private, bounded checkpoint for unified output fault acceptance.
 
 An unconfigured runtime never constructs this gate. A configured Node selects
-its first publication at INTENT and pauses at one semantic phase. Complete and
+its first publication at owner registration and pauses at one semantic phase. Complete and
 outcome delivery share the same gate, so neither can leak the completed bytes
 before a no-delivery crash. Frames contain exact metadata only.
 
@@ -24,24 +24,19 @@ from .ids import AttemptID, LeaseID, NodeID, TaskID
 from .output_publication import (
     OutputPublicationID, OutputPublicationManifest, _checksum, _opaque, _uint,
 )
-from .task_outputs import (
-    MAX_TASK_RETURNS, TargetExecutionKey, TargetOutputManifest, TaskExecutionKey,
-    TaskOutputManifest,
-)
+from .task_outputs import TaskExecutionKey, TaskOutputManifest
 
 
 class OutputPublicationGatePhase(str, Enum):
-    AFTER_INTENT_ACK = "AFTER_INTENT_ACK"
-    AFTER_PROMOTIONS_ACK = "AFTER_PROMOTIONS_ACK"  # strictly before ARM
-    AFTER_ARM_ACK_BEFORE_COMPLETE = "AFTER_ARM_ACK_BEFORE_COMPLETE"
+    AFTER_OWNER_REGISTER_ACK = "AFTER_OWNER_REGISTER_ACK"
+    AFTER_PROMOTIONS_ACK = "AFTER_PROMOTIONS_ACK"
     AFTER_COMPLETE_BEFORE_TASK_REPLY = "AFTER_COMPLETE_BEFORE_TASK_REPLY"
 
 
 OUTPUT_PUBLICATION_GATE_RELEASE = b"G"
-_MAGIC = b"MROPG001"
-# Full manifests are contiguous and bounded; a bitmap preserves noncontiguous
-# target indices without variable-sized frames or result serialization.
-_FRAME = struct.Struct("!8s16sQQ16s16sQBBI32sB")
+_MAGIC = b"MROPG002"
+# The output is always ObjectID(task_id, 0), so the frame needs no slot scope.
+_FRAME = struct.Struct("!8s16sQQ16s16sQ32sB")
 _PHASES = tuple(OutputPublicationGatePhase)
 
 
@@ -102,32 +97,25 @@ class OutputPublicationGateArrival:
     def to_bytes(self) -> bytes:
         arrival = replace(self)
         publication = arrival.publication_id
-        mask = sum(1 << output.return_index for output in publication.output_ids)
         return _FRAME.pack(
             _MAGIC, bytes(arrival.node_id), arrival.node_pid, arrival.registration_epoch,
             bytes(publication.lease_id), bytes(publication.task_id), publication.attempt_id.attempt_number,
-            int(type(publication.execution) is TargetExecutionKey), len(publication.full_output_ids),
-            mask, bytes.fromhex(arrival.manifest_digest), _PHASES.index(arrival.phase),
+            bytes.fromhex(arrival.manifest_digest), _PHASES.index(arrival.phase),
         )
 
     @classmethod
     def from_bytes(cls, data: bytes):
         if type(data) is not bytes or len(data) != _FRAME.size:
             raise ValueError("output gate frame has the wrong type or size")
-        magic, node, pid, epoch, lease, task, attempt, targeted, count, mask, digest, phase = _FRAME.unpack(data)
+        magic, node, pid, epoch, lease, task, attempt, digest, phase = _FRAME.unpack(data)
         if magic != _MAGIC:
             raise ValueError("output gate frame has the wrong magic")
-        if (targeted not in (0, 1) or not 1 <= count <= MAX_TASK_RETURNS
-                or not 0 < mask < (1 << count) or phase >= len(_PHASES)):
-            raise ValueError("output gate frame has an invalid execution scope or phase")
-        if targeted == 0 and mask != (1 << count) - 1:
-            raise ValueError("whole-task output gate cannot omit return slots")
+        if phase >= len(_PHASES):
+            raise ValueError("output gate frame has an invalid phase")
         task_id = TaskID(task)
-        full = TaskOutputManifest.for_task(task_id, count)
+        manifest = TaskOutputManifest.for_task(task_id, 1)
         attempt_id = AttemptID(task_id, attempt)
-        execution = (TargetExecutionKey(TargetOutputManifest(
-            full, tuple(output for output in full.output_ids if mask & (1 << output.return_index)),
-        ), attempt_id) if targeted else TaskExecutionKey(full, attempt_id))
+        execution = TaskExecutionKey(manifest, attempt_id)
         return cls(NodeID(node), pid, epoch, OutputPublicationID(LeaseID(lease), execution),
                    digest.hex(), _PHASES[phase])
 

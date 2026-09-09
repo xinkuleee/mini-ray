@@ -13,6 +13,26 @@ from scripts import run_bounded_test as runner
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("missing", ("none", "posix", "getpgrp", "killpg", "SIGKILL"))
+def test_execution_platform_requires_posix_cleanup_capabilities(monkeypatch, missing):
+    platform = SimpleNamespace(name="posix", getpgrp=lambda: 42, killpg=lambda *_args: None)
+    signals = SimpleNamespace(SIGKILL=9)
+    if missing == "posix":
+        platform.name = "nt"
+    elif missing == "SIGKILL":
+        del signals.SIGKILL
+    elif missing != "none":
+        delattr(platform, missing)
+    # Replace only this runner's reference, never the shared os.name used by Path.
+    monkeypatch.setattr(runner, "os", platform)
+    monkeypatch.setattr(runner, "signal", signals)
+    if missing == "none":
+        assert runner._require_posix_execution() is None
+    else:
+        with pytest.raises(RuntimeError, match="POSIX process groups"):
+            runner._require_posix_execution()
+
+
 def _snapshot(
     rows: Iterable[tuple[int, int, int]],
 ) -> Dict[int, runner._ProcessRecord]:
@@ -47,6 +67,7 @@ def test_process_snapshot_parser_keeps_only_unambiguous_positive_targets() -> No
 
 def test_read_process_snapshot_uses_portable_numeric_ps_columns(monkeypatch) -> None:
     calls = []
+    monkeypatch.setattr(runner, "sys", SimpleNamespace(platform="darwin"))
 
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
@@ -72,6 +93,7 @@ def test_read_process_snapshot_uses_portable_numeric_ps_columns(monkeypatch) -> 
 
 
 def test_process_snapshot_timeout_does_not_make_cleanup_wait_unbounded(monkeypatch) -> None:
+    monkeypatch.setattr(runner, "sys", SimpleNamespace(platform="darwin"))
     def timed_out(command, **kwargs):
         assert command == ("ps", "-axo", "pid=,ppid=,pgid=")
         assert kwargs["timeout"] == runner.PROCESS_SNAPSHOT_TIMEOUT_SECONDS == 0.25
@@ -80,6 +102,83 @@ def test_process_snapshot_timeout_does_not_make_cleanup_wait_unbounded(monkeypat
     monkeypatch.setattr(runner.subprocess, "run", timed_out)
     with pytest.raises(runner.subprocess.TimeoutExpired):
         runner._read_process_snapshot()
+
+
+def test_proc_stat_preserves_numeric_identity_with_unusual_comm():
+    for comm in ("python3", "worker pool", "worker (nested) ) name", "worker\nname",
+                 b"worker-\xff".decode("utf-8", errors="surrogateescape")):
+        assert runner._parse_proc_stat("200 (" + comm + ") S 100 200 200 0 -1 0\n", 200) == (
+            runner._ProcessRecord(200, 100, 200)
+        )
+    assert runner._parse_proc_stat("1 (init) S 0 1 0", 1) == runner._ProcessRecord(1, 0, 1)
+    assert runner._parse_proc_stat("200 (zombie) Z 100 200", 200) == runner._ProcessRecord(200, 100, 200)
+    for value in (
+        "201 (python) S 100 200", "0 (python) S 100 200",
+        "200 python S 100 200", "200 (python S 100 200",
+        "200 (python) S -1 200", "200 (python) S 100 0",
+        "200 (python) S 100", "200 (python) S 100 bad",
+        "+200 (python) S 100 200", "200 (python) S 100 +200",
+        "200 (python) ? 100 200",
+    ):
+        assert runner._parse_proc_stat(value, 200) is None, value
+
+
+def test_proc_snapshot_reads_only_numeric_stat_and_skips_untrusted_rows(monkeypatch):
+    reads = []
+
+    class Entry:
+        def __init__(self, name, value):
+            self.name, self.value = name, value
+
+        def __truediv__(self, name):
+            assert name == "stat"
+            return self
+
+        def read_text(self, **options):
+            assert options == {"encoding": "utf-8", "errors": "surrogateescape"}
+            reads.append(self.name)
+            if isinstance(self.value, OSError):
+                raise self.value
+            return self.value
+
+    entries = (
+        Entry("100", "100 (parent) S 0 100 0"),
+        Entry("200", "200 (worker ) name) R 100 200 0"),
+        Entry("300", FileNotFoundError()), Entry("400", PermissionError()),
+        Entry("500", "501 (wrong PID) S 100 500"),
+        Entry("self", None), Entry("thread-self", None), Entry("0", None),
+        Entry("01", None), Entry("１２", None), Entry("100x", None),
+    )
+    monkeypatch.setattr(runner.time, "monotonic", lambda: 0.0)
+    assert runner._read_proc_process_snapshot(SimpleNamespace(iterdir=lambda: iter(entries))) == (
+        _snapshot(((100, 0, 100), (200, 100, 200)))
+    )
+    assert reads == ["100", "200", "300", "400", "500"]
+
+
+def test_proc_snapshot_timeout_and_root_failure_never_return_partial_identity(monkeypatch):
+    clock = iter((0.0, 1.0))
+    monkeypatch.setattr(runner.time, "monotonic", lambda: next(clock))
+    with pytest.raises(runner.subprocess.TimeoutExpired):
+        runner._read_proc_process_snapshot(SimpleNamespace(iterdir=lambda: iter((object(),))))
+    monkeypatch.setattr(runner.time, "monotonic", lambda: 0.0)
+
+    def denied():
+        raise PermissionError("procfs unavailable")
+
+    with pytest.raises(PermissionError, match="procfs unavailable"):
+        runner._read_proc_process_snapshot(SimpleNamespace(iterdir=denied))
+
+
+def test_linux_process_snapshot_uses_procfs_without_launching_ps(monkeypatch):
+    expected = _snapshot(((100, 0, 100), (200, 100, 200)))
+    monkeypatch.setattr(runner, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(runner, "_read_proc_process_snapshot", lambda: expected)
+    monkeypatch.setattr(
+        runner.subprocess, "run",
+        lambda *_args, **_kwargs: pytest.fail("Linux snapshot launched ps"),
+    )
+    assert runner._read_process_snapshot() is expected
 
 
 def test_descendant_closure_never_adopts_unrelated_processes() -> None:
@@ -150,7 +249,7 @@ def test_signal_active_tree_uses_owned_groups_then_exact_remaining_pids(
     group_calls = []
     pid_calls = []
     monkeypatch.setattr(
-        runner.os, "killpg", lambda pgid, sig: group_calls.append((pgid, sig))
+        runner.os, "killpg", lambda pgid, sig: group_calls.append((pgid, sig)), raising=False,
     )
     monkeypatch.setattr(
         runner.os, "kill", lambda pid, sig: pid_calls.append((pid, sig))
@@ -254,9 +353,10 @@ def test_timeout_cleanup_rescans_known_tree_and_escalates_exact_targets(
     monkeypatch.setattr(runner.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(runner.os, "getpid", lambda: 41)
-    monkeypatch.setattr(runner.os, "getpgrp", lambda: 42)
+    monkeypatch.setattr(runner.os, "getpgrp", lambda: 42, raising=False)
+    monkeypatch.setattr(runner.signal, "SIGKILL", 9, raising=False)
     monkeypatch.setattr(
-        runner.os, "killpg", lambda pgid, sig: group_calls.append((pgid, sig))
+        runner.os, "killpg", lambda pgid, sig: group_calls.append((pgid, sig)), raising=False,
     )
     monkeypatch.setattr(
         runner.os, "kill", lambda pid, sig: pid_calls.append((pid, sig))
@@ -292,6 +392,7 @@ def test_signal_helpers_reject_non_positive_or_boolean_targets(
         runner.os,
         "killpg",
         lambda _pgid, _sig: pytest.fail("unsafe group signal was attempted"),
+        raising=False,
     )
     monkeypatch.setattr(
         runner.os,
@@ -317,6 +418,7 @@ def test_main_cleans_exact_process_tree_when_wait_is_interrupted(
         raise KeyboardInterrupt
 
     process.wait = interrupted_wait  # type: ignore[method-assign]
+    monkeypatch.setattr(runner, "_require_posix_execution", lambda: None)
     monkeypatch.setattr(
         runner.subprocess, "Popen", lambda *args, **kwargs: process
     )

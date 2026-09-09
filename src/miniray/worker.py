@@ -2,7 +2,7 @@
 
 WorkerServer accepts direct PushTask requests and obtains StartLease before
 decoding and executing user code. Its lazy Core supports nested submissions
-and owned references. Successful outputs use the shared Node/GCS publication
+and owned references. Successful outputs use the owner/Node handoff
 protocol; ambiguous acknowledgements replay retained bytes rather than user
 code. The Node retains lease/resource authority; stateful Actors use the
 separate actor_worker module. Module-level process entry points support spawn.
@@ -19,7 +19,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from enum import Enum
 from multiprocessing.connection import Connection
-from typing import Hashable, Optional, Sequence, Tuple
+from typing import Hashable, Optional, Tuple
 
 import cloudpickle
 
@@ -174,8 +174,6 @@ def _error_reply(
     worker_id: ids.WorkerID,
     status: protocol.TaskReplyStatus,
     exc: BaseException,
-    *,
-    target_execution: object = None,
 ) -> protocol.TaskReply:
     return protocol.TaskReply(
         task_id=spec.task_id,
@@ -188,26 +186,7 @@ def _error_reply(
             message=str(exc),
             traceback=traceback.format_exc(),
         ),
-        target_execution=target_execution,
     )
-
-
-def _normalize_results(value: object, return_ids: Sequence[object]) -> tuple[object, ...]:
-    count = len(return_ids)
-    if count == 0:
-        return ()
-    if count == 1:
-        return (value,)
-    if not isinstance(value, (tuple, list)):
-        raise TypeError(
-            "a task with {} return IDs must return a tuple or list".format(count)
-        )
-    results = tuple(value)
-    if len(results) != count:
-        raise ValueError(
-            "task declared {} returns but produced {}".format(count, len(results))
-        )
-    return results
 
 
 def _decode_argument(
@@ -222,7 +201,7 @@ def _decode_argument(
         return decode_inline_argument(
             argument, import_nested_ref=nested_imports
         )
-    if isinstance(argument, (protocol.RefArg, protocol.StoredArg)):
+    if isinstance(argument, protocol.RefArg):
         try:
             descriptor = dependencies[argument.object_id]
         except KeyError as exc:
@@ -270,14 +249,6 @@ def _decode_argument(
         checksum = hashlib.sha256(reply.data).hexdigest()
         if checksum != descriptor.checksum or reply.checksum != descriptor.checksum:
             raise RuntimeError("dependency object checksum does not match descriptor")
-        if isinstance(argument, protocol.StoredArg):
-            return decode_inline_argument(
-                protocol.InlineArg(
-                    reply.data, serializer=argument.serializer,
-                    nested_refs=argument.nested_refs,
-                ),
-                import_nested_ref=nested_imports,
-            )
         return cloudpickle.loads(reply.data)
     raise TypeError("unknown task argument type: {}".format(type(argument).__name__))
 
@@ -430,6 +401,10 @@ class WorkerServer:
                     self._handle_release_contained_reference
                 ),
                 GET_OWNED_OBJECT_HANDLER: self._handle_get_owned_object,
+                "register_output_handoff": lambda request: self._handle_output_handoff("register_output_handoff", request),
+                "report_output_handoff_complete": lambda request: self._handle_output_handoff("report_output_handoff_complete", request),
+                "report_output_handoff_rollback": lambda request: self._handle_output_handoff("report_output_handoff_rollback", request),
+                "get_output_handoff": lambda request: self._handle_output_handoff("get_output_handoff", request),
                 REQUEST_OWNED_OBJECT_RECONSTRUCTION_HANDLER: (
                     self._handle_request_owned_object_reconstruction
                 ),
@@ -613,7 +588,6 @@ class WorkerServer:
                     self.worker_id,
                     protocol.TaskReplyStatus.SYSTEM_ERROR,
                     RuntimeError("injected system failure before user-code decode"),
-                    target_execution=request.target_execution,
                 )
                 return self._cache_complete_and_return(request, reply, key)
 
@@ -691,7 +665,6 @@ class WorkerServer:
                         self.worker_id,
                         protocol.TaskReplyStatus.SYSTEM_ERROR,
                         exc,
-                        target_execution=request.target_execution,
                     )
                 else:
                     try:
@@ -709,26 +682,14 @@ class WorkerServer:
                                 else protocol.TaskReplyStatus.APPLICATION_ERROR
                             ),
                             exc,
-                            target_execution=request.target_execution,
                         )
                     else:
                         try:
-                            return_ids = spec.return_ids()
-                            values = _normalize_results(value, return_ids)
-                            target_execution = request.target_execution
-                            selected_ids = (
-                                return_ids
-                                if target_execution is None
-                                else target_execution.target_output_ids
-                            )
-                            selected_values = tuple(
-                                values[object_id.return_index]
-                                for object_id in selected_ids
-                            )
+                            # A task returns one Python value, including a tuple or list.
                             discovery = self._output_discovery_session(
                                 request, node_incarnation
                             )
-                            outputs = discovery.discover(selected_values)
+                            outputs = discovery.discover((value,))
                             prepared = _PreparedOutputReply(
                                 request, discovery, outputs, nested_imports
                             )
@@ -736,9 +697,9 @@ class WorkerServer:
                             if table is None:
                                 table = {}
                                 self._prepared_output_replies = table
-                            # Transfer every selected stream and argument
-                            # borrower before the first Node effect.  Even a
-                            # ref-free mixed batch has one atomic publication.
+                            # Transfer the result stream and argument borrowers
+                            # before the first Node effect; the complete result
+                            # shares one publication identity.
                             table[key] = prepared
                             nested_imports = None
                             return self._resume_discovered_outputs(prepared, key)
@@ -752,7 +713,6 @@ class WorkerServer:
                                 self.worker_id,
                                 protocol.TaskReplyStatus.SYSTEM_ERROR,
                                 exc,
-                                target_execution=request.target_execution,
                             )
             finally:
                 # Attempt-scoped borrowers never depend on Python GC.  This runs
@@ -892,7 +852,7 @@ class WorkerServer:
         spec = request.spec
         arguments = spec.args + tuple(value for _, value in spec.kwargs)
         has_manifest = any(
-            isinstance(argument, (protocol.InlineArg, protocol.StoredArg))
+            isinstance(argument, protocol.InlineArg)
             and argument.nested_refs
             for argument in arguments
         )
@@ -986,14 +946,14 @@ class WorkerServer:
         self, request: protocol.PushTask,
         node_incarnation: OutputPublicationNodeIncarnation,
     ) -> OutputDiscoverySession:
-        """The single discovery entry for every selected result shape/tier."""
+        """The discovery entry for the single result, at either storage tier."""
 
         if (
             type(node_incarnation) is not OutputPublicationNodeIncarnation
             or node_incarnation.node_id != self.node_id
         ):
             raise RuntimeError("output discovery has no exact accepted Node incarnation")
-        execution = request.target_execution or TaskExecutionKey.from_task_spec(
+        execution = TaskExecutionKey.from_task_spec(
             request.spec
         )
         header = OutputPublicationHeader(
@@ -1118,7 +1078,6 @@ class WorkerServer:
                 attempt_id=request.spec.attempt_id,
                 worker_id=self.worker_id,
                 scheduling_key=request.spec.scheduling_key,
-                target_execution=request.target_execution,
             ),
         )
         if not isinstance(reply, protocol.StartWorkerLeaseReply):
@@ -1128,7 +1087,6 @@ class WorkerServer:
         if (
             reply.lease_id != request.lease_id
             or reply.scheduling_key != request.spec.scheduling_key
-            or reply.target_execution != request.target_execution
         ):
             raise RuntimeError(
                 "Node returned a start reply for a different worker lease or scheduling key"
@@ -1223,11 +1181,10 @@ class WorkerServer:
                         request.spec, self.worker_id,
                         protocol.TaskReplyStatus.SYSTEM_ERROR,
                         RuntimeError(acknowledgement.error or "Node rejected output publication"),
-                        target_execution=request.target_execution,
                     )
                     return self._complete_aborted_outputs(prepared, key)
                 prepared.prepare_acked = True
-            # The Node ACK proves all promotions and ARM, not that these local
+            # The Node ACK proves materialization and child promotions, not that these local
             # callbacks returned.  Retry cleanup even after Complete is known.
             prepared.release_promoted_sources()
             return self._complete_output_and_return(prepared, key)
@@ -1308,7 +1265,7 @@ class WorkerServer:
             request.lease_id, request.spec.task_id, request.spec.attempt_id,
             self.worker_id, request.spec.owner_worker_id,
             prepared.outputs.manifest.publication_id.output_ids,
-            request.spec.scheduling_key, request.target_execution,
+            request.spec.scheduling_key,
         )
         outcome = self._output_rpc(GET_WORKER_LEASE_OUTCOME_HANDLER, query, attempts=1)
         if type(outcome) is not protocol.GetWorkerLeaseOutcomeReply:
@@ -1317,12 +1274,12 @@ class WorkerServer:
         expected = (
             query.lease_id, query.task_id, query.attempt_id, query.executor_worker_id,
             query.owner_worker_id, query.object_ids, self.node_id,
-            query.scheduling_key, query.target_execution,
+            query.scheduling_key,
         )
         observed = (
             outcome.lease_id, outcome.task_id, outcome.attempt_id, outcome.executor_worker_id,
             outcome.owner_worker_id, outcome.object_ids, outcome.node_id,
-            outcome.scheduling_key, outcome.target_execution,
+            outcome.scheduling_key,
         )
         if expected != observed:
             raise RuntimeError("Node output completion outcome changed identity")
@@ -1400,7 +1357,6 @@ class WorkerServer:
             status=protocol.TaskReplyStatus.SUCCEEDED,
             results=envelope.results,
             error=None,
-            target_execution=request.target_execution,
             output_publication=envelope,
         )
         return self._cache_complete_and_return(request, reply, key)
@@ -1440,7 +1396,6 @@ class WorkerServer:
             worker_id=self.worker_id,
             status=(task_reply.status if task_reply is not None else status),
             scheduling_key=request.spec.scheduling_key,
-            target_execution=request.target_execution,
         )
         reply = self._output_rpc(COMPLETE_WORKER_LEASE_HANDLER, completion)
         if type(reply) is not protocol.CompleteWorkerLeaseReply:
@@ -1455,7 +1410,6 @@ class WorkerServer:
             reply.worker_id,
             reply.status,
             reply.scheduling_key,
-            reply.target_execution,
         )
         completion_identity = (
             completion.lease_id,
@@ -1464,7 +1418,6 @@ class WorkerServer:
             completion.worker_id,
             completion.status,
             completion.scheduling_key,
-            completion.target_execution,
         )
         if reply_identity != completion_identity:
             raise RuntimeError(
@@ -1542,6 +1495,13 @@ class WorkerServer:
             return getattr(self, "_embedded_core", None)
         with lock:
             return self._embedded_core
+
+    def _handle_output_handoff(self, method, request):
+        from .output_protocol import OutputHandoffReply
+        core = self._borrow_owner_core()
+        if core is None:
+            return OutputHandoffReply(request, False, error="object owner CoreWorker is not available")
+        return getattr(core, method)(request)
 
     def _handle_acquire_borrowed_object(self, request: object) -> object:
         if not isinstance(request, protocol.AcquireBorrowedObject):
@@ -1936,7 +1896,7 @@ class WorkerServer:
             for push in pushes:
                 if push is None:
                     continue
-                execution = push.target_execution or TaskExecutionKey.from_task_spec(push.spec)
+                execution = TaskExecutionKey.from_task_spec(push.spec)
                 if (_attempt_key(push) != key or push.worker_id != self.worker_id
                         or push.spec.job_id != manifest.header.job_id
                         or push.spec.owner_worker_id != manifest.header.owner_worker_id
@@ -1946,9 +1906,6 @@ class WorkerServer:
                 cached.task_id != identity.task_id
                 or cached.attempt_id != identity.attempt_id
                 or cached.worker_id != self.worker_id
-                or cached.target_execution != (
-                    None if type(manifest.execution) is TaskExecutionKey else manifest.execution
-                )
             ):
                 raise RuntimeError("output cleanup changed cached reply identity")
 

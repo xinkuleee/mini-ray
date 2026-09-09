@@ -3,7 +3,8 @@
 Each case starts one GCS, one or two Nodes, and at most two ordinary Workers
 (three to five startup children), with a 1 MiB store per Node. Example04 adds
 one dedicated Actor Worker (six children) and three tiny method calls; example07
-reserves two bundles and runs two ordinary Tasks. The remaining examples
+uses two CPUs per Node, reserves two one-CPU bundles and runs two ordinary Tasks
+on the same two-Worker bound. The remaining examples
 submit at most two logical Tasks, use at most 64 KiB application payload, and
 only example06 performs one physical drop and one reconstruction. Their get
 calls share a ten-second post-init deadline; reference cleanup uses three
@@ -85,7 +86,8 @@ def _assert_runtime_exited(
         pytest.param(
             "01_task_path.py", 1, 1, 0, 0, True, 1,
             ("TaskID:", "ObjectID:", "owner WorkerID:", "result: 49", "Canonical trace",
-             "stage=INTENT", "stage=ARM_COMPLETE", "stage=TERMINAL", "stage=ADOPTED",
+             "NodeServer -> OwnerService (Driver owner) : register_output_handoff",
+             "register_output_handoff [reply_received, transport_ok=true]",
              "output_owner_ready", "output_payload_retired", "complete_worker_lease"),
             id="example01",
         ),
@@ -119,14 +121,15 @@ def _assert_runtime_exited(
             "07_placement_group.py", 2, 1, 0, 1, False, 2,
             ("committed PGID:", "attempt: 0", "bundle placement: 0 -> NodeID:",
              "bundle placement: 1 -> NodeID:", "distinct Nodes are a hard constraint",
-             "PACK would also need two Nodes", "bundle executors:"), id="example07",
+             "STRICT_PACK could place both one-CPU bundles on one Node",
+             "bundle executors:"), id="example07",
         ),
     ),
 )
 def test_original_teaching_example_main_is_bounded_and_cleans_cluster(
     filename: str, num_nodes: int, workers_per_node: int, actor_count: int,
     pg_count: int, tracing: bool, driver_closes: int,
-    output_fragments: tuple[str, ...], capsys: pytest.CaptureFixture[str],
+    output_fragments: tuple[str, ...], capsys: pytest.CaptureFixture[str], tmp_path: Path,
 ) -> None:
     assert not ray.is_initialized()
     original_init, original_shutdown = ray.init, ray.shutdown
@@ -218,6 +221,10 @@ def test_original_teaching_example_main_is_bounded_and_cleans_cluster(
         assert namespace["__name__"] == "miniray_teaching_example"
         namespace["main"]()
         output = capsys.readouterr().out
+        # Save the actual main output, including example01's matched canonical
+        # trace, for the fixed-version evidence bundle. This observes no extra
+        # runtime state and does not replace any assertion below.
+        (tmp_path / (filename + ".txt")).write_text(output, encoding="utf-8")
     finally:
         try:
             if ray.is_initialized():
@@ -245,6 +252,8 @@ def test_original_teaching_example_main_is_bounded_and_cleans_cluster(
     assert positional == ()
     assert options["num_nodes"] == num_nodes
     assert options.get("num_workers_per_node", 1) == workers_per_node
+    if pg_count:
+        assert options["num_cpus"] == 2
     assert options["object_store_bytes"] == _STORE_BYTES
     assert options.get("enable_tracing", True) is tracing
     assert len(context.nodes) == num_nodes

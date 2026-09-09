@@ -25,21 +25,15 @@ from .contained_edges import (
     ContainedReferenceEdge,
     ContainedReferenceHold,
     IncomingContainedReferenceHold,
-    LegacyContainedReferenceHold,
     LineageReferenceEdge,
     ObjectMetadataCollection,
     ObjectMetadataCollectionPlan,
-)
-from .contained_cycle import (
-    ContainedGraphManifest, ContainedGraphManifestDisposition,
-    ContainedGraphManifestReceipt,
-    ContainedGraphTransactionState,
 )
 from .ids import AttemptID, NodeID, ObjectID, TaskID, WorkerID
 from .errors import ProtocolError
 from .output_publication import (
     OutputPublicationEnvelope, OutputPublicationID, OutputPublicationManifest,
-    OutputSlotManifest, _attempt, _checksum, _hold, _object_id, _opaque,
+    OutputSlotManifest, _attempt, _checksum, _descriptor, _execution, _hold, _object_id, _opaque,
     _sequence, _string, _uint,
 )
 from .protocol import (
@@ -61,7 +55,7 @@ from .protocol import (
     TaskSpec,
 )
 from .task_outputs import (
-    TargetExecutionKey, TargetOutputManifest, TaskExecutionKey,
+    TaskExecutionKey,
     TaskOutputManifest,
 )
 
@@ -162,7 +156,7 @@ class DeadWorkerReferenceConflictError(OwnershipError):
 
 
 class OutputOwnerPublicationConflictError(OwnershipError):
-    """A selected-output publication disagrees with its immutable identity."""
+    """An output publication disagrees with its immutable identity."""
 
 
 class OutputOwnerPublicationCollectionRequiredError(OwnershipError):
@@ -170,11 +164,11 @@ class OutputOwnerPublicationCollectionRequiredError(OwnershipError):
 
 
 class OutputOwnerRetirementConflictError(OutputOwnerPublicationConflictError):
-    """A selected LOST-slot retirement changed its frozen identity."""
+    """A LOST-output retirement changed its frozen identity."""
 
 
 class OutputOwnerRetirementInProgressError(OwnershipError):
-    """Old publication effects still own a selected LOST output's metadata."""
+    """Old publication effects still own a LOST output's metadata."""
 
 
 class ReferenceKind(str, Enum):
@@ -390,14 +384,14 @@ class TaskOutputPublicationPlan:
 
 @dataclass(frozen=True)
 class OutputOwnerPublicationPlan:
-    """Transient batch CAS input; the owner never retains its whole envelope.
+    """Transient output CAS input; the owner never retains its whole envelope.
 
     The explicit execution is a checked compatibility spelling, not a second
-    authority. Pins and graph COMMIT must already be acknowledged by the caller;
+    authority. Final child pins must already be acknowledged by the caller;
     the typed envelope proves identity, not that those remote effects happened.
     """
 
-    execution: TaskExecutionKey | TargetExecutionKey
+    execution: TaskExecutionKey
     envelope: OutputPublicationEnvelope
 
     def __post_init__(self) -> None:
@@ -411,8 +405,6 @@ class OutputOwnerPublicationPlan:
             raise OutputOwnerPublicationConflictError(
                 "owner execution must equal the envelope execution"
             )
-        # Build the canonical graph projection before any owner mutation.
-        envelope.manifest.to_graph_manifest()
         object.__setattr__(self, "execution", execution)
         object.__setattr__(self, "envelope", envelope)
 
@@ -431,7 +423,7 @@ class OutputOwnerPublicationMembership:
 
     Table entry points deeply validate the manifest once per batch. Memberships
     share that immutable value rather than storing other slots' descriptors or
-    cloning the whole metadata graph per slot.
+    duplicating the publication metadata.
     """
 
     manifest: OutputPublicationManifest
@@ -500,7 +492,7 @@ class OutputOwnerPublicationCollectionPlan:
             or metadata.producer_attempt_id != membership.publication_id.attempt_id
             or tuple(metadata.contained_releases) != tuple(sorted(slot.edges))
             or not isinstance(spec, TaskSpec)
-            or tuple(spec.return_ids()) != membership.publication_id.full_output_ids
+            or tuple(spec.return_ids()) != membership.publication_id.output_ids
             or spec.owner_worker_id != membership.manifest.header.owner_worker_id
             or spec.job_id != membership.manifest.header.job_id
         ):
@@ -593,23 +585,8 @@ class OutputOwnerPublicationRetirementPlan:
                 replace(value.manifest), value.slot_index
             ))
         memberships = tuple(memberships)
-        if not memberships:
-            raise ValueError("retirement requires selected output slots")
-        first = memberships[0]
-        output_ids = tuple(value.object_id for value in memberships)
-        if output_ids != tuple(sorted(set(output_ids))):
-            raise OutputOwnerRetirementConflictError(
-                "retirement slots must be unique in original return order"
-            )
-        if any(
-            value.publication_id.full_output_ids != first.publication_id.full_output_ids
-            or value.manifest.header.owner_worker_id != first.manifest.header.owner_worker_id
-            or value.manifest.header.job_id != first.manifest.header.job_id
-            for value in memberships
-        ):
-            raise OutputOwnerRetirementConflictError(
-                "retirement slots must share one full lineage, owner and job"
-            )
+        if len(memberships) != 1:
+            raise ValueError("retirement requires exactly one output membership")
         drops = []
         by_object = {value.object_id: value for value in memberships}
         for value in _sequence(self.replica_drops, "replica_drops"):
@@ -623,7 +600,7 @@ class OutputOwnerPublicationRetirementPlan:
             )
             member = by_object.get(value.object_id)
             if member is None or member.slot.tier is not ResultStorage.OBJECT_STORE:
-                raise OutputOwnerRetirementConflictError("replica obligation requires a selected stored slot")
+                raise OutputOwnerRetirementConflictError("replica obligation requires the stored output membership")
             node_id = _opaque(value.node_id, NodeID, "replica node_id")
             expected = DropObjectReplica(
                 member.object_id, member.publication_id.attempt_id,
@@ -666,7 +643,6 @@ class OutputOwnerPublicationRetirementReceipt:
 
     plan: OutputOwnerPublicationRetirementPlan
     released_edges: tuple[ReleaseContainedReferenceReply, ...]
-    graph_receipts: tuple[ContainedGraphManifestReceipt, ...]
     dropped_replicas: tuple[DropObjectReplicaReply | NodeDeathRecord, ...]
     disposition: OutputOwnerPublicationDisposition
 
@@ -680,11 +656,11 @@ class OutputOwnerPublicationRetirementReceipt:
             raise ValueError("retirement receipt requires a committed disposition")
         plan = replace(self.plan)
         proofs = _validate_output_retirement_proofs(
-            plan, self.released_edges, self.graph_receipts, self.dropped_replicas,
+            plan, self.released_edges, self.dropped_replicas,
         )
         object.__setattr__(self, "plan", plan)
         for name, value in zip(
-            ("released_edges", "graph_receipts", "dropped_replicas"), proofs
+            ("released_edges", "dropped_replicas"), proofs
         ):
             object.__setattr__(self, name, value)
 
@@ -710,170 +686,6 @@ class TaskOutputAttemptAdvancePlan:
             raise InvalidObjectTransitionError(
                 "next task attempt number must increase"
             )
-
-
-@dataclass(frozen=True)
-class TargetOutputAttemptAdvancePlan:
-    """CAS only selected return slots to one targeted execution.
-
-    Unlike :class:`TaskOutputAttemptAdvancePlan`, this plan deliberately owns
-    an expected epoch per target.  Partial reconstruction leaves healthy
-    siblings at their existing producer attempts, and two independently lost
-    targets can therefore enter one not-yet-started session from different
-    historical attempts.
-    """
-
-    execution: TargetExecutionKey
-    expected_attempts: tuple[tuple[ObjectID, AttemptID], ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.execution, TargetExecutionKey):
-            raise TypeError("execution must be a TargetExecutionKey")
-        values = tuple(self.expected_attempts)
-        if any(
-            not isinstance(item, tuple) or len(item) != 2
-            for item in values
-        ):
-            raise TypeError(
-                "expected_attempts must contain (ObjectID, AttemptID) pairs"
-            )
-        object_ids = tuple(object_id for object_id, _ in values)
-        if object_ids != self.execution.target_output_ids:
-            raise ValueError(
-                "expected attempts must exactly follow targeted output order"
-            )
-        for object_id, attempt_id in values:
-            if not isinstance(object_id, ObjectID):
-                raise TypeError("expected attempt key must be an ObjectID")
-            if not isinstance(attempt_id, AttemptID):
-                raise TypeError("expected producer epoch must be an AttemptID")
-            if attempt_id.task_id != self.execution.task_id:
-                raise ValueError(
-                    "expected producer epoch belongs to another TaskID"
-                )
-            if (
-                self.execution.attempt_id.attempt_number
-                <= attempt_id.attempt_number
-            ):
-                raise InvalidObjectTransitionError(
-                    "target execution attempt must advance every producer epoch"
-                )
-        object.__setattr__(self, "expected_attempts", values)
-
-
-@dataclass(frozen=True)
-class TargetOutputRetryAdvancePlan:
-    """Advance one already-started target execution after system failure."""
-
-    expected_execution: TargetExecutionKey
-    next_execution: TargetExecutionKey
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.expected_execution, TargetExecutionKey):
-            raise TypeError("expected_execution must be a TargetExecutionKey")
-        if not isinstance(self.next_execution, TargetExecutionKey):
-            raise TypeError("next_execution must be a TargetExecutionKey")
-        if self.expected_execution.manifest != self.next_execution.manifest:
-            raise ValueError("target retry cannot change its frozen target set")
-        if (
-            self.next_execution.attempt_id.attempt_number
-            <= self.expected_execution.attempt_id.attempt_number
-        ):
-            raise InvalidObjectTransitionError(
-                "target retry attempt number must increase"
-            )
-
-
-@dataclass(frozen=True)
-class TargetOutputPublicationPlan:
-    """One ordered result descriptor for every selected return slot."""
-
-    execution: TargetExecutionKey
-    results: tuple[ResultDescriptor, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.execution, TargetExecutionKey):
-            raise TypeError("execution must be a TargetExecutionKey")
-        results = tuple(self.results)
-        if any(not isinstance(result, ResultDescriptor) for result in results):
-            raise TypeError("results must contain ResultDescriptor values")
-        if (
-            tuple(result.object_id for result in results)
-            != self.execution.target_output_ids
-        ):
-            raise ValueError(
-                "result descriptors must exactly match targeted output order"
-            )
-        if len({result.owner_worker_id for result in results}) != 1:
-            raise ValueError("all targeted outputs must have one logical owner")
-        object.__setattr__(self, "results", results)
-
-
-@dataclass(frozen=True)
-class TargetOutputErrorPlan:
-    """One terminal execution error applied to every selected slot."""
-
-    execution: TargetExecutionKey
-    error: object
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.execution, TargetExecutionKey):
-            raise TypeError("execution must be a TargetExecutionKey")
-
-
-@dataclass(frozen=True)
-class TargetOutputTerminalErrorPlan:
-    """Fail lost/pending slots that may carry different producer epochs."""
-
-    manifest: TargetOutputManifest
-    expected_attempts: tuple[tuple[ObjectID, AttemptID], ...]
-    error: object
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.manifest, TargetOutputManifest):
-            raise TypeError("manifest must be a TargetOutputManifest")
-        values = tuple(self.expected_attempts)
-        if tuple(object_id for object_id, _ in values) != (
-            self.manifest.target_output_ids
-        ):
-            raise ValueError(
-                "expected attempts must exactly follow terminal target order"
-            )
-        for object_id, attempt_id in values:
-            if not isinstance(object_id, ObjectID):
-                raise TypeError("terminal target must be an ObjectID")
-            if not isinstance(attempt_id, AttemptID):
-                raise TypeError("terminal expected epoch must be an AttemptID")
-            if attempt_id.task_id != self.manifest.task_id:
-                raise ValueError(
-                    "terminal expected epoch belongs to another TaskID"
-                )
-        object.__setattr__(self, "expected_attempts", values)
-
-
-@dataclass(frozen=True)
-class TargetExecutionStateCleanupPlan:
-    """Bounded cleanup of target-only receipts after final sibling GC."""
-
-    task_id: TaskID
-    advances: tuple[TargetOutputAttemptAdvancePlan, ...]
-    retries: tuple[TargetOutputRetryAdvancePlan, ...]
-    publications: tuple[TargetExecutionKey, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.task_id, TaskID):
-            raise TypeError("cleanup task_id must be a TaskID")
-        if any(
-            plan.execution.task_id != self.task_id for plan in self.advances
-        ):
-            raise ValueError("cleanup advance belongs to another TaskID")
-        if any(
-            plan.expected_execution.task_id != self.task_id
-            for plan in self.retries
-        ):
-            raise ValueError("cleanup retry belongs to another TaskID")
-        if any(key.task_id != self.task_id for key in self.publications):
-            raise ValueError("cleanup publication belongs to another TaskID")
 
 
 @dataclass(frozen=True)
@@ -956,13 +768,16 @@ class _ObjectOwnerEntry:
     # integrity metadata of a stored result.  Locations may later grow, but an
     # exact TaskReply replay may not silently change its original node, size,
     # checksum, owner, or ObjectID.  Attempt identity remains in
-    # ``current_attempt`` and is advanced atomically with all siblings.
+    # ``current_attempt`` and advances only after old effects are retired.
     canonical_stored_result: ResultDescriptor | None = None
-    # Unified batches share byte-free metadata. Each entry keeps only its own
-    # inline_data/canonical_stored_result; never a sibling's result envelope.
+    # Put has no TaskSpec or publication membership. Freeze its metadata-only
+    # identity so equal inline bytes cannot replay with another owner or Node.
+    put_identity: tuple | None = None
+    # Publication metadata is byte-free; payloads remain in inline_data or
+    # the object store described by canonical_stored_result.
     output_publication: OutputOwnerPublicationMembership | None = None
     # Separate from collection_pending: reference releases remain legal while
-    # GCS retires the graph/pins for a lost publishing Node.
+    # the owner retires child pins and replicas from an old publication.
     output_retirement_id: str | None = None
     local_tokens: set[ReferenceToken] = field(default_factory=set)
     submitted_tokens: set[TaskReferenceHold] = field(default_factory=set)
@@ -986,9 +801,8 @@ class _ObjectOwnerEntry:
     retained_borrower_tokens: dict[TaskReferenceHold, ReferenceToken] = field(
         default_factory=dict
     )
-    # The complete container identity is required for authoritative Worker
-    # death cleanup.  Legacy token-only holds remain explicitly distinguishable
-    # and are never guessed to belong to a Worker incarnation.
+    # The complete container identity binds each hold to the Worker
+    # incarnation responsible for releasing it.
     contained_holds: set[IncomingContainedReferenceHold] = field(
         default_factory=set
     )
@@ -1039,12 +853,10 @@ class _ObjectOwnerEntry:
 
 @dataclass
 class _TaskLineageAuthority:
-    """Task-scoped release authority shared by every return ObjectID.
+    """Release authority for the producer's retained dependencies.
 
-    Producer dependencies belong to the logical task, not to an arbitrary
-    return slot.  Keeping this record outside ``_ObjectOwnerEntry`` means one
-    sibling can already be COLLECTING while another completes without moving
-    mutable obligations between entries.
+    These holds survive attempt replacement and are claimed by the single
+    output's final metadata collection.
     """
 
     task_id: TaskID
@@ -1104,19 +916,6 @@ class ObjectOwnerTable:
         # only their retired canonical identity, never the GC plan or payload.
         self._stored_collection_history: dict[ObjectID, _StoredCollectionIdentity] = {}
         self._task_lineage: dict[TaskID, _TaskLineageAuthority] = {}
-        # Targeted attempt replay needs transaction identity, not merely the
-        # coincidental fact that slots are PENDING at the requested epoch.
-        # Otherwise an unrelated advance to the same attempt number could be
-        # mistaken for this plan's idempotent commit.
-        self._committed_target_advances: set[
-            TargetOutputAttemptAdvancePlan
-        ] = set()
-        self._committed_target_retries: set[
-            TargetOutputRetryAdvancePlan
-        ] = set()
-        self._target_publication_receipts: dict[
-            TargetExecutionKey, tuple[ResultDescriptor, ...]
-        ] = {}
         self._output_publication_receipts: dict[
             OutputPublicationID, OutputPublicationManifest
         ] = {}
@@ -1194,9 +993,8 @@ class ObjectOwnerTable:
     ) -> TaskOutputRegistrationPlan:
         """Preflight a complete ordinary-task output registration.
 
-        No entry or token is changed.  A manifest may be wholly absent (first
-        registration) or wholly present with the exact same lineage (replay);
-        a partial manifest is always corruption, never a replay target.
+        No entry or token is changed. The output must be absent for first
+        registration or retain the exact same lineage for registration replay.
         """
 
         plan = TaskOutputRegistrationPlan.for_task_spec(
@@ -1209,7 +1007,7 @@ class ObjectOwnerTable:
     def commit_register_task_outputs(
         self, plan: TaskOutputRegistrationPlan
     ) -> None:
-        """Atomically register every output in a validated manifest."""
+        """Register the task's output under the owner lock."""
 
         if not isinstance(plan, TaskOutputRegistrationPlan):
             raise TypeError("plan must be a TaskOutputRegistrationPlan")
@@ -1229,9 +1027,8 @@ class ObjectOwnerTable:
                     self._entries[object_id] = entry
                 return
 
-            # Exact registration replay may attach the handles created for a
-            # replayed caller.  Validation above covers the whole batch before
-            # any token becomes visible.
+            # An exact registration replay may attach the caller's handle
+            # only after the output identity has been validated.
             for object_id, local_token in zip(
                 plan.execution.output_ids, plan.local_tokens
             ):
@@ -1274,16 +1071,9 @@ class ObjectOwnerTable:
                 "outgoing_lineage_edges must contain LineageReferenceEdge values"
             )
         with self._lock:
-            present = tuple(
-                object_id in self._entries
-                for object_id in plan.execution.output_ids
-            )
-            if not any(present):
+            execution = _execution(plan.execution)
+            if execution.output_ids[0] not in self._entries:
                 return False
-            if not all(present):
-                raise InvalidObjectTransitionError(
-                    "cannot abort a partially registered output manifest"
-                )
             if any(
                 edge.producer_object_id not in plan.execution.output_ids
                 for edge in expected_edges
@@ -1332,26 +1122,13 @@ class ObjectOwnerTable:
     def _validate_register_task_outputs_locked(
         self, plan: TaskOutputRegistrationPlan
     ) -> bool:
-        execution = plan.execution
-        collected = [
-            object_id
-            for object_id in execution.output_ids
-            if object_id in self._collected
-        ]
-        if collected:
+        execution = _execution(plan.execution)
+        object_id = execution.output_ids[0]
+        if object_id in self._collected:
             raise ObjectAlreadyRegisteredError(
-                "task output was already collected: {!r}".format(collected[0])
+                "task output was already collected: {!r}".format(object_id)
             )
-        present = [
-            object_id
-            for object_id in execution.output_ids
-            if object_id in self._entries
-        ]
-        if present and len(present) != execution.num_returns:
-            raise ObjectAlreadyRegisteredError(
-                "task output manifest is only partially registered"
-            )
-        if not present:
+        if object_id not in self._entries:
             return False
         for object_id, local_token in zip(
             execution.output_ids, plan.local_tokens
@@ -1462,10 +1239,7 @@ class ObjectOwnerTable:
                     changed = True
 
                 for hold in tuple(entry.contained_holds):
-                    if (
-                        not isinstance(hold, ContainedReferenceHold)
-                        or hold.container_owner_worker_id != worker_id
-                    ):
+                    if hold.container_owner_worker_id != worker_id:
                         continue
                     entry.contained_holds.remove(hold)
                     self._released_contained_holds.add((object_id, hold))
@@ -1546,9 +1320,8 @@ class ObjectOwnerTable:
                 released_lineage_tokens=frozenset(
                     entry.released_lineage_tokens
                 ),
-                # Compatibility diagnostic projection: task obligations are
-                # rendered against the queried sibling without being stored
-                # or moved through that sibling entry.
+                # Project the task's retained dependencies into this output's
+                # diagnostic view without duplicating release authority.
                 outgoing_lineage_edges=(
                     frozenset(entry.outgoing_lineage_edges) | task_edges
                 ),
@@ -1558,7 +1331,7 @@ class ObjectOwnerTable:
                 output_retirement_id=entry.output_retirement_id,
             )
             # Unified publication metadata is a trust boundary, including the
-            # slot's legacy descriptor/edge projections. A frozen dataclass
+            # slot's descriptor/edge projections. A frozen dataclass
             # can still be mutated through object.__setattr__; no public view
             # may alias the canonical manifest or its nested identity values.
             return (deepcopy(snapshot) if entry.output_publication is not None
@@ -1648,7 +1421,7 @@ class ObjectOwnerTable:
     def commit_advance_task_outputs(
         self, plan: TaskOutputAttemptAdvancePlan
     ) -> bool:
-        """Atomically reset every sibling to one new publishing attempt."""
+        """Reset the task output to one new publishing attempt."""
 
         if not isinstance(plan, TaskOutputAttemptAdvancePlan):
             raise TypeError("plan must be a TaskOutputAttemptAdvancePlan")
@@ -1692,256 +1465,33 @@ class ObjectOwnerTable:
         plan = self.validate_advance_task_outputs(expected, next_attempt)
         return self.commit_advance_task_outputs(plan)
 
-    def validate_advance_target_outputs(
-        self,
-        execution: TargetExecutionKey,
-        expected_attempts: Mapping[ObjectID, AttemptID],
-    ) -> TargetOutputAttemptAdvancePlan:
-        """Preflight a target-only producer-epoch CAS without mutation.
-
-        The map is intentionally explicit rather than projected from the
-        task's latest attempt.  A healthy sibling may still be produced by
-        attempt 0 while another slot is reconstructed by attempt 1, and a
-        later session may merge losses from both epochs.
-        """
-
-        if not isinstance(execution, TargetExecutionKey):
-            raise TypeError("execution must be a TargetExecutionKey")
-        if not isinstance(expected_attempts, Mapping):
-            raise TypeError("expected_attempts must be a mapping")
-        if set(expected_attempts) != set(execution.target_output_ids):
-            raise ValueError(
-                "expected attempts must exactly cover targeted outputs"
-            )
-        plan = TargetOutputAttemptAdvancePlan(
-            execution,
-            tuple(
-                (object_id, expected_attempts[object_id])
-                for object_id in execution.target_output_ids
-            ),
-        )
-        with self._lock:
-            self._validate_advance_target_outputs_locked(plan)
-        return plan
-
-    def commit_advance_target_outputs(
-        self, plan: TargetOutputAttemptAdvancePlan
-    ) -> bool:
-        """Atomically reset only target slots; every sibling is preflighted."""
-
-        if not isinstance(plan, TargetOutputAttemptAdvancePlan):
-            raise TypeError(
-                "plan must be a TargetOutputAttemptAdvancePlan"
-            )
-        with self._lock:
-            if plan in self._committed_target_advances:
-                return True
-            action = self._validate_advance_target_outputs_locked(plan)
-            if action == "stale":
-                return False
-            self.commit_validated_advance_target_outputs(plan)
-            self._committed_target_advances.add(plan)
-            return True
-
-    def commit_validated_advance_target_outputs(
-        self, plan: TargetOutputAttemptAdvancePlan
-    ) -> None:
-        """Apply a caller-held target plan using assignment only.
-
-        The caller must retain the composition lock from validation through
-        commit.  Non-target entries are not read or written here.
-        """
-
-        self._require_no_output_retirements_locked(tuple(
-            self._entries[object_id]
-            for object_id in plan.execution.target_output_ids
-        ))
-        self._require_output_memberships_retired_locked(tuple(
-            self._entries[object_id] for object_id in plan.execution.target_output_ids
-        ))
-        for object_id in plan.execution.target_output_ids:
-            entry = self._entries[object_id]
-            entry.current_attempt = plan.execution.attempt_id
-            entry.state = ObjectState.PENDING
-            entry.inline_data = None
-            entry.error = None
-            entry.canonical_stored_result = None
-        self._committed_target_advances.add(plan)
-
-    def _validate_advance_target_outputs_locked(
-        self, plan: TargetOutputAttemptAdvancePlan
-    ) -> str:
-        execution = plan.execution
-        entries = tuple(
-            self._entry(object_id)
-            for object_id in execution.full_output_ids
-        )
-        task_spec = entries[0].producer_task_spec
-        if not isinstance(task_spec, TaskSpec):
-            raise InvalidObjectTransitionError(
-                "targeted task output advance requires producer lineage"
-            )
-        if (
-            TaskExecutionKey.from_task_spec(task_spec).manifest
-            != execution.manifest.full_manifest
-        ):
-            raise InvalidObjectTransitionError(
-                "registered producer lineage changed its output manifest"
-            )
-        if any(entry.producer_task_spec != task_spec for entry in entries[1:]):
-            raise InvalidObjectTransitionError(
-                "task output siblings disagree on producer lineage"
-            )
-        if any(entry.collection_pending for entry in entries):
-            raise ObjectCollectionInProgressError(
-                "task output metadata collection is pending"
-            )
-        self._require_no_output_retirements_locked(entries)
-
-        expected = dict(plan.expected_attempts)
-        targets = tuple(
-            self._entries[object_id]
-            for object_id in execution.target_output_ids
-        )
-        next_attempt = execution.attempt_id
-        if any(
-            entry.current_attempt != expected[entry.object_id]
-            for entry in targets
-        ):
-            return "stale"
-        self._require_output_memberships_retired_locked(targets)
-        for entry in targets:
-            if entry.state is not ObjectState.LOST:
-                raise InvalidObjectTransitionError(
-                    "targeted reconstruction requires LOST output {!r}"
-                    .format(entry.object_id)
-                )
-            if entry.location_attempts:
-                raise InvalidObjectTransitionError(
-                    "cannot advance a target while replicas remain"
-                )
-        return "apply"
-
-    def validate_retry_target_outputs(
-        self, expected: TargetExecutionKey, next_attempt: AttemptID
-    ) -> TargetOutputRetryAdvancePlan:
-        """Preflight SYSTEM retry of one frozen target execution."""
-
-        plan = TargetOutputRetryAdvancePlan(
-            expected, expected.for_attempt(next_attempt)
-        )
-        with self._lock:
-            self._validate_retry_target_outputs_locked(plan)
-        return plan
-
-    def commit_retry_target_outputs(
-        self, plan: TargetOutputRetryAdvancePlan
-    ) -> bool:
-        if not isinstance(plan, TargetOutputRetryAdvancePlan):
-            raise TypeError("plan must be a TargetOutputRetryAdvancePlan")
-        with self._lock:
-            if plan in self._committed_target_retries:
-                return True
-            if not self._validate_retry_target_outputs_locked(plan):
-                return False
-            self.commit_validated_retry_target_outputs(plan)
-            self._committed_target_retries.add(plan)
-            return True
-
-    def commit_validated_retry_target_outputs(
-        self, plan: TargetOutputRetryAdvancePlan
-    ) -> None:
-        self._require_no_output_retirements_locked(tuple(
-            self._entries[object_id]
-            for object_id in plan.expected_execution.target_output_ids
-        ))
-        self._require_output_memberships_retired_locked(tuple(
-            self._entries[object_id] for object_id in plan.expected_execution.target_output_ids
-        ))
-        for object_id in plan.expected_execution.target_output_ids:
-            entry = self._entries[object_id]
-            entry.current_attempt = plan.next_execution.attempt_id
-            entry.state = ObjectState.PENDING
-            entry.inline_data = None
-            entry.error = None
-            entry.location_attempts.clear()
-            entry.canonical_stored_result = None
-        self._committed_target_retries.add(plan)
-
-    def _validate_retry_target_outputs_locked(
-        self, plan: TargetOutputRetryAdvancePlan
-    ) -> bool:
-        execution = plan.expected_execution
-        entries = tuple(
-            self._entry(object_id) for object_id in execution.full_output_ids
-        )
-        task_spec = entries[0].producer_task_spec
-        if (
-            not isinstance(task_spec, TaskSpec)
-            or TaskExecutionKey.from_task_spec(task_spec).manifest
-            != execution.manifest.full_manifest
-            or any(
-                entry.producer_task_spec != task_spec for entry in entries[1:]
-            )
-        ):
-            raise InvalidObjectTransitionError(
-                "target retry disagrees with producer lineage"
-            )
-        if any(entry.collection_pending for entry in entries):
-            raise ObjectCollectionInProgressError(
-                "task output metadata collection is pending"
-            )
-        self._require_no_output_retirements_locked(entries)
-        targets = tuple(
-            self._entries[object_id]
-            for object_id in execution.target_output_ids
-        )
-        if any(
-            entry.current_attempt != execution.attempt_id for entry in targets
-        ):
-            return False
-        self._require_output_memberships_retired_locked(targets)
-        if any(
-            entry.state not in (ObjectState.PENDING, ObjectState.LOST)
-            for entry in targets
-        ):
-            raise InvalidObjectTransitionError(
-                "target retry requires pending or lost current outputs"
-            )
-        return True
-
     def _validate_advance_task_outputs_locked(
         self, plan: TaskOutputAttemptAdvancePlan
     ) -> str:
         entries, _ = self._task_output_entries_locked(plan.expected)
-        if any(entry.collection_pending for entry in entries):
+        entry = entries[0]
+        if entry.collection_pending:
             raise ObjectCollectionInProgressError(
                 "task output metadata collection is pending"
             )
         self._require_no_output_retirements_locked(entries)
-        attempts = {entry.current_attempt for entry in entries}
         expected_attempt = plan.expected.attempt_id
         next_attempt = plan.next_execution.attempt_id
-        if attempts == {next_attempt}:
+        if entry.current_attempt == next_attempt:
             return "replay"
-        if attempts != {expected_attempt}:
-            if len(attempts) == 1:
-                return "stale"
-            raise InvalidObjectTransitionError(
-                "task output siblings disagree on their current attempt"
-            )
+        if entry.current_attempt != expected_attempt:
+            return "stale"
         self._require_output_memberships_retired_locked(entries)
-        for entry in entries:
-            if entry.state not in (ObjectState.PENDING, ObjectState.LOST):
-                raise InvalidObjectTransitionError(
-                    "cannot advance task output {!r} from state {}".format(
-                        entry.object_id, entry.state.value
-                    )
+        if entry.state not in (ObjectState.PENDING, ObjectState.LOST):
+            raise InvalidObjectTransitionError(
+                "cannot advance task output {!r} from state {}".format(
+                    entry.object_id, entry.state.value
                 )
-            if entry.location_attempts:
-                raise InvalidObjectTransitionError(
-                    "cannot advance a task output while replicas remain"
-                )
+            )
+        if entry.location_attempts:
+            raise InvalidObjectTransitionError(
+                "cannot advance a task output while replicas remain"
+            )
         return "apply"
 
     def publish_inline(
@@ -1973,6 +1523,81 @@ class ObjectOwnerTable:
             entry.inline_data = payload
             entry.error = None
             entry.canonical_stored_result = None
+            return True
+
+    def publish_put_value(
+        self, object_id: ObjectID, attempt: AttemptID,
+        descriptor: ResultDescriptor, edges: tuple[ContainedReferenceEdge, ...],
+    ) -> bool:
+        """Atomically publish a put value and its child-release obligations.
+
+        Core validates the publishing owner and final child pins before this
+        local commit. An exact replay checks identity without restoring bytes,
+        erased locations, or released references. Put has no producer lineage.
+        """
+        object_id, attempt = _object_id(object_id), _attempt(attempt)
+        _require_attempt(object_id, attempt, allow_none=False)
+        descriptor = _descriptor(descriptor)
+        if descriptor.object_id != object_id:
+            raise ValueError("put descriptor must name the registered object")
+        child_edges = {}
+        child_routes = {}
+        for edge in _sequence(edges, "put edges"):
+            if type(edge) is not ContainedReferenceEdge:
+                raise TypeError("put edges require ContainedReferenceEdge values")
+            edge = ContainedReferenceEdge(
+                _object_id(edge.container_object_id), _object_id(edge.contained_object_id),
+                _opaque(edge.contained_owner_worker_id, WorkerID, "child owner"),
+                edge.contained_owner_address, _string(edge.transfer_token, "transfer_token"),
+            )
+            if edge.container_object_id != object_id:
+                raise ValueError("put edge must name the published container")
+            route = (edge.contained_owner_worker_id, edge.contained_owner_address)
+            if child_routes.setdefault(edge.contained_object_id, route) != route:
+                raise ConflictingObjectResultError("put repeats a child with conflicting edge owner or address")
+            key = (edge.contained_object_id, edge.transfer_token)
+            if child_edges.setdefault(key, edge) != edge:
+                raise ConflictingObjectResultError("put repeats a child with conflicting edge identity")
+        edge_set = set(child_edges.values())
+        inline = descriptor.storage is ResultStorage.INLINE
+        identity = (attempt, descriptor.owner_worker_id, descriptor.node_id, descriptor.storage,
+                    descriptor.size_bytes, descriptor.checksum)
+        with self._lock:
+            entry = self._entry(object_id)
+            self._require_no_output_retirement_locked(entry)
+            if entry.collection_pending:
+                raise ObjectCollectionInProgressError("put metadata collection is pending")
+            if entry.current_attempt != attempt:
+                return False
+            if (entry.producer_task_spec is not None or object_id.task_id in self._task_lineage
+                    or entry.outgoing_lineage_edges or entry.output_publication is not None):
+                raise InvalidObjectTransitionError("put cannot publish task lineage or publication membership")
+            if descriptor.owner_worker_id in self._dead_worker_cleanups:
+                return False
+            if entry.put_identity is not None:
+                valid = (entry.put_identity == identity and entry.outgoing_contained_edges == edge_set
+                         and entry.error is None and (
+                    inline and entry.state is ObjectState.READY_INLINE
+                    and entry.inline_data == descriptor.inline_data
+                    and entry.canonical_stored_result is None and not entry.location_attempts
+                    or not inline and entry.state is ObjectState.READY_STORED
+                    and entry.inline_data is None and entry.canonical_stored_result == descriptor
+                    and bool(entry.location_attempts)
+                    and all(epoch == attempt for epoch in entry.location_attempts.values())))
+                if not valid:
+                    raise ConflictingObjectResultError("put replay changed identity, edges, or available result")
+                return True
+            self._require_publishable(entry)
+            if (entry.inline_data is not None or entry.error is not None or entry.canonical_stored_result is not None
+                    or entry.location_attempts or entry.outgoing_contained_edges):
+                raise ConflictingObjectResultError("put requires pristine pending result metadata")
+            locations = {} if inline else {descriptor.node_id: attempt}
+            entry.inline_data = descriptor.inline_data if inline else None
+            entry.canonical_stored_result = None if inline else descriptor
+            entry.location_attempts = locations
+            entry.outgoing_contained_edges = edge_set
+            entry.put_identity = identity
+            entry.state = ObjectState.READY_INLINE if inline else ObjectState.READY_STORED
             return True
 
     def publish_stored(
@@ -2164,477 +1789,6 @@ class ObjectOwnerTable:
                 return None
         return plan
 
-    def validate_publish_target_outputs(
-        self,
-        execution: TargetExecutionKey,
-        results: tuple[ResultDescriptor, ...],
-    ) -> TargetOutputPublicationPlan | None:
-        """Preflight success for selected slots without reading siblings."""
-
-        plan = TargetOutputPublicationPlan(execution, tuple(results))
-        with self._lock:
-            if not self._validate_publish_target_outputs_locked(plan):
-                return None
-        return plan
-
-    def commit_publish_target_outputs(
-        self, plan: TargetOutputPublicationPlan
-    ) -> bool:
-        """Publish every target under one owner lock or publish none."""
-
-        if not isinstance(plan, TargetOutputPublicationPlan):
-            raise TypeError("plan must be a TargetOutputPublicationPlan")
-        with self._lock:
-            self._require_no_output_retirements_locked(tuple(
-                self._entries[object_id]
-                for object_id in plan.execution.target_output_ids
-            ))
-            receipt = self._target_publication_receipts.get(plan.execution)
-            if receipt is not None:
-                if receipt != plan.results:
-                    raise ConflictingObjectResultError(
-                        "target execution replay changed its result manifest"
-                    )
-                return True
-            if not self._validate_publish_target_outputs_locked(plan):
-                return False
-            self.commit_validated_publish_target_outputs(plan)
-            self._target_publication_receipts[plan.execution] = plan.results
-            return True
-
-    def commit_validated_publish_target_outputs(
-        self, plan: TargetOutputPublicationPlan
-    ) -> None:
-        """Apply a validated targeted publication using assignments only."""
-
-        self._require_no_output_retirements_locked(tuple(
-            self._entries[object_id]
-            for object_id in plan.execution.target_output_ids
-        ))
-        for descriptor in plan.results:
-            entry = self._entries[descriptor.object_id]
-            if descriptor.storage is ResultStorage.INLINE:
-                entry.state = ObjectState.READY_INLINE
-                entry.inline_data = descriptor.inline_data
-                entry.error = None
-                entry.canonical_stored_result = None
-            else:
-                entry.state = ObjectState.READY_STORED
-                entry.inline_data = None
-                entry.error = None
-                entry.canonical_stored_result = descriptor
-                entry.location_attempts[descriptor.node_id] = (
-                    plan.execution.attempt_id
-                )
-        self._target_publication_receipts[plan.execution] = plan.results
-
-    def publish_target_outputs(
-        self,
-        execution: TargetExecutionKey,
-        results: tuple[ResultDescriptor, ...],
-    ) -> bool:
-        plan = self.validate_publish_target_outputs(execution, results)
-        return (
-            False if plan is None
-            else self.commit_publish_target_outputs(plan)
-        )
-
-    def targeted_publication_receipt(
-        self, execution: TargetExecutionKey
-    ) -> tuple[ResultDescriptor, ...] | None:
-        """Return immutable proof that every selected slot was published."""
-
-        if not isinstance(execution, TargetExecutionKey):
-            raise TypeError("execution must be a TargetExecutionKey")
-        with self._lock:
-            return self._target_publication_receipts.get(execution)
-
-    def validate_forget_target_execution_state(
-        self, task_id: TaskID
-    ) -> TargetExecutionStateCleanupPlan:
-        """Plan bounded receipt cleanup after every sibling is collected."""
-
-        if not isinstance(task_id, TaskID):
-            raise TypeError("task_id must be a TaskID")
-        with self._lock:
-            if any(object_id.task_id == task_id for object_id in self._entries):
-                raise InvalidObjectTransitionError(
-                    "target execution state survives until the final sibling"
-                )
-            advances = tuple(
-                sorted(
-                    (
-                        plan for plan in self._committed_target_advances
-                        if plan.execution.task_id == task_id
-                    ),
-                    key=repr,
-                )
-            )
-            retries = tuple(
-                sorted(
-                    (
-                        plan for plan in self._committed_target_retries
-                        if plan.expected_execution.task_id == task_id
-                    ),
-                    key=repr,
-                )
-            )
-            publications = tuple(
-                sorted(
-                    (
-                        key for key in self._target_publication_receipts
-                        if key.task_id == task_id
-                    ),
-                    key=repr,
-                )
-            )
-            return TargetExecutionStateCleanupPlan(
-                task_id, advances, retries, publications
-            )
-
-    def commit_forget_target_execution_state(
-        self, plan: TargetExecutionStateCleanupPlan
-    ) -> bool:
-        """Apply a validated final-GC cleanup using discard/pop only."""
-
-        if not isinstance(plan, TargetExecutionStateCleanupPlan):
-            raise TypeError(
-                "plan must be a TargetExecutionStateCleanupPlan"
-            )
-        with self._lock:
-            if any(
-                object_id.task_id == plan.task_id for object_id in self._entries
-            ):
-                raise InvalidObjectTransitionError(
-                    "target execution state survives until the final sibling"
-                )
-            before = (
-                len(self._committed_target_advances)
-                + len(self._committed_target_retries)
-                + len(self._target_publication_receipts)
-            )
-            for advance in plan.advances:
-                self._committed_target_advances.discard(advance)
-            for retry in plan.retries:
-                self._committed_target_retries.discard(retry)
-            for execution in plan.publications:
-                self._target_publication_receipts.pop(execution, None)
-            after = (
-                len(self._committed_target_advances)
-                + len(self._committed_target_retries)
-                + len(self._target_publication_receipts)
-            )
-            return after != before
-
-    def forget_target_execution_state(self, task_id: TaskID) -> bool:
-        plan = self.validate_forget_target_execution_state(task_id)
-        return self.commit_forget_target_execution_state(plan)
-
-    def _validate_publish_target_outputs_locked(
-        self, plan: TargetOutputPublicationPlan
-    ) -> bool:
-        execution = plan.execution
-        entries = tuple(
-            self._entry(object_id) for object_id in execution.full_output_ids
-        )
-        self._require_no_output_retirements_locked(entries)
-        receipt = self._target_publication_receipts.get(execution)
-        if receipt is not None:
-            if receipt != plan.results:
-                raise ConflictingObjectResultError(
-                    "target execution replay changed its result manifest"
-                )
-            return True
-        # Full-manifest inspection is lineage validation only.  Healthy slot
-        # state, descriptor, producer epoch, and locations remain unconstrained
-        # and are never mutated by targeted publication.
-        task_spec = entries[0].producer_task_spec
-        if not isinstance(task_spec, TaskSpec):
-            raise InvalidObjectTransitionError(
-                "targeted publication requires producer lineage"
-            )
-        if (
-            TaskExecutionKey.from_task_spec(task_spec).manifest
-            != execution.manifest.full_manifest
-        ):
-            raise InvalidObjectTransitionError(
-                "registered producer lineage changed its output manifest"
-            )
-        if any(entry.producer_task_spec != task_spec for entry in entries[1:]):
-            raise InvalidObjectTransitionError(
-                "task output siblings disagree on producer lineage"
-            )
-        if any(entry.collection_pending for entry in entries):
-            raise ObjectCollectionInProgressError(
-                "task output metadata collection is pending"
-            )
-        self._require_no_output_retirements_locked(entries)
-        if any(
-            result.owner_worker_id != task_spec.owner_worker_id
-            for result in plan.results
-        ):
-            raise ValueError(
-                "result owner must match the registered task output owner"
-            )
-
-        modes: set[str] = set()
-        targets = tuple(
-            self._entries[object_id]
-            for object_id in execution.target_output_ids
-        )
-        if any(
-            entry.current_attempt != execution.attempt_id for entry in targets
-        ):
-            return False
-        for entry, descriptor in zip(targets, plan.results):
-            if descriptor.storage is ResultStorage.INLINE:
-                if entry.state is ObjectState.READY_INLINE:
-                    if entry.inline_data != descriptor.inline_data:
-                        raise ConflictingObjectResultError(
-                            "attempt published conflicting inline target output"
-                        )
-                    modes.add("replay")
-                    continue
-                self._require_publishable(entry)
-                modes.add("apply")
-                continue
-            if entry.state is ObjectState.READY_STORED:
-                if entry.canonical_stored_result != descriptor:
-                    raise ConflictingObjectResultError(
-                        "attempt replay changed targeted output identity or "
-                        "integrity metadata"
-                    )
-                if (
-                    entry.location_attempts.get(descriptor.node_id, _MISSING)
-                    != execution.attempt_id
-                ):
-                    raise ConflictingObjectResultError(
-                        "target output location has a different attempt epoch"
-                    )
-                modes.add("replay")
-                continue
-            self._require_publishable(entry)
-            modes.add("apply")
-        if len(modes) != 1:
-            raise InvalidObjectTransitionError(
-                "target output set is only partially published"
-            )
-        return True
-
-    def validate_publish_target_error(
-        self, execution: TargetExecutionKey, error: object
-    ) -> TargetOutputErrorPlan | None:
-        """Preflight one terminal error for exactly the target set."""
-
-        plan = TargetOutputErrorPlan(execution, error)
-        with self._lock:
-            if not self._validate_publish_target_error_locked(plan):
-                return None
-        return plan
-
-    def commit_publish_target_error(
-        self, plan: TargetOutputErrorPlan
-    ) -> bool:
-        """Atomically fail every selected output and no healthy sibling."""
-
-        if not isinstance(plan, TargetOutputErrorPlan):
-            raise TypeError("plan must be a TargetOutputErrorPlan")
-        with self._lock:
-            self._require_no_output_retirements_locked(tuple(
-                self._entries[object_id]
-                for object_id in plan.execution.target_output_ids
-            ))
-            if not self._validate_publish_target_error_locked(plan):
-                return False
-            self.commit_validated_publish_target_error(plan)
-            return True
-
-    def commit_validated_publish_target_error(
-        self, plan: TargetOutputErrorPlan
-    ) -> None:
-        self._require_no_output_retirements_locked(tuple(
-            self._entries[object_id]
-            for object_id in plan.execution.target_output_ids
-        ))
-        for object_id in plan.execution.target_output_ids:
-            entry = self._entries[object_id]
-            entry.state = ObjectState.ERROR
-            entry.error = plan.error
-            entry.inline_data = None
-            entry.canonical_stored_result = None
-
-    def publish_target_error(
-        self, execution: TargetExecutionKey, error: object
-    ) -> bool:
-        plan = self.validate_publish_target_error(execution, error)
-        return False if plan is None else self.commit_publish_target_error(plan)
-
-    def _validate_publish_target_error_locked(
-        self, plan: TargetOutputErrorPlan
-    ) -> bool:
-        execution = plan.execution
-        entries = tuple(
-            self._entry(object_id) for object_id in execution.full_output_ids
-        )
-        task_spec = entries[0].producer_task_spec
-        if not isinstance(task_spec, TaskSpec):
-            raise InvalidObjectTransitionError(
-                "targeted error requires producer lineage"
-            )
-        if (
-            TaskExecutionKey.from_task_spec(task_spec).manifest
-            != execution.manifest.full_manifest
-            or any(
-                entry.producer_task_spec != task_spec for entry in entries[1:]
-            )
-        ):
-            raise InvalidObjectTransitionError(
-                "task output siblings disagree on producer lineage"
-            )
-        if any(entry.collection_pending for entry in entries):
-            raise ObjectCollectionInProgressError(
-                "task output metadata collection is pending"
-            )
-        self._require_no_output_retirements_locked(entries)
-        targets = tuple(
-            self._entries[object_id]
-            for object_id in execution.target_output_ids
-        )
-        if any(
-            entry.current_attempt != execution.attempt_id for entry in targets
-        ):
-            return False
-        modes: set[str] = set()
-        for entry in targets:
-            if entry.state is ObjectState.ERROR:
-                if not _safely_equal(entry.error, plan.error):
-                    raise ConflictingObjectResultError(
-                        "attempt published conflicting target errors"
-                    )
-                modes.add("replay")
-                continue
-            self._require_publishable(entry)
-            modes.add("apply")
-        if len(modes) != 1:
-            raise InvalidObjectTransitionError(
-                "target output set is only partially failed"
-            )
-        return True
-
-    def validate_publish_terminal_target_error(
-        self, full_manifest: TaskOutputManifest,
-        expected_attempts: Mapping[ObjectID, AttemptID], error: object,
-    ) -> TargetOutputTerminalErrorPlan | None:
-        """Preflight terminal failure across active and queued targets."""
-
-        if not isinstance(full_manifest, TaskOutputManifest):
-            raise TypeError("full_manifest must be a TaskOutputManifest")
-        if not isinstance(expected_attempts, Mapping):
-            raise TypeError("expected_attempts must be a mapping")
-        selected = set(expected_attempts)
-        target_ids = tuple(
-            object_id for object_id in full_manifest.output_ids
-            if object_id in selected
-        )
-        if not target_ids or selected != set(target_ids):
-            raise ValueError(
-                "expected attempts must be a non-empty subset of the manifest"
-            )
-        plan = TargetOutputTerminalErrorPlan(
-            TargetOutputManifest(full_manifest, target_ids),
-            tuple(
-                (object_id, expected_attempts[object_id])
-                for object_id in target_ids
-            ),
-            error,
-        )
-        with self._lock:
-            if not self._validate_publish_terminal_target_error_locked(plan):
-                return None
-        return plan
-
-    def commit_publish_terminal_target_error(
-        self, plan: TargetOutputTerminalErrorPlan
-    ) -> bool:
-        if not isinstance(plan, TargetOutputTerminalErrorPlan):
-            raise TypeError(
-                "plan must be a TargetOutputTerminalErrorPlan"
-            )
-        with self._lock:
-            self._require_no_output_retirements_locked(tuple(
-                self._entries[object_id]
-                for object_id in plan.manifest.target_output_ids
-            ))
-            if not self._validate_publish_terminal_target_error_locked(plan):
-                return False
-            for object_id in plan.manifest.target_output_ids:
-                entry = self._entries[object_id]
-                entry.state = ObjectState.ERROR
-                entry.error = plan.error
-                entry.inline_data = None
-                entry.location_attempts.clear()
-                entry.canonical_stored_result = None
-            return True
-
-    def _validate_publish_terminal_target_error_locked(
-        self, plan: TargetOutputTerminalErrorPlan
-    ) -> bool:
-        entries = tuple(
-            self._entry(object_id)
-            for object_id in plan.manifest.full_output_ids
-        )
-        task_spec = entries[0].producer_task_spec
-        if (
-            not isinstance(task_spec, TaskSpec)
-            or TaskExecutionKey.from_task_spec(task_spec).manifest
-            != plan.manifest.full_manifest
-            or any(
-                entry.producer_task_spec != task_spec for entry in entries[1:]
-            )
-        ):
-            raise InvalidObjectTransitionError(
-                "terminal target error disagrees with producer lineage"
-            )
-        if any(entry.collection_pending for entry in entries):
-            raise ObjectCollectionInProgressError(
-                "task output metadata collection is pending"
-            )
-        self._require_no_output_retirements_locked(entries)
-        expected = dict(plan.expected_attempts)
-        targets = tuple(
-            self._entries[object_id]
-            for object_id in plan.manifest.target_output_ids
-        )
-        # A failed reconstruction does not erase the old result's cleanup
-        # identity. Core must retire any selected publication before exposing
-        # ERROR; otherwise its canonical descriptor would disappear while
-        # child/graph/replica obligations remained live.
-        self._require_output_memberships_retired_locked(targets)
-        if any(
-            entry.current_attempt != expected[entry.object_id]
-            for entry in targets
-        ):
-            return False
-        modes: set[str] = set()
-        for entry in targets:
-            if entry.state is ObjectState.ERROR:
-                if not _safely_equal(entry.error, plan.error):
-                    raise ConflictingObjectResultError(
-                        "terminal target carries another error"
-                    )
-                modes.add("replay")
-                continue
-            if entry.state not in (ObjectState.PENDING, ObjectState.LOST):
-                raise InvalidObjectTransitionError(
-                    "terminal target error requires pending or lost output"
-                )
-            modes.add("apply")
-        if len(modes) != 1:
-            raise InvalidObjectTransitionError(
-                "terminal target set is only partially failed"
-            )
-        return True
-
     def commit_publish_task_outputs(
         self, plan: TaskOutputPublicationPlan
     ) -> bool:
@@ -2701,7 +1855,7 @@ class ObjectOwnerTable:
     def validate_output_publication(
         self, plan: OutputOwnerPublicationPlan,
     ) -> OutputOwnerPublicationDisposition:
-        """Forecast one selected-output CAS without changing any slot."""
+        """Forecast the output CAS without changing result metadata."""
 
         plan = self._validated_output_publication_plan(plan)
         with self._lock:
@@ -2710,11 +1864,11 @@ class ObjectOwnerTable:
     def commit_output_publication(
         self, plan: OutputOwnerPublicationPlan,
     ) -> OutputOwnerPublicationReceipt:
-        """Publish all selected bytes/descriptors and slot edges atomically.
+        """Publish the result and its contained-reference edges atomically.
 
-        The caller owns remote pin/graph acknowledgements. This method owns
+        The caller owns remote child-pin acknowledgements. This method owns
         only the local CAS: complete validation and allocation precede the
-        first assignment, with the same table lock held through all slots.
+        first assignment, with the same table lock held through the commit.
         """
 
         plan = self._validated_output_publication_plan(plan)
@@ -2769,19 +1923,17 @@ class ObjectOwnerTable:
             raise OutputOwnerPublicationConflictError(
                 "output publication identity was rebound"
             )
-        if (any(object_id in self._collected for object_id in plan.output_ids)
-                or any((plan.publication_id, object_id) in self._retired_output_slots
-                       for object_id in plan.output_ids)
-                or any((object_id, plan.execution.attempt_id) in self._retired_output_attempts
-                       for object_id in plan.output_ids)
+        object_id = plan.output_ids[0]
+        if (object_id in self._collected
+                or (plan.publication_id, object_id) in self._retired_output_slots
+                or (object_id, plan.execution.attempt_id) in self._retired_output_attempts
                 or manifest.header.owner_worker_id in self._dead_worker_cleanups):
             return OutputOwnerPublicationDisposition.FENCED
-        entries = tuple(self._entry(object_id) for object_id in plan.output_ids)
-        task_spec = entries[0].producer_task_spec
+        entry = self._entry(object_id)
+        task_spec = entry.producer_task_spec
         if (
             not isinstance(task_spec, TaskSpec)
-            or tuple(task_spec.return_ids()) != plan.publication_id.full_output_ids
-            or any(entry.producer_task_spec != task_spec for entry in entries[1:])
+            or tuple(task_spec.return_ids()) != plan.output_ids
         ):
             raise OutputOwnerPublicationConflictError(
                 "output publication requires the canonical full producer lineage"
@@ -2791,92 +1943,63 @@ class ObjectOwnerTable:
             raise OutputOwnerPublicationConflictError(
                 "output publication owner and job must match registered lineage"
             )
-        # Healthy siblings are inspected for lineage only; their current
-        # attempts, storage, locations and collection state are not constraints
-        # on a targeted CAS. A collected sibling is already a terminal fact.
-        for object_id in plan.publication_id.full_output_ids:
-            sibling = self._entries.get(object_id)
-            if sibling is None:
-                if object_id not in self._collected:
-                    raise UnknownObjectError(
-                        f"output publication has an unregistered sibling: {object_id!r}"
-                    )
-            elif sibling.producer_task_spec != task_spec:
-                raise OutputOwnerPublicationConflictError(
-                    "output siblings disagree on canonical producer lineage"
-                )
-        if any(entry.current_attempt != plan.execution.attempt_id for entry in entries):
+        if entry.current_attempt != plan.execution.attempt_id:
             return OutputOwnerPublicationDisposition.FENCED
-        if any(entry.collection_pending for entry in entries):
+        if entry.collection_pending:
             raise ObjectCollectionInProgressError(
-                "selected output collection is pending"
+                "output collection is pending"
             )
-        self._require_no_output_retirements_locked(entries)
-        if previous is not None and any(entry.output_publication is None for entry in entries):
-            # A previous successful batch is not authority to recreate a slot
-            # after its lifecycle was retired, even when other siblings live.
+        self._require_no_output_retirement_locked(entry)
+        if previous is not None and entry.output_publication is None:
+            # A success receipt cannot recreate retired result metadata.
             return OutputOwnerPublicationDisposition.FENCED
-        modes = set()
-        lost = False
-        for index, (entry, descriptor, slot) in enumerate(zip(
-            entries, plan.envelope.results, manifest.slots
-        )):
-            expected = OutputOwnerPublicationMembership(manifest, index)
-            membership = entry.output_publication
-            if membership is not None:
-                if membership != expected:
-                    raise OutputOwnerPublicationCollectionRequiredError(
-                        "selected output still belongs to an unretired publication"
-                    )
-                if previous is None:
-                    raise OutputOwnerPublicationConflictError(
-                        "output membership exists without an atomic batch receipt"
-                    )
-                if entry.error is not None or entry.outgoing_contained_edges != set(slot.edges):
-                    raise OutputOwnerPublicationConflictError(
-                        "output publication slot metadata changed after commit"
-                    )
-                if descriptor.storage is ResultStorage.INLINE:
-                    valid = (
-                        entry.state is ObjectState.READY_INLINE
-                        and entry.inline_data == descriptor.inline_data
-                        and entry.canonical_stored_result is None
-                        and not entry.location_attempts
-                    )
-                else:
-                    valid = (
-                        entry.state in (ObjectState.READY_STORED, ObjectState.LOST)
-                        and entry.inline_data is None
-                        and entry.canonical_stored_result == descriptor
-                        and all(epoch == plan.execution.attempt_id for epoch in entry.location_attempts.values())
-                        and ((entry.state is ObjectState.READY_STORED and bool(entry.location_attempts))
-                             or (entry.state is ObjectState.LOST and not entry.location_attempts))
-                    )
-                    lost = lost or entry.state is ObjectState.LOST
-                if not valid:
-                    raise OutputOwnerPublicationConflictError(
-                        "output publication result changed after commit"
-                    )
-                modes.add("replay")
-                continue
-            if (entry.state is not ObjectState.PENDING
-                    or entry.inline_data is not None or entry.error is not None
-                    or entry.canonical_stored_result is not None
-                    or entry.location_attempts or entry.outgoing_contained_edges):
-                raise OutputOwnerPublicationConflictError(
-                    "selected output contains a partial or incompatible publication"
+        descriptor = plan.envelope.results[0]
+        slot = manifest.slots[0]
+        membership = entry.output_publication
+        if membership is not None:
+            if membership != OutputOwnerPublicationMembership(manifest, 0):
+                raise OutputOwnerPublicationCollectionRequiredError(
+                    "output still belongs to an unretired publication"
                 )
-            modes.add("apply")
-        if len(modes) != 1:
+            if previous is None:
+                raise OutputOwnerPublicationConflictError(
+                    "output membership exists without its publication receipt"
+                )
+            if entry.error is not None or entry.outgoing_contained_edges != set(slot.edges):
+                raise OutputOwnerPublicationConflictError(
+                    "output publication metadata changed after commit"
+                )
+            if descriptor.storage is ResultStorage.INLINE:
+                valid = (
+                    entry.state is ObjectState.READY_INLINE
+                    and entry.inline_data == descriptor.inline_data
+                    and entry.canonical_stored_result is None
+                    and not entry.location_attempts
+                )
+            else:
+                valid = (
+                    entry.state in (ObjectState.READY_STORED, ObjectState.LOST)
+                    and entry.inline_data is None
+                    and entry.canonical_stored_result == descriptor
+                    and all(epoch == plan.execution.attempt_id for epoch in entry.location_attempts.values())
+                    and ((entry.state is ObjectState.READY_STORED and bool(entry.location_attempts))
+                         or (entry.state is ObjectState.LOST and not entry.location_attempts))
+                )
+            if not valid:
+                raise OutputOwnerPublicationConflictError(
+                    "output publication result changed after commit"
+                )
+            if entry.state is ObjectState.LOST:
+                return OutputOwnerPublicationDisposition.FENCED
+            return OutputOwnerPublicationDisposition.ALREADY_APPLIED
+        if (entry.state is not ObjectState.PENDING
+                or entry.inline_data is not None or entry.error is not None
+                or entry.canonical_stored_result is not None
+                or entry.location_attempts or entry.outgoing_contained_edges):
             raise OutputOwnerPublicationConflictError(
-                "selected output publication is only partially installed"
+                "output contains partial or incompatible publication metadata"
             )
-        if lost:
-            return OutputOwnerPublicationDisposition.FENCED
-        return (
-            OutputOwnerPublicationDisposition.ALREADY_APPLIED
-            if modes == {"replay"} else OutputOwnerPublicationDisposition.APPLIED
-        )
+        return OutputOwnerPublicationDisposition.APPLIED
 
     def output_owner_publication(
         self, object_id: ObjectID,
@@ -3103,10 +2226,10 @@ class ObjectOwnerTable:
         envelope: OutputPublicationEnvelope | None = None,
         *, unavailable_nodes: tuple[NodeID, ...] = (),
     ) -> bool:
-        """Apply the exact post-cleanup KEEP/LOST vector at the logical owner.
+        """Apply a local keep-or-discard receipt after publisher death.
 
-        No remote cleanup happens here.  GCS resolution must already acknowledge
-        every discarded child/graph effect. INLINE KEEP needs actual local
+        No remote cleanup happens here. The caller must already acknowledge
+        every discarded child hold and replica. INLINE KEEP needs actual local
         bytes; STORED KEEP needs an already-adopted slot, whose replica
         locations were recorded by the normal grant/owner protocol. The caller
         chooses KEEP from live custody, then supplies its current death fences
@@ -3114,14 +2237,11 @@ class ObjectOwnerTable:
         leaves the kept publication LOST, not resurrected from a saved route.
         Incoming refs and canonical lineage stay.
         """
-        from .output_recovery import OutputRecoveryResolution
-        if type(manifest) is not OutputPublicationManifest or type(resolution) is not OutputRecoveryResolution:
+        from .output_handoff import NodeLostOutputResolution
+        if type(manifest) is not OutputPublicationManifest or type(resolution) is not NodeLostOutputResolution:
             raise TypeError("Node-loss resolution requires exact typed metadata")
         manifest, resolution = replace(manifest), replace(resolution)
-        if (resolution.publication_id != manifest.publication_id
-                or resolution.manifest_digest != manifest.manifest_digest
-                or resolution.owner_worker_id != manifest.header.owner_worker_id):
-            raise OutputOwnerPublicationConflictError("Node-loss resolution changed publication")
+        resolution.validate_manifest(manifest)
         publisher = manifest.header.node_incarnation
         death = resolution.node_death
         if (death.reason is not NodeDeathReason.PROCESS_EXIT
@@ -3135,9 +2255,7 @@ class ObjectOwnerTable:
             envelope = replace(envelope)
             if envelope.manifest != manifest or envelope.complete != resolution.complete:
                 raise OutputOwnerPublicationConflictError("retained envelope changed resolution")
-        keep = set(resolution.kept_slots)
-        if (envelope is None and any(index in keep and slot.tier is ResultStorage.INLINE
-                                     for index, slot in enumerate(manifest.slots))):
+        if resolution.keep and envelope is None and manifest.slots[0].tier is ResultStorage.INLINE:
             raise OutputOwnerPublicationConflictError("KEEP requires locally retained output bytes")
         with self._lock:
             prior = self._output_loss_receipts.get(manifest.publication_id)
@@ -3150,16 +2268,9 @@ class ObjectOwnerTable:
             entries = tuple(self._entry(slot.object_id) for slot in manifest.slots)
             spec = entries[0].producer_task_spec
             if (not isinstance(spec, TaskSpec)
-                    or tuple(spec.return_ids()) != identity.full_output_ids
+                    or tuple(spec.return_ids()) != identity.output_ids
                     or spec.job_id != header.job_id or spec.owner_worker_id != header.owner_worker_id):
                 raise OutputOwnerPublicationConflictError("Node-loss resolution requires exact producer lineage")
-            for object_id in identity.full_output_ids:
-                sibling = self._entries.get(object_id)
-                if sibling is None:
-                    if object_id not in self._collected or object_id in identity.output_ids:
-                        raise OutputOwnerPublicationConflictError("Node-loss resolution has an unknown sibling")
-                elif sibling.producer_task_spec != spec:
-                    raise OutputOwnerPublicationConflictError("Node-loss siblings changed canonical lineage")
             previous_manifest = self._output_publication_receipts.get(identity)
             if previous_manifest is not None and previous_manifest != manifest:
                 raise OutputOwnerPublicationConflictError("Node-loss publication changed its committed manifest")
@@ -3177,7 +2288,7 @@ class ObjectOwnerTable:
                 if membership is None:
                     # An unreceived result may replace only a pristine pending
                     # slot. Metadata cleanup is never authority to erase an
-                    # unrelated partial publication, payload, or graph edge.
+                    # unrelated partial publication, payload, or child hold.
                     if (entry.state is not ObjectState.PENDING or entry.inline_data is not None
                             or entry.error is not None or entry.location_attempts
                             or entry.canonical_stored_result is not None or entry.outgoing_contained_edges):
@@ -3202,11 +2313,16 @@ class ObjectOwnerTable:
                                       or (entry.state is ObjectState.LOST and not entry.location_attempts)))
                     if not valid:
                         raise OutputOwnerPublicationConflictError("published Node-loss slot changed canonical result metadata")
-                if index in keep and slot.tier is ResultStorage.OBJECT_STORE and membership is None:
+                if resolution.keep and slot.tier is ResultStorage.OBJECT_STORE and membership is None:
                     raise OutputOwnerPublicationConflictError("STORED KEEP requires an already-adopted output membership")
+                if (not resolution.keep and slot.tier is ResultStorage.OBJECT_STORE
+                        and any(node not in unavailable for node in entry.location_attempts)):
+                    raise OutputOwnerPublicationConflictError(
+                        "discard requires surviving replicas to be dropped before owner cleanup"
+                    )
             for index, (entry, slot) in enumerate(zip(entries, manifest.slots)):
                 entry.error = None
-                if index in keep:
+                if resolution.keep:
                     if slot.tier is ResultStorage.INLINE:
                         entry.inline_data = envelope.results[index].inline_data
                         entry.state = ObjectState.READY_INLINE
@@ -3234,7 +2350,8 @@ class ObjectOwnerTable:
                     self._retired_output_slots.add((manifest.publication_id, slot.object_id))
                     if resolution.complete is not None:
                         self._retired_output_attempts.add((slot.object_id, manifest.publication_id.attempt_id))
-            self._output_publication_receipts[manifest.publication_id] = manifest
+            if resolution.complete is not None:
+                self._output_publication_receipts[manifest.publication_id] = manifest
             self._output_loss_receipts[manifest.publication_id] = resolution
             return True
 
@@ -3259,7 +2376,7 @@ class ObjectOwnerTable:
         if not isinstance(replica_locations, Mapping):
             raise TypeError("replica_locations must be a mapping")
         if set(replica_locations) != {member.object_id for member in values}:
-            raise OutputOwnerRetirementConflictError("replica inventory must cover exactly the selected slots")
+            raise OutputOwnerRetirementConflictError("replica inventory must cover exactly the retiring output")
         drops = []
         for member in values:
             locations = tuple(
@@ -3279,7 +2396,7 @@ class ObjectOwnerTable:
             previous = self._output_retirement_plans.get(retirement_id)
             if previous is not None:
                 if previous != plan:
-                    raise OutputOwnerRetirementConflictError("retirement_id changed its exact selected cleanup plan")
+                    raise OutputOwnerRetirementConflictError("retirement_id changed its exact cleanup plan")
                 return replace(previous)
             entries = tuple(self._entry(member.object_id) for member in plan.memberships)
             for entry, member in zip(entries, plan.memberships):
@@ -3300,7 +2417,7 @@ class ObjectOwnerTable:
         if entry.collection_pending:
             raise ObjectCollectionInProgressError("normal collection conflicts with output retirement")
         if entry.output_retirement_id != retirement_id:
-            raise OutputOwnerRetirementInProgressError("another retirement owns a selected output")
+            raise OutputOwnerRetirementInProgressError("another retirement owns this output")
         spec = entry.producer_task_spec
         manifest = member.manifest
         if (self._output_publication_receipts.get(member.publication_id) != manifest
@@ -3310,17 +2427,10 @@ class ObjectOwnerTable:
                 or entry.error is not None or entry.collection_plan is not None
                 or entry.outgoing_contained_edges != set(member.slot.edges)
                 or not isinstance(spec, TaskSpec)
-                or tuple(spec.return_ids()) != member.publication_id.full_output_ids
+                or tuple(spec.return_ids()) != member.publication_id.output_ids
                 or spec.owner_worker_id != manifest.header.owner_worker_id
                 or spec.job_id != manifest.header.job_id):
             raise OutputOwnerRetirementConflictError("retirement requires the exact published LOST slot and lineage")
-        for object_id in member.publication_id.full_output_ids:
-            sibling = self._entries.get(object_id)
-            if sibling is None:
-                if object_id not in self._collected:
-                    raise OutputOwnerRetirementConflictError("retirement has an unknown lineage sibling")
-            elif sibling.producer_task_spec != spec:
-                raise OutputOwnerRetirementConflictError("retirement siblings changed canonical producer lineage")
         if member.slot.tier is ResultStorage.OBJECT_STORE:
             expected = ResultDescriptor(
                 member.object_id, member.slot.tier, member.slot.size_bytes,
@@ -3338,7 +2448,6 @@ class ObjectOwnerTable:
     def complete_output_publication_retirement(
         self, plan: OutputOwnerPublicationRetirementPlan, *,
         released_edges: tuple[ReleaseContainedReferenceReply, ...],
-        graph_receipts: tuple[ContainedGraphManifestReceipt, ...],
         dropped_replicas: tuple[DropObjectReplicaReply | NodeDeathRecord, ...],
     ) -> OutputOwnerPublicationRetirementReceipt:
         """Clear only retired result effects after every exact cleanup ACK.
@@ -3350,7 +2459,7 @@ class ObjectOwnerTable:
         """
 
         receipt = OutputOwnerPublicationRetirementReceipt(
-            plan, released_edges, graph_receipts, dropped_replicas,
+            plan, released_edges, dropped_replicas,
             OutputOwnerPublicationDisposition.APPLIED,
         )
         plan = receipt.plan
@@ -3407,69 +2516,48 @@ class ObjectOwnerTable:
         with self._lock:
             return any(entry.output_retirement_id is not None for entry in self._entries.values())
 
-
     def _validate_publish_task_outputs_locked(
         self, plan: TaskOutputPublicationPlan
     ) -> bool:
         entries, task_spec = self._task_output_entries_locked(plan.execution)
-        if task_spec is not None and any(
-            descriptor.owner_worker_id != task_spec.owner_worker_id
-            for descriptor in plan.results
-        ):
+        entry = entries[0]
+        descriptor = plan.results[0]
+        if task_spec is not None and descriptor.owner_worker_id != task_spec.owner_worker_id:
             raise ValueError(
                 "result owner must match the registered task output owner"
             )
-        if any(entry.collection_pending for entry in entries):
+        if entry.collection_pending:
             raise ObjectCollectionInProgressError(
                 "task output metadata collection is pending"
             )
         self._require_no_output_retirements_locked(entries)
-        attempts = {entry.current_attempt for entry in entries}
-        if attempts != {plan.execution.attempt_id}:
-            if len(attempts) > 1:
-                raise InvalidObjectTransitionError(
-                    "task output siblings disagree on their current attempt"
-                )
+        if entry.current_attempt != plan.execution.attempt_id:
             return False
-        publication_modes: set[str] = set()
-        for entry, descriptor in zip(entries, plan.results):
-            if descriptor.storage is ResultStorage.INLINE:
-                if entry.state is ObjectState.READY_INLINE:
-                    if entry.inline_data != descriptor.inline_data:
-                        raise ConflictingObjectResultError(
-                            "attempt published conflicting inline task output"
-                        )
-                    publication_modes.add("replay")
-                    continue
-                self._require_publishable(entry)
-                publication_modes.add("apply")
-                continue
-
-            if entry.state is ObjectState.READY_STORED:
-                if entry.canonical_stored_result is None:
+        if descriptor.storage is ResultStorage.INLINE:
+            if entry.state is ObjectState.READY_INLINE:
+                if entry.inline_data != descriptor.inline_data:
                     raise ConflictingObjectResultError(
-                        "stored task output has no canonical replay descriptor"
+                        "attempt published conflicting inline task output"
                     )
-                if entry.canonical_stored_result != descriptor:
-                    raise ConflictingObjectResultError(
-                        "attempt replay changed stored task output identity "
-                        "or integrity metadata"
-                    )
-                existing_attempt = entry.location_attempts.get(
-                    descriptor.node_id, _MISSING
+                return True
+            self._require_publishable(entry)
+            return True
+        if entry.state is ObjectState.READY_STORED:
+            if entry.canonical_stored_result is None:
+                raise ConflictingObjectResultError(
+                    "stored task output has no canonical replay descriptor"
                 )
-                if existing_attempt != plan.execution.attempt_id:
-                    raise ConflictingObjectResultError(
-                        "task output location has a different attempt epoch"
-                    )
-                publication_modes.add("replay")
-                continue
-            self._require_publishable(entry, allow_lost=True)
-            publication_modes.add("apply")
-        if len(publication_modes) != 1:
-            raise InvalidObjectTransitionError(
-                "task output manifest is only partially published"
-            )
+            if entry.canonical_stored_result != descriptor:
+                raise ConflictingObjectResultError(
+                    "attempt replay changed stored task output identity "
+                    "or integrity metadata"
+                )
+            if entry.location_attempts.get(descriptor.node_id, _MISSING) != plan.execution.attempt_id:
+                raise ConflictingObjectResultError(
+                    "task output location has a different attempt epoch"
+                )
+            return True
+        self._require_publishable(entry, allow_lost=True)
         return True
 
     def validate_publish_task_error(
@@ -3484,7 +2572,7 @@ class ObjectOwnerTable:
         return plan
 
     def commit_publish_task_error(self, plan: TaskOutputErrorPlan) -> bool:
-        """Atomically publish the same task failure to every sibling."""
+        """Publish the task failure under the owner lock."""
 
         if not isinstance(plan, TaskOutputErrorPlan):
             raise TypeError("plan must be a TaskOutputErrorPlan")
@@ -3528,49 +2616,38 @@ class ObjectOwnerTable:
         self, plan: TaskOutputErrorPlan
     ) -> bool:
         entries, _ = self._task_output_entries_locked(plan.execution)
-        if any(entry.collection_pending for entry in entries):
+        entry = entries[0]
+        if entry.collection_pending:
             raise ObjectCollectionInProgressError(
                 "task output metadata collection is pending"
             )
         self._require_no_output_retirements_locked(entries)
-        attempts = {entry.current_attempt for entry in entries}
-        if attempts != {plan.execution.attempt_id}:
-            if len(attempts) > 1:
-                raise InvalidObjectTransitionError(
-                    "task output siblings disagree on their current attempt"
-                )
+        if entry.current_attempt != plan.execution.attempt_id:
             return False
-        publication_modes: set[str] = set()
-        for entry in entries:
-            if entry.state is ObjectState.ERROR:
-                if not _safely_equal(entry.error, plan.error):
-                    raise ConflictingObjectResultError(
-                        "attempt published conflicting task errors"
-                    )
-                publication_modes.add("replay")
-                continue
-            self._require_publishable(entry)
-            publication_modes.add("apply")
-        if len(publication_modes) != 1:
-            raise InvalidObjectTransitionError(
-                "task output manifest is only partially failed"
-            )
+        if entry.state is ObjectState.ERROR:
+            if not _safely_equal(entry.error, plan.error):
+                raise ConflictingObjectResultError(
+                    "attempt published conflicting task errors"
+                )
+            return True
+        self._require_publishable(entry)
         return True
 
     def _task_output_entries_locked(
         self, execution: TaskExecutionKey
     ) -> tuple[tuple[_ObjectOwnerEntry, ...], TaskSpec | None]:
-        """Bind a batch operation to one canonical registered lineage."""
+        """Bind the single-output operation to its registered lineage."""
 
+        execution = _execution(execution)
         entries = tuple(self._entry(value) for value in execution.output_ids)
         task_spec = entries[0].producer_task_spec
-        if task_spec is None and execution.num_returns == 1:
+        if task_spec is None:
             # Actor calls and a few deliberately lineage-free singleton
             # control paths still use the same atomic owner transition.
             return entries, None
         if not isinstance(task_spec, TaskSpec):
             raise InvalidObjectTransitionError(
-                "multi-return task output batch requires producer lineage"
+                "task output requires valid producer lineage"
             )
         if (
             TaskExecutionKey.from_task_spec(task_spec).manifest
@@ -3578,10 +2655,6 @@ class ObjectOwnerTable:
         ):
             raise InvalidObjectTransitionError(
                 "registered producer lineage changed its output manifest"
-            )
-        if any(entry.producer_task_spec != task_spec for entry in entries[1:]):
-            raise InvalidObjectTransitionError(
-                "task output siblings disagree on producer lineage"
             )
         return entries, task_spec
 
@@ -3807,24 +2880,23 @@ class ObjectOwnerTable:
     def acquire_exported_reference(
         self,
         object_id: ObjectID,
-        source: BorrowSource | str,
+        source: BorrowSource,
         borrower_token: ReferenceToken,
     ) -> bool:
         """Acquire one borrower from a contained pin or an active Task hold.
 
-        A raw string retains the original legacy contained-transfer API.
-        Internally every borrower is bound to the exact typed source that authorized it, so an
+        Every borrower is bound to the exact typed source that authorized it, so an
         exact replay is idempotent and the same token cannot be rebound to a
         different lifetime reason.  Task-hold sources are additionally checked
         against the authoritative SUBMITTED/RETAINED hold sets.
         """
 
-        if isinstance(source, str):
-            source = ContainedTransferSource(source)
         if not isinstance(source, (ContainedTransferSource, TaskHoldSource)):
             raise TypeError(
                 "borrow source must be ContainedTransferSource or TaskHoldSource"
             )
+        if type(source) is ContainedTransferSource:
+            source = ContainedTransferSource(_hold(source.hold))
         _require_hashable(borrower_token, "borrower token")
         with self._lock:
             if self._borrower_is_dead_locked(borrower_token):
@@ -4170,20 +3242,16 @@ class ObjectOwnerTable:
     def add_contained_reference(
         self,
         object_id: ObjectID,
-        hold: IncomingContainedReferenceHold | ReferenceToken,
+        hold: IncomingContainedReferenceHold,
     ) -> bool:
         """Install one incoming container pin by its complete identity.
 
-        A raw hashable value is wrapped as a legacy token-only hold.  It stays
-        live and replayable, but lacks enough identity for Worker-death cleanup.
+        The complete typed hold supplies its container and responsible owner.
         """
 
         resolved = _contained_reference_hold(hold)
         with self._lock:
-            if isinstance(resolved, ContainedReferenceHold):
-                self._require_live_worker_locked(
-                    resolved.container_owner_worker_id
-                )
+            self._require_live_worker_locked(resolved.container_owner_worker_id)
             if (object_id, resolved) in self._released_contained_holds:
                 raise ReleasedBorrowerTokenError(
                     f"contained hold was already released for {object_id!r}"
@@ -4257,7 +3325,6 @@ class ObjectOwnerTable:
             self._stored_contained_preparations[key] = transfer
             return StoredContainedReferenceDisposition.PREPARED
 
-
     def promote_stored_contained_reference(
         self, transfer: object, *, authority_worker_id: WorkerID
     ) -> StoredContainedReferenceDisposition:
@@ -4316,7 +3383,7 @@ class ObjectOwnerTable:
     def release_contained_reference(
         self,
         object_id: ObjectID,
-        hold: IncomingContainedReferenceHold | ReferenceToken,
+        hold: IncomingContainedReferenceHold,
     ) -> bool:
         """Release or pre-tombstone one exact incoming container pin."""
 
@@ -4348,7 +3415,7 @@ class ObjectOwnerTable:
     def contained_release_was_seen(
         self,
         object_id: ObjectID,
-        hold: IncomingContainedReferenceHold | ReferenceToken,
+        hold: IncomingContainedReferenceHold,
     ) -> bool:
         resolved = _contained_reference_hold(hold)
         with self._lock:
@@ -4435,15 +3502,6 @@ class ObjectOwnerTable:
                     raise InvalidObjectTransitionError(
                         "producer entry is outside its task output manifest"
                     )
-                for output_id in output_ids:
-                    sibling = self._entries.get(output_id)
-                    if (
-                        sibling is None
-                        or sibling.producer_task_spec != task_spec
-                    ):
-                        raise InvalidObjectTransitionError(
-                            "task lineage requires a complete output manifest"
-                        )
             authority = self._task_lineage.get(object_id.task_id)
             if authority is None:
                 authority = _TaskLineageAuthority(
@@ -4527,22 +3585,6 @@ class ObjectOwnerTable:
         del self._task_lineage[task_id]
         return True
 
-    def move_outgoing_lineage_edges(
-        self, source_object_id: ObjectID, target_object_id: ObjectID
-    ) -> int:
-        """Compatibility no-op: task-level edges no longer inhabit slots."""
-
-        _require_object_id(source_object_id)
-        _require_object_id(target_object_id)
-        if source_object_id.task_id != target_object_id.task_id:
-            raise ValueError("lineage edge move requires sibling ObjectIDs")
-        if source_object_id == target_object_id:
-            return 0
-        with self._lock:
-            self._entry(source_object_id)
-            self._entry(target_object_id)
-            return 0
-
     def add_outgoing_contained_edge(
         self, object_id: ObjectID, edge: ContainedReferenceEdge
     ) -> bool:
@@ -4612,7 +3654,7 @@ class ObjectOwnerTable:
 
         Callers that can retain outgoing contained-release obligations must use
         :meth:`collect_unused_with_edges`.  Returning ``False`` here instead of
-        silently dropping edges keeps legacy boolean callers safe.
+        silently dropping edges keeps boolean collection callers safe.
         """
 
         with self._lock:
@@ -4658,9 +3700,8 @@ class ObjectOwnerTable:
             if entry.is_live:
                 return ObjectMetadataCollection(object_id, collected=False)
             if entry.output_publication is not None:
-                # The returned edges alone cannot prove that the GCS graph was
-                # released.  Force graph-associated INLINE values through the
-                # frozen begin/complete protocol below.
+                # Published values require a frozen cleanup claim so a late
+                # result replay cannot revive metadata after collection.
                 return ObjectMetadataCollection(object_id, collected=False)
             releases = tuple(sorted(entry.outgoing_contained_edges))
             lineage_releases = self._take_final_task_lineage_locked(object_id)
@@ -4689,8 +3730,8 @@ class ObjectOwnerTable:
                 assert entry.collection_plan is not None
                 return (deepcopy(entry.collection_plan)
                         if entry.output_publication is not None else entry.collection_plan)
-            # Only an exact retired output attempt proves all old graph,
-            # child and replica effects gone. Other LOST objects still need
+            # Only an exact retired output attempt proves all old child
+            # and replica effects gone. Other LOST objects still need
             # canonical integrity metadata; a previous epoch cannot waive it.
             retired_output = (
                 entry.state is ObjectState.LOST
@@ -4721,15 +3762,7 @@ class ObjectOwnerTable:
                     f"inline/error collection cannot carry stored metadata: {object_id!r}"
                 )
             releases = tuple(sorted(entry.outgoing_contained_edges))
-            authority = self._task_lineage.get(object_id.task_id)
-            # A single-output task has no sibling race: freezing its task-level
-            # lineage in the plan preserves the original owner-table contract.
-            # Multi-return tasks defer the claim until final sibling commit.
-            lineage_releases = (
-                self._final_task_lineage_locked(object_id)
-                if authority is not None and len(authority.output_ids) == 1
-                else ()
-            )
+            lineage_releases = self._final_task_lineage_locked(object_id)
             plan = ObjectMetadataCollectionPlan(
                 object_id=object_id,
                 collection_id=collection_id or f"collect:{uuid.uuid4().hex}",
@@ -4739,24 +3772,19 @@ class ObjectOwnerTable:
                 canonical_size_bytes=canonical_size_bytes,
                 canonical_checksum=canonical_checksum,
                 contained_releases=releases,
-                # Task lineage is deliberately not frozen into a per-object
-                # plan.  Another sibling may finish first while this stored
-                # object waits for a Drop ACK; only the final sibling commit
-                # atomically claims the task authority.
+                # Freeze dependency releases with the same exact GC claim.
                 lineage_releases=lineage_releases,
             )
             entry.collection_pending = True
             entry.collection_plan = plan
             return deepcopy(plan) if entry.output_publication is not None else plan
 
-
     def begin_output_publication_collection(
         self, object_id: ObjectID, *, collection_id: str,
     ) -> OutputOwnerPublicationCollectionPlan | None:
-        """Freeze one selected slot using the existing metadata GC claim.
+        """Freeze the output using the existing metadata GC claim.
 
-        Sibling outputs remain independent. In particular, sharing a contained
-        child never merges their final holds or releases their lineage early.
+        Different containers retain separate child holds and release duties.
         Already-collected calls return None; terminal replay needs the caller's
         exact saved plan, because the table intentionally forgot its TaskSpec.
         """
@@ -4808,19 +3836,17 @@ class ObjectOwnerTable:
 
     def complete_output_publication_collection(
         self, plan: OutputOwnerPublicationCollectionPlan,
-        graph_receipt: ContainedGraphManifestReceipt | None = None,
     ) -> OutputOwnerPublicationCollectionReceipt:
-        """Collect one slot after its child releases, graph ACK and replica drop.
+        """Collect the output after its child releases and replica drops.
 
-        Core performs the child/replica effects before this local CAS. The
-        graph ACK must bind the whole publication but release exactly this
-        container's edges. An empty-edge slot requires no graph operation.
+        Core performs and validates those effects against the frozen plan
+        before this local CAS. This receipt records metadata collection; it
+        does not independently prove that remote effects occurred.
         """
 
         if type(plan) is not OutputOwnerPublicationCollectionPlan:
             raise TypeError("plan must be an OutputOwnerPublicationCollectionPlan")
         plan = replace(plan)
-        self._validate_output_graph_release(plan, graph_receipt)
         metadata_digest = _collection_metadata_digest(plan.metadata_plan)
         with self._lock:
             terminal = self._output_collection_receipts.get(plan.object_id)
@@ -4850,35 +3876,6 @@ class ObjectOwnerTable:
             )
             return OutputOwnerPublicationCollectionReceipt(
                 plan, deepcopy(collection), OutputOwnerPublicationDisposition.APPLIED
-            )
-
-    @staticmethod
-    def _validate_output_graph_release(
-        plan: OutputOwnerPublicationCollectionPlan,
-        receipt: ContainedGraphManifestReceipt | None,
-    ) -> None:
-        expected = plan.membership.slot.edges
-        if not expected:
-            if receipt is not None:
-                raise OutputOwnerPublicationConflictError(
-                    "empty-edge output collection must not claim graph release"
-                )
-            return
-        if type(receipt) is not ContainedGraphManifestReceipt:
-            raise TypeError("output collection requires a ContainedGraphManifestReceipt")
-        if type(receipt.manifest) is not ContainedGraphManifest:
-            raise TypeError("output graph release requires a typed graph manifest")
-        receipt = replace(receipt)
-        manifest = plan.membership.manifest.to_graph_manifest()
-        if (receipt.manifest != manifest
-                or receipt.state is not ContainedGraphTransactionState.COMMITTED
-                or receipt.disposition not in (
-                    ContainedGraphManifestDisposition.RELEASED,
-                    ContainedGraphManifestDisposition.ALREADY_RELEASED,
-                )
-                or receipt.released_edges != expected):
-            raise OutputOwnerPublicationConflictError(
-                "graph release must acknowledge the exact batch and output slot edges"
             )
 
     def output_publication_collection_receipt(
@@ -4916,7 +3913,6 @@ class ObjectOwnerTable:
                 )
             return self._complete_collection_locked(plan)
 
-
     def _complete_collection_locked(
         self, plan: ObjectMetadataCollectionPlan,
     ) -> ObjectMetadataCollection:
@@ -4931,20 +3927,12 @@ class ObjectOwnerTable:
             )
         stored_identity = self._stored_collection_identity(entry, plan)
         releases = tuple(sorted(entry.outgoing_contained_edges))
-        lineage_releases = (
-            plan.lineage_releases
-            if plan.lineage_releases
-            else self._take_final_task_lineage_locked(object_id)
-        )
-        if plan.lineage_releases:
-            authority = self._task_lineage.get(object_id.task_id)
-            if authority is not None:
-                preview = self._final_task_lineage_locked(object_id)
-                if preview != plan.lineage_releases:
-                    raise InvalidObjectTransitionError(
-                        "task lineage changed after collection freeze"
-                    )
-                del self._task_lineage[object_id.task_id]
+        lineage_releases = self._final_task_lineage_locked(object_id)
+        if lineage_releases != plan.lineage_releases:
+            raise InvalidObjectTransitionError(
+                "task lineage changed after collection freeze"
+            )
+        self._task_lineage.pop(object_id.task_id, None)
         if stored_identity is not None:
             self._stored_collection_history[stored_identity.object_id] = stored_identity
         del self._entries[object_id]
@@ -4955,7 +3943,6 @@ class ObjectOwnerTable:
             lineage_releases=lineage_releases,
         )
 
-
     def collection_lineage_releases(
         self, plan: ObjectMetadataCollectionPlan
     ) -> tuple[LineageReferenceEdge, ...]:
@@ -4963,20 +3950,19 @@ class ObjectOwnerTable:
 
         self.validate_complete_collection(plan)
         with self._lock:
-            return (
-                plan.lineage_releases
-                if plan.lineage_releases
-                else self._final_task_lineage_locked(plan.object_id)
-            )
+            if self._final_task_lineage_locked(plan.object_id) != plan.lineage_releases:
+                raise InvalidObjectTransitionError(
+                    "task lineage changed after collection freeze"
+                )
+            return plan.lineage_releases
 
     def _take_final_task_lineage_locked(
         self, object_id: ObjectID
     ) -> tuple[LineageReferenceEdge, ...]:
-        """Claim task obligations iff ``object_id`` is the final sibling."""
+        """Claim the collected output's producer dependency obligations."""
 
         releases = self._final_task_lineage_locked(object_id)
-        if releases:
-            del self._task_lineage[object_id.task_id]
+        self._task_lineage.pop(object_id.task_id, None)
         return releases
 
     def _final_task_lineage_locked(
@@ -4985,15 +3971,10 @@ class ObjectOwnerTable:
         authority = self._task_lineage.get(object_id.task_id)
         if authority is None:
             return ()
-        if object_id not in authority.output_ids:
+        if authority.output_ids != (object_id,):
             raise InvalidObjectTransitionError(
                 "collection object is outside task lineage manifest"
             )
-        if any(
-            sibling != object_id and sibling in self._entries
-            for sibling in authority.output_ids
-        ):
-            return ()
         return tuple(sorted(
             LineageReferenceEdge(
                 object_id, obligation.dependency_object_id, obligation.token
@@ -5094,7 +4075,7 @@ class ObjectOwnerTable:
 _MISSING = object()
 
 
-def _validate_output_retirement_proofs(plan, released_edges, graph_receipts, dropped_replicas):
+def _validate_output_retirement_proofs(plan, released_edges, dropped_replicas):
     """Normalize typed ACKs against the exact frozen cleanup obligations."""
 
     replies = _sequence(released_edges, "released_edges")
@@ -5116,28 +4097,8 @@ def _validate_output_retirement_proofs(plan, released_edges, graph_receipts, dro
         releases.append(ReleaseContainedReferenceReply(
             expected.object_id, expected.owner_worker_id, expected.hold, True, reply.released,
         ))
-    replies = _sequence(graph_receipts, "graph_receipts")
-    edge_members = tuple(member for member in plan.memberships if member.slot.edges)
-    if len(replies) != len(edge_members):
-        raise OutputOwnerRetirementConflictError("retirement requires every non-empty slot graph ACK")
-    graphs = []
-    for reply, member in zip(replies, edge_members):
-        if type(reply) is not ContainedGraphManifestReceipt or type(reply.manifest) is not ContainedGraphManifest:
-            raise TypeError("graph cleanup requires ContainedGraphManifestReceipt")
-        reply = replace(reply)
-        expected = member.manifest.to_graph_manifest()
-        if (reply.manifest != expected
-                or reply.state is not ContainedGraphTransactionState.COMMITTED
-                or reply.disposition not in (
-                    ContainedGraphManifestDisposition.RELEASED,
-                    ContainedGraphManifestDisposition.ALREADY_RELEASED,
-                ) or reply.released_edges != member.slot.edges):
-            raise OutputOwnerRetirementConflictError("graph ACK must release the exact old batch slot edges")
-        graphs.append(ContainedGraphManifestReceipt(
-            expected, reply.state, reply.disposition, member.slot.edges,
-        ))
     replicas = _validate_output_retirement_replica_proofs(plan, dropped_replicas)
-    return tuple(releases), tuple(graphs), replicas
+    return tuple(releases), replicas
 
 
 def _validate_output_retirement_replica_proofs(plan, dropped_replicas):
@@ -5271,19 +4232,11 @@ def _same_stored_result_identity(
 
 
 def _contained_reference_hold(
-    value: IncomingContainedReferenceHold | ReferenceToken,
+    value: IncomingContainedReferenceHold,
 ) -> IncomingContainedReferenceHold:
-    """Normalize only the historical raw-token boundary.
+    """Revalidate the full container identity; a raw token is insufficient."""
 
-    Never synthesize a container ObjectID or WorkerID.  Missing authority is
-    represented by ``LegacyContainedReferenceHold`` and consequently cannot be
-    consumed by an authoritative Worker-death sweep.
-    """
-
-    if isinstance(value, (ContainedReferenceHold, LegacyContainedReferenceHold)):
-        return value
-    _require_hashable(value, "contained reference token")
-    return LegacyContainedReferenceHold(value)
+    return _hold(value)
 
 
 def _require_optional_hashable(value: object | None, label: str) -> None:

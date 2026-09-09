@@ -68,127 +68,12 @@ def _fixture(*, survivor_available: bool = True):
     return nodes, actors, request, old_worker, survivor, death_reply.death
 
 
-def _accepted(reservation: protocol.ReserveActorWorkerRequest):
-    return protocol.ReserveActorWorkerReply(
-        reservation.actor_id, reservation.generation, True,
-        reservation.target_node_id, _id(WorkerID, 7),
-        ("127.0.0.1", 19107), 9107,
-    )
+def _ack(_address, message):
+    return protocol.InstallActorStateReply(message.owner_worker_id, message.snapshot, True)
 
 
-def test_node_loss_orders_owner_fence_reserve_and_alive_publication() -> None:
-    nodes, actors, request, old_worker, survivor, death = _fixture()
-    events = []
-
-    def install(_address, message):
-        events.append(("install", message.snapshot))
-        return protocol.InstallActorStateReply(
-            message.owner_worker_id, message.snapshot, True
-        )
-
-    def reserve(address, reservation):
-        events.append(("reserve", address, reservation))
-        return _accepted(reservation)
-
-    coordinator = ActorCoordinator(
-        nodes, actors, reserve_actor_worker=reserve,
-        install_actor_state=install,
-    )
-
-    assert coordinator.migrate_node_loss(death)
-
-    assert [item[0] for item in events] == ["install", "reserve", "install"]
-    restarting = events[0][1]
-    reservation = events[1][2]
-    alive = events[2][1]
-    assert restarting.state is protocol.ActorState.RESTARTING
-    assert restarting.node_id is restarting.worker_id is None
-    assert reservation.target_node_id == survivor
-    assert isinstance(reservation.restart, protocol.ActorNodeLossRecord)
-    assert reservation.restart.worker_id == old_worker
-    assert alive.state is protocol.ActorState.ALIVE
-    assert alive.node_id == survivor and alive.generation == request.generation.next()
-    assert coordinator.migrate_node_loss(death)
-    assert len(events) == 3
-
-
-def test_capacity_pending_redrives_without_advancing_generation_or_budget() -> None:
-    nodes, actors, request, _old, survivor, death = _fixture(
-        survivor_available=False
-    )
-    installs = []
-    reserves = []
-    coordinator = ActorCoordinator(
-        nodes, actors,
-        reserve_actor_worker=lambda *_args: reserves.append(_args),
-        install_actor_state=lambda _address, message: (
-            installs.append(message.snapshot)
-            or protocol.InstallActorStateReply(
-                message.owner_worker_id, message.snapshot, True
-            )
-        ),
-    )
-
-    assert not coordinator.migrate_node_loss(death)
-    pending = actors.get(request.actor_id)
-    assert pending.state is protocol.ActorState.RESTARTING
-    assert pending.generation == request.generation.next()
-    assert pending.restarts_used == 1
-    assert len(installs) == 1 and reserves == []
-    assert not coordinator.migrate_node_loss(death)
-    assert actors.get(request.actor_id) == pending
-    assert len(installs) == 1 and reserves == []
-
-    survivor_record = nodes.get(survivor)
-    nodes.update_resources(
-        survivor, survivor_record.node_pid, survivor_record.registration_epoch,
-        1, ResourceVector({"CPU": 1}),
-    )
-    coordinator._reserve_actor_worker = lambda _address, reservation: (
-        reserves.append(reservation) or _accepted(reservation)
-    )
-    assert coordinator.migrate_node_loss(death)
-    assert len(reserves) == 1
-    assert actors.get(request.actor_id).restarts_used == 1
-
-
-def test_shutdown_cancels_frozen_migration_and_publishes_dead() -> None:
-    nodes, actors, request, _old, _survivor, death = _fixture(
-        survivor_available=False
-    )
-    publications = []
-    coordinator = ActorCoordinator(
-        nodes, actors,
-        install_actor_state=lambda _address, message: (
-            publications.append(message.snapshot)
-            or protocol.InstallActorStateReply(
-                message.owner_worker_id, message.snapshot, True
-            )
-        ),
-    )
-    assert not coordinator.migrate_node_loss(death)
-
-    assert coordinator.drain_once() == ()
-
-    dead = actors.get(request.actor_id)
-    assert dead.state is protocol.ActorState.DEAD
-    assert "cancelled by drain" in (dead.error or "")
-    assert [item.state for item in publications] == [
-        protocol.ActorState.RESTARTING, protocol.ActorState.DEAD,
-    ]
-
-
-def test_gcs_node_death_reply_is_not_ack_clean_until_migration_converges() -> None:
-    nodes, actors, request, _old, survivor, death = _fixture(
-        survivor_available=False
-    )
-    coordinator = ActorCoordinator(
-        nodes, actors,
-        install_actor_state=lambda _address, message:
-            protocol.InstallActorStateReply(
-                message.owner_worker_id, message.snapshot, True
-            ),
-    )
+def _gcs(nodes, actors, coordinator):
+    # No transport, process, timer, or background service is constructed.
     gcs = object.__new__(GCSLite)
     gcs.nodes = nodes
     gcs.actors = actors
@@ -197,25 +82,104 @@ def test_gcs_node_death_reply_is_not_ack_clean_until_migration_converges() -> No
     gcs.workers = None
     gcs._on_node_dead = None
     gcs.event_sink = EventSink()
-    request_death = protocol.ReportNodeDeath(
+    return gcs
+
+
+def _report(death):
+    return protocol.ReportNodeDeath(
         death.detection_id, death.node_id, death.node_pid,
         death.registration_epoch, death.exit_code, death.reason, death.detail,
     )
 
-    first = gcs.report_node_death(request_death)
-    assert not first.actor_migration_converged
-    pending = actors.get(request.actor_id)
-    assert pending.state is protocol.ActorState.RESTARTING
 
-    survivor_record = nodes.get(survivor)
-    nodes.update_resources(
-        survivor, survivor_record.node_pid, survivor_record.registration_epoch,
-        1, ResourceVector({"CPU": 1}),
+def test_node_loss_publishes_dead_without_reserving_a_survivor() -> None:
+    nodes, actors, request, _old, _survivor, death = _fixture()
+    installs, reserves = [], []
+    def install(address, message):
+        installs.append(message.snapshot)
+        return _ack(address, message)
+    coordinator = ActorCoordinator(
+        nodes, actors, reserve_actor_worker=lambda *args: reserves.append(args),
+        install_actor_state=install,
     )
-    coordinator._reserve_actor_worker = (
-        lambda _address, reservation: _accepted(reservation)
+    coordinator.fail_node(death.node_id, "managed Node exited")
+    dead = actors.get(request.actor_id)
+    assert dead.state is protocol.ActorState.DEAD
+    assert dead.generation == request.generation and dead.restarts_used == 0
+    assert dead.node_id is dead.worker_id is None
+    assert installs == [dead] and reserves == []
+    assert coordinator.node_failure_states_converged()
+    assert coordinator.fail_node(death.node_id, "managed Node exited") == ()
+    assert installs == [dead]
+
+
+@pytest.mark.parametrize("available", (False, True))
+def test_survivor_capacity_does_not_change_terminal_node_loss(available) -> None:
+    nodes, actors, request, _old, _survivor, death = _fixture(survivor_available=available)
+    reserves = []
+    coordinator = ActorCoordinator(
+        nodes, actors, reserve_actor_worker=lambda *args: reserves.append(args),
+        install_actor_state=_ack,
     )
-    replay = gcs.report_node_death(request_death)
-    assert replay.actor_migration_converged
+    coordinator.fail_node(death.node_id, "Node exited")
+    assert actors.get(request.actor_id).state is protocol.ActorState.DEAD
+    assert reserves == []
+
+
+def test_lost_owner_install_ack_retains_dead_state_until_exact_replay() -> None:
+    nodes, actors, request, _old, _survivor, death = _fixture()
+    calls = []
+    def install(address, message):
+        calls.append(message)
+        if len(calls) == 1:
+            raise TimeoutError("owner accepted DEAD but ACK was lost")
+        return _ack(address, message)
+    coordinator = ActorCoordinator(nodes, actors, install_actor_state=install)
+    coordinator.fail_node(death.node_id, "Node exited")
+    dead = actors.get(request.actor_id)
+    assert dead.state is protocol.ActorState.DEAD
+    assert not coordinator.node_failure_states_converged()
+    assert coordinator.active_operation_ids() == (request.actor_id,)
+    assert coordinator.fail_node(death.node_id, "Node exited") == (dead,)
+    assert calls[0] == calls[1]
+    assert coordinator.node_failure_states_converged()
+    assert coordinator.active_operation_ids() == ()
+
+
+def test_gcs_node_death_reply_waits_for_dead_owner_install_ack() -> None:
+    nodes, actors, request, _old, _survivor, death = _fixture()
+    calls = []
+    def install(address, message):
+        calls.append(message)
+        if len(calls) == 1:
+            return protocol.InstallActorStateReply(message.owner_worker_id, message.snapshot, False, "busy")
+        return _ack(address, message)
+    coordinator = ActorCoordinator(nodes, actors, install_actor_state=install)
+    gcs = _gcs(nodes, actors, coordinator)
+    first = gcs.report_node_death(_report(death))
+    assert not first.actor_state_converged
+    dead = actors.get(request.actor_id)
+    assert dead.state is protocol.ActorState.DEAD
+    replay = gcs.report_node_death(_report(death))
+    assert replay.actor_state_converged
     assert replay.disposition is protocol.NodeDeathDisposition.ALREADY_DEAD
-    assert actors.get(request.actor_id).state is protocol.ActorState.ALIVE
+    assert actors.get(request.actor_id) == dead
+    assert calls[0] == calls[1]
+
+
+def test_drain_retries_dead_install_without_starting_any_restart() -> None:
+    nodes, actors, request, _old, _survivor, death = _fixture()
+    calls, reserves = [], []
+    def install(address, message):
+        calls.append(message)
+        if len(calls) == 1:
+            raise TimeoutError("lost ACK")
+        return _ack(address, message)
+    coordinator = ActorCoordinator(
+        nodes, actors, reserve_actor_worker=lambda *args: reserves.append(args),
+        install_actor_state=install,
+    )
+    coordinator.fail_node(death.node_id, "Node exited")
+    assert coordinator.drain_once() == ()
+    assert calls[0] == calls[1] and reserves == []
+    assert actors.get(request.actor_id).state is protocol.ActorState.DEAD

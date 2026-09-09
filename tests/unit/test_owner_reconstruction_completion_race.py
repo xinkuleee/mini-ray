@@ -1,20 +1,22 @@
 """Pure owner-reconstruction ACK races after a real local START.
 
 One canonical Task publishes a stored result through discovery, the Node
-publication adapter/journal and Core adoption, finishes, and really drops its
-replica. The real reconstruction admission then queues the next Attempt. A
+publication adapter/journal and Core owner-handoff/adoption, finishes, and
+really drops its replica. The real reconstruction admission then queues the next Attempt. A
 synchronous callback completes that exact Attempt before returning its START
 outcome to the owner reducer. Success uses the same publication path; an
 application failure uses Core's actual atomic terminal-error reducer. No user
-function, scheduler, physical Worker, StartLease RPC or live GCS is executed.
+function, scheduler, physical Worker, StartLease RPC or GCS publication
+service is executed.
 
-The borrower has an actually acquired capability from an explicit legacy
-export pin; it never receives or queues producer lineage. A separate probe
-observes the Core lock at both reads of each owner/recovery metadata pair. It
+The borrower has an actually acquired capability from an explicit typed
+container hold. Its outer identity is a pure protocol fixture, not a public
+serialized outer result; it never receives or queues producer lineage. A separate probe
+observes the Core lock at the pre-admission owner/recovery metadata pair. It
 does not simulate concurrent execution by publishing under a re-entrant lock.
 
 Per case: one Task/one slot, at most two Attempts/publications, one 4-KiB
-store, <=128 bytes per published slot and <=32 observations per channel. All
+store, <=128 bytes per published result and <=32 observations per channel. All
 transport is exact synchronous routing. Runtime constructors, threads, sockets,
 processes, timers and real waits are forbidden. Cleanup releases real handles
 and the export capability; it does not finish unresolved Tasks, drain queued
@@ -35,15 +37,18 @@ import pytest
 
 from miniray import control, core as core_module, node as node_module, protocol, transport, worker
 from miniray.core import CoreWorker, ObjectRef, _PendingTask, _ReleaseBorrowedReference, _WAKE_COORDINATOR
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.errors import SystemTaskError, TaskError
-from miniray.ids import ObjectID
+from miniray.ids import LeaseID, ObjectID, TaskID, WorkerID
 from miniray.node import NodeServer
+from miniray.object_manager import ObjectManager
+from miniray.object_store import ObjectStore
 from miniray.ownership import ObjectState, UnknownObjectError
 from miniray.reconstruction_runtime import ReconstructionDisposition
 from miniray.recovery import FailureKind, RecoveryAction, TaskState
 from miniray.resources import ResourceVector
 from tests.unit._pure_core import SynchronousReferenceMailbox, close_pure_core, make_pure_core
-from tests.unit.test_task_finish_barrier import _OutputBackend
+from tests.unit._pure_output_runtime import PureOutputRuntime
 
 
 pytestmark = pytest.mark.unit
@@ -114,6 +119,63 @@ class _BorrowMailbox(SynchronousReferenceMailbox):
         return True
 
 
+class _OutputBackend(PureOutputRuntime):
+    """Bounded single-output reducer composition, never a live Node/lease.
+
+    Store sealing and deletion call actual Node methods. Complete accounting
+    is the PureOutputRuntime callback, not a Worker execution or physical lease.
+    """
+
+    def __init__(self, core, forbidden):
+        super().__init__(core)
+        self.forbidden = forbidden
+        self.completed = self.completions
+        self.executor = WorkerID(bytes.fromhex("ef" * 16))
+        self.store = ObjectStore(4096)
+        self.node = object.__new__(NodeServer)
+        node = self.node
+        node.node_id = core.node_id
+        node._node_pid = self.incarnation.node_pid
+        node._registration_epoch = self.incarnation.registration_epoch
+        node._state_lock = threading.RLock()
+        node._object_store = self.store
+        node._object_manager = ObjectManager(node.node_id, self.store)
+        node._sealed_metadata = {}
+        node._dropped_metadata = {}
+        node._local_replica_write_claims = {}
+        node._object_localization_locks = {}
+        node._owner_death_fences = {}
+        node._output_publication_journal = self.journal
+        self.adapter._seal_replica = node._seal_output_publication_replica
+        self.adapter._drop_replica = node._drop_output_publication_replica
+
+    def address(self, node_id):
+        assert node_id == self.core.node_id
+        return self.node_address
+
+    def rpc(self, address, handler, request):
+        if handler == "drop_object_replica":
+            assert address == self.node_address
+            self.calls.append((handler, request))
+            return self.node._handle_drop_object_replica(request)
+        return super().rpc(address, handler, request)
+
+    def succeed(self, pending, *, stored, value):
+        assert len(self.completed) < 2 and len(pending.output_ids) == 1
+        lease_id = LeaseID((len(self.completed) + 1).to_bytes(16, "big"))
+        push = protocol.PushTask(lease_id, self.executor, pending.spec)
+        reply = self.complete(push, (value,), inline_threshold=0 if stored else 1024)
+        identity = reply.output_publication.publication_id
+        assert reply.results[0].size_bytes <= 128
+        assert self.adapter.report_terminal(identity)
+        assert self.core._publish_reply(
+            pending, reply, expected_node_id=self.core.node_id, expected_lease_id=lease_id,
+        )
+        assert not self.journal.snapshot(identity).retained_result_slots
+        assert self.handoff_snapshot(identity).adoption.complete == reply.output_publication.complete
+        return reply.results
+
+
 class _Fixture:
     def __init__(self, forbidden):
         self.forbidden = forbidden
@@ -121,8 +183,12 @@ class _Fixture:
         self.local_ref = self.foreign_ref = None
         self.export_installed = False
         self.original = self.retried = None
-        self.source = protocol.ContainedTransferSource("reconstruction-ack-race-export")
-        self.owner.gcs_address = ("reconstruction-ack-control.invalid", 1)
+        outer = ObjectID.for_task(TaskID.derive(
+            self.owner.job_id, self.owner.driver_task_id, 999,
+        ))
+        self.source = protocol.ContainedTransferSource(ContainedReferenceHold(
+            outer, self.owner.worker_id, "reconstruction-ack-race-export",
+        ))
         self.backend = _OutputBackend(self.owner, forbidden)
         self.owner_calls, self.admissions = [], []
 
@@ -438,7 +504,7 @@ def test_core_reconstruction_ack_reads_owner_and_recovery_under_one_composition_
         assert f.owner.request_owned_object_reconstruction(request) is reply
     finally:
         probing = False
-    assert reads == [("owner", True), ("recovery", True)] * 2
+    assert reads == [("owner", True), ("recovery", True)]
     assert calls == [f.local_ref.object_id]
     pending, = f.take()
     assert pending.spec.attempt_id == reply.reconstruction_attempt == f.original.spec.attempt_id.next()
@@ -448,66 +514,46 @@ def test_core_reconstruction_ack_reads_owner_and_recovery_under_one_composition_
     # completion merely to collect the last local/borrowed handles.
 
 
-@pytest.mark.parametrize(
-    "pair_fault", ("pending-with-terminal-recovery", "ready-with-retry-pending"),
-)
-def test_same_attempt_incompatible_snapshot_pair_cannot_ack_started(monkeypatch, owner_race, pair_fault):
+@pytest.mark.parametrize("complete_before_return", (False, True))
+def test_admission_receipt_never_depends_on_a_post_admission_snapshot(
+    monkeypatch, owner_race, complete_before_return,
+):
     f = owner_race
     original_admit = f.owner._admit_owned_object_reconstruction
     original_snapshot = f.owner._owned_reconstruction_snapshot
-    admissions, actual_pairs = [], []
+    admissions, reads = [], []
 
     def admit(object_id):
-        assert not admissions
         outcome = original_admit(object_id)
         admissions.append(outcome)
         assert outcome.disposition is ReconstructionDisposition.START
-        if pair_fault == "ready-with-retry-pending":
+        if complete_before_return:
             f.finish_admitted(outcome)
         return outcome
 
-    def incompatible_post_view(object_id):
-        if len(actual_pairs) >= 2:
-            f.forbidden("unexpected paired reconstruction snapshot", object_id)
+    def only_pre_admission(object_id):
+        if admissions or reads:
+            f.forbidden("current metadata used as historical admission proof")
         pair = original_snapshot(object_id)
-        actual_pairs.append(pair)
-        if len(actual_pairs) == 1:
-            assert not admissions
-            return pair
-        assert len(admissions) == 1
-        owner, recovery = pair
-        attempt = admissions[0].decision.attempt_id
-        assert owner.current_attempt == recovery.current_attempt == attempt
-        # Fault only the immutable metadata view returned to the reducer. The
-        # actual START/publication, owner table and RecoveryManager are untouched.
-        if pair_fault == "pending-with-terminal-recovery":
-            assert owner.state is ObjectState.PENDING
-            assert recovery.task_state is TaskState.RETRY_PENDING
-            assert recovery.active_recovery == attempt
-            return owner, replace(recovery, task_state=TaskState.SUCCEEDED)
-        assert owner.state is ObjectState.READY_INLINE
-        assert recovery.task_state is TaskState.SUCCEEDED
-        assert recovery.active_recovery is None
-        return owner, replace(recovery, task_state=TaskState.RETRY_PENDING)
+        reads.append(pair)
+        return pair
 
     monkeypatch.setattr(f.owner, "_admit_owned_object_reconstruction", admit)
-    monkeypatch.setattr(f.owner, "_owned_reconstruction_snapshot", incompatible_post_view)
+    monkeypatch.setattr(f.owner, "_owned_reconstruction_snapshot", only_pre_admission)
     request = f.request()
     reply = f.owner.request_owned_object_reconstruction(request)
-    assert reply.disposition is protocol.OwnedObjectReconstructionDisposition.FAILED
-    assert reply.failure is protocol.OwnedObjectReconstructionFailure.AUTHORITY_REJECTED
-    assert reply.reconstruction_attempt is None and len(actual_pairs) == 2
-    assert f.owner.owner_table.snapshot(f.local_ref.object_id) == actual_pairs[-1][0]
-    assert f.owner._recovery.reconstruction_snapshot(f.local_ref.object_id) == actual_pairs[-1][1]
-    assert not f.owner._owned_reconstruction._replies
-    if pair_fault == "pending-with-terminal-recovery":
+    assert reply.disposition is protocol.OwnedObjectReconstructionDisposition.STARTED
+    assert reply.reconstruction_attempt == admissions[0].decision.attempt_id
+    assert f.owner.request_owned_object_reconstruction(request) is reply
+    assert len(reads) == len(admissions) == 1
+    if not complete_before_return:
         pending, = f.take()
-        assert pending.spec.attempt_id == admissions[0].decision.attempt_id
+        assert pending.spec.attempt_id == reply.reconstruction_attempt
         assert f.owner._task_finish_barriers[pending.object_id] is pending
         assert f.owner._accepted_task_count == 1
     else:
         assert f.borrower.get(f.foreign_ref, timeout=1.0) == 42
-        assert f.take() == () and len(f.admissions) == 1
+        assert f.take() == ()
     f.assert_borrower_active()
 
 
@@ -663,3 +709,25 @@ def test_pre_admission_snapshot_distinguishes_unknown_object_from_recovery_failu
     assert f.owner._accepted_task_count == 0 and not f.owner._task_finish_barriers
     assert not f.owner._reconstruction._sessions and f.take() == ()
     f.assert_borrower_active()
+
+
+def test_post_handoff_trace_failure_cannot_hide_the_accepted_attempt(monkeypatch, owner_race):
+    f = owner_race
+    original_emit = f.owner._emit
+    failed_events = []
+
+    def emit(name, **attributes):
+        if name == "object_reconstruction_started":
+            failed_events.append(attributes)
+            raise RuntimeError("observation failed after actual queue handoff")
+        return original_emit(name, **attributes)
+
+    monkeypatch.setattr(f.owner, "_emit", emit)
+    request = f.request()
+    reply = f.owner.request_owned_object_reconstruction(request)
+    assert reply.disposition is protocol.OwnedObjectReconstructionDisposition.STARTED
+    assert f.owner.request_owned_object_reconstruction(request) is reply
+    pending, = f.take()
+    assert pending.spec.attempt_id == reply.reconstruction_attempt
+    assert f.owner._task_finish_barriers[pending.object_id] is pending
+    assert f.owner._accepted_task_count == 1 and len(failed_events) == 1

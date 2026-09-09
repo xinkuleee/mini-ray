@@ -4,6 +4,7 @@ This runner intentionally has no pytest argument passthrough.  Adding a smoke
 test requires a code review and an exact entry in the matching allowlist.
 Even an in-memory thread/socket smoke runs in a separate pytest process so a
 failed lock or teardown cannot hang the parent beyond the same hard deadline.
+Execution requires POSIX process groups. --list is read-only on every platform.
 """
 
 from __future__ import annotations
@@ -22,7 +23,14 @@ from typing import Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_NODE_IDS = frozenset(
     {
+        "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+        "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
         "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+        "tests/integration/test_runner_process_tree_path.py::test_timeout_cleanup_reaps_owned_parent_and_detached_grandchild",
+        "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
+        "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
+        "tests/integration/test_put_contained_ref_path.py::test_stored_put_foreign_ref_survives_source_close_and_task_argument_import",
+        "tests/integration/test_put_contained_ref_path.py::test_stored_put_dependency_survives_consumer_reconstruction",
         "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example01]",
         "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example02]",
         "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example03]",
@@ -171,6 +179,28 @@ TIMEOUT_EXIT_CODE = 124
 _PS_PROCESS_TREE_COMMAND = ("ps", "-axo", "pid=,ppid=,pgid=")
 
 
+def _require_posix_execution() -> None:
+    """Reject unsupported cleanup before creating an isolated pytest child."""
+
+    if (os.name != "posix" or not callable(getattr(os, "getpgrp", None))
+            or not callable(getattr(os, "killpg", None))
+            or not hasattr(signal, "SIGKILL")):
+        raise RuntimeError(
+            "bounded test execution requires POSIX process groups (Linux/macOS). "
+            "Native Windows process-tree cleanup is unsupported; --list remains available."
+        )
+
+
+def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """Keep ambient pytest options and plugins outside both reviewed runners."""
+
+    env = dict(environment)
+    env.pop("PYTEST_ADDOPTS", None)
+    env.pop("PYTEST_PLUGINS", None)
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    return env
+
+
 @dataclass(frozen=True)
 class _ProcessRecord:
     """One numeric row from a read-only process-table snapshot."""
@@ -209,8 +239,54 @@ def _parse_process_snapshot(output: str) -> Dict[int, _ProcessRecord]:
     return records
 
 
+def _parse_proc_stat(value: str, expected_pid: int) -> Optional[_ProcessRecord]:
+    """Read Linux stat identity, allowing spaces and parentheses in comm."""
+
+    prefix, closing, suffix = value.rpartition(")")
+    pid_text, opening, _comm = prefix.partition(" (")
+    columns = suffix.split()
+    if (not opening or not closing or len(columns) < 3
+            or len(columns[0]) != 1 or columns[0] not in "RSDZTtXxKWPI"
+            or not pid_text.isascii() or not pid_text.isdecimal()
+            or any(not part.isascii() or not part.isdecimal() for part in columns[1:3])):
+        return None
+    pid, parent_pid, process_group_id = (int(part) for part in (pid_text, *columns[1:3]))
+    if pid != expected_pid or pid <= 0 or process_group_id <= 0:
+        return None
+    return _ProcessRecord(pid, parent_pid, process_group_id)
+
+
+def _read_proc_process_snapshot(root: Path = Path("/proc")) -> Dict[int, _ProcessRecord]:
+    """Read only numeric PID/stat entries, without requiring a procps binary."""
+
+    deadline = time.monotonic() + PROCESS_SNAPSHOT_TIMEOUT_SECONDS
+    records: Dict[int, _ProcessRecord] = {}
+    for entry in root.iterdir():
+        if time.monotonic() >= deadline:
+            # Never return a timed-out partial scan as a complete snapshot.
+            raise subprocess.TimeoutExpired("/proc/[pid]/stat", PROCESS_SNAPSHOT_TIMEOUT_SECONDS)
+        name = entry.name
+        if not name.isascii() or not name.isdecimal() or name.startswith("0"):
+            continue
+        pid = int(name)
+        try:
+            value = (entry / "stat").read_text(encoding="utf-8", errors="surrogateescape")
+        except OSError:
+            # Exit races and permission-denied entries supply no trusted identity.
+            continue
+        record = _parse_proc_stat(value, pid)
+        if record is not None:
+            records[pid] = record
+    if time.monotonic() >= deadline:
+        raise subprocess.TimeoutExpired("/proc/[pid]/stat", PROCESS_SNAPSHOT_TIMEOUT_SECONDS)
+    return records
+
+
 def _read_process_snapshot() -> Dict[int, _ProcessRecord]:
-    """Take the same numeric process-tree snapshot on macOS and Linux."""
+    """Take numeric identities from Linux procfs or the macOS ps interface."""
+
+    if sys.platform.startswith("linux"):
+        return _read_proc_process_snapshot()
 
     completed = subprocess.run(
         _PS_PROCESS_TREE_COMMAND,
@@ -250,8 +326,8 @@ def _descendant_closure(
 class _TrackedProcessTree:
     """Remember identities captured before TERM, including reparented rows.
 
-    ``ps`` does not expose a portable birth token in the requested macOS/Linux
-    column set.  A remembered PID is therefore trusted on a later scan only
+    Snapshot records contain only PID/PPID/PGID, without a birth token.
+    A remembered PID is therefore trusted on a later scan only
     while its PGID is unchanged.  New rows are admitted solely through a PPID
     edge from one of those live, trusted rows.  Dead remembered PIDs are never
     used as traversal roots, which avoids adopting an unrelated tree after PID
@@ -261,7 +337,7 @@ class _TrackedProcessTree:
     def __init__(self, leader_pid: int) -> None:
         self.leader_pid = _positive_id(leader_pid, kind="pytest leader PID")
         # start_new_session=True makes this equality an invariant controlled by
-        # this runner, even if the first ps snapshot races with leader exit.
+        # this runner, even if the first snapshot races with leader exit.
         self._known_pgids: Dict[int, int] = {leader_pid: leader_pid}
         self._retired_pids: Set[int] = set()
 
@@ -291,7 +367,7 @@ class _TrackedProcessTree:
         }
         # Popen.poll() is stronger identity evidence for our direct child than
         # the process table.  Seeding its exact PID also catches a child row if
-        # ps omitted the leader during an exit race.
+        # the snapshot omitted the leader during an exit race.
         if leader_alive:
             trusted_roots.add(self.leader_pid)
 
@@ -304,7 +380,7 @@ class _TrackedProcessTree:
         for pid, record in active.items():
             if pid == self.leader_pid:
                 # Never weaken the start_new_session invariant based on a
-                # surprising/reused ps row.
+                # surprising/reused process row.
                 continue
             self._known_pgids[pid] = record.process_group_id
 
@@ -457,7 +533,7 @@ def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
         time.sleep(min(0.05, remaining))
 
     # A fresh final snapshot avoids signaling stale PIDs after the grace period.
-    # If ps itself is unavailable, only the Popen-owned leader remains strong
+    # If the process snapshot is unavailable, only the Popen-owned leader remains strong
     # enough identity evidence for a safe final signal.
     try:
         records = _read_process_snapshot()
@@ -498,26 +574,49 @@ def _smoke_marker(node_id: str) -> str:
 def _pytest_command(node_id: str) -> list[str]:
     return [
         sys.executable, "-m", "pytest", "-m", _smoke_marker(node_id),
-        node_id, "-q",
+        node_id, "-q", "-p", "no:cacheprovider",
     ]
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run one allowlisted, bounded mini-Ray smoke test."
+        description="Run one allowlisted, bounded mini-Ray smoke test.",
+        allow_abbrev=False,
     )
     parser.add_argument(
         "node_id",
+        nargs="?",
         choices=sorted(ALLOWED_NODE_IDS | ALLOWED_LOOPBACK_NODE_IDS),
         help="complete pytest node ID (must be statically allowlisted)",
     )
+    parser.add_argument(
+        "--list", action="store_true",
+        help="show exact allowlisted selectors without importing tests or starting pytest",
+    )
     args = parser.parse_args(argv)
+    if args.list:
+        if args.node_id is not None:
+            parser.error("--list cannot be combined with a test node ID")
+        print("Allowlisted smoke selectors (no test modules imported or pytest started):")
+        for marker, selectors in (("multiprocess_smoke", ALLOWED_NODE_IDS),
+                                  ("loopback_smoke", ALLOWED_LOOPBACK_NODE_IDS)):
+            for selector in sorted(selectors):
+                print("{} {}".format(marker, selector))
+        print("Execution requires POSIX process groups; listing is not a test result or safety review.")
+        return 0
+    if args.node_id is None:
+        parser.error("one exact test node ID is required unless --list is used")
+    try:
+        _require_posix_execution()
+    except RuntimeError as exc:
+        parser.error(str(exc))
 
     command = _pytest_command(args.node_id)
     process = subprocess.Popen(
         command,
         cwd=str(PROJECT_ROOT),
         start_new_session=True,
+        env=_child_environment(os.environ),
     )
     try:
         # A normal pytest result is returned unchanged, including failures and

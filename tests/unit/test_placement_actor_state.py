@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -24,7 +22,7 @@ from miniray.placement import (
     ReservationConflictError,
     ReservationState,
 )
-from miniray.resources import NodeSnapshot, ResourceVector
+from miniray.resources import AllocationState, NodeSnapshot, ResourceLedger, ResourceVector
 
 
 def rv(**values: int) -> ResourceVector:
@@ -32,8 +30,7 @@ def rv(**values: int) -> ResourceVector:
 
 
 def make_id(cls, value: str):
-    # Opaque IDs are fixed-width bytes.  A deterministic repeated byte keeps
-    # expected placements readable without depending on random values.
+    # Opaque IDs are fixed-width bytes, chosen deterministically for these tests.
     return cls(bytes([sum(value.encode("utf-8")) % 251]) * 16)
 
 
@@ -41,18 +38,21 @@ def node(name: str, total: ResourceVector, available: ResourceVector) -> NodeSna
     return NodeSnapshot(make_id(NodeID, name), total, available, alive=True)
 
 
-def test_pack_reuses_nodes_while_spread_uses_distinct_nodes() -> None:
+def test_hard_strategies_choose_distinct_layouts_without_mutating_snapshots() -> None:
     nodes = [node("n1", rv(CPU=4), rv(CPU=4)), node("n2", rv(CPU=4), rv(CPU=4))]
+    before = tuple(nodes)
     bundles = [Bundle(0, rv(CPU=1)), Bundle(1, rv(CPU=1))]
     planner = PlacementPlanner()
 
-    packed = planner.plan(bundles, nodes, PlacementStrategy.PACK)
-    spread = planner.plan(bundles, nodes, PlacementStrategy.SPREAD)
+    packed = planner.plan(bundles, nodes)
+    spread = planner.plan(bundles, nodes, PlacementStrategy.STRICT_SPREAD)
 
     assert packed.status is PlacementStatus.SUCCESS
-    assert packed.node_for(0) == packed.node_for(1)
+    assert packed.node_for(0) == packed.node_for(1) == make_id(NodeID, "n1")
     assert spread.status is PlacementStatus.SUCCESS
     assert spread.node_for(0) != spread.node_for(1)
+    assert packed == planner.plan(bundles, tuple(reversed(nodes)), "STRICT_PACK")
+    assert tuple(nodes) == before
 
 
 def test_strict_pack_requires_one_node_to_hold_the_entire_group() -> None:
@@ -64,9 +64,9 @@ def test_strict_pack_requires_one_node_to_hold_the_entire_group() -> None:
     assert plan.status is PlacementStatus.INFEASIBLE
 
 
-def test_strict_spread_uses_matching_instead_of_greedy_first_fit() -> None:
-    # The GPU bundle can run only on n1.  A naive CPU-first greedy assignment
-    # to n1 would fail, while bipartite matching moves CPU to n2.
+def test_strict_spread_checks_both_assignments_instead_of_greedy_first_fit() -> None:
+    # The GPU bundle can run only on n1. A CPU-first assignment to n1 fails;
+    # checking the other exact pair places CPU on n2 and GPU on n1.
     nodes = [
         node("n1", rv(CPU=1, GPU=1), rv(CPU=1, GPU=1)),
         node("n2", rv(CPU=1), rv(CPU=1)),
@@ -91,85 +91,88 @@ def test_planner_distinguishes_temporarily_unavailable_from_infeasible() -> None
     assert infeasible.status is PlacementStatus.INFEASIBLE
 
 
-@dataclass(frozen=True)
-class FakeToken:
-    number: int
-    resources: ResourceVector
+@pytest.mark.parametrize("strategy", ("PACK", "SPREAD"))
+def test_planner_rejects_soft_strategy_instead_of_changing_its_semantics(strategy) -> None:
+    nodes = [node("n1", rv(CPU=2), rv(CPU=2))]
+    with pytest.raises(ValueError):
+        PlacementPlanner().plan([rv(CPU=1)], nodes, strategy)
 
 
-class FakeResourceLedger:
-    def __init__(self, available: ResourceVector) -> None:
-        self.available = available
-        self.next_token = 0
-        self.live: dict[int, FakeToken] = {}
-        self.release_count = 0
-
-    def allocate(self, resources: ResourceVector) -> FakeToken | None:
-        if not resources.fits_in(self.available):
-            return None
-        self.available = self.available - resources
-        token = FakeToken(self.next_token, resources)
-        self.next_token += 1
-        self.live[token.number] = token
-        return token
-
-    def release(self, token: FakeToken) -> None:
-        assert self.live.pop(token.number) == token
-        self.available = self.available + token.resources
-        self.release_count += 1
+@pytest.mark.parametrize("count", (0, 3))
+def test_bundle_count_is_rejected_before_planning_or_reserving(count) -> None:
+    bundles = [Bundle(index, rv(CPU=1)) for index in range(count)]
+    root = ResourceLedger(rv(CPU=4))
+    reservations = BundleReservationLedger(root)
+    before = root.snapshot()
+    with pytest.raises(ValueError, match="one or two"):
+        PlacementPlanner().plan(bundles, [node("n1", rv(CPU=4), rv(CPU=4))])
+    with pytest.raises(ValueError, match="one or two"):
+        reservations.prepare(make_id(PlacementGroupID, "pg"), 0, bundles)
+    assert root.snapshot() == before
+    assert reservations.snapshot(make_id(PlacementGroupID, "pg"), 0) is None
 
 
-def test_prepare_failure_rolls_back_every_bundle_allocated_on_the_node() -> None:
-    resources = FakeResourceLedger(rv(CPU=2))
-    ledger = BundleReservationLedger(resources)  # type: ignore[arg-type]
+def test_strict_spread_distinguishes_busy_assignment_from_too_few_live_nodes() -> None:
+    first = node("n1", rv(CPU=1), rv(CPU=1))
+    second = node("n2", rv(CPU=1), rv(CPU=0))
+    bundles = [rv(CPU=1), rv(CPU=1)]
+    planner = PlacementPlanner()
+    assert planner.plan(bundles, [first, second], "STRICT_SPREAD").status is PlacementStatus.PENDING
+    assert planner.plan(bundles, [first], "STRICT_SPREAD").status is PlacementStatus.INFEASIBLE
+
+
+def test_prepare_failure_allocates_nothing_on_the_node() -> None:
+    resources = ResourceLedger(rv(CPU=2))
+    ledger = BundleReservationLedger(resources)
     pg = make_id(PlacementGroupID, "pg")
+    before = resources.snapshot()
 
-    prepared = ledger.prepare(
-        pg, 0, [Bundle(0, rv(CPU=1)), Bundle(1, rv(CPU=2))]
-    )
+    assert not ledger.prepare(pg, 0, [Bundle(0, rv(CPU=1)), Bundle(1, rv(CPU=2))])
 
-    assert not prepared
-    assert resources.available == rv(CPU=2)
-    assert resources.live == {}
-    # Atomic prepare checks the aggregate before allocating any bundle.
-    assert resources.next_token == 0
-    assert ledger.snapshot(pg, 0).state is ReservationState.ABORTED  # type: ignore[union-attr]
+    assert resources.snapshot() == before
+    assert ledger.snapshot(pg, 0).state is ReservationState.ABORTED
 
 
 def test_reservation_protocol_is_idempotent_and_abort_rolls_back_commit() -> None:
-    resources = FakeResourceLedger(rv(CPU=2))
-    ledger = BundleReservationLedger(resources)  # type: ignore[arg-type]
+    resources = ResourceLedger(rv(CPU=2))
+    ledger = BundleReservationLedger(resources)
     pg = make_id(PlacementGroupID, "pg")
     bundles = [Bundle(0, rv(CPU=1))]
 
     assert ledger.prepare(pg, 3, bundles)
     assert ledger.prepare(pg, 3, bundles)
-    assert len(resources.live) == 1
+    active = resources.snapshot().allocations
+    assert len(active) == 1 and active[0].state is AllocationState.ACTIVE
     assert ledger.commit(pg, 3)
     assert ledger.commit(pg, 3)
-    assert ledger.snapshot(pg, 3).state is ReservationState.COMMITTED  # type: ignore[union-attr]
+    assert ledger.snapshot(pg, 3).state is ReservationState.COMMITTED
 
     assert ledger.abort(pg, 3)
+    released = resources.snapshot()
     assert ledger.abort(pg, 3)
+    assert resources.snapshot() == released
     assert resources.available == rv(CPU=2)
-    assert resources.release_count == 1
+    assert len(released.allocations) == 1
+    assert released.allocations[0].state is AllocationState.RELEASED
     assert not ledger.commit(pg, 3)
     assert not ledger.prepare(pg, 3, bundles)
 
 
 def test_reusing_transaction_key_with_different_payload_is_rejected() -> None:
-    resources = FakeResourceLedger(rv(CPU=4))
-    ledger = BundleReservationLedger(resources)  # type: ignore[arg-type]
+    resources = ResourceLedger(rv(CPU=4))
+    ledger = BundleReservationLedger(resources)
     pg = make_id(PlacementGroupID, "pg")
     assert ledger.prepare(pg, 0, [rv(CPU=1)])
+    before = resources.snapshot()
 
     with pytest.raises(ReservationConflictError):
         ledger.prepare(pg, 0, [rv(CPU=2)])
+    assert resources.snapshot() == before
 
 
 def test_abort_before_prepare_fences_late_prepare() -> None:
-    resources = FakeResourceLedger(rv(CPU=2))
-    ledger = BundleReservationLedger(resources)  # type: ignore[arg-type]
+    resources = ResourceLedger(rv(CPU=2))
+    ledger = BundleReservationLedger(resources)
     pg = make_id(PlacementGroupID, "pg")
 
     assert ledger.abort(pg, 7)

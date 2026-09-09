@@ -195,6 +195,16 @@ class OwnerService:
                     core.release_contained_reference,
                 INSTALL_ACTOR_STATE_HANDLER: core.install_actor_state,
         }
+        from . import output_protocol as output_wire
+        for handler, method in (
+            (output_wire.REGISTER_OUTPUT_HANDOFF_HANDLER, "register_output_handoff"),
+            (output_wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, "report_output_handoff_complete"),
+            (output_wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER, "report_output_handoff_rollback"),
+            (output_wire.GET_OUTPUT_HANDOFF_HANDLER, "get_output_handoff"),
+        ):
+            callback = getattr(core, method, None)
+            if callable(callback):
+                handlers[handler] = callback
         # Phase C1 makes these operations optional until CoreWorker adopts the
         # new business methods.  Absence means no advertised RPC surface; it
         # must never make an otherwise valid OwnerService fail construction.

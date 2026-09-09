@@ -1,20 +1,10 @@
-"""Zero-effect serialization of one complete selected-output batch.
+"""Serialize one task result once and discover its contained-reference custody.
 
-Discovery has one job: serialize each selected return once, identify its
-contained-reference custody, and choose its storage tier.  It never acquires
-pins, performs RPC, commits a graph, or manufactures a Complete witness.
-Only the metadata manifest may reach GCS; ``slot_payloads`` are a separate
-Worker-to-Node data-plane value.
-
-Tier selection is per slot, not cumulative across the return batch: equality
-with ``inline_threshold`` stays INLINE.  This preserves the existing Worker
-result policy; the cumulative budget for *task arguments* is a different rule.
-
-Python pickle memoization defines aliasing within a slot.  Repeated occurrences
-of one Python ObjectRef produce one transfer and restore one handle.  Distinct
-Python handles for the same logical child remain distinct transfers, matching
-the existing single-slot exporter.  Every slot starts a new memo and names its
-own container hold, so collecting one sibling cannot release another's child.
+The result may be any supported Python value, including a tuple or list; it is
+one ObjectRef. Discovery selects INLINE or STORED, emits one metadata manifest
+and retains source handles until their real handoff. It performs no RPC or
+reference mutation. Payload bytes travel separately from control metadata.
+Pickle memoization preserves aliases within that single object.
 """
 
 from __future__ import annotations
@@ -111,7 +101,7 @@ class OutputDiscoverySession:
         self.inline_threshold = inline_threshold
         self._owner_address = owner_address
         self._token_factory = token_factory
-        self._token_namespace = self.header.publication_id.graph_transaction_id
+        self._token_namespace = self.header.publication_id.transaction_id
         self._source_references: list[object] = []
         self._discovered: Optional[DiscoveredOutputs] = None
         self._state = "NEW"

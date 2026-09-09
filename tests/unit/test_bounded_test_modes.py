@@ -7,6 +7,8 @@ creation and cleanup operations are fakes, including timeout/interruption.
 from __future__ import annotations
 
 import ast
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -53,7 +55,8 @@ def test_exact_allowlist_infers_mode_without_changing_original_cli(
 ) -> None:
     assert runner._smoke_marker(node_id) == expected
     assert runner._pytest_command(node_id) == [
-        runner.sys.executable, "-m", "pytest", "-m", expected, node_id, "-q"
+        runner.sys.executable, "-m", "pytest", "-m", expected, node_id, "-q",
+        "-p", "no:cacheprovider",
     ]
 
 
@@ -104,6 +107,54 @@ def test_cli_accepts_one_selector_and_no_pytest_passthrough(
     assert caught.value.code == 2
 
 
+def test_list_is_read_only_even_without_posix_cleanup(monkeypatch, capsys):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("listing attempted execution or process inspection")
+
+    monkeypatch.setattr(runner, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(runner, "_require_posix_execution", forbidden)
+    monkeypatch.setattr(runner.subprocess, "Popen", forbidden)
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
+    monkeypatch.setattr(runner, "_terminate_process_tree", forbidden)
+    before = {name for name in sys.modules if name.startswith(("tests.", "miniray"))}
+    assert runner.main(["--list"]) == 0
+    assert {name for name in sys.modules if name.startswith(("tests.", "miniray"))} == before
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[1:-1] == [
+        marker + " " + selector
+        for marker, selectors in (("multiprocess_smoke", runner.ALLOWED_NODE_IDS),
+                                  ("loopback_smoke", runner.ALLOWED_LOOPBACK_NODE_IDS))
+        for selector in sorted(selectors)
+    ]
+    assert "not a test result or safety review" in lines[-1]
+
+
+def test_native_windows_fails_before_starting_or_inspecting_processes(monkeypatch, capsys):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("unsupported execution reached a process effect")
+
+    monkeypatch.setattr(runner, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(runner.subprocess, "Popen", forbidden)
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
+    monkeypatch.setattr(runner, "_terminate_process_tree", forbidden)
+    with pytest.raises(SystemExit) as caught:
+        runner.main([_MP_ID])
+    assert caught.value.code == 2
+    error = capsys.readouterr().err
+    assert "POSIX process groups" in error and "--list remains available" in error
+
+
+@pytest.mark.parametrize("arguments", ([], ["--list", _MP_ID], ["--li"], ["--list", "-m", "heavy"]))
+def test_list_and_execution_are_distinct_explicit_commands(monkeypatch, arguments):
+    monkeypatch.setattr(
+        runner.subprocess, "Popen",
+        lambda *_args, **_kwargs: pytest.fail("invalid command started pytest"),
+    )
+    with pytest.raises(SystemExit) as caught:
+        runner.main(arguments)
+    assert caught.value.code == 2
+
+
 @pytest.mark.parametrize("node_id", (_MP_ID, _LOOPBACK_ID))
 @pytest.mark.parametrize("outcome", ("passed", "failed", "timeout", "interrupt"))
 def test_modes_share_isolated_process_deadline_and_exact_cleanup(
@@ -130,6 +181,9 @@ def test_modes_share_isolated_process_deadline_and_exact_cleanup(
         return process
 
     monkeypatch.setattr(runner.subprocess, "Popen", launch)
+    monkeypatch.setattr(runner, "_require_posix_execution", lambda: None)
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-n auto -m heavy tests")
+    monkeypatch.setenv("PYTEST_PLUGINS", "unreviewed_plugin")
     monkeypatch.setattr(
         runner, "_terminate_process_tree", lambda value: cleaned.append(value)
     )
@@ -141,7 +195,11 @@ def test_modes_share_isolated_process_deadline_and_exact_cleanup(
         assert result == (124 if outcome == "timeout" else 0 if outcome == "passed" else 2)
     assert launches == [(runner._pytest_command(node_id), {
         "cwd": str(runner.PROJECT_ROOT), "start_new_session": True,
+        "env": runner._child_environment(runner.os.environ),
     })]
+    child_env = launches[0][1]["env"]
+    assert "PYTEST_ADDOPTS" not in child_env and "PYTEST_PLUGINS" not in child_env
+    assert child_env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
     assert cleaned == ([process] if outcome in {"timeout", "interrupt"} else [])
 
 

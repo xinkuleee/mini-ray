@@ -15,9 +15,11 @@ from __future__ import annotations
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from queue import Queue
 
 import pytest
 
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.errors import ProtocolError
 from miniray.ids import (
     AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID,
@@ -68,8 +70,11 @@ class _Fixture:
         self.owner_id = WorkerID.random()
         self.first_requester = WorkerID.random()
         self.second_requester = WorkerID.random()
-        self.source = ContainedTransferSource("export-pin")
         self.spec = _spec(self.owner_id, max_retries=max_retries)
+        outer = ObjectID.for_task(TaskID.derive(self.spec.job_id, self.spec.task_id, 1))
+        self.source = ContainedTransferSource(ContainedReferenceHold(
+            outer, self.owner_id, "export-pin",
+        ))
         self.object_id = self.spec.return_ids()[0]
         self.owner = ObjectOwnerTable()
         self.recovery = RecoveryManager()
@@ -93,7 +98,7 @@ class _Fixture:
                 self.spec.task_id, self.spec.attempt_id
             )
         self.owner.add_contained_reference(
-            self.object_id, self.source.transfer_token
+            self.object_id, self.source.hold
         )
         for requester, token in (
             (self.first_requester, "first-borrower"),
@@ -106,10 +111,13 @@ class _Fixture:
             self.recovery, self.owner
         )
         self.admission_calls: list[ObjectID] = []
+        self.queue = Queue()
 
         def admit(object_id: ObjectID):
             self.admission_calls.append(object_id)
-            return self.coordinator.request(object_id)
+            return self.coordinator.handoff(
+                self.coordinator.request(object_id), self.queue.put
+            )
 
         self.reducer = OwnedObjectReconstructionReducer(
             self.owner_id,
@@ -375,7 +383,7 @@ def test_concurrent_exact_requests_commit_once_and_replay_one_reply(monkeypatch)
 @pytest.mark.unit
 def test_source_binding_is_verified_and_claim_drift_is_a_typed_conflict() -> None:
     fixture = _Fixture()
-    unbound = fixture.request(source=ContainedTransferSource("forged"))
+    unbound = fixture.request(source=ContainedTransferSource(replace(fixture.source.hold, transfer_token="forged")))
 
     mismatch = fixture.reducer.handle(unbound)
 
@@ -388,7 +396,7 @@ def test_source_binding_is_verified_and_claim_drift_is_a_typed_conflict() -> Non
     drift = fixture.reducer.handle(
         replace(
             exact, credential=BorrowedCredential(
-                ContainedTransferSource("drift"), exact.borrower_token
+                ContainedTransferSource(replace(fixture.source.hold, transfer_token="drift")), exact.borrower_token
             )
         )
     )
@@ -404,7 +412,7 @@ def test_failed_forgery_does_not_poison_a_later_exact_valid_request() -> None:
     exact = fixture.request()
     forged = replace(
         exact, credential=BorrowedCredential(
-            ContainedTransferSource("forged"), exact.borrower_token
+            ContainedTransferSource(replace(fixture.source.hold, transfer_token="forged")), exact.borrower_token
         )
     )
 
@@ -552,3 +560,198 @@ def test_released_retained_credential_is_rejected() -> None:
     assert reply.disposition is Disposition.FAILED
     assert reply.failure is Failure.RELEASED_CREDENTIAL
     assert fixture.admission_calls == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("after_handoff", ("success", "lost-again", "next-epoch", "released"))
+def test_first_ack_uses_actual_queue_handoff_after_later_state_changes(after_handoff):
+    from miniray.reconstruction_runtime import ReconstructionDisposition
+    fixture = _Fixture(max_retries=2)
+    request = fixture.request()
+    calls = []
+
+    def admit(object_id):
+        outcome = fixture.coordinator.handoff(
+            fixture.coordinator.request(object_id), fixture.queue.put,
+        )
+        calls.append(outcome)
+        plan = fixture.queue.get_nowait()
+        assert outcome.disposition is ReconstructionDisposition.START
+        assert plan.attempt_id == outcome.decision.attempt_id
+        if after_handoff == "released":
+            fixture.owner.release_borrowed_reference(
+                object_id, (fixture.first_requester, request.borrower_token),
+            )
+        else:
+            fixture.owner.publish_stored(object_id, plan.attempt_id, NodeID.random())
+            fixture.recovery.record_task_success(plan.task_id, plan.attempt_id)
+            assert fixture.coordinator.complete(plan.task_id, plan.attempt_id)
+            if after_handoff in ("lost-again", "next-epoch"):
+                fixture.owner.mark_lost(object_id, plan.attempt_id)
+            if after_handoff == "next-epoch":
+                next_outcome = fixture.coordinator.handoff(
+                    fixture.coordinator.request(object_id), fixture.queue.put,
+                )
+                assert next_outcome.decision.attempt_id == plan.attempt_id.next()
+                assert fixture.queue.get_nowait().attempt_id == plan.attempt_id.next()
+        return outcome
+
+    fixture.reducer._admit = admit
+    reply = fixture.reducer.handle(request)
+    assert reply.disposition is Disposition.STARTED
+    assert reply.reconstruction_attempt == fixture.spec.attempt_id.next()
+    assert fixture.reducer.handle(request) is reply
+    assert len(calls) == 1 and fixture.queue.empty()
+
+
+@pytest.mark.unit
+def test_preview_and_committed_but_unqueued_outcomes_cannot_authorize_ack():
+    from miniray.reconstruction_runtime import ReconstructionRuntimeError
+    fixture = _Fixture()
+    preview = fixture.coordinator.preview(fixture.object_id)
+    with pytest.raises(ReconstructionRuntimeError, match="actual committed"):
+        fixture.coordinator.handoff(preview, fixture.queue.put)
+    committed = fixture.coordinator.request(fixture.object_id)
+    assert committed.admission is None and fixture.queue.empty()
+    fixture.reducer._admit = lambda _object: committed
+    # The owner is already PENDING but no queue accepted the task.
+    reply = fixture.reducer.handle(fixture.request())
+    assert reply.failure is Failure.AUTHORITY_REJECTED
+    joined = fixture.coordinator.request(fixture.object_id)
+    with pytest.raises(ReconstructionRuntimeError, match="already queued"):
+        fixture.coordinator.handoff(joined, fixture.queue.put)
+    assert fixture.queue.empty() and not fixture.reducer._replies
+
+
+@pytest.mark.unit
+def test_handoff_replay_queues_once_and_rejects_changed_attempt():
+    from miniray.reconstruction_runtime import ReconstructionRuntimeError
+    fixture = _Fixture()
+    outcome = fixture.coordinator.request(fixture.object_id)
+    admitted = fixture.coordinator.handoff(outcome, fixture.queue.put)
+    replay = fixture.coordinator.handoff(outcome, fixture.queue.put)
+    assert admitted.admission.matches(admitted, fixture.owner, fixture.recovery)
+    assert replay.admission.matches(replay, fixture.owner, fixture.recovery)
+    assert fixture.queue.qsize() == 1
+    wrong = replace(outcome, decision=replace(
+        outcome.decision, attempt_id=outcome.decision.attempt_id.next(),
+    ))
+    with pytest.raises(ReconstructionRuntimeError, match="actual committed"):
+        fixture.coordinator.handoff(wrong, fixture.queue.put)
+    fixture.reducer._admit = lambda _object: replace(
+        admitted, decision=wrong.decision,
+    )
+    assert fixture.reducer.handle(fixture.request()).failure is Failure.AUTHORITY_REJECTED
+    assert fixture.queue.qsize() == 1
+
+
+@pytest.mark.unit
+def test_failed_queue_acceptance_cannot_issue_receipt_or_authorize_join():
+    from miniray.reconstruction_runtime import ReconstructionRuntimeError
+    fixture = _Fixture()
+    outcome = fixture.coordinator.request(fixture.object_id)
+
+    def reject(_plan):
+        raise RuntimeError("queue rejected before acceptance")
+
+    with pytest.raises(RuntimeError, match="queue rejected"):
+        fixture.coordinator.handoff(outcome, reject)
+    assert not fixture.coordinator._handoffs and fixture.queue.empty()
+    with pytest.raises(ReconstructionRuntimeError, match="already queued"):
+        fixture.coordinator.handoff(
+            fixture.coordinator.request(fixture.object_id), fixture.queue.put,
+        )
+    admitted = fixture.coordinator.handoff(outcome, fixture.queue.put)
+    assert admitted.admission.matches(admitted, fixture.owner, fixture.recovery)
+    assert fixture.queue.qsize() == 1
+
+
+@pytest.mark.unit
+def test_system_retry_join_requires_its_own_committed_queue_handoff():
+    from miniray.reconstruction_runtime import ReconstructionRuntimeError
+    from miniray.errors import SystemTaskError
+    from miniray.task_outputs import TaskExecutionKey
+    fixture = _Fixture(max_retries=2)
+    admitted = fixture.coordinator.handoff(
+        fixture.coordinator.request(fixture.object_id), fixture.queue.put,
+    )
+    previous = admitted.decision.attempt_id
+    assert fixture.queue.get_nowait().attempt_id == previous
+    assert fixture.coordinator.preflight_retry(fixture.spec.task_id, previous)
+    transition = fixture.recovery.validate_task_failure(
+        fixture.spec.task_id, previous, SystemTaskError("retry"),
+    )
+    attempt = transition.decision.attempt_id
+    plan = fixture.owner.validate_advance_task_outputs(
+        TaskExecutionKey.from_task_spec(fixture.spec).for_attempt(previous), attempt,
+    )
+    fixture.owner.commit_validated_advance_task_outputs(plan)
+    fixture.recovery.commit_transition(transition)
+    joined = fixture.coordinator.request(fixture.object_id)
+    with pytest.raises(ReconstructionRuntimeError, match="already queued"):
+        fixture.coordinator.handoff(joined, fixture.queue.put)
+    assert fixture.coordinator.handoff_retry(
+        fixture.spec.task_id, previous, attempt, lambda: fixture.queue.put(attempt),
+    )
+    assert not fixture.coordinator.handoff_retry(
+        fixture.spec.task_id, previous, attempt, lambda: fixture.queue.put(attempt),
+    )
+    accepted_join = fixture.coordinator.handoff(joined, fixture.queue.put)
+    assert accepted_join.admission.matches(accepted_join, fixture.owner, fixture.recovery)
+    assert fixture.queue.get_nowait() == attempt and fixture.queue.empty()
+    assert fixture.recovery.task_record(fixture.spec.task_id).retries_started == 2
+
+
+@pytest.mark.unit
+def test_request_binding_conflict_is_checked_before_retired_metadata_lookup():
+    fixture = _Fixture()
+    request = fixture.request()
+    acknowledged = fixture.reducer.handle(request)
+    assert acknowledged.disposition is Disposition.STARTED
+
+    def unavailable(_object):
+        raise AssertionError("exact replay/conflict must not consult current metadata")
+
+    fixture.reducer._snapshot_reconstruction = unavailable
+    assert fixture.reducer.handle(request) is acknowledged
+    changed = replace(request, credential=BorrowedCredential(
+        ContainedTransferSource(replace(fixture.source.hold, transfer_token="changed-source")), request.borrower_token,
+    ))
+    assert fixture.reducer.handle(changed).failure is Failure.REQUEST_CONFLICT
+    assert fixture.admission_calls == [fixture.object_id]
+
+
+@pytest.mark.unit
+def test_join_first_ack_survives_completion_and_a_later_epoch():
+    fixture = _Fixture(max_retries=2)
+    started = fixture.coordinator.handoff(
+        fixture.coordinator.request(fixture.object_id), fixture.queue.put,
+    )
+    first_plan = fixture.queue.get_nowait()
+    assert first_plan.attempt_id == started.decision.attempt_id
+    joins = []
+
+    def join_then_finish(object_id):
+        joined = fixture.coordinator.handoff(
+            fixture.coordinator.request(object_id), fixture.queue.put,
+        )
+        joins.append(joined)
+        assert fixture.queue.empty()
+        fixture.owner.publish_stored(object_id, first_plan.attempt_id, NodeID.random())
+        fixture.recovery.record_task_success(first_plan.task_id, first_plan.attempt_id)
+        assert fixture.coordinator.complete(first_plan.task_id, first_plan.attempt_id)
+        fixture.owner.mark_lost(object_id, first_plan.attempt_id)
+        fixture.coordinator.handoff(
+            fixture.coordinator.request(object_id), fixture.queue.put,
+        )
+        assert fixture.queue.get_nowait().attempt_id == first_plan.attempt_id.next()
+        return joined
+
+    fixture.reducer._admit = join_then_finish
+    request = fixture.request()
+    reply = fixture.reducer.handle(request)
+    assert reply.disposition is Disposition.JOINED
+    assert reply.reconstruction_attempt == first_plan.attempt_id
+    assert fixture.reducer.handle(request) is reply
+    assert len(joins) == 1 and fixture.queue.empty()
+    assert fixture.owner.snapshot(fixture.object_id).current_attempt == first_plan.attempt_id.next()

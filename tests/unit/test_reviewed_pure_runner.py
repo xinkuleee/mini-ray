@@ -9,6 +9,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -131,7 +132,13 @@ def test_manifest_freezes_reviewed_scope_and_explicit_reviewed_extensions():
     assert "not a permanent safety certificate" in manifest.review_notice
 
 
-def test_list_reports_scope_and_known_exclusions_without_importing_tests_or_launching(capsys):
+def test_list_reports_scope_and_known_exclusions_without_importing_tests_or_launching(monkeypatch, capsys):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("listing attempted execution or process inspection")
+
+    monkeypatch.setattr(runner.bounded, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(runner.bounded, "_require_posix_execution", forbidden)
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
     before = {name for name in sys.modules if name.startswith(("tests.", "miniray"))}
     assert runner.main(["--list"]) == 0
     assert {name for name in sys.modules if name.startswith(("tests.", "miniray"))} == before
@@ -163,7 +170,7 @@ def test_environment_cannot_inject_pytest_options_or_plugins_and_is_not_mutated(
         "TASK_NOTE": "preserve",
     }
     before = dict(ambient)
-    actual = runner._child_environment(ambient)
+    actual = runner.bounded._child_environment(ambient)
     assert ambient == before
     assert actual == {"PATH": "/task/bin", "TASK_NOTE": "preserve", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
 
@@ -252,6 +259,19 @@ def test_cli_has_no_selector_override_or_pytest_passthrough(arguments):
     assert raised.value.code == 2
 
 
+def test_native_windows_rejects_execution_without_a_child_or_cleanup(monkeypatch, capsys):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("unsupported execution inspected the process table")
+
+    monkeypatch.setattr(runner.bounded, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(runner.subprocess, "run", forbidden)
+    with pytest.raises(SystemExit) as raised:
+        runner.main([])
+    assert raised.value.code == 2
+    error = capsys.readouterr().err
+    assert "POSIX process groups" in error and "--list remains available" in error
+
+
 @pytest.mark.parametrize("outcome", ("passed", "failed", "collection-error", "no-tests", "timeout", "interrupt", "wait-error"))
 def test_one_isolated_child_has_same_deadline_exitcode_and_cleanup_as_bounded_runner(monkeypatch, capsys, outcome):
     manifest = runner._validate_manifest(_small_data())
@@ -280,6 +300,7 @@ def test_one_isolated_child_has_same_deadline_exitcode_and_cleanup_as_bounded_ru
 
     monkeypatch.setattr(runner, "_load_manifest", lambda: manifest)
     monkeypatch.setattr(runner.subprocess, "Popen", launch)
+    monkeypatch.setattr(runner.bounded, "_require_posix_execution", lambda: None)
     monkeypatch.setattr(runner.bounded, "_terminate_process_tree", cleaned.append)
     monkeypatch.setenv("PYTEST_ADDOPTS", "-n auto -m heavy")
     monkeypatch.setenv("PYTEST_PLUGINS", "unexpected_plugin")
@@ -294,7 +315,7 @@ def test_one_isolated_child_has_same_deadline_exitcode_and_cleanup_as_bounded_ru
         assert result == {"passed": 0, "failed": 1, "collection-error": 2, "no-tests": 5, "timeout": 124}[outcome]
     assert launches == [(runner._pytest_command(manifest), {
         "cwd": str(runner.PROJECT_ROOT), "start_new_session": True,
-        "env": runner._child_environment(runner.os.environ),
+        "env": runner.bounded._child_environment(runner.os.environ),
     })]
     assert waits == [30.0]
     assert cleaned == ([child] if outcome in ("timeout", "interrupt", "wait-error") else [])

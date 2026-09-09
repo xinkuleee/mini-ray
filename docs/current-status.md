@@ -1,19 +1,48 @@
-# Current implementation status
+# 当前实现状态与历史记录
 
-> **2026-09-08 source snapshot, not a verified release.** Read
-> [handoff.md](handoff.md) for the current code/draft boundary and
-> [correction-plan.md](correction-plan.md) for the pending semantic decisions.
-> Archiving/pushing the project does not approve implementation. No tests were
-> run for this archival step. The records below are historical evidence, not a
-> claim that the uploaded tree passes: the retained foreign-wait test draft
-> currently disagrees with its classification guard.
+日期：2026-09-09。**第一阶段基础版已独立通过约定验收；本地提交/标记为`teaching-base-v0.1`，第二阶段尚未实施。**
+两阶段顺序以 [redesign-plan.md](redesign-plan.md) 为准；当前实际结果、证据层级和有限剩余项以 [acceptance-baseline.md](acceptance-baseline.md) 为唯一验收账本。
+本页不累计旧 pass 数表示完成度，也不把不同修改时点的结果当成同一最终版本通过。
 
-This page preserves capability and verification records for their named
-checkpoints. Detailed existing mechanisms live in `design.md`; test safety and
-historical commands live in `testing.md`. Later additions to a roadmap or test
-inventory do not automatically become new user requirements. A module,
-protocol type, or pure reducer is not counted as an integrated capability
-until it participates in the real runtime path.
+## 当前基础实现
+
+| 领域 | 当前已接入的范围 | 尚不能据此声称 |
+|---|---|---|
+| Task / 执行 | 单输出；真实 spawn；1–2 逻辑 Node；dependency gate、lease/spillback、Core→Worker direct Push；动态子任务与 CPU yield | K0/K1 全部历史组合或生产 Ray API 兼容 |
+| owner-led 普通结果 | owner 待交接清单与精确收据；Node 物化/Complete；child owner holds；owner 原子可见与独立托管退休 | 无 ACK/补偿，或 Node Complete 就等于当前 bytes 可读 |
+| GCS 边界 | 成员、死亡事实、owner-wide Node fence、Actor 与 PG；普通结果 GCS 阶段事务和全局 contained graph 已退出活动实现 | 第二阶段两项增强已完成 |
+| 对象与引用 | INLINE/STORED、immutable bytes、pin/pull、typed hold/source、独立 borrower、nested refs；显式含 Ref put 接线与补偿 | close/shutdown 已证明所有实体 GC，或 put 可以 lineage 重建 |
+| 恢复 | 单输出 whole retry/reconstruction；B1 真实 START/JOIN 准入事实、B2 完整 drop 请求绑定；准确 Complete 与 UNKNOWN/LOST 分开 | 精确一次外部副作用、任意故障交错或 owner 接管 |
+| Actor / PG | 串行 Actor、同 Node 有限 restart、typed 构造/启动失败、Node loss 终态；PG 至多两个 bundle、STRICT_PACK/STRICT_SPREAD、2PC/LOST | Actor migration、引用参数/值内 Ref、soft PG 优化或 bundle 重排 |
+
+独立多返回槽、targeted/sibling 恢复、自动 StoredArg lift、Actor migration、全局图及 GCS 普通发布权威已从基础版范围退出。
+对应旧测试的共享不变量按验收账本迁移，退役协议专属断言不自动成为新门禁；历史 manifest 不是当前基础回归入口。
+
+最终snapshot03归档SHA256为`42fa8b6406ae5672b434b1b479aa08ca3c36faab131429ea287970bf135cd5d0`。
+同版Linux结果为**318 passed / 1 deselected，32个exact smoke全部通过**；七个原main的stdout和canonical trace已保存。
+证据见[结果](../artifacts/stage1-baseline/results.json)、[环境](../artifacts/stage1-baseline/environment.json)、[示例产物](../artifacts/stage1-baseline/example-output/)。
+B04 adoption ACK-loss、B06 Task foreign nested replay的有限缺口均在本版复验闭合。
+Linux/Windows已分别完成相同锁文件的frozen安装和import；安装不扩大Windows运行时支持，远端CI尚未执行。
+
+2026-09-09活动源码为56个Python文件、59,386物理行、48,555代码行，比原始代码行减少12.03%。
+Core、Node、wire责任仍集中，紧凑代码量目标尚未达成；成本及低置信度预算校准见[两阶段计划§8](redesign-plan.md)。
+
+## 阶段交界
+
+基础版以本地提交/标记`teaching-base-v0.1`固定源码、依赖和证据；通过该标记独立检出，之后进入第二阶段。
+第二阶段尚未实现，接下来按计划E0–E4加入两项增强并验收，不恢复退出能力、不长期保留双后端。
+基础标记持续作为首次学习入口，新增保证和组合测试不回写成本版交付条件。
+
+阅读当前运行路径从 [learning-path.md](learning-path.md) 开始；职责与简化对照见 [production-ray-mapping.md](production-ray-mapping.md)。
+[handoff.md](handoff.md)、旧 correction-plan、roadmap、acceptance-matrix、design/testing 的历史段落及下方记录保留来源，不覆盖本轮实施授权或当前事实。
+
+---
+
+## 历史 checkpoint 归档：以下不是当前工作树状态
+
+**以下原始记录全部属于 owner-led 基础改造前的历史。** 其中“current”“now”“remaining”、旧 GCS INTENT/ARM/terminal/adopted、global DAG、multi-return/targeted、Actor migration 和累计测试数字，都必须按各自当时源码解释。
+这些结果不能认证当前工作树；其中旧源文件/行号可能已删除或移动。保留内容用于追溯原断言、故障来源和语义变化，不恢复旧滚动任务队列。
+当前是否通过只查顶部链接的验收账本，不能从下面任一历史绿色或未勾 checkbox 推导。
 
 ## Last recorded focused verification (2026-09-08; before retained drafts)
 

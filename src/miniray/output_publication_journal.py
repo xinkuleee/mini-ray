@@ -1,4 +1,4 @@
-"""One Node-local journal for a whole selected-output publication.
+"""One Node-local journal for a single-output publication.
 
 The control history is metadata-only.  INLINE payloads live exclusively in the
 active ``results`` cache and leave it after rollback or an exact retirement
@@ -23,11 +23,6 @@ from enum import Enum
 from threading import RLock
 from typing import Optional, Tuple, Union
 
-from .contained_cycle import (
-    ContainedGraphManifest, ContainedGraphManifestDisposition,
-    ContainedGraphManifestReceipt, ContainedGraphTransactionState,
-)
-from .contained_edges import ContainedReferenceEdge
 from .ids import ObjectID, WorkerID
 from .output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationConflictError,
@@ -63,13 +58,10 @@ class OutputPublicationJournalState(str, Enum):
 
 
 class OutputPublicationStage(str, Enum):
-    INTENT = "INTENT"
+    OWNER_REGISTER = "OWNER_REGISTER"
     PREPARE = "PREPARE"
-    GRAPH_PREPARE = "GRAPH_PREPARE"
     MATERIALIZE = "MATERIALIZE"
     PROMOTE = "PROMOTE"
-    ARM_COMPLETE = "ARM_COMPLETE"
-    GRAPH_ABORT = "GRAPH_ABORT"
     SLOT_DROP = "SLOT_DROP"
     FINAL_RELEASE = "FINAL_RELEASE"
     PROVISIONAL_RELEASE = "PROVISIONAL_RELEASE"
@@ -88,7 +80,7 @@ _SLOT_STAGES = frozenset((
     OutputPublicationStage.MATERIALIZE, OutputPublicationStage.SLOT_DROP,
 ))
 _ROLLBACK_STAGES = frozenset((
-    OutputPublicationStage.GRAPH_ABORT, OutputPublicationStage.SLOT_DROP,
+    OutputPublicationStage.SLOT_DROP,
     OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE,
 ))
 
@@ -282,7 +274,6 @@ class OutputPublicationJournalSnapshot:
     rollback: Optional[OutputPublicationRollbackPlan]
     rollback_tombstone: Optional[OutputPublicationRollbackTombstone]
     retired_slots: Tuple[OutputPublicationSlotTombstone, ...]
-    ready_to_arm: bool
     ready_to_complete: bool
 
     @property
@@ -341,31 +332,17 @@ class OutputPublicationJournal:
             self._records[manifest.publication_id] = _Record(manifest)
             return True
 
-    def begin_intent(self, publication_id: OutputPublicationID) -> OutputPublicationEffect:
-        return self._begin(publication_id, OutputPublicationStage.INTENT)
+    def begin_owner_register(self, publication_id: OutputPublicationID) -> OutputPublicationEffect:
+        return self._begin(publication_id, OutputPublicationStage.OWNER_REGISTER)
 
-    def ack_intent(self, acknowledgement: OutputPublicationAck) -> bool:
-        return self._ack_forward(acknowledgement, OutputPublicationStage.INTENT)
+    def ack_owner_registered(self, acknowledgement: OutputPublicationAck) -> bool:
+        return self._ack_forward(acknowledgement, OutputPublicationStage.OWNER_REGISTER)
 
     def begin_prepare(self, publication_id: OutputPublicationID, slot_index: int, transfer_index: int) -> OutputPublicationEffect:
         return self._begin(publication_id, OutputPublicationStage.PREPARE, slot_index, transfer_index)
 
     def ack_prepared(self, acknowledgement: OutputPublicationAck) -> bool:
         return self._ack_forward(acknowledgement, OutputPublicationStage.PREPARE)
-
-    def begin_graph_prepare(self, publication_id: OutputPublicationID) -> Optional[OutputPublicationEffect]:
-        with self._lock:
-            record = self._record(publication_id)
-            self._require_active(record)
-            self._require_all_prepared(record)
-            if not record.manifest.ordered_edges:
-                return None
-            return self._begin(publication_id, OutputPublicationStage.GRAPH_PREPARE)
-
-    def ack_graph_prepared(self, acknowledgement: OutputPublicationAck, receipt: ContainedGraphManifestReceipt) -> bool:
-        return self._ack_forward(
-            acknowledgement, OutputPublicationStage.GRAPH_PREPARE, graph_receipt=receipt
-        )
 
     def begin_materialize(self, publication_id: OutputPublicationID, slot_index: int) -> OutputPublicationEffect:
         return self._begin(publication_id, OutputPublicationStage.MATERIALIZE, slot_index)
@@ -381,12 +358,6 @@ class OutputPublicationJournal:
     def ack_promoted(self, acknowledgement: OutputPublicationAck) -> bool:
         return self._ack_forward(acknowledgement, OutputPublicationStage.PROMOTE)
 
-    def begin_arm_complete(self, publication_id: OutputPublicationID) -> OutputPublicationEffect:
-        return self._begin(publication_id, OutputPublicationStage.ARM_COMPLETE)
-
-    def ack_arm_complete(self, acknowledgement: OutputPublicationAck) -> bool:
-        return self._ack_forward(acknowledgement, OutputPublicationStage.ARM_COMPLETE)
-
     def acknowledged(self, effect: OutputPublicationEffect) -> bool:
         _require_type(effect, OutputPublicationEffect, "effect")
         effect = replace(effect)
@@ -396,13 +367,13 @@ class OutputPublicationJournal:
             return effect in record.acknowledgements
 
     def complete(self, publication_id: OutputPublicationID, witness: OutputPublicationCompleteWitness) -> OutputPublicationEnvelope:
-        """Cross the irreversible local boundary after the exact ARM ACK.
+        """Cross the local boundary after owner registration and all result handoffs.
 
         First construction of the data-plane envelope is validated before any
         state change.  A retry returns the same value while every slot remains
         retained.  After retirement it raises OutputPublicationPayloadRetired,
         preserving the successful Complete without inventing missing bytes.
-        Terminal reporting to GCS happens outside this local operation.
+        Reporting Complete to the owner happens outside this local operation.
         """
         _require_type(witness, OutputPublicationCompleteWitness, "witness")
         witness = replace(witness)
@@ -412,8 +383,10 @@ class OutputPublicationJournal:
                 raise OutputPublicationConflictError("Complete witness changed publication identity")
             if record.complete is None:
                 self._require_active(record)
-                if not self._acked(record, OutputPublicationStage.ARM_COMPLETE):
-                    raise OutputPublicationJournalStateError("Complete requires the exact arm ACK")
+                if not self._ready_to_complete(record):
+                    raise OutputPublicationJournalStateError(
+                        "Complete requires owner registration, materialization, and child promotion ACKs"
+                    )
             if record.retired_slots:
                 raise OutputPublicationPayloadRetired(
                     record.manifest.publication_id,
@@ -431,10 +404,9 @@ class OutputPublicationJournal:
     def begin_rollback(self, publication_id: OutputPublicationID, rollback_id: str) -> OutputPublicationRollbackPlan:
         """Fence forward work and freeze compensation from possible effects.
 
-        A recorded ARM is permission to Complete, not proof that it occurred.
-        Therefore an alive Node may still roll back an armed execution whose
-        local Complete is absent.  After Node loss only recovery authority, not
-        this local reducer, may decide an unknown Complete outcome.
+        Successful preparation does not prove execution completion. The alive
+        Node may roll back while its local Complete is absent. After Node loss
+        this in-memory journal provides no durable recovery authority.
         """
         _string(rollback_id, "rollback_id")
         with self._lock:
@@ -447,8 +419,6 @@ class OutputPublicationJournal:
                 return replace(record.rollback)
             self._require_active(record)
             effects = []
-            if self._intended(record, OutputPublicationStage.GRAPH_PREPARE):
-                effects.append(self._effect(record, OutputPublicationStage.GRAPH_ABORT))
             for index in reversed(range(len(record.manifest.slots))):
                 if self._intended(record, OutputPublicationStage.MATERIALIZE, index):
                     effects.append(self._effect(record, OutputPublicationStage.SLOT_DROP, index))
@@ -473,7 +443,7 @@ class OutputPublicationJournal:
             value = self._next_rollback(record)
             return None if value is None else replace(value)
 
-    def ack_rollback(self, acknowledgement: OutputPublicationAck, graph_receipt: Optional[ContainedGraphManifestReceipt] = None) -> bool:
+    def ack_rollback(self, acknowledgement: OutputPublicationAck) -> bool:
         _require_type(acknowledgement, OutputPublicationAck, "acknowledgement")
         acknowledgement = replace(acknowledgement)
         effect = acknowledgement.effect
@@ -482,10 +452,6 @@ class OutputPublicationJournal:
             self._require_effect(record, effect)
             if record.rollback is None or effect not in record.rollback.effects:
                 raise OutputPublicationJournalStateError("effect is not part of this rollback")
-            if effect.stage is OutputPublicationStage.GRAPH_ABORT:
-                self._validate_graph_receipt(record, graph_receipt, abort=True)
-            elif graph_receipt is not None:
-                raise TypeError("only graph ABORT accepts a graph receipt")
             if effect in record.acknowledgements:
                 return False
             if self._next_rollback(record) != effect:
@@ -528,12 +494,12 @@ class OutputPublicationJournal:
             return tuple(replace(value) for value in terminals)
 
     def retire_owner_death(self, publication_id: OutputPublicationID, death: object) -> None:
-        """Forget reply custody only after the exact global owner cleanup.
+        """Forget reply custody only after exact owner-death cleanup.
 
         The Node adapter validates fence, stopped lease and physical cleanup.
         This does not pretend a rollback happened after successful Complete.
         """
-        from .output_recovery import _owner_death
+        from .death_proofs import owner_death as _owner_death
         death = _owner_death(death)
         with self._lock:
             record = self._record(publication_id)
@@ -571,8 +537,7 @@ class OutputPublicationJournal:
                 None if record.rollback is None else replace(record.rollback),
                 None if record.rollback_tombstone is None else replace(record.rollback_tombstone),
                 tuple(replace(record.retired_slots[index]) for index in sorted(record.retired_slots)),
-                active and self._ready_to_arm(record),
-                active and self._acked(record, OutputPublicationStage.ARM_COMPLETE),
+                active and self._ready_to_complete(record),
             )
 
     def publication_ids(self) -> Tuple[OutputPublicationID, ...]:
@@ -588,7 +553,7 @@ class OutputPublicationJournal:
             record.intents.add(effect)
             return replace(effect)
 
-    def _ack_forward(self, acknowledgement, stage, *, descriptor=None, graph_receipt=None):
+    def _ack_forward(self, acknowledgement, stage, *, descriptor=None):
         _require_type(acknowledgement, OutputPublicationAck, "acknowledgement")
         acknowledgement = replace(acknowledgement)
         effect = acknowledgement.effect
@@ -601,9 +566,7 @@ class OutputPublicationJournal:
             if effect not in record.intents:
                 raise OutputPublicationJournalStateError("ACK arrived before its intent")
             self._require_stage_ready(record, stage)
-            if stage is OutputPublicationStage.GRAPH_PREPARE:
-                self._validate_graph_receipt(record, graph_receipt, abort=False)
-            elif stage is OutputPublicationStage.MATERIALIZE:
+            if stage is OutputPublicationStage.MATERIALIZE:
                 descriptor = self._validate_descriptor(record, effect.slot_index, descriptor)
             if effect in record.acknowledgements:
                 if stage is OutputPublicationStage.MATERIALIZE and record.results[effect.slot_index] != descriptor:
@@ -644,8 +607,6 @@ class OutputPublicationJournal:
                 raise OutputPublicationConflictError("slot_index is outside the selected manifest")
             if transfer_index is not None and transfer_index >= len(record.manifest.slots[slot_index].transfers):
                 raise OutputPublicationConflictError("transfer_index is outside its slot")
-        if stage in (OutputPublicationStage.GRAPH_PREPARE, OutputPublicationStage.GRAPH_ABORT) and not record.manifest.ordered_edges:
-            raise OutputPublicationConflictError("an empty-edge publication has no graph effect")
         return effect
 
     def _require_effect(self, record, effect):
@@ -656,47 +617,36 @@ class OutputPublicationJournal:
         return self._effect(record, stage, slot_index, transfer_index) in record.acknowledgements
 
     def _intended(self, record, stage, slot_index=None, transfer_index=None):
-        if stage is OutputPublicationStage.GRAPH_PREPARE and not record.manifest.ordered_edges:
-            return False
         return self._effect(record, stage, slot_index, transfer_index) in record.intents
 
     def _require_all_prepared(self, record):
-        if not self._acked(record, OutputPublicationStage.INTENT):
-            raise OutputPublicationJournalStateError("child/data effects require intent ACK")
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("child/data effects require the exact owner registration ACK")
         if not all(self._acked(record, OutputPublicationStage.PREPARE, *index) for index in self._transfer_indices(record)):
-            raise OutputPublicationJournalStateError("graph prepare requires every provisional prepare ACK")
-
-    def _graph_ready(self, record):
-        return not record.manifest.ordered_edges or self._acked(record, OutputPublicationStage.GRAPH_PREPARE)
+            raise OutputPublicationJournalStateError("materialization requires every provisional prepare ACK")
 
     def _all_materialized(self, record):
         return all(self._acked(record, OutputPublicationStage.MATERIALIZE, index)
                    for index in range(len(record.manifest.slots)))
 
-    def _ready_to_arm(self, record):
-        return (self._acked(record, OutputPublicationStage.INTENT) and self._graph_ready(record)
+    def _ready_to_complete(self, record):
+        return (self._acked(record, OutputPublicationStage.OWNER_REGISTER)
                 and self._all_materialized(record)
                 and all(self._acked(record, OutputPublicationStage.PROMOTE, *index)
                         for index in self._transfer_indices(record)))
 
     def _require_stage_ready(self, record, stage):
-        if stage is OutputPublicationStage.INTENT:
+        if stage is OutputPublicationStage.OWNER_REGISTER:
             return
-        if not self._acked(record, OutputPublicationStage.INTENT):
-            raise OutputPublicationJournalStateError("operation requires intent ACK")
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
         if stage is OutputPublicationStage.PREPARE:
             return
         self._require_all_prepared(record)
-        if stage is OutputPublicationStage.GRAPH_PREPARE:
-            return
-        if not self._graph_ready(record):
-            raise OutputPublicationJournalStateError("materialization requires graph prepare ACK")
         if stage is OutputPublicationStage.MATERIALIZE:
             return
         if not self._all_materialized(record):
             raise OutputPublicationJournalStateError("promotion requires every materialization ACK")
-        if stage is OutputPublicationStage.ARM_COMPLETE and not self._ready_to_arm(record):
-            raise OutputPublicationJournalStateError("arm requires every promotion ACK")
 
     @staticmethod
     def _validate_descriptor(record, slot_index, descriptor):
@@ -708,42 +658,6 @@ class OutputPublicationJournal:
                 or descriptor.node_id != record.manifest.header.node_incarnation.node_id):
             raise OutputPublicationConflictError("materialized descriptor changed its slot identity")
         return descriptor
-
-    @staticmethod
-    def _validate_graph_receipt(record, receipt, *, abort):
-        _require_type(receipt, ContainedGraphManifestReceipt, "graph receipt")
-        _require_type(receipt.manifest, ContainedGraphManifest, "graph manifest")
-        actual = receipt.manifest
-        _require_type(actual.publication_id, OutputPublicationID, "graph publication_id")
-        edges = []
-        for edge in _sequence(actual.ordered_edges, "graph edges"):
-            _require_type(edge, ContainedReferenceEdge, "graph edge")
-            address = edge.contained_owner_address
-            if (type(address) is not tuple or len(address) != 2 or type(address[0]) is not str
-                    or not address[0] or type(address[1]) is not int or not 1 <= address[1] <= 65535):
-                raise ValueError("invalid graph child-owner address")
-            edges.append(ContainedReferenceEdge(
-                _object_id(edge.container_object_id), _object_id(edge.contained_object_id),
-                _opaque(edge.contained_owner_worker_id, WorkerID, "contained owner"),
-                address, _string(edge.transfer_token, "transfer_token"),
-            ))
-        graph = ContainedGraphManifest(
-            _string(actual.transaction_id, "graph transaction_id"), replace(actual.publication_id),
-            _opaque(actual.outer_owner_worker_id, WorkerID, "graph owner"),
-            _checksum(actual.manifest_digest, "graph digest"), tuple(edges),
-        )
-        if graph != record.manifest.to_graph_manifest():
-            raise OutputPublicationConflictError("graph ACK changed the complete manifest")
-        _require_type(receipt.state, ContainedGraphTransactionState, "graph state")
-        _require_type(receipt.disposition, ContainedGraphManifestDisposition, "graph disposition")
-        if type(receipt.released_edges) is not tuple:
-            raise TypeError("graph released_edges must be a tuple")
-        expected_state = ContainedGraphTransactionState.ABORTED if abort else ContainedGraphTransactionState.PREPARED
-        allowed = (ContainedGraphManifestDisposition.APPLIED,
-                   ContainedGraphManifestDisposition.ALREADY_ABORTED if abort
-                   else ContainedGraphManifestDisposition.ALREADY_PREPARED)
-        if receipt.state is not expected_state or receipt.disposition not in allowed or receipt.released_edges:
-            raise OutputPublicationConflictError("graph ACK has the wrong terminal or phase")
 
     @staticmethod
     def _next_rollback(record):

@@ -24,7 +24,7 @@ def main() -> None:
     refs: list[ray.ObjectRef] = []
     try:
         context = ray.init(
-            num_nodes=2, num_cpus=1, enable_tracing=False,
+            num_nodes=2, num_cpus=2, num_workers_per_node=1, enable_tracing=False,
             object_store_bytes=1024 * 1024,
         )
         work_deadline = time.monotonic() + 10.0
@@ -45,8 +45,8 @@ def main() -> None:
             print("bundle placement:", key.bundle_index, "-> NodeID:", key.node_id)
         print("STRICT_SPREAD: distinct Nodes are a hard constraint, not a preference.")
         print(
-            "Capacity caveat: with one CPU per Node and one CPU per bundle, "
-            "PACK would also need two Nodes; this run does not distinguish the policies."
+            "Each Node has two CPUs: STRICT_PACK could place both one-CPU bundles "
+            "on one Node; STRICT_SPREAD requires the two distinct Nodes used here."
         )
         for index in range(group.bundle_count):
             refs.append(

@@ -1,0 +1,6 @@
+   Building mini-ray @ file:///C:/Users/t-hdong/Desktop/gao/audit/stage1-dependency-repro/project
+      Built mini-ray @ file:///C:/Users/t-hdong/Desktop/gao/audit/stage1-dependency-repro/project
+Prepared 1 package in 7.77s
+Uninstalled 1 package in 12ms
+Installed 1 package in 46ms
+ ~ mini-ray==0.1.0.dev0 (from file:///C:/Users/t-hdong/Desktop/gao/audit/stage1-dependency-repro/project)

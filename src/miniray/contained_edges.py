@@ -11,7 +11,7 @@ no RPC and never deletes physical object-store bytes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Hashable, Tuple, Union
+from typing import Tuple
 
 from .ids import AttemptID, NodeID, ObjectID, WorkerID
 
@@ -62,29 +62,7 @@ class ContainedReferenceHold:
             raise ValueError("transfer_token must be a non-empty string")
 
 
-@dataclass(frozen=True)
-class LegacyContainedReferenceHold:
-    """Compatibility identity for callers that know only a raw token.
-
-    Historical mini-Ray pin APIs did not identify the outer object or the
-    Worker incarnation that owned it.  Such pins remain valid lifetime
-    reasons, but no Worker-death reducer may guess their owner.  Runtime paths
-    can migrate incrementally by passing :class:`ContainedReferenceHold`; the
-    raw-token projection remains deliberately isolated in this variant.
-    """
-
-    transfer_token: Hashable
-
-    def __post_init__(self) -> None:
-        try:
-            hash(self.transfer_token)
-        except TypeError as exc:
-            raise TypeError("transfer_token must be hashable") from exc
-
-
-IncomingContainedReferenceHold = Union[
-    ContainedReferenceHold, LegacyContainedReferenceHold
-]
+IncomingContainedReferenceHold = ContainedReferenceHold
 
 
 @dataclass(frozen=True, order=True)
@@ -288,7 +266,6 @@ __all__ = [
     "ContainedReferenceHold",
     "ContainedReferenceEdge",
     "IncomingContainedReferenceHold",
-    "LegacyContainedReferenceHold",
     "LineageReferenceEdge",
     "ObjectMetadataCollection",
     "ObjectMetadataCollectionPlan",

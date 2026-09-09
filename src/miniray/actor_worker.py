@@ -580,8 +580,10 @@ def actor_worker_main(
 
     server: Optional[ActorWorkerServer] = None
     trace_sink = sink_from_config(trace_config)
+    startup_failure = protocol.ActorWorkerFailure.CONSTRUCTOR_FAILED
     try:
         instance = _construct_actor(class_definition, constructor_payload)
+        startup_failure = protocol.ActorWorkerFailure.STARTUP_FAILED
         server = ActorWorkerServer(
             actor_id,
             generation,
@@ -615,7 +617,9 @@ def actor_worker_main(
     except BaseException:
         if ready_connection is not None:
             try:
-                ready_connection.send((False, traceback.format_exc()))
+                ready_connection.send((False, protocol.ActorWorkerStartupFailure(
+                    startup_failure, traceback.format_exc()
+                )))
             finally:
                 ready_connection.close()
         raise

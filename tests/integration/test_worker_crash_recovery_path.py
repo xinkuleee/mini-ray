@@ -164,7 +164,7 @@ def test_after_complete_worker_crash_recovers_output_without_reexecution() -> No
         assert (grant.lease_id, grant.task_id, grant.attempt_id, grant.node_id) == (
             probe_request.lease_id, probe_request.task_id, probe_request.attempt_id, context.node_id,
         )
-        assert grant.dependencies == () and grant.scheduling_key is None and grant.target_execution is None
+        assert grant.dependencies == () and grant.scheduling_key is None
         assert grant.worker_id != context.worker_id
         managed_addresses.add(grant.worker_address)
         assert probe_grant is None or probe_grant == grant
@@ -389,7 +389,7 @@ def test_after_complete_worker_crash_recovers_output_without_reexecution() -> No
                 break
             assert type(reply) is protocol.RejectWorkerLease
             assert reply.reason is protocol.LeaseRejectReason.PENDING_CAPACITY
-            assert reply.scheduling_key is None and reply.target_execution is None
+            assert reply.scheduling_key is None
             passive_wait.wait(min(0.05, _remaining(deadline)))
         else:
             raise TimeoutError("replacement Worker did not grant the fixed probe lease")

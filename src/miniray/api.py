@@ -21,7 +21,7 @@ from . import protocol
 from .control import (
     DRAIN_ACTORS_HANDLER,
     DRAIN_PLACEMENT_GROUPS_HANDLER,
-    DRAIN_PUBLICATION_OWNER_DEATHS_HANDLER,
+    DRAIN_OWNER_DEATH_FENCES_HANDLER,
     GCS_SHUTDOWN_HANDLER,
     GET_NODES_HANDLER,
     INSTALL_CLUSTER_SNAPSHOT_HANDLER,
@@ -973,10 +973,10 @@ def _observe_managed_node_exit(runtime: _Runtime, process: object) -> None:
             reply = _validate_node_death_reply(
                 runtime, node, request, raw_reply
             )
-            if not reply.actor_migration_converged:
+            if not reply.actor_state_converged:
                 if time.monotonic() >= retry_deadline:
                     raise TimeoutError(
-                        "GCS Node death Actor migration did not converge"
+                        "GCS Node death Actor state publication did not converge"
                     )
                 threading.Event().wait(_NODE_DEATH_RETRY_INTERVAL_SECONDS)
                 continue
@@ -2434,8 +2434,8 @@ def shutdown() -> Optional[ShutdownReport]:
             try:
                 owner_death_candidate = rpc_request(
                     runtime.gcs_startup.gcs_address,
-                    DRAIN_PUBLICATION_OWNER_DEATHS_HANDLER,
-                    protocol.DrainPublicationOwnerDeaths(drain.request_id),
+                    DRAIN_OWNER_DEATH_FENCES_HANDLER,
+                    protocol.DrainOwnerDeathFences(drain.request_id),
                     request_timeout=max(0.001, deadline - time.monotonic()),
                 )
             except Exception:
@@ -2443,11 +2443,11 @@ def shutdown() -> Optional[ShutdownReport]:
             owner_death_drain_clean = bool(
                 isinstance(
                     owner_death_candidate,
-                    protocol.DrainPublicationOwnerDeathsReply,
+                    protocol.DrainOwnerDeathFencesReply,
                 )
                 and owner_death_candidate.request_id == drain.request_id
                 and owner_death_candidate.clean
-                and owner_death_candidate.active_publications == 0
+                and owner_death_candidate.active_fences == 0
             )
         if control_called:
             # Recheck membership at the top before treating these acknowledgments
@@ -2902,7 +2902,7 @@ def put(value: object) -> ObjectRef:
 def placement_group(
     bundles: Sequence[Mapping[str, ResourceQuantity] | ResourceVector],
     *,
-    strategy: str = "PACK",
+    strategy: str = "STRICT_PACK",
 ) -> PlacementGroup:
     """Synchronously create a fully committed placement group.
 
@@ -2913,8 +2913,8 @@ def placement_group(
 
     if isinstance(bundles, (str, bytes)) or not isinstance(bundles, Sequence):
         raise TypeError("bundles must be a sequence of resource mappings")
-    if not bundles:
-        raise ValueError("placement_group requires at least one bundle")
+    if not 1 <= len(bundles) <= 2:
+        raise ValueError("placement_group requires one or two bundles")
     resources = tuple(
         _validate_resource_mapping("bundles[{}]".format(index), bundle)
         for index, bundle in enumerate(bundles)
@@ -2923,7 +2923,7 @@ def placement_group(
         checked_strategy = PlacementStrategy(strategy)
     except (TypeError, ValueError):
         raise ValueError(
-            "strategy must be PACK, SPREAD, STRICT_PACK, or STRICT_SPREAD"
+            "strategy must be STRICT_PACK or STRICT_SPREAD"
         ) from None
     core = _active_core_worker()
     reply = core.create_placement_group(resources, checked_strategy)

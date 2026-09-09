@@ -146,7 +146,7 @@ def test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release() -> N
         assert (grant.lease_id, grant.task_id, grant.attempt_id, grant.node_id) == (
             probe_request.lease_id, probe_request.task_id, probe_request.attempt_id, owner_node.node_id,
         )
-        assert grant.dependencies == () and grant.scheduling_key is None and grant.target_execution is None
+        assert grant.dependencies == () and grant.scheduling_key is None
         managed_addresses.add(grant.worker_address)
         assert grant.worker_id != owner_node.worker_id
         assert probe_grant is None or probe_grant == grant
@@ -338,7 +338,7 @@ def test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release() -> N
                 break
             assert type(reply) is protocol.RejectWorkerLease
             assert reply.reason is protocol.LeaseRejectReason.PENDING_CAPACITY
-            assert reply.scheduling_key is None and reply.target_execution is None
+            assert reply.scheduling_key is None
             wake.wait(min(0.05, _remaining(deadline)))
         else:
             raise TimeoutError("replacement Worker did not grant the fixed probe lease")

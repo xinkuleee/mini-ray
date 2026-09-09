@@ -1,0 +1,8 @@
+Using CPython 3.12.13 interpreter at: /dev/shm/mini-ray-install-check/python/bin/python3.12
+Creating virtual environment at: .venv
+  × Failed to download `pygments==2.21.0`
+  ╰─▶ Network connectivity is disabled, but the
+      requested data wasn't found in the cache for:
+      `https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl`
+
+hint: `pygments` (v2.21.0) was included because `mini-ray[test]` (v0.1.0.dev0) depends on `pytest` (v8.4.2) which depends on `pygments`

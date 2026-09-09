@@ -1,0 +1,15 @@
+Using CPython 3.12.13 interpreter at: /dev/shm/mini-ray-install-check/python/bin/python3.12
+Creating virtual environment at: .venv
+   Building mini-ray @ file:///dev/shm/mini-ray-install-check/project
+Downloading pygments (1.2MiB)
+ Downloaded pygments
+      Built mini-ray @ file:///dev/shm/mini-ray-install-check/project
+Prepared 7 packages in 5.01s
+Installed 7 packages in 13ms
+ + cloudpickle==3.1.2
+ + iniconfig==2.3.0
+ + mini-ray==0.1.0.dev0 (from file:///dev/shm/mini-ray-install-check/project)
+ + packaging==26.3
+ + pluggy==1.6.0
+ + pygments==2.21.0
+ + pytest==8.4.2

@@ -1,0 +1,2 @@
+parent PID: 1354 child PID: 1360
+one CPU was yielded and then reacquired

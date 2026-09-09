@@ -1,0 +1,3 @@
+C:\Users\t-hdong\Desktop\gao\audit\stage1-dependency-repro\project\src\miniray\__init__.py
+<3.13,>=3.12
+0.1.0.dev0

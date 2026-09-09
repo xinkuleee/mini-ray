@@ -5,11 +5,10 @@ or result bytes. This module records membership/resource summaries, exported
 functions and Actor lifecycle state; it never queues or forwards ordinary
 Task or Actor-method submissions.
 
-The unified output backend additionally coordinates metadata-only publication
-INTENT/ARM, terminal/adoption facts and death cleanup. Those synchronous gates
-are a mini-ray teaching protocol, not Ray's per-task completion architecture;
-normal task placement remains Node-local but successful publication currently
-depends on this service. No result payload is retained here.
+Ordinary result publication belongs to the object owner and executing Node.
+GCS holds no per-task publication manifest, result-stage history or contained
+reference graph. It commits membership/owner-death facts and retries their
+owner-wide Node fences until exact acknowledgements make Nodes safe to use.
 
 Placement groups use a small GCS-side runtime adapter around the pure
 ``PlacementGroupCoordinator``.  GCS freezes the plan and converges participant
@@ -37,15 +36,6 @@ from .function_registry import (
     UnknownFunctionError,
 )
 from .ids import ActorGeneration, ActorID, NodeID, PlacementGroupID, WorkerID
-from .contained_cycle import (
-    ContainedContainerBusyError,
-    ContainedGraphError,
-    ContainedGraphTransactionConflictError,
-    ContainedGraphTransactionState,
-    ContainedGraphTransactionStateError,
-    ContainedReferenceCycleError,
-    ContainedReferenceGraphAuthority,
-)
 from .placement import Bundle, PlacementStrategy
 from .placement_group_runtime import (
     AbortReservation,
@@ -93,14 +83,6 @@ from .resources import (
     ResourceVector,
     SchedulingStatus,
 )
-from .output_publication import (
-    OutputPublicationConflictError, OutputPublicationID, OutputPublicationManifest,
-)
-from .output_recovery import (
-    OutputPublicationRecoveryAuthority, OutputRecoveryStateError,
-    UnknownOutputRecoveryError, OutputRecoveryAction, OutputRecoveryOwnerDecision,
-    OutputRecoveryResolution,
-)
 from .owner_death_fence_registry import (
     OwnerDeathFenceEffect, OwnerDeathFenceRegistry,
     OwnerFenceNodeIncarnation,
@@ -143,28 +125,9 @@ DRAIN_ACTORS_HANDLER = "drain_actors"
 PREPARE_PLACEMENT_GROUP_HANDLER = "prepare_placement_group"
 COMMIT_PLACEMENT_GROUP_HANDLER = "commit_placement_group"
 ABORT_PLACEMENT_GROUP_HANDLER = "abort_placement_group"
-# Contained-object graph publication is control metadata only: no object bytes
-# traverse any of these GCS handlers. One generic graph surface serves the
-# unified selected-output lifecycle; storage-tier aliases are not registered.
-PREPARE_CONTAINED_GRAPH_HANDLER = "prepare_contained_graph"
-COMMIT_CONTAINED_GRAPH_HANDLER = "commit_contained_graph"
-ABORT_CONTAINED_GRAPH_HANDLER = "abort_contained_graph"
-RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER = (
-    "release_contained_graph_container"
-)
-GET_CONTAINED_GRAPH_HANDLER = "get_contained_graph"
-REPORT_OUTPUT_PUBLICATION_HANDLER = "report_output_publication"
-GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER = "get_output_publication_recovery"
-GET_OUTPUT_NODE_LOSS_HANDLER = "get_output_node_loss"
-DECIDE_OUTPUT_NODE_LOSS_HANDLER = "decide_output_node_loss"
-PROGRESS_OUTPUT_NODE_LOSS_HANDLER = "progress_output_node_loss"
-RELEASE_CONTAINED_REFERENCE_HANDLER = "release_contained_reference"
-PROGRESS_PUBLICATION_OWNER_DEATH_HANDLER = (
-    "progress_publication_owner_death"
-)
-DRAIN_PUBLICATION_OWNER_DEATHS_HANDLER = "drain_publication_owner_deaths"
+# Owner-wide death propagation is membership cleanup, not result publication.
+DRAIN_OWNER_DEATH_FENCES_HANDLER = "drain_owner_death_fences"
 INSTALL_OWNER_DEATH_FENCE_HANDLER = "install_owner_death_fence"
-DROP_OBJECT_REPLICA_HANDLER = "drop_object_replica"
 
 
 class ControlPlaneError(RuntimeError):
@@ -193,587 +156,6 @@ class ActorRegistrationConflictError(ControlPlaneError):
 
 class ActorCreationStateError(ControlPlaneError):
     """Raised when a terminal Actor record would be changed."""
-
-
-def _graph_rpc_error_kind(error: BaseException) -> protocol.ContainedGraphRPCErrorKind:
-    """Translate graph/output authority errors without legacy dependencies."""
-    kind = protocol.ContainedGraphRPCErrorKind
-    if isinstance(error, (ContainedGraphTransactionConflictError, OutputPublicationConflictError)):
-        return kind.CONFLICT
-    if isinstance(error, ContainedReferenceCycleError):
-        return kind.CYCLE
-    if isinstance(error, (ContainedGraphTransactionStateError, ContainedContainerBusyError,
-                          OutputRecoveryStateError)):
-        return kind.INVALID_STATE
-    if isinstance(error, (TypeError, ValueError, protocol.ProtocolError)):
-        return kind.INVALID_REQUEST
-    if isinstance(error, ContainedGraphError):
-        return kind.INVALID_STATE
-    return kind.INTERNAL
-
-
-def _output_rpc_error_kind(error: BaseException):
-    from .output_protocol import OutputPublicationRPCErrorKind as Kind
-
-    if isinstance(error, OutputPublicationConflictError):
-        return Kind.CONFLICT
-    if isinstance(error, OutputRecoveryStateError):
-        return Kind.INVALID_STATE
-    if isinstance(error, ContainedReferenceCycleError):
-        return Kind.CYCLE
-    if isinstance(error, (TypeError, ValueError)):
-        return Kind.INVALID_REQUEST
-    return Kind.INTERNAL
-
-
-class PublicationControlAdapter:
-    """One metadata publication authority beside membership/Actor/PG control.
-
-    Graph transitions and output recovery facts share one composition lock.
-    Storage tier is data-plane placement, never a second recovery registry.
-    The adapter owns publication admission, cleanup tickets and recovery
-    orchestration; the service owns membership and owner-wide fence readiness.
-    Local observers and effect RPCs arrive per call, not as retained services.
-    RPCs run outside the composition lock. No task placement or result bytes
-    belong here.
-    """
-
-    def __init__(
-        self, graph: Optional[ContainedReferenceGraphAuthority] = None,
-    ) -> None:
-        if graph is not None and not isinstance(graph, ContainedReferenceGraphAuthority):
-            raise TypeError("graph must be a ContainedReferenceGraphAuthority or None")
-        self._composition_lock = RLock()
-        self._publication_admission_closed = False
-        self.output_recovery = OutputPublicationRecoveryAuthority()
-        self._output_loss_cleanup: dict[OutputPublicationID, dict] = {}
-        self._output_loss_tickets: set[OutputPublicationID] = set()
-        self._output_owner_cleanup: dict[OutputPublicationID, dict] = {}
-        self.graph = graph if graph is not None else ContainedReferenceGraphAuthority()
-
-    def mutate_graph(
-        self, request: object
-    ) -> protocol.ContainedGraphReply:
-        if not isinstance(
-            request,
-            (protocol.PrepareContainedGraph, protocol.CommitContainedGraph,
-             protocol.AbortContainedGraph,
-             protocol.ReleaseContainedGraphContainer),
-        ):
-            raise TypeError(
-                "contained graph mutation expects a typed graph request"
-            )
-        try:
-            with self._composition_lock:
-                if type(request.manifest.publication_id) is not OutputPublicationID:
-                    raise TypeError("graph publication requires a unified output identity")
-                self._require_output_graph_operation(request)
-                if isinstance(request, protocol.PrepareContainedGraph):
-                    receipt = self.graph.prepare_manifest(request.manifest)
-                elif isinstance(request, protocol.CommitContainedGraph):
-                    receipt = self.graph.commit_manifest(request.manifest)
-                elif isinstance(
-                    request, protocol.ReleaseContainedGraphContainer
-                ):
-                    receipt = self.graph.release_manifest_container(
-                        request.manifest, request.container_object_id
-                    )
-                else:
-                    receipt = self.graph.abort_manifest(request.manifest)
-        except Exception as exc:
-            return protocol.ContainedGraphReply(
-                request, error_kind=_graph_rpc_error_kind(exc),
-                error=str(exc) or type(exc).__name__,
-            )
-        return protocol.ContainedGraphReply(request, receipt=receipt)
-
-    def _require_output_graph_operation(self, request: object) -> None:
-        """Guard generic graph RPCs with the exact output recovery history.
-
-        A manifest's presence is not a successful Complete proof.  The owner
-        first reports its received Complete witness, then commits this graph.
-        This never puts GCS terminal reporting on the Node resource-release
-        path.  Death-frozen work uses the recovery driver, not these live RPCs.
-        """
-        snapshot = self.output_recovery.snapshot(request.manifest.publication_id)
-        if snapshot.manifest.to_graph_manifest() != request.manifest:
-            raise OutputRecoveryStateError("graph changed its output manifest")
-        if snapshot.owner_death is not None:
-            raise OutputRecoveryStateError("output graph is death-frozen")
-        if snapshot.frozen_node_death is not None:
-            if (isinstance(request, protocol.ReleaseContainedGraphContainer)
-                    and (snapshot.resolution is not None or snapshot.adopted is not None)):
-                # Post-resolution GC still releases the exact retained slot;
-                # no forward publication is reopened by this exception.
-                return
-            raise OutputRecoveryStateError("output graph is death-frozen")
-        if isinstance(request, protocol.PrepareContainedGraph):
-            allowed = snapshot.forward_allowed and not snapshot.armed
-        elif isinstance(request, protocol.CommitContainedGraph):
-            allowed = snapshot.complete is not None and snapshot.rollback is None
-        elif isinstance(request, protocol.AbortContainedGraph):
-            allowed = snapshot.complete is None and snapshot.adopted is None
-        else:
-            allowed = snapshot.complete is not None and snapshot.rollback is None
-        if not allowed:
-            raise OutputRecoveryStateError("graph operation contradicts output history")
-
-    def report_output_recovery(self, request: object):
-        from . import output_protocol as wire
-
-        request_types = (
-            wire.ReportOutputPublicationIntent, wire.ArmOutputPublication,
-            wire.ReportOutputPublicationTerminal, wire.ReportOutputPublicationRollback,
-            wire.ReportOutputPublicationAdopted, wire.ReportOutputPublicationSlotCollected,
-        )
-        if type(request) not in request_types:
-            raise TypeError("output recovery requires a typed metadata report")
-        request = replace(request)
-        try:
-            with self._composition_lock:
-                registry = self.output_recovery
-                if isinstance(request, wire.ReportOutputPublicationIntent):
-                    if self._publication_admission_closed:
-                        existing = registry.snapshot(request.manifest.publication_id)
-                        if existing.manifest != request.manifest:
-                            raise OutputRecoveryStateError("output admission is closed")
-                    ack = registry.report_intent(request.manifest)
-                elif isinstance(request, wire.ArmOutputPublication):
-                    ack = registry.arm_complete(request.publication_id, request.manifest_digest)
-                elif isinstance(request, wire.ReportOutputPublicationTerminal):
-                    ack = registry.report_terminal(request.witness)
-                elif isinstance(request, wire.ReportOutputPublicationRollback):
-                    ack = registry.report_rollback(request.tombstone, manifest=request.manifest)
-                elif isinstance(request, wire.ReportOutputPublicationAdopted):
-                    ack = registry.report_adopted(request.proof)
-                else:
-                    ack = registry.report_slot_collected(request.proof)
-        except Exception as exc:
-            return wire.OutputRecoveryReply(
-                request, error_kind=_output_rpc_error_kind(exc),
-                error=str(exc) or type(exc).__name__,
-            )
-        return wire.OutputRecoveryReply(request, ack=ack)
-
-    def get_output_recovery(self, request: object):
-        from . import output_protocol as wire
-
-        if type(request) is not wire.GetOutputPublicationRecovery:
-            raise TypeError("output recovery query requires its typed request")
-        request = replace(request)
-        try:
-            with self._composition_lock:
-                snapshot = self.output_recovery.snapshot(request.publication_id)
-        except UnknownOutputRecoveryError:
-            return wire.GetOutputPublicationRecoveryReply(request, False)
-        except Exception as exc:
-            return wire.GetOutputPublicationRecoveryReply(
-                request, False, error_kind=_output_rpc_error_kind(exc),
-                error=str(exc) or type(exc).__name__,
-            )
-        return wire.GetOutputPublicationRecoveryReply(request, True, snapshot=snapshot)
-
-    def _has_active_output_publications(self) -> bool:
-        for publication_id in self.output_recovery.publication_ids():
-            snapshot = self.output_recovery.snapshot(publication_id)
-            if snapshot.owner_cleaned is not None:
-                continue
-            if snapshot.owner_death is not None:
-                return True
-            if snapshot.rollback is not None:
-                continue
-            if snapshot.resolution is not None:
-                continue
-            # Adoption finishes this recovery registry's handoff.  Live graph
-            # edges remain independently visible in graph.has_active_obligations;
-            # ordinary no-edge objects belong to owner/Node lifetime, not GCS.
-            if snapshot.adopted is not None:
-                continue
-            if len(snapshot.slot_collections) == len(snapshot.manifest.slots):
-                continue
-            return True
-        return False
-
-    def get_graph(
-        self, request: object
-    ) -> protocol.GetContainedGraphReply:
-        if not isinstance(request, protocol.GetContainedGraph):
-            raise TypeError(
-                "contained graph query expects GetContainedGraph"
-            )
-        try:
-            with self._composition_lock:
-                manifest = self.graph.get_manifest(request.transaction_id)
-        except Exception as exc:
-            return protocol.GetContainedGraphReply(
-                request, protocol.ContainedGraphQueryDisposition.REJECTED,
-                error_kind=_graph_rpc_error_kind(exc),
-                error=str(exc) or type(exc).__name__,
-            )
-        return protocol.GetContainedGraphReply(
-            request,
-            (protocol.ContainedGraphQueryDisposition.FOUND
-             if manifest is not None
-             else protocol.ContainedGraphQueryDisposition.NOT_FOUND),
-            manifest=manifest,
-        )
-
-    def close_admission(self) -> None:
-        """Fence unseen identities while exact reports and cleanup can replay."""
-        with self._composition_lock:
-            self._publication_admission_closed = True
-            self.graph.close_admission()
-
-    def has_active_operations(self) -> bool:
-        """Whether final GCS exit would abandon graph or output obligations."""
-        with self._composition_lock:
-            return (bool(self._output_loss_tickets)
-                    or self.graph.has_active_obligations()
-                    or self._has_active_output_publications())
-
-    def commit_node_death(
-        self, commit: Callable[[], protocol.ReportNodeDeathReply],
-    ) -> protocol.ReportNodeDeathReply:
-        """Commit membership and freeze the exact output workset together."""
-        if not callable(commit):
-            raise TypeError("commit must be callable")
-        with self._composition_lock:
-            reply = commit()
-            if (reply.disposition in (
-                    protocol.NodeDeathDisposition.APPLIED,
-                    protocol.NodeDeathDisposition.ALREADY_DEAD,
-                ) and reply.death is not None):
-                self.output_recovery.freeze_node_death(reply.death)
-            return reply
-
-    def commit_worker_death(
-        self, commit: Callable[[], protocol.ReportWorkerDeathReply],
-    ) -> protocol.ReportWorkerDeathReply:
-        """Commit a Worker death and close its publication-owner admission."""
-        if not callable(commit):
-            raise TypeError("commit must be callable")
-        with self._composition_lock:
-            reply = commit()
-            if (reply.disposition in (
-                    protocol.WorkerDeathDisposition.APPLIED,
-                    protocol.WorkerDeathDisposition.ALREADY_DEAD,
-                ) and reply.death is not None
-                    and reply.death.reason in (
-                        protocol.WorkerDeathReason.PROCESS_EXIT,
-                        protocol.WorkerDeathReason.NODE_EXIT,
-                    )):
-                self.admit_worker_death(reply.death)
-            return reply
-
-    def admit_worker_death(self, death: protocol.WorkerDeathRecord) -> Tuple[object, ...]:
-        """Freeze or repair owner cleanup after an exact committed death.
-
-        The service separately queues owner-wide Node fences. This registry
-        freezes publication work under the same membership composition order;
-        its remote cleanup is driven later, outside these locks.
-        """
-        if type(death) is not protocol.WorkerDeathRecord:
-            raise TypeError("death must be a WorkerDeathRecord")
-        death = replace(death)
-        if death.reason not in (
-            protocol.WorkerDeathReason.PROCESS_EXIT, protocol.WorkerDeathReason.NODE_EXIT,
-        ):
-            raise OutputRecoveryStateError("publication owner cleanup requires non-expected death")
-        with self._composition_lock:
-            return self.output_recovery.freeze_owner_death(death)
-
-    def report_registered(
-        self, request: object, *,
-        node_lookup: Callable[[NodeID], NodeSnapshot],
-        worker_lookup: Callable[[WorkerID], WorkerSnapshot],
-        worker_state: Callable[[protocol.GetWorkerState], protocol.GetWorkerStateReply],
-    ):
-        """Validate publisher membership and record its fact in one local cut.
-
-        GCS holds its owner-fence lock before entry. The supplied observers
-        read local membership registries only; no network call may run under
-        this composition lock. Driver owners need not be registered Workers.
-        """
-        from . import output_protocol as wire
-
-        if type(request) not in (wire.ReportOutputPublicationIntent, wire.ArmOutputPublication,
-                                 wire.ReportOutputPublicationTerminal, wire.ReportOutputPublicationRollback,
-                                 wire.ReportOutputPublicationAdopted, wire.ReportOutputPublicationSlotCollected):
-            raise TypeError("report_output_publication requires a metadata report")
-        request = replace(request)
-        try:
-            with self._composition_lock:
-                if isinstance(request, (wire.ReportOutputPublicationIntent, wire.ReportOutputPublicationRollback)):
-                    manifest = request.manifest
-                    self._validate_publisher_registration(manifest, node_lookup, worker_lookup, worker_state)
-                return self.report_output_recovery(request)
-        except Exception as exc:
-            return wire.OutputRecoveryReply(
-                request, error_kind=_output_rpc_error_kind(exc),
-                error=str(exc) or type(exc).__name__,
-            )
-
-    def _validate_publisher_registration(
-        self, manifest: OutputPublicationManifest, node_lookup, worker_lookup, worker_state,
-    ) -> None:
-        header = manifest.header
-        node = node_lookup(header.node_incarnation.node_id)
-        expected = header.node_incarnation
-        if (node.node_pid != expected.node_pid
-                or node.registration_epoch != expected.registration_epoch):
-            raise OutputPublicationConflictError("output publisher Node incarnation is not registered")
-        worker = worker_lookup(header.executor_worker_id)
-        identity = worker.incarnation
-        if (identity.node_id != expected.node_id or identity.node_pid != expected.node_pid
-                or identity.node_registration_epoch != expected.registration_epoch):
-            raise OutputPublicationConflictError("output executor is not on the publishing Node")
-        registry = self.output_recovery
-        if node.state is protocol.NodeMembershipState.DEAD and node.death is not None:
-            registry.freeze_node_death(node.death)
-        # The logical owner may be a Driver (not an ordinary Worker registry
-        # member).  A registered dead Worker, however, is an exact death fact.
-        owner = worker_state(protocol.GetWorkerState(header.owner_worker_id))
-        if owner.found and owner.death is not None:
-            registry.freeze_owner_death(owner.death)
-        try:
-            registry.snapshot(manifest.publication_id)
-        except UnknownOutputRecoveryError:
-            if (node.state is not protocol.NodeMembershipState.ALIVE
-                    or worker.state is not protocol.WorkerMembershipState.ALIVE):
-                raise OutputRecoveryStateError("a new output intent requires a live publisher")
-
-    def get_node_loss(self, request: object, *, node_lookup: Callable[[NodeID], NodeSnapshot]):
-        from . import output_protocol as wire
-        if type(request) is not wire.GetOutputNodeLoss:
-            raise TypeError("get_output_node_loss requires typed request")
-        request = replace(request)
-        with self._composition_lock:
-            current = node_lookup(request.node_death.node_id)
-            if current.death != request.node_death:
-                raise OutputRecoveryStateError("Node-loss query lacks committed death")
-            works = self.output_recovery.freeze_node_death(request.node_death)
-            work = next((value for value in works if value.publication_id == request.publication_id), None)
-            if work is None:
-                return wire.GetOutputNodeLossReply(request, False)
-            if work.manifest.header.owner_worker_id != request.owner_worker_id:
-                raise OutputPublicationConflictError("Node-loss query names another owner")
-            return wire.GetOutputNodeLossReply(request, True, work, self.output_recovery.snapshot(request.publication_id))
-
-    def decide_node_loss(self, request: object):
-        from . import output_protocol as wire
-        if type(request) is not wire.DecideOutputNodeLoss:
-            raise TypeError("output decision requires typed request")
-        request = replace(request)
-        decision = request.decision
-        with self._composition_lock:
-            ack = self.output_recovery.decide_owner(
-                request.work, decision.owner_worker_id, decision.slots,
-                decision_id=decision.decision_id, complete=decision.complete,
-            )
-        return wire.OutputNodeLossReply(request, ack.snapshot, ack.disposition.value == "APPLIED")
-
-    @staticmethod
-    def _validate_output_child_release_ack(reply, request):
-        """Revalidate an exact child receipt before retiring cleanup work.
-
-        A dataclass instance can have bypassed its constructor during transport
-        or a callback.  Subclasses and merely truthy acceptance fields are not
-        acknowledgement of the frozen release operation.
-        """
-        if type(reply) is not protocol.ReleaseContainedReferenceReply:
-            raise OutputRecoveryStateError("output cleanup requires an exact child reply")
-        reply = replace(reply)
-        if (reply.accepted is not True
-                or (reply.object_id, reply.owner_worker_id, reply.hold)
-                != (request.object_id, request.owner_worker_id, request.hold)):
-            raise OutputRecoveryStateError("output cleanup child ACK mismatch")
-        return reply
-
-    def progress_node_loss(
-        self, request: object, *,
-        worker_state: Callable[[protocol.GetWorkerState], protocol.GetWorkerStateReply],
-        effect_rpc: Callable[[Address, str, object], object],
-    ):
-        """Bounded cleanup driven by the exact living owner after Node loss.
-
-        A nonblocking ticket serializes remote child releases.  Graph choice
-        and mutation occur beneath the same GCS lock as owner-death admission;
-        no remote effect is called under that lock.
-        """
-        from . import output_protocol as wire
-        if type(request) is not wire.ProgressOutputNodeLoss:
-            raise TypeError("output progress requires typed request")
-        request = replace(request)
-        work = request.work
-        identity = work.publication_id
-        with self._composition_lock:
-            registry = self.output_recovery
-            canonical = next((item for item in registry.frozen_workset(work.death) if item.publication_id == identity), None)
-            if canonical != work:
-                raise OutputPublicationConflictError("progress changed original frozen work")
-            snapshot = registry.snapshot(identity)
-            if snapshot.resolution is not None or identity in self._output_loss_tickets:
-                return wire.OutputNodeLossReply(request, snapshot)
-            if snapshot.owner_death is not None:
-                raise OutputRecoveryStateError("output owner death superseded live-owner progress")
-            if work.action is not OutputRecoveryAction.PRECOMPLETE_ROLLBACK and snapshot.owner_decision is None:
-                raise OutputRecoveryStateError("output cleanup requires owner decision")
-            self._output_loss_tickets.add(identity)
-            cleanup = self._output_loss_cleanup.setdefault(identity, {"released": set(), "graph": False})
-        progressed = False
-        try:
-            decision = snapshot.owner_decision
-            keep = set() if decision is None else {item.slot_index for item in decision.slots if item.decision is OutputRecoveryOwnerDecision.KEEP}
-            releases = []
-            for index, slot in enumerate(work.manifest.slots):
-                for transfer in slot.transfers:
-                    if index not in keep:
-                        releases.append((transfer.contained_owner_address, protocol.ReleaseContainedReference(
-                            transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.final_hold
-                        )))
-                    releases.append((transfer.contained_owner_address, protocol.ReleaseContainedReference(
-                        transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.provisional_hold
-                    )))
-            for address, release in releases:
-                if release in cleanup["released"]:
-                    continue
-                owner_state = worker_state(protocol.GetWorkerState(release.owner_worker_id))
-                if (owner_state.found and owner_state.death is not None
-                        and owner_state.death.reason is not protocol.WorkerDeathReason.EXPECTED):
-                    # A committed child-owner death retires all its in-memory
-                    # holds.  Transport failure alone never enters this branch.
-                    with self._composition_lock:
-                        cleanup["released"].add(release)
-                    progressed = True
-                    break
-                reply = effect_rpc(address, "release_contained_reference", release)
-                self._validate_output_child_release_ack(reply, release)
-                with self._composition_lock:
-                    if registry.snapshot(identity).owner_death is not None:
-                        raise OutputRecoveryStateError("owner died during output cleanup")
-                    cleanup["released"].add(release)
-                progressed = True
-                break  # one remote child effect per progress call
-            if any(release not in cleanup["released"] for _, release in releases):
-                return wire.OutputNodeLossReply(request, registry.snapshot(identity), progressed)
-            with self._composition_lock:
-                snapshot = registry.snapshot(identity)
-                if snapshot.owner_death is not None:
-                    raise OutputRecoveryStateError("owner died before graph resolution")
-                graph = work.manifest.to_graph_manifest()
-                if graph is not None and not cleanup["graph"]:
-                    saved = next((item for item in self.graph.snapshot().manifests if item.manifest.transaction_id == graph.transaction_id), None)
-                    if keep:
-                        self.graph.commit_manifest(graph)
-                        for index, slot in enumerate(work.manifest.slots):
-                            if index not in keep and slot.edges:
-                                self.graph.release_manifest_container(graph, slot.object_id)
-                    elif saved is not None and saved.state is ContainedGraphTransactionState.COMMITTED:
-                        for slot in work.manifest.slots:
-                            if slot.edges:
-                                self.graph.release_manifest_container(graph, slot.object_id)
-                    else:
-                        self.graph.abort_manifest(graph)
-                    cleanup["graph"] = True
-                resolution = OutputRecoveryResolution(
-                    identity, work.manifest.manifest_digest, work.death, work.manifest.header.owner_worker_id,
-                    "node-loss:{}:{}".format(work.death.detection_id, identity.graph_transaction_id),
-                    tuple(sorted(keep)), None if decision is None else decision.complete,
-                )
-                ack = registry.resolve_node_loss(work, resolution)
-                return wire.OutputNodeLossReply(request, ack.snapshot, True)
-        finally:
-            with self._composition_lock:
-                self._output_loss_tickets.discard(identity)
-
-    def progress_owner_death(
-        self, death: protocol.WorkerDeathRecord, *,
-        node_lookup: Callable[[NodeID], NodeSnapshot],
-        worker_state: Callable[[protocol.GetWorkerState], protocol.GetWorkerStateReply],
-        effect_rpc: Callable[[Address, str, object], object],
-    ) -> bool:
-        """Advance each publication only after GCS's owner-wide fence barrier.
-
-        At most one child release is attempted per publication. Its last child
-        may be followed by graph retirement and a Node Finalize RPC in the same
-        round. Per-publication failures keep the exact unfinished work, while
-        other publications remain eligible. Callbacks are supplied per call so
-        no stale transport or membership observer is retained here.
-        """
-        from . import output_protocol as wire
-
-        registry = self.output_recovery
-        progressed = False
-        with self._composition_lock:
-            try:
-                owner_work = registry.frozen_owner_workset(death)
-            except OutputRecoveryStateError:
-                owner_work = registry.freeze_owner_death(death)
-        for work in owner_work:
-            identity, manifest = work.publication_id, work.snapshot.manifest
-            with self._composition_lock:
-                snapshot = registry.snapshot(identity)
-                if snapshot.owner_cleaned is not None or identity in self._output_loss_tickets:
-                    continue
-                self._output_loss_tickets.add(identity)
-                cleanup = self._output_owner_cleanup.setdefault(identity, {"released": set(), "graph": False})
-            try:
-                releases = tuple((transfer.contained_owner_address, protocol.ReleaseContainedReference(
-                    transfer.contained_object_id, transfer.contained_owner_worker_id, hold
-                )) for slot in manifest.slots for transfer in slot.transfers
-                    for hold in (transfer.final_hold, transfer.provisional_hold))
-                for address, request in releases:
-                    if request in cleanup["released"]:
-                        continue
-                    child = worker_state(protocol.GetWorkerState(request.owner_worker_id))
-                    if not (child.found and child.death is not None and child.death.reason is not protocol.WorkerDeathReason.EXPECTED):
-                        reply = effect_rpc(address, "release_contained_reference", request)
-                        self._validate_output_child_release_ack(reply, request)
-                    with self._composition_lock:
-                        cleanup["released"].add(request)
-                    progressed = True
-                    break
-                if any(request not in cleanup["released"] for _, request in releases):
-                    continue
-                with self._composition_lock:
-                    graph = manifest.to_graph_manifest()
-                    if graph is not None and not cleanup["graph"]:
-                        state = next((item for item in self.graph.snapshot().manifests if item.manifest.transaction_id == graph.transaction_id), None)
-                        if state is not None and state.state is ContainedGraphTransactionState.COMMITTED:
-                            for slot in manifest.slots:
-                                if slot.edges:
-                                    self.graph.release_manifest_container(graph, slot.object_id)
-                        else:
-                            self.graph.abort_manifest(graph)
-                        cleanup["graph"] = True
-                node = node_lookup(manifest.header.node_incarnation.node_id)
-                if node.state is not protocol.NodeMembershipState.DEAD:
-                    request = wire.FinalizeOutputOwnerDeath(manifest, death)
-                    reply = effect_rpc(node.address, wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER, request)
-                    if type(reply) is not wire.FinalizeOutputOwnerDeathReply:
-                        continue
-                    reply = replace(reply)
-                    if reply.request != request or reply.cleaned is not True:
-                        continue
-                with self._composition_lock:
-                    registry.resolve_owner_death(work)
-                progressed = True
-            except Exception:
-                continue
-            finally:
-                with self._composition_lock:
-                    self._output_loss_tickets.discard(identity)
-        return progressed
-
-    def active_owner_deaths(self, owner_worker_id: WorkerID | None = None) -> int:
-        with self._composition_lock:
-            registry = self.output_recovery
-            return sum(
-                (snapshot := registry.snapshot(identity)).owner_death is not None
-                and snapshot.owner_cleaned is None
-                and (owner_worker_id is None or snapshot.manifest.header.owner_worker_id == owner_worker_id)
-                for identity in registry.publication_ids()
-            )
 
 
 @dataclass(frozen=True)
@@ -1539,7 +921,7 @@ class _ActorRecord:
     state: protocol.ActorState = protocol.ActorState.CREATING
     route_epoch: int = 0
     restarts_used: int = 0
-    last_exit: Optional[protocol.ActorRestartProof] = None
+    last_exit: Optional[protocol.ActorWorkerExitRecord] = None
     node_id: Optional[NodeID] = None
     worker_id: Optional[WorkerID] = None
     worker_address: Optional[Address] = None
@@ -1547,8 +929,6 @@ class _ActorRecord:
     error: Optional[str] = None
     initial_reservation: Optional[ReserveActorWorkerRequest] = None
     restart_reservation: Optional[ReserveActorWorkerRequest] = None
-    migration_failures: Tuple[protocol.NodeDeathRecord, ...] = ()
-    migration_target: Optional[NodeSnapshot] = None
 
 
 @dataclass(frozen=True)
@@ -1576,12 +956,6 @@ class ActorRegistry:
     def __init__(self) -> None:
         self._actors: dict[ActorID, _ActorRecord] = {}
         self._exit_detections: dict[str, _ActorExitOutcome] = {}
-        # One committed Node death may affect many Actors, hence ActorID is part
-        # of this replay key.  The frozen input is retained independently from
-        # the Actor's later generation so exact replays cannot consume budget.
-        self._node_loss_detections: dict[
-            tuple[ActorID, str], tuple[protocol.NodeDeathRecord, ActorSnapshot]
-        ] = {}
         self._lock = RLock()
 
     def begin(self, request: CreateActorRequest) -> bool:
@@ -1831,235 +1205,8 @@ class ActorRegistry:
             )
             return protocol.ActorWorkerExitDisposition.APPLIED
 
-    def accept_node_loss(
-        self,
-        actor_id: ActorID,
-        death: protocol.NodeDeathRecord,
-        *,
-        restart_allowed: bool = True,
-    ) -> protocol.ActorNodeLossDisposition:
-        """Reduce a committed Node death without choosing a survivor.
-
-        The first loss of an ALIVE route consumes at most one restart and moves
-        the Actor to an endpoint-free RESTARTING generation.  Selecting a live
-        survivor is a separate pure transaction.  If that frozen target later
-        dies, this method clears only the target reservation; generation, route
-        epoch, and restart budget remain unchanged for a same-generation replan.
-        """
-
-        if not isinstance(actor_id, ActorID):
-            raise TypeError("actor_id must be an ActorID")
-        if not isinstance(death, protocol.NodeDeathRecord):
-            raise TypeError("death must be a NodeDeathRecord")
-        if not isinstance(restart_allowed, bool):
-            raise TypeError("restart_allowed must be a bool")
-        if death.reason is protocol.NodeDeathReason.EXPECTED:
-            return protocol.ActorNodeLossDisposition.IGNORED_EXPECTED
-        if death.reason is not protocol.NodeDeathReason.PROCESS_EXIT:
-            raise ValueError("Actor migration requires PROCESS_EXIT Node death")
-
-        with self._lock:
-            detection_key = (actor_id, death.detection_id)
-            prior = self._node_loss_detections.get(detection_key)
-            if prior is not None:
-                return (
-                    protocol.ActorNodeLossDisposition.ALREADY_APPLIED
-                    if prior[0] == death
-                    else protocol.ActorNodeLossDisposition.CONFLICT
-                )
-
-            record = self._actors.get(actor_id)
-            if record is None:
-                return protocol.ActorNodeLossDisposition.UNKNOWN
-
-            if record.state is protocol.ActorState.ALIVE:
-                if record.node_id != death.node_id:
-                    return protocol.ActorNodeLossDisposition.UNRELATED
-                assert record.worker_id is not None
-                assert record.worker_pid is not None
-                proof = protocol.ActorNodeLossRecord(
-                    actor_id, record.generation, record.route_epoch,
-                    record.worker_id, record.worker_pid, death,
-                    record.request.class_definition,
-                    record.request.constructor_payload, record.request.resources,
-                    record.request.owner_worker_id,
-                )
-                record.last_exit = proof
-                record.node_id = None
-                record.worker_id = None
-                record.worker_address = None
-                record.worker_pid = None
-                record.route_epoch += 1
-                record.restart_reservation = None
-                record.migration_failures = ()
-                record.migration_target = None
-                if (
-                    not restart_allowed
-                    or record.restarts_used >= record.request.max_restarts
-                ):
-                    record.state = protocol.ActorState.DEAD
-                    record.error = (
-                        "Actor Node-loss migration admission is closed"
-                        if not restart_allowed
-                        else "Actor restart budget exhausted after Node loss"
-                    )
-                else:
-                    record.restarts_used += 1
-                    record.generation = record.generation.next()
-                    record.state = protocol.ActorState.RESTARTING
-                    record.error = None
-                snapshot = self._snapshot_locked(record)
-                self._node_loss_detections[detection_key] = (death, snapshot)
-                return protocol.ActorNodeLossDisposition.APPLIED
-
-            if record.state is protocol.ActorState.RESTARTING:
-                reservation = record.restart_reservation
-                previous = record.last_exit
-                if isinstance(previous, protocol.ActorNodeLossRecord):
-                    accepted_deaths = (
-                        (previous.node_death,) + record.migration_failures
-                    )
-                    if any(
-                        item.node_id == death.node_id for item in accepted_deaths
-                    ):
-                        # Exact replay was handled by the detection index above.
-                        # A different proof for an already-fenced incarnation is
-                        # conflicting input, never another failure transition.
-                        return protocol.ActorNodeLossDisposition.CONFLICT
-                if reservation is None or reservation.target_node_id != death.node_id:
-                    return protocol.ActorNodeLossDisposition.UNRELATED
-                target = record.migration_target
-                if target is not None and (
-                    target.node_id != death.node_id
-                    or target.node_pid != death.node_pid
-                    or target.registration_epoch != death.registration_epoch
-                ):
-                    return protocol.ActorNodeLossDisposition.CONFLICT
-                if isinstance(previous, protocol.ActorWorkerExitRecord):
-                    # The Worker proof authorized only the old Node.  Its later
-                    # committed death upgrades the same already-consumed restart
-                    # into explicit cross-Node authorization.
-                    if (
-                        previous.node_id != death.node_id
-                        or previous.node_pid != death.node_pid
-                        or previous.registration_epoch != death.registration_epoch
-                    ):
-                        return protocol.ActorNodeLossDisposition.CONFLICT
-                    record.last_exit = protocol.ActorNodeLossRecord(
-                        previous.actor_id, previous.generation,
-                        previous.route_epoch, previous.worker_id,
-                        previous.worker_pid, death,
-                        record.request.class_definition,
-                        record.request.constructor_payload,
-                        record.request.resources, record.request.owner_worker_id,
-                    )
-                    record.migration_failures = ()
-                elif isinstance(previous, protocol.ActorNodeLossRecord):
-                    previous_epoch = (
-                        record.migration_failures[-1].death_epoch
-                        if record.migration_failures
-                        else previous.node_death.death_epoch
-                    )
-                    if death.death_epoch <= previous_epoch:
-                        return protocol.ActorNodeLossDisposition.CONFLICT
-                    record.migration_failures = (
-                        record.migration_failures + (death,)
-                    )
-                else:
-                    return protocol.ActorNodeLossDisposition.CONFLICT
-                record.restart_reservation = None
-                record.migration_target = None
-                snapshot = self._snapshot_locked(record)
-                self._node_loss_detections[detection_key] = (death, snapshot)
-                return protocol.ActorNodeLossDisposition.APPLIED
-
-            if record.state is protocol.ActorState.DEAD:
-                return protocol.ActorNodeLossDisposition.STALE
-            return protocol.ActorNodeLossDisposition.UNRELATED
-
-    def install_migration_reservation(
-        self, actor_id: ActorID, target: NodeSnapshot
-    ) -> ReserveActorWorkerRequest:
-        """Freeze one cross-Node target for the current restart generation."""
-
-        if not isinstance(actor_id, ActorID):
-            raise TypeError("actor_id must be an ActorID")
-        if not isinstance(target, NodeSnapshot):
-            raise TypeError("target must be a NodeSnapshot")
-        if target.state is not protocol.NodeMembershipState.ALIVE:
-            raise ActorCreationStateError(
-                "Actor migration target must be an ALIVE Node incarnation"
-            )
-        target_node_id = target.node_id
-        with self._lock:
-            try:
-                record = self._actors[actor_id]
-            except KeyError:
-                raise UnknownActorError(
-                    "unknown Actor: {}".format(actor_id)
-                ) from None
-            if (
-                record.state is not protocol.ActorState.RESTARTING
-                or not isinstance(record.last_exit, protocol.ActorNodeLossRecord)
-            ):
-                raise ActorCreationStateError(
-                    "only Node-loss RESTARTING state may reserve a migration target"
-                )
-            previous = record.restart_reservation
-            if previous is not None:
-                if previous.target_node_id != target_node_id:
-                    raise ActorCreationStateError(
-                        "Actor migration already has a different frozen target"
-                    )
-                if record.migration_target != target:
-                    raise ActorCreationStateError(
-                        "Actor migration target incarnation changed"
-                    )
-                return previous
-            reservation = ReserveActorWorkerRequest(
-                record.request.actor_id, record.generation,
-                record.request.class_definition,
-                record.request.constructor_payload, record.request.resources,
-                record.request.owner_worker_id, target_node_id,
-                record.route_epoch + 1, record.last_exit,
-                record.migration_failures,
-            )
-            record.restart_reservation = reservation
-            record.migration_target = target
-            return reservation
-
-    def cancel_node_migration(
-        self, actor_id: ActorID, error: str
-    ) -> ActorSnapshot:
-        """Commit an endpoint-free pending migration as DEAD on drain."""
-
-        if not isinstance(actor_id, ActorID):
-            raise TypeError("actor_id must be an ActorID")
-        if not isinstance(error, str) or not error:
-            raise ValueError("cancelled Actor migration requires an error")
-        with self._lock:
-            try:
-                record = self._actors[actor_id]
-            except KeyError:
-                raise UnknownActorError(
-                    "unknown Actor: {}".format(actor_id)
-                ) from None
-            if (
-                record.state is not protocol.ActorState.RESTARTING
-                or not isinstance(record.last_exit, protocol.ActorNodeLossRecord)
-            ):
-                raise ActorCreationStateError(
-                    "only a pending Node-loss migration can be cancelled"
-                )
-            if record.restart_reservation is not None:
-                return self.fail_restart(record.last_exit, error)
-            record.state = protocol.ActorState.DEAD
-            record.error = error
-            record.migration_target = None
-            return self._snapshot_locked(record)
-
     def restart_reservation_for(
-        self, exit_record: protocol.ActorRestartProof
+        self, exit_record: protocol.ActorWorkerExitRecord
     ) -> Optional[ReserveActorWorkerRequest]:
         with self._lock:
             record = self._get_restart_record_locked(exit_record)
@@ -2079,7 +1226,7 @@ class ActorRegistry:
 
     def publish_restart(
         self,
-        exit_record: protocol.ActorRestartProof,
+        exit_record: protocol.ActorWorkerExitRecord,
         reply: ReserveActorWorkerReply,
     ) -> ActorSnapshot:
         if not isinstance(reply, ReserveActorWorkerReply):
@@ -2110,7 +1257,7 @@ class ActorRegistry:
             return self._snapshot_locked(record)
 
     def fail_restart(
-        self, exit_record: protocol.ActorRestartProof, error: str
+        self, exit_record: protocol.ActorWorkerExitRecord, error: str
     ) -> ActorSnapshot:
         """Commit one frozen, explicitly rejected restart as terminal.
 
@@ -2122,7 +1269,7 @@ class ActorRegistry:
 
         if not isinstance(
             exit_record,
-            (protocol.ActorWorkerExitRecord, protocol.ActorNodeLossRecord),
+            protocol.ActorWorkerExitRecord,
         ):
             raise TypeError("exit_record must be an Actor restart proof")
         if not isinstance(error, str) or not error:
@@ -2144,7 +1291,6 @@ class ActorRegistry:
             record.state = protocol.ActorState.DEAD
             record.route_epoch = reservation.route_epoch
             record.restart_reservation = None
-            record.migration_target = None
             record.error = error
             return self._snapshot_locked(record)
 
@@ -2194,7 +1340,6 @@ class ActorRegistry:
             record.worker_pid = None
             record.initial_reservation = None
             record.restart_reservation = None
-            record.migration_target = None
             record.error = error
             return self._snapshot_locked(record)
 
@@ -2267,29 +1412,11 @@ class ActorRegistry:
         return self._actors[exit_record.actor_id]
 
     def _get_restart_record_locked(
-        self, proof: protocol.ActorRestartProof
+        self, proof: protocol.ActorWorkerExitRecord
     ) -> _ActorRecord:
-        if isinstance(proof, protocol.ActorWorkerExitRecord):
-            return self._get_exit_record_locked(proof)
-        if not isinstance(proof, protocol.ActorNodeLossRecord):
-            raise TypeError("proof must be an Actor restart proof")
-        record = self._actors.get(proof.actor_id)
-        if record is None:
-            raise UnknownActorError(
-                "unknown Actor: {}".format(proof.actor_id)
-            )
-        if record.last_exit != proof:
-            raise ActorCreationStateError(
-                "Actor Node-loss proof is not current"
-            )
-        prior = self._node_loss_detections.get(
-            (proof.actor_id, proof.detection_id)
-        )
-        if prior is None or prior[0] != proof.node_death:
-            raise ActorCreationStateError(
-                "Actor Node-loss proof was not accepted by this registry"
-            )
-        return record
+        if not isinstance(proof, protocol.ActorWorkerExitRecord):
+            raise TypeError("proof must be an ActorWorkerExitRecord")
+        return self._get_exit_record_locked(proof)
 
     def _get_exit_outcome_locked(
         self, exit_record: protocol.ActorWorkerExitRecord
@@ -2323,7 +1450,7 @@ class ActorRegistry:
 ActorReserve = Callable[[Address, ReserveActorWorkerRequest], object]
 ActorStateInstall = Callable[[Address, protocol.InstallActorState], object]
 PlacementGroupParticipantRPC = Callable[[Address, str, object], object]
-StoredHoldRPC = Callable[[Address, str, object], object]
+OwnerFenceRPC = Callable[[Address, str, object], object]
 
 
 @dataclass(frozen=True)
@@ -2509,9 +1636,6 @@ class ActorCoordinator:
         self._admission_lock = RLock()
         self._admission_open = True
         self._node_failure_publications: dict[ActorID, ActorSnapshot] = {}
-        self._migration_publications: dict[ActorID, ActorSnapshot] = {}
-        self._migration_owner_acks: dict[ActorID, ActorSnapshot] = {}
-        self._migration_deaths: dict[str, protocol.NodeDeathRecord] = {}
 
     def create(self, request: CreateActorRequest) -> CreateActorReply:
         _require_create_actor_request(request)
@@ -2777,167 +1901,10 @@ class ActorCoordinator:
             else ()
         )
 
-    def migrate_node_loss(
-        self, death: protocol.NodeDeathRecord
-    ) -> bool:
-        """Advance every Actor affected by one committed Node death once.
+    def node_failure_states_converged(self) -> bool:
+        """DEAD is acknowledged only after every queued owner install completes."""
 
-        ``True`` means every resulting RESTARTING/ALIVE/DEAD snapshot has been
-        acknowledged by its owner.  Capacity pressure and ambiguous RPCs keep
-        the exact reducer/reservation obligation for a later death-report replay.
-        """
-
-        if not isinstance(death, protocol.NodeDeathRecord):
-            raise TypeError("death must be a NodeDeathRecord")
-        if death.reason is not protocol.NodeDeathReason.PROCESS_EXIT:
-            return True
-        prior_death = self._migration_deaths.get(death.detection_id)
-        if prior_death is not None and prior_death != death:
-            raise ActorCreationStateError(
-                "Actor migration detection ID was reused for another Node death"
-            )
-        self._migration_deaths[death.detection_id] = death
-        with self._admission_lock:
-            restart_allowed = self._admission_open
-        for visible in self._actors.snapshot():
-            with self._lock_for(visible.actor_id):
-                disposition = self._actors.accept_node_loss(
-                    visible.actor_id, death, restart_allowed=restart_allowed
-                )
-                if disposition in (
-                    protocol.ActorNodeLossDisposition.APPLIED,
-                    protocol.ActorNodeLossDisposition.ALREADY_APPLIED,
-                ):
-                    self._drive_node_migration_locked(visible.actor_id)
-        self._flush_migration_publications()
-        return not self.migration_pending(death)
-
-    def _migration_failures_for(
-        self, actor_id: ActorID
-    ) -> Tuple[protocol.NodeDeathRecord, ...]:
-        with self._actors._lock:
-            record = self._actors._actors.get(actor_id)
-            return () if record is None else record.migration_failures
-
-    def migration_pending(self, death: protocol.NodeDeathRecord) -> bool:
-        """Whether a committed death still owns Actor migration work."""
-
-        if not isinstance(death, protocol.NodeDeathRecord):
-            raise TypeError("death must be a NodeDeathRecord")
-        for snapshot in self._actors.snapshot():
-            loss = snapshot.last_exit
-            if not isinstance(loss, protocol.ActorNodeLossRecord):
-                continue
-            if (
-                loss.node_death == death
-                or death in self._migration_failures_for(snapshot.actor_id)
-            ) and (
-                snapshot.state is protocol.ActorState.RESTARTING
-                or snapshot.actor_id in self._migration_publications
-            ):
-                return True
-        return False
-
-    def migration_converged(self, death: protocol.NodeDeathRecord) -> bool:
-        """Side-effect-free acknowledgement barrier for one Node death."""
-
-        if not isinstance(death, protocol.NodeDeathRecord):
-            raise TypeError("death must be a NodeDeathRecord")
-        return (
-            self._migration_deaths.get(death.detection_id) == death
-            and not self.migration_pending(death)
-        )
-
-    def _drive_node_migration_locked(self, actor_id: ActorID) -> None:
-        snapshot = self._actors.get(actor_id)
-        if snapshot.state is protocol.ActorState.DEAD:
-            self._migration_publications[actor_id] = snapshot
-            return
-        if snapshot.state is not protocol.ActorState.RESTARTING:
-            return
-        proof = snapshot.last_exit
-        if not isinstance(proof, protocol.ActorNodeLossRecord):
-            return
-        if self._migration_owner_acks.get(actor_id) != snapshot:
-            if self._install_snapshot(actor_id, snapshot) is not None:
-                self._migration_publications[actor_id] = snapshot
-                return
-            self._migration_publications.pop(actor_id, None)
-            self._migration_owner_acks[actor_id] = snapshot
-
-        reservation = self._actors.restart_reservation_for(proof)
-        selected = None
-        if reservation is None:
-            nodes = self._nodes.snapshot()
-            decision = self._policy.schedule(
-                proof.resources,
-                tuple(node.to_scheduling_snapshot() for node in nodes),
-                require_available=True,
-            )
-            if decision.status is SchedulingStatus.INFEASIBLE:
-                # Keep the generation pending.  A later Node registration can
-                # create a feasible survivor; shutdown owns terminal cancellation.
-                return
-            if decision.status is SchedulingStatus.PENDING_CAPACITY:
-                return
-            selected = next(
-                (node for node in nodes if node.node_id == decision.node_id), None
-            )
-            if selected is None:
-                return
-            reservation = self._actors.install_migration_reservation(
-                actor_id, selected
-            )
-        if selected is None:
-            try:
-                selected = self._nodes.get(reservation.target_node_id)
-            except (UnknownNodeError, DeadNodeError):
-                return
-        try:
-            reserved = self._reserve_actor_worker(selected.address, reservation)
-        except Exception:
-            return
-        if (
-            not isinstance(reserved, ReserveActorWorkerReply)
-            or reserved.actor_id != reservation.actor_id
-            or reserved.generation != reservation.generation
-        ):
-            return
-        if not reserved.accepted:
-            # Resource pressure remains retryable; a definitive constructor or
-            # protocol failure is terminal.
-            if "resource" in (reserved.error or "").lower():
-                return
-            terminal = self._actors.fail_restart(
-                proof, reserved.error or "Node rejected Actor migration"
-            )
-            self._migration_publications[actor_id] = terminal
-            return
-        if reserved.node_id != reservation.target_node_id:
-            return
-        if (
-            reserved.worker_id == proof.worker_id
-            or reserved.worker_pid == proof.worker_pid
-        ):
-            return
-        try:
-            current_target = self._nodes.get(reservation.target_node_id)
-        except (UnknownNodeError, DeadNodeError):
-            return
-        if current_target != selected:
-            return
-        alive = self._actors.publish_restart(proof, reserved)
-        self._migration_publications[actor_id] = alive
-
-    def _flush_migration_publications(self) -> Tuple[ActorSnapshot, ...]:
-        installed = []
-        for actor_id, snapshot in tuple(self._migration_publications.items()):
-            if self._install_snapshot(actor_id, snapshot) is None:
-                if self._migration_publications.get(actor_id) == snapshot:
-                    del self._migration_publications[actor_id]
-                self._migration_owner_acks[actor_id] = snapshot
-                installed.append(snapshot)
-        return tuple(installed)
+        return not self._node_failure_publications
 
     def _flush_node_failure_publications(self) -> Tuple[ActorSnapshot, ...]:
         """Try every pending DEAD install once; delete only exact ACKs."""
@@ -2956,7 +1923,7 @@ class ActorCoordinator:
         return tuple(
             sorted(
                 set(self._actors.active_actor_ids()).union(
-                    self._node_failure_publications, self._migration_publications
+                    self._node_failure_publications
                 ),
                 key=lambda value: value.hex,
             )
@@ -2992,27 +1959,8 @@ class ActorCoordinator:
                     snapshot.state is protocol.ActorState.RESTARTING
                     and last_exit is not None
                 ):
-                    if isinstance(last_exit, protocol.ActorNodeLossRecord):
-                        # Shutdown never starts a new migration.  A frozen
-                        # reservation is converted to DEAD and published; a
-                        # capacity-pending migration with no target remains
-                        # restart-free and is failed through the registry's
-                        # explicit node-failure path.
-                        reservation = self._actors.restart_reservation_for(last_exit)
-                        if reservation is not None:
-                            terminal = self._actors.fail_restart(
-                                last_exit, "Actor migration cancelled by drain"
-                            )
-                        else:
-                            terminal = self._actors.cancel_node_migration(
-                                actor_id,
-                                "Actor migration cancelled by drain",
-                            )
-                        self._migration_publications[actor_id] = terminal
-                    else:
-                        self._report_worker_exit_locked(last_exit)
+                    self._report_worker_exit_locked(last_exit)
         self._flush_node_failure_publications()
-        self._flush_migration_publications()
         return self.active_operation_ids()
 
     def has_active_operations(self) -> bool:
@@ -3653,8 +2601,7 @@ class GCSLite:
         placement_group_prepare_failure: Optional[
             PlacementGroupPrepareFailureConfig
         ] = None,
-        publications: Optional[PublicationControlAdapter] = None,
-        stored_hold_rpc: Optional[StoredHoldRPC] = None,
+        owner_fence_rpc: Optional[OwnerFenceRPC] = None,
     ) -> None:
         if (
             placement_group_prepare_failure is not None
@@ -3679,10 +2626,10 @@ class GCSLite:
             self.owner_death_fences.cleanup_safe_node_ids()
         ))
         self.workers = WorkerRegistry(self.nodes)
-        if stored_hold_rpc is not None and not callable(stored_hold_rpc):
-            raise TypeError("stored_hold_rpc must be callable or None")
-        self._stored_hold_rpc = (
-            stored_hold_rpc if stored_hold_rpc is not None else rpc_request
+        if owner_fence_rpc is not None and not callable(owner_fence_rpc):
+            raise TypeError("owner_fence_rpc must be callable or None")
+        self._owner_fence_rpc = (
+            owner_fence_rpc if owner_fence_rpc is not None else rpc_request
         )
         self._on_node_dead = on_node_dead
         self.functions = FunctionRegistry()
@@ -3703,21 +2650,6 @@ class GCSLite:
             )
         self.placement_groups = PlacementGroupControlCoordinator(
             self.nodes, participant_rpc=participant_rpc
-        )
-        if (
-            publications is not None
-            and not isinstance(
-                publications, PublicationControlAdapter
-            )
-        ):
-            raise TypeError(
-                "publications must be a "
-                "PublicationControlAdapter or None"
-            )
-        self.publications = (
-            publications
-            if publications is not None
-            else PublicationControlAdapter()
         )
         self._snapshot_lock = RLock()
         self._stop_event = Event()
@@ -3765,24 +2697,7 @@ class GCSLite:
                 REMOVE_PLACEMENT_GROUP_HANDLER: self.remove_placement_group,
                 DRAIN_PLACEMENT_GROUPS_HANDLER: self.drain_placement_groups,
                 DRAIN_ACTORS_HANDLER: self.drain_actors,
-                PREPARE_CONTAINED_GRAPH_HANDLER:
-                    self.prepare_contained_graph,
-                COMMIT_CONTAINED_GRAPH_HANDLER:
-                    self.commit_contained_graph,
-                ABORT_CONTAINED_GRAPH_HANDLER:
-                    self.abort_contained_graph,
-                RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER:
-                    self.release_contained_graph_container,
-                GET_CONTAINED_GRAPH_HANDLER: self.get_contained_graph,
-                REPORT_OUTPUT_PUBLICATION_HANDLER: self.report_output_publication,
-                GET_OUTPUT_PUBLICATION_RECOVERY_HANDLER: self.get_output_publication_recovery,
-                GET_OUTPUT_NODE_LOSS_HANDLER: self.get_output_node_loss,
-                DECIDE_OUTPUT_NODE_LOSS_HANDLER: self.decide_output_node_loss,
-                PROGRESS_OUTPUT_NODE_LOSS_HANDLER: self.progress_output_node_loss,
-                PROGRESS_PUBLICATION_OWNER_DEATH_HANDLER:
-                    self.progress_publication_owner_death,
-                DRAIN_PUBLICATION_OWNER_DEATHS_HANDLER:
-                    self.drain_publication_owner_deaths,
+                DRAIN_OWNER_DEATH_FENCES_HANDLER: self.drain_owner_death_fences,
             }
         )
 
@@ -3806,13 +2721,11 @@ class GCSLite:
         self._emit("stopped", address=self.address)
 
     def _start_owner_death_progress(self) -> None:
-        """Start the bounded retry driver for both owner-death domains.
+        """Retry owner-wide Node fences independently from death reports.
 
-        Death-report handlers only commit durable in-memory authority.  Remote
-        owner-wide Node sweeps and publication-saga effects run on this separate
-        thread so a pinned replica, lost ACK, or temporarily unavailable peer
-        never blocks the supervisor report and still converges while the cluster
-        remains live.  Each iteration attempts both domains independently.
+        Death-report handlers commit membership and pending fence identities.
+        The separate driver keeps retrying pinned replicas or lost replies;
+        only exact complete Node acknowledgements retire pending effects.
         """
 
         wakeup, stop = self._owner_death_progress_events()
@@ -3864,61 +2777,27 @@ class GCSLite:
             wakeup.clear()
             if stop.is_set():
                 return
-            fence_progressed = False
-            publication_progressed = False
+            progressed = False
             try:
-                fence_progressed = self._drive_owner_death_fence_once()
+                progressed = self._drive_owner_death_fence_once()
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as exc:
-                # Authority remains in the outbox.  One malformed/unavailable
-                # Node must not kill the only live-cluster retry driver.
+                # A failed attempt leaves its exact effect in the outbox.
                 self._emit(
                     "owner_death_fence_progress_failed",
                     error="{}: {}".format(type(exc).__name__, exc),
                 )
             try:
-                publication_progressed = self._drive_output_owner_deaths()
-            except (KeyboardInterrupt, SystemExit):
-                raise
+                active = self._owner_fence_registry().has_active_operations()
             except Exception as exc:
-                # Publication cleanup is an independent obligation domain.  Its
-                # failure cannot prevent the owner-wide fence from converging,
-                # and the same exact publication effect remains replayable.
-                self._emit(
-                    "publication_owner_death_progress_failed",
-                    error="{}: {}".format(type(exc).__name__, exc),
-                )
-            try:
-                fence_active = (
-                    self._owner_fence_registry().has_active_operations()
-                )
-            except Exception as exc:
-                # Narrow tests may stop or partially construct a GCS while the
-                # daemon is leaving its current iteration.  Treat that as no
-                # background work; explicit progress/shutdown remains authority.
                 self._emit(
                     "owner_death_fence_state_failed",
                     error="{}: {}".format(type(exc).__name__, exc),
                 )
-                fence_active = False
-            try:
-                publication_active = bool(self._active_output_owner_deaths())
-            except Exception as exc:
-                self._emit(
-                    "publication_owner_death_state_failed",
-                    error="{}: {}".format(type(exc).__name__, exc),
-                )
-                publication_active = False
-            active = fence_active or publication_active
-            progressed = fence_progressed or publication_progressed
-            if active:
-                # PINNED, transport ambiguity, and malformed replies retain the
-                # exact effect.  Any acknowledged effect resets latency for both
-                # domains; a wholly unchanged round backs off without a busy loop.
-                delay = 0.01 if progressed else min(0.25, delay * 2)
-                continue
-            delay = 0.25
+                # Missing state evidence cannot establish a clean outbox.
+                active = True
+            delay = (0.01 if progressed else min(0.25, delay * 2)) if active else 0.25
 
     def wait(self) -> None:
         """Block the process entry point until a shutdown request arrives."""
@@ -3926,147 +2805,14 @@ class GCSLite:
         self._stop_event.wait()
 
 
-    def prepare_contained_graph(
-        self, request: object
-    ) -> protocol.ContainedGraphReply:
-        if not isinstance(request, protocol.PrepareContainedGraph):
-            raise TypeError(
-                "prepare_contained_graph expects PrepareContainedGraph"
-            )
-        return self.publications.mutate_graph(request)
-
-
-    def commit_contained_graph(
-        self, request: object
-    ) -> protocol.ContainedGraphReply:
-        if not isinstance(request, protocol.CommitContainedGraph):
-            raise TypeError(
-                "commit_contained_graph expects CommitContainedGraph"
-            )
-        return self.publications.mutate_graph(request)
-
-
-    def abort_contained_graph(
-        self, request: object
-    ) -> protocol.ContainedGraphReply:
-        if not isinstance(request, protocol.AbortContainedGraph):
-            raise TypeError(
-                "abort_contained_graph expects AbortContainedGraph"
-            )
-        return self.publications.mutate_graph(request)
-
-
-    def release_contained_graph_container(
-        self, request: object
-    ) -> protocol.ContainedGraphReply:
-        if not isinstance(request, protocol.ReleaseContainedGraphContainer):
-            raise TypeError(
-                "release_contained_graph_container expects "
-                "ReleaseContainedGraphContainer"
-            )
-        return self.publications.mutate_graph(request)
-
-
-    def get_contained_graph(
-        self, request: object
-    ) -> protocol.GetContainedGraphReply:
-        if not isinstance(request, protocol.GetContainedGraph):
-            raise TypeError(
-                "get_contained_graph expects GetContainedGraph"
-            )
-        return self.publications.get_graph(request)
-
-
-    def report_output_publication(self, request: object):
-        """Compose owner-fence admission with the publication authority."""
-        with self._owner_fence_lock():
-            return self.publications.report_registered(
-                request, node_lookup=self.nodes.get, worker_lookup=self.workers.get,
-                worker_state=self.workers.get_state_reply,
-            )
-
-    def get_output_publication_recovery(self, request: object):
-        return self.publications.get_output_recovery(request)
-
-    def get_output_node_loss(self, request: object):
-        return self.publications.get_node_loss(request, node_lookup=self.nodes.get)
-
-    def decide_output_node_loss(self, request: object):
-        return self.publications.decide_node_loss(request)
-
-    def progress_output_node_loss(self, request: object):
-        return self.publications.progress_node_loss(
-            request, worker_state=self.workers.get_state_reply,
-            effect_rpc=self._stored_hold_rpc,
-        )
-
-    def _drive_output_owner_deaths(self, owner_worker_id: WorkerID | None = None) -> bool:
-        """Offer fence-ready deaths; publication progress owns its own state."""
-        fences = self._owner_fence_registry()
-        progressed = False
-        for death in fences.snapshot().owner_deaths:
-            if owner_worker_id is not None and death.worker_id != owner_worker_id:
-                continue
-            if fences.pending_for_owner(death.worker_id):
-                continue
-            if self.publications.progress_owner_death(
-                death, node_lookup=self.nodes.get,
-                worker_state=self.workers.get_state_reply, effect_rpc=self._stored_hold_rpc,
-            ):
-                progressed = True
-        return progressed
-
-    def _active_output_owner_deaths(self, owner_worker_id: WorkerID | None = None) -> int:
-        return self.publications.active_owner_deaths(owner_worker_id)
-
-    def progress_publication_owner_death(
+    def drain_owner_death_fences(
         self, request: object,
-    ) -> protocol.ProgressPublicationOwnerDeathReply:
-        if not isinstance(request, protocol.ProgressPublicationOwnerDeath):
-            raise TypeError(
-                "progress_publication_owner_death expects "
-                "ProgressPublicationOwnerDeath"
-            )
-        fence_progressed = self._drive_owner_death_fence_for_owner(
-            request.owner_worker_id
-        )
-        publication_progressed = self._drive_output_owner_deaths(request.owner_worker_id)
-        active = (
-            self._active_output_owner_deaths(request.owner_worker_id)
-            + len(self._owner_fence_registry().pending_for_owner(
-                request.owner_worker_id
-            ))
-        )
-        return protocol.ProgressPublicationOwnerDeathReply(
-            request.owner_worker_id,
-            fence_progressed or publication_progressed, active == 0, active,
-        )
-
-    def drain_publication_owner_deaths(
-        self, request: object,
-    ) -> protocol.DrainPublicationOwnerDeathsReply:
-        if not isinstance(request, protocol.DrainPublicationOwnerDeaths):
-            raise TypeError(
-                "drain_publication_owner_deaths expects "
-                "DrainPublicationOwnerDeaths"
-            )
+    ) -> protocol.DrainOwnerDeathFencesReply:
+        if not isinstance(request, protocol.DrainOwnerDeathFences):
+            raise TypeError("drain_owner_death_fences expects DrainOwnerDeathFences")
         self._drive_owner_death_fence_once()
-        self._drive_output_owner_deaths()
-        active = (
-            self._active_output_owner_deaths()
-            + len(self._owner_fence_registry().pending())
-        )
-        return protocol.DrainPublicationOwnerDeathsReply(
-            request.request_id, active == 0, active
-        )
-
-    def _drive_owner_death_fence_for_owner(
-        self, owner_worker_id: WorkerID,
-    ) -> bool:
-        pending = self._owner_fence_registry().pending_for_owner(
-            owner_worker_id
-        )
-        return bool(pending and self._drive_owner_death_fence(pending[0]))
+        active = len(self._owner_fence_registry().pending())
+        return protocol.DrainOwnerDeathFencesReply(request.request_id, active == 0, active)
 
     def _drive_owner_death_fence_once(self) -> bool:
         pending = self._owner_fence_registry().pending()
@@ -4078,7 +2824,7 @@ class GCSLite:
         """Send one immutable owner-level fence and acknowledge its echo."""
 
         try:
-            candidate = self._publication_node_rpc(
+            candidate = self._owner_fence_node_rpc(
                 effect.key.target.node_id,
                 INSTALL_OWNER_DEATH_FENCE_HANDLER, effect.request,
             )
@@ -4112,10 +2858,10 @@ class GCSLite:
 
 
 
-    def _publication_node_rpc(
+    def _owner_fence_node_rpc(
         self, node_id: NodeID, handler: str, request: object,
     ) -> object:
-        return self._stored_hold_rpc(
+        return self._owner_fence_rpc(
             self.nodes.address(node_id), handler, request
         )
 
@@ -4250,19 +2996,11 @@ class GCSLite:
     ) -> protocol.ReportNodeDeathReply:
         if not isinstance(message, protocol.ReportNodeDeath):
             raise TypeError("report_node_death expects ReportNodeDeath")
-        # Membership death and the unified publication workset share a
-        # control-plane linearization boundary.  If saga admission raises after
-        # membership commits, this handler raises too; replay observes
-        # ALREADY_DEAD and retries the exact freeze before returning success.
-        publications = getattr(self, "publications", None)
+        # Membership and owner-wide fence admission share one local boundary.
+        # If fence admission fails after membership commits, exact ALREADY_DEAD
+        # replay repeats that admission before acknowledging the death report.
         with self._owner_fence_lock():
-            reply = (
-                self.nodes.report_death(message)
-                if publications is None
-                else publications.commit_node_death(
-                    lambda: self.nodes.report_death(message)
-                )
-            )
+            reply = self.nodes.report_death(message)
             committed_worker_deaths = ()
             if (
                 reply.disposition in (
@@ -4274,9 +3012,6 @@ class GCSLite:
                 workers = getattr(self, "workers", None)
                 if workers is not None:
                     committed_worker_deaths = workers.fail_node(reply.death)
-                    if publications is not None:
-                        for death in committed_worker_deaths:
-                            publications.admit_worker_death(death)
                     for death in committed_worker_deaths:
                         self._owner_fence_registry().commit_owner_death(death)
                 if (
@@ -4291,7 +3026,7 @@ class GCSLite:
                         registry.mark_node_dead(reply.death)
         if committed_worker_deaths:
             self._wake_owner_death_progress()
-        migration_converged = True
+        actor_state_converged = True
         if (
             reply.disposition in (
                 protocol.NodeDeathDisposition.APPLIED,
@@ -4313,9 +3048,10 @@ class GCSLite:
             actor_coordinator = getattr(self, "actor_coordinator", None)
             if actor_coordinator is not None:
                 if reply.death.reason is protocol.NodeDeathReason.PROCESS_EXIT:
-                    migration_converged = actor_coordinator.migrate_node_loss(
-                        reply.death
+                    actor_coordinator.fail_node(
+                        reply.death.node_id, "Actor Node exited; cross-Node migration is unsupported"
                     )
+                    actor_state_converged = actor_coordinator.node_failure_states_converged()
                 else:
                     actor_coordinator.fail_node(
                         message.node_id, "Actor Node exited normally",
@@ -4334,7 +3070,7 @@ class GCSLite:
             and reply.death.reason is protocol.NodeDeathReason.PROCESS_EXIT
         ):
             reply = replace(
-                reply, actor_migration_converged=migration_converged
+                reply, actor_state_converged=actor_state_converged
             )
         return reply
 
@@ -4367,15 +3103,8 @@ class GCSLite:
     ) -> protocol.ReportWorkerDeathReply:
         if not isinstance(message, protocol.ReportWorkerDeath):
             raise TypeError("report_worker_death expects ReportWorkerDeath")
-        publications = getattr(self, "publications", None)
         with self._owner_fence_lock():
-            reply = (
-                self.workers.report_death(message)
-                if publications is None
-                else publications.commit_worker_death(
-                    lambda: self.workers.report_death(message),
-                )
-            )
+            reply = self.workers.report_death(message)
             if (
                 reply.disposition in (
                     protocol.WorkerDeathDisposition.APPLIED,
@@ -4532,17 +3261,10 @@ class GCSLite:
         # endpoints remain live.  Here we only fence admission and refuse a clean
         # exit while any PG is still visible or owns a participant obligation.
         self.placement_groups.close_admission()
-        publications = getattr(self, "publications", None)
-        if publications is not None:
-            publications.close_admission()
         placement_groups_clean = not self.placement_groups.has_active_operations()
         actors_clean = (
             actor_coordinator is None
             or not actor_coordinator.has_active_operations()
-        )
-        publications_clean = (
-            publications is None
-            or not publications.has_active_operations()
         )
         owner_death_fences_clean = (
             not self._owner_fence_registry().has_active_operations()
@@ -4550,7 +3272,7 @@ class GCSLite:
         with self._snapshot_lock:
             schedule_exit = (
                 placement_groups_clean and actors_clean
-                and publications_clean and owner_death_fences_clean
+                and owner_death_fences_clean
                 and not self._shutdown_exit_scheduled
             )
             if schedule_exit:
@@ -4572,13 +3294,13 @@ class GCSLite:
             component="gcs",
             clean=(
                 placement_groups_clean and actors_clean
-                and publications_clean and owner_death_fences_clean
+                and owner_death_fences_clean
             ),
             detail=(
                 "GCS stopping"
                 if (
                     placement_groups_clean and actors_clean
-                    and publications_clean
+                    and owner_death_fences_clean
                 )
                 else "GCS retained for active control-plane cleanup"
             ),
@@ -4800,26 +3522,7 @@ class GCSLite:
             "RemovePlacementGroupRequest": self.remove_placement_group,
             "DrainPlacementGroupsRequest": self.drain_placement_groups,
             "DrainActorsRequest": self.drain_actors,
-            "PrepareContainedGraph": self.prepare_contained_graph,
-            "CommitContainedGraph": self.commit_contained_graph,
-            "AbortContainedGraph": self.abort_contained_graph,
-            "ReleaseContainedGraphContainer":
-                self.release_contained_graph_container,
-            "GetContainedGraph": self.get_contained_graph,
-            "ReportOutputPublicationIntent": self.report_output_publication,
-            "ArmOutputPublication": self.report_output_publication,
-            "ReportOutputPublicationTerminal": self.report_output_publication,
-            "ReportOutputPublicationRollback": self.report_output_publication,
-            "ReportOutputPublicationAdopted": self.report_output_publication,
-            "ReportOutputPublicationSlotCollected": self.report_output_publication,
-            "GetOutputPublicationRecovery": self.get_output_publication_recovery,
-            "GetOutputNodeLoss": self.get_output_node_loss,
-            "DecideOutputNodeLoss": self.decide_output_node_loss,
-            "ProgressOutputNodeLoss": self.progress_output_node_loss,
-            "ProgressPublicationOwnerDeath":
-                self.progress_publication_owner_death,
-            "DrainPublicationOwnerDeaths":
-                self.drain_publication_owner_deaths,
+            "DrainOwnerDeathFences": self.drain_owner_death_fences,
         }
         try:
             handler = dispatch[name]
@@ -4964,33 +3667,26 @@ def _require_available_within_total(
 
 __all__ = [
     "ACTOR_STATUS",
-    "ABORT_CONTAINED_GRAPH_HANDLER",
     "ABORT_PLACEMENT_GROUP_HANDLER",
-    "COMMIT_CONTAINED_GRAPH_HANDLER",
     "COMMIT_PLACEMENT_GROUP_HANDLER",
     "CREATE_ACTOR_HANDLER",
     "CREATE_PLACEMENT_GROUP_HANDLER",
     "CONTROL_HANDLER_NAME",
-    "DRAIN_PUBLICATION_OWNER_DEATHS_HANDLER",
+    "DRAIN_OWNER_DEATH_FENCES_HANDLER",
     "DRAIN_PLACEMENT_GROUPS_HANDLER",
     "DRAIN_ACTORS_HANDLER",
     "GCS_SHUTDOWN_HANDLER",
-    "DROP_OBJECT_REPLICA_HANDLER",
     "GET_NODE_ADDRESS_HANDLER",
     "GET_ACTOR_STATE_HANDLER",
     "GET_NODE_STATE_HANDLER",
     "GET_NODES_HANDLER",
     "GET_PLACEMENT_GROUP_HANDLER",
-    "GET_CONTAINED_GRAPH_HANDLER",
     "GET_WORKER_DEATHS_HANDLER",
     "GET_WORKER_STATE_HANDLER",
     "INSTALL_CLUSTER_SNAPSHOT_HANDLER",
     "INSTALL_OWNER_DEATH_FENCE_HANDLER",
     "PLACEMENT_GROUP_STATUS",
     "PREPARE_PLACEMENT_GROUP_HANDLER",
-    "PREPARE_CONTAINED_GRAPH_HANDLER",
-    "PROGRESS_PUBLICATION_OWNER_DEATH_HANDLER",
-    "RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER",
     "REGISTER_NODE_HANDLER",
     "REGISTER_WORKER_INCARNATION_HANDLER",
     "REPORT_NODE_DEATH_HANDLER",
@@ -5021,7 +3717,6 @@ __all__ = [
     "GCSLite",
     "GCSLiteService",
     "GCSService",
-    "PublicationControlAdapter",
     "GetActorStatus",
     "GetControlSnapshot",
     "GetFunction",

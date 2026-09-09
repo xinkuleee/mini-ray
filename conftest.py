@@ -2,7 +2,7 @@
 
 This hook does not select, skip or import test modules. Explicit files are a
 deliberate opt-in, not a safety certificate: their imports/fixtures still need
-review. The reviewed-pure runner supplies a fixed, reviewed file/node list.
+review. The baseline runner supplies the current fixed file/node list.
 """
 
 from pathlib import Path
@@ -12,9 +12,9 @@ import pytest
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _SCOPE_ERROR = (
-    "mini-ray's complete default test gate has not passed safety review. "
-    "Use python scripts/run_reviewed_pure.py --list, then the reviewed-pure "
-    "runner, or explicitly name previously reviewed test files/node IDs. "
+    "mini-ray uses an explicit baseline; the historical full tree is not its gate. "
+    "Use python scripts/run_baseline.py --list, then the baseline runner, "
+    "or explicitly name previously reviewed test files/node IDs. "
     "Directory/package collection is disabled; -m unit or --collect-only "
     "alone does not make imports/fixtures safe."
 )

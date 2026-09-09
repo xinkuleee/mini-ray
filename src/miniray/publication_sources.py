@@ -4,7 +4,7 @@ These immutable values contain identity only: no journal, result payload,
 network operation or owner mutation. Fingerprints retain their original domain
 and framing so moving the definitions cannot rebind a publication manifest.
 Protocol types are imported only while validating a value; importing this leaf
-module must not eagerly import the protocol or legacy publication authorities.
+module must not eagerly import the protocol or publication authorities.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Union
 
 from .contained_edges import (
-    ContainedReferenceEdge, ContainedReferenceHold, LegacyContainedReferenceHold,
+    ContainedReferenceEdge, ContainedReferenceHold,
     OwnerAddress,
 )
 from .ids import NodeID, ObjectID, WorkerID
@@ -107,6 +107,9 @@ class BorrowedContainedSource:
             raise TypeError(
                 "original_source must be a contained or task-hold source"
             )
+        if (type(self.original_source) is ContainedTransferSource
+                and type(self.original_source.hold) is not ContainedReferenceHold):
+            raise TypeError("contained original_source requires a ContainedReferenceHold")
 
     @property
     def owner_table_token(self) -> tuple[WorkerID, str]:
@@ -187,15 +190,14 @@ def prepared_contained_transfer_fingerprint(
 ) -> bytes:
     """Return a stable digest of one complete child-source capability.
 
-    An edge alone is sufficient for graph accounting, but it is not enough to
-    authorize a borrowed child.  Publication manifests therefore bind the
+    An outgoing edge does not authorize a borrowed child. Manifests bind the
     original borrower source, both custody holds, and the child-owner route in
     a single deterministic fingerprint.  Runtime borrower tokens and contained
     transfer tokens are strings by protocol contract; refusing opaque Python
     objects here keeps the wire identity independent from ``repr`` or pickle.
     """
 
-    from .protocol import ContainedTransferSource
+    from .protocol import ContainedTransferSource, TaskHoldSource
 
     if not isinstance(transfer, PreparedContainedTransfer):
         raise TypeError(
@@ -219,6 +221,8 @@ def prepared_contained_transfer_fingerprint(
         framed(value.return_index.to_bytes(8, "big"))
 
     def contained_hold(value: ContainedReferenceHold) -> None:
+        if type(value) is not ContainedReferenceHold:
+            raise TypeError("contained hold must be a ContainedReferenceHold")
         object_id(value.container_object_id)
         framed(bytes(value.container_owner_worker_id))
         framed(string(value.transfer_token, "contained transfer token"))
@@ -241,20 +245,13 @@ def prepared_contained_transfer_fingerprint(
         if isinstance(original, ContainedTransferSource):
             framed(b"contained")
             original_hold = original.hold
-            if isinstance(original_hold, ContainedReferenceHold):
-                framed(b"typed")
-                contained_hold(original_hold)
-            elif isinstance(original_hold, LegacyContainedReferenceHold):
-                framed(b"legacy")
-                framed(string(
-                    original_hold.transfer_token,
-                    "legacy contained transfer token",
-                ))
-            else:
+            if type(original_hold) is not ContainedReferenceHold:
                 raise TypeError(
-                    "contained source hold has an invalid type"
+                    "contained source requires a ContainedReferenceHold"
                 )
-        else:
+            framed(b"typed")
+            contained_hold(original_hold)
+        elif isinstance(original, TaskHoldSource):
             framed(b"task")
             task_hold = original.hold
             framed(task_hold.kind.value.encode("utf-8"))
@@ -262,6 +259,8 @@ def prepared_contained_transfer_fingerprint(
             framed(bytes(task_hold.task_id))
             framed(bytes(task_hold.origin_attempt_id.task_id))
             framed(task_hold.origin_attempt_id.attempt_number.to_bytes(8, "big"))
+        else:
+            raise TypeError("original_source must be a contained or task-hold source")
 
     contained_hold(transfer.provisional_hold)
     contained_hold(transfer.final_hold)

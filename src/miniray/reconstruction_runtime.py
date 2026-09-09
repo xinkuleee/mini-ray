@@ -1,23 +1,24 @@
 """Pure bridge from lineage decisions to a CoreWorker requeue plan.
 
-This module deliberately performs no RPC, queue operation, descriptor mutation, or
-waiter notification.  It serializes concurrent requests, advances owner attempt
-authority exactly once, and returns an explicit plan for the Core composition layer.
+This module performs no RPC, descriptor mutation, or waiter notification. It
+advances owner/recovery authority and returns a requeue plan. The composition
+layer supplies the actual queue handoff; only that successful handoff can issue
+the local admission receipt consumed by an owner-routed reconstruction ACK.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from threading import RLock
-from typing import Optional
+from typing import Callable, Optional
 
 from .ids import AttemptID, ObjectID, TaskID
 from .ownership import (
     ObjectOwnerTable, ObjectState, TaskOutputAttemptAdvancePlan,
 )
 from .protocol import (
-    InlineArg, RefArg, StoredArg, TaskReferenceHold,
+    InlineArg, RefArg, TaskReferenceHold,
     TaskReferenceHoldKind, TaskSpec,
 )
 from .recovery import (
@@ -86,10 +87,9 @@ class ReconstructionPlan:
     task_id: TaskID
     requested_object_id: ObjectID
     # ``object_id`` remains the slot-zero compatibility identity used by
-    # ``_PendingTask``; the request may have named any sibling.
+    # ``_PendingTask``; the request names the one producer output.
     object_id: ObjectID
     output_ids: tuple[ObjectID, ...]
-    target_output_ids: tuple[ObjectID, ...]
     previous_attempt: AttemptID
     attempt_id: AttemptID
     task_spec: TaskSpec
@@ -101,11 +101,61 @@ class ReconstructionPlan:
     accepted_count_delta: int = 1
 
 
+_ADMISSION_SEAL = object()
+
+
+def _admission_identity(disposition, decision) -> tuple:
+    return (
+        disposition, decision.action, decision.task_id, decision.attempt_id,
+        decision.requested_object_id, tuple(decision.output_ids),
+    )
+
+
+@dataclass(frozen=True)
+class _CommittedAdmission:
+    coordinator: object = field(repr=False)
+    identity: tuple
+    seal: object = field(repr=False)
+
+
+@dataclass(frozen=True)
+class ReconstructionAdmissionReceipt:
+    """Local evidence of one committed attempt accepted by its actual queue.
+
+    Issued only by ReconstructionCoordinator.handoff after queue acceptance.
+    It is transient, immutable and never a wire capability or a current-state
+    lookup. Completion, collection and later attempts cannot rewrite it.
+    """
+
+    owner: object = field(repr=False)
+    recovery: object = field(repr=False)
+    identity: tuple
+    seal: object = field(repr=False)
+
+    def matches(self, outcome, owner, recovery) -> bool:
+        return (
+            self.seal is _ADMISSION_SEAL
+            and self.owner is owner and self.recovery is recovery
+            and self.identity == _admission_identity(
+                outcome.disposition, outcome.decision
+            )
+        )
+
+    def __reduce__(self):
+        raise TypeError("reconstruction admission receipts are local only")
+
+
 @dataclass(frozen=True)
 class ReconstructionOutcome:
     disposition: ReconstructionDisposition
     decision: RecoveryDecision
     plan: Optional[ReconstructionPlan] = None
+    admission: Optional[ReconstructionAdmissionReceipt] = field(
+        default=None, compare=False, repr=False
+    )
+    _commit: Optional[_CommittedAdmission] = field(
+        default=None, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True)
@@ -140,43 +190,9 @@ class ReconstructionCoordinator:
         self._owner = owner
         self._lock = RLock()
         self._sessions: dict[TaskID, ReconstructionPlan] = {}
-
-    def has_active_lineage_producer(
-        self, object_id: ObjectID, active_task_ids: tuple[TaskID, ...],
-    ) -> bool:
-        """Whether unfinished selected work owns a non-ready lineage vertex.
-
-        Core supplies the other admission authority's active IDs. This read-
-        only walk prevents whole-DAG admission from bypassing a targeted OPEN
-        failure or STARTED execution, even when every sibling has since become
-        LOST. READY values terminate traversal; nested handles are not edges.
-        The ordinary graph preflight still validates lineage/cycles/budgets.
-        """
-        active = set(active_task_ids)
-        if not active:
-            return False
-        with self._lock:
-            pending = [object_id]
-            seen: set[ObjectID] = set()
-            while pending:
-                current = pending.pop()
-                if current in seen:
-                    continue
-                seen.add(current)
-                try:
-                    owner = self._owner.snapshot(current)
-                except Exception as exc:
-                    raise ReconstructionRuntimeError(
-                        "recursive lineage owner does not know dependency {}".format(current)
-                    ) from exc
-                if owner.state in (ObjectState.READY_INLINE, ObjectState.READY_STORED):
-                    continue
-                if current.task_id in active:
-                    return True
-                if owner.state is ObjectState.LOST and isinstance(owner.producer_task_spec, TaskSpec):
-                    dependencies, _nested = self._validate_lineage_inputs(owner.producer_task_spec)
-                    pending.extend(dependencies)
-            return False
+        # Only current queued attempts are retained; returned receipts carry
+        # their own immutable fact until the request reducer stores its ACK.
+        self._handoffs: dict[AttemptID, tuple[ObjectID, ...]] = {}
 
     def preflight_graph(self, object_id: ObjectID) -> ReconstructionGraphPlan:
         """Validate a local top-level-Ref lineage DAG without mutation.
@@ -269,7 +285,7 @@ class ReconstructionCoordinator:
                         "owner and recovery disagree on current attempt"
                     )
                 assert isinstance(recovery.current_attempt, AttemptID)
-                sibling_snapshots = self._validate_output_group(
+                output_snapshots = self._validate_output_group(
                     spec, output_ids, recovery.current_attempt
                 )
 
@@ -277,10 +293,10 @@ class ReconstructionCoordinator:
                     self._validate_lineage_inputs(spec)
                 )
 
-                sibling_states = {
-                    snapshot.state for snapshot in sibling_snapshots
+                output_states = {
+                    snapshot.state for snapshot in output_snapshots
                 }
-                if sibling_states == {ObjectState.PENDING}:
+                if output_states == {ObjectState.PENDING}:
                     if (
                         recovery.active_recovery is None
                         or recovery.active_recovery != owner.current_attempt
@@ -289,7 +305,7 @@ class ReconstructionCoordinator:
                             "pending lineage node has no matching active reconstruction"
                         )
                     action = ReconstructionGraphAction.PENDING_JOIN
-                elif sibling_states == {ObjectState.LOST}:
+                elif output_states == {ObjectState.LOST}:
                     if recovery.task_state is not TaskState.SUCCEEDED:
                         raise ReconstructionRuntimeError(
                             "lost lineage producer was not previously successful"
@@ -301,8 +317,8 @@ class ReconstructionCoordinator:
                     action = ReconstructionGraphAction.LOST_RECONSTRUCT
                 else:
                     raise ReconstructionRuntimeError(
-                        "multi-return reconstruction requires every producer "
-                        "output to be LOST (or every output to be PENDING in "
+                        "reconstruction requires the producer "
+                        "output to be LOST (or PENDING in "
                         "the same active reconstruction)"
                     )
 
@@ -365,13 +381,7 @@ class ReconstructionCoordinator:
         output_ids: tuple[ObjectID, ...],
         expected_attempt: AttemptID,
     ) -> tuple[object, ...]:
-        """Preflight every sibling before recovery or owner mutation.
-
-        Phase 1 deliberately admits only whole-manifest reconstruction.  A
-        partial loss would require an execution target mask on the Worker and
-        Node protocols plus per-output attempt epochs.  Rejecting the mixed
-        state here preserves healthy immutable siblings and consumes no retry.
-        """
+        """Preflight the canonical output before recovery or owner mutation."""
 
         snapshots: list[object] = []
         for output_id in output_ids:
@@ -388,11 +398,11 @@ class ReconstructionCoordinator:
                 )
             if snapshot.producer_task_spec != spec:
                 raise ReconstructionRuntimeError(
-                    "producer output siblings disagree on canonical lineage"
+                    "producer output metadata disagrees on canonical lineage"
                 )
             if snapshot.current_attempt != expected_attempt:
                 raise ReconstructionRuntimeError(
-                    "producer output siblings disagree on current attempt"
+                    "producer output metadata disagrees on current attempt"
                 )
             snapshots.append(snapshot)
         return tuple(snapshots)
@@ -415,17 +425,17 @@ class ReconstructionCoordinator:
         seen_nested: set[ObjectID] = set()
         arguments = spec.args + tuple(value for _, value in spec.kwargs)
         for argument in arguments:
-            if isinstance(argument, (RefArg, StoredArg)):
+            if isinstance(argument, RefArg):
                 if argument.owner_worker_id == spec.owner_worker_id:
                     if argument.object_id not in seen_dependencies:
                         seen_dependencies.add(argument.object_id)
                         dependencies.append(argument.object_id)
-                elif not isinstance(argument, StoredArg):
+                else:
                     # Foreign readiness and owner-routed reconstruction are
                     # governed by the TaskID-scoped retained-lineage runtime.
                     # They are not vertices in this local owner's DFS.
                     continue
-            if not isinstance(argument, (InlineArg, StoredArg)):
+            if not isinstance(argument, InlineArg):
                 continue
             for transfer in argument.nested_refs:
                 if transfer.owner_worker_id != spec.owner_worker_id:
@@ -470,7 +480,7 @@ class ReconstructionCoordinator:
 
         def rewrite_argument(argument: object) -> object:
             if (
-                not isinstance(argument, (InlineArg, StoredArg))
+                not isinstance(argument, InlineArg)
                 or not argument.nested_refs
             ):
                 return argument
@@ -499,14 +509,14 @@ class ReconstructionCoordinator:
     def lineage_inputs(
         self, spec: TaskSpec
     ) -> tuple[tuple[ObjectID, ...], tuple[ObjectID, ...]]:
-        """Public pure preflight used by targeted reconstruction."""
+        """Public pure preflight for retained reconstruction inputs."""
 
         return self._validate_lineage_inputs(spec)
 
     def rewrite_nested_holds(
         self, spec: TaskSpec, hold: TaskReferenceHold
     ) -> TaskSpec:
-        """Public immutable rewrite shared by whole/targeted replay."""
+        """Rewrite nested holds for one whole-function replay."""
 
         return self._rewrite_nested_holds(spec, hold)
 
@@ -540,7 +550,7 @@ class ReconstructionCoordinator:
             if session is not None:
                 if object_id not in session.output_ids:
                     raise ReconstructionRuntimeError(
-                        "active reconstruction does not contain requested sibling"
+                        "active reconstruction does not contain requested output"
                     )
                 recovery_plan = (
                     self._recovery.validate_request_reconstruction(object_id)
@@ -602,14 +612,14 @@ class ReconstructionCoordinator:
                     "owner and recovery disagree on current attempt"
                 )
             assert isinstance(before.current_attempt, AttemptID)
-            sibling_snapshots = self._validate_output_group(
+            output_snapshots = self._validate_output_group(
                 spec, output_ids, before.current_attempt
             )
-            if {snapshot.state for snapshot in sibling_snapshots} != {
+            if {snapshot.state for snapshot in output_snapshots} != {
                 ObjectState.LOST
             }:
                 raise ReconstructionRuntimeError(
-                    "multi-return reconstruction requires every producer "
+                    "reconstruction requires the producer "
                     "output to be LOST"
                 )
             dependencies, nested_local_holds = (
@@ -648,7 +658,7 @@ class ReconstructionCoordinator:
                 raise ReconstructionRuntimeError("reconstruction attempt did not advance")
             # Canonical lineage keeps the initial immutable TaskSpec.  The
             # producer may already have consumed SYSTEM retries before its
-            # output was lost, so the batch CAS must use RecoveryManager's
+            # output was lost, so the output CAS must use RecoveryManager's
             # current physical attempt rather than spec.attempt_id.
             execution = TaskExecutionKey.from_task_spec(spec).for_attempt(
                 before.current_attempt
@@ -669,7 +679,6 @@ class ReconstructionCoordinator:
                 requested_object_id=object_id,
                 object_id=output_ids[0],
                 output_ids=output_ids,
-                target_output_ids=output_ids,
                 previous_attempt=before.current_attempt,
                 attempt_id=decision.attempt_id,
                 task_spec=retried,
@@ -712,7 +721,7 @@ class ReconstructionCoordinator:
                     raise ReconstructionRuntimeError(
                         "prepared reconstruction JOIN is no longer active"
                     )
-                return outcome
+                return self._committed_outcome(outcome)
             if outcome.disposition is ReconstructionDisposition.FAILED:
                 recovery_plan = prepared.recovery_plan
                 if recovery_plan is not None:
@@ -732,9 +741,10 @@ class ReconstructionCoordinator:
             existing = self._sessions.get(plan.task_id)
             if existing is not None:
                 if existing.attempt_id == plan.attempt_id:
-                    return ReconstructionOutcome(
-                        ReconstructionDisposition.JOIN, decision
-                    )
+                    return self._committed_outcome(ReconstructionOutcome(
+                        ReconstructionDisposition.JOIN,
+                        replace(decision, action=RecoveryAction.JOIN_RECONSTRUCTION),
+                    ))
                 raise ReconstructionRuntimeError(
                     "another reconstruction committed after prepare"
                 )
@@ -761,7 +771,7 @@ class ReconstructionCoordinator:
                 )
             if not self._owner.commit_advance_task_outputs(owner_plan):
                 raise ReconstructionRuntimeError(
-                    "owner rejected reconstruction output-batch CAS"
+                    "owner rejected reconstruction output CAS"
                 )
             committed = self._recovery.commit_transition(recovery_plan)
             if committed != decision:
@@ -770,7 +780,93 @@ class ReconstructionCoordinator:
                     "decision"
                 )
             self._sessions[plan.task_id] = plan
-            return outcome
+            return self._committed_outcome(outcome)
+
+    def _committed_outcome(self, outcome: ReconstructionOutcome) -> ReconstructionOutcome:
+        return replace(outcome, _commit=_CommittedAdmission(
+            self, _admission_identity(outcome.disposition, outcome.decision),
+            _ADMISSION_SEAL,
+        ))
+
+    def handoff(
+        self, outcome: ReconstructionOutcome,
+        enqueue: Callable[[ReconstructionPlan], None],
+    ) -> ReconstructionOutcome:
+        """Accept a committed START at its actual queue, or prove a JOIN.
+
+        Call beneath the Core composition lock. The callback must do only the
+        queue acceptance, with no fallible observation after it. A callback
+        failure is not evidence of acceptance. Preview/prepare values cannot
+        enter here, and committed-but-unqueued state cannot authorize JOIN.
+        """
+        if not isinstance(outcome, ReconstructionOutcome) or not callable(enqueue):
+            raise TypeError("handoff requires an outcome and a queue callback")
+        with self._lock:
+            proof = outcome._commit
+            identity = _admission_identity(outcome.disposition, outcome.decision)
+            if (not isinstance(proof, _CommittedAdmission)
+                    or proof.coordinator is not self or proof.seal is not _ADMISSION_SEAL
+                    or proof.identity != identity):
+                raise ReconstructionRuntimeError("handoff requires an actual committed admission")
+            decision = outcome.decision
+            attempt = decision.attempt_id
+            session = self._require_current_handoff_attempt(decision.task_id, attempt)
+            if tuple(decision.output_ids) != session.output_ids:
+                raise ReconstructionRuntimeError("handoff changed the committed output identity")
+            if outcome.disposition is ReconstructionDisposition.START:
+                if decision.action is not RecoveryAction.START_RECONSTRUCTION or outcome.plan != session:
+                    raise ReconstructionRuntimeError("START handoff changed its committed plan")
+                if attempt not in self._handoffs:
+                    enqueue(session)
+                    self._handoffs[attempt] = session.output_ids
+            elif (outcome.disposition is not ReconstructionDisposition.JOIN
+                    or decision.action is not RecoveryAction.JOIN_RECONSTRUCTION
+                    or self._handoffs.get(attempt) != session.output_ids):
+                raise ReconstructionRuntimeError("JOIN requires an already queued attempt")
+            return replace(outcome, admission=ReconstructionAdmissionReceipt(
+                self._owner, self._recovery, identity, _ADMISSION_SEAL,
+            ))
+
+    def _require_current_handoff_attempt(self, task_id, attempt):
+        session = self._sessions.get(task_id)
+        if (session is None or not isinstance(attempt, AttemptID)
+                or attempt.task_id != task_id
+                or self._recovery.active_recovery(task_id) != attempt):
+            raise ReconstructionRuntimeError("handoff is not the current committed reconstruction")
+        recovery = self._recovery.reconstruction_snapshot(session.object_id)
+        owners = tuple(self._owner.snapshot(output) for output in session.output_ids)
+        if (recovery.current_attempt != attempt
+                or recovery.task_state not in (TaskState.RETRY_PENDING, TaskState.RUNNING)
+                or any(owner.current_attempt != attempt
+                       or owner.state is not ObjectState.PENDING for owner in owners)):
+            raise ReconstructionRuntimeError("handoff owner/recovery transition is not committed")
+        return session
+
+    def handoff_retry(
+        self, task_id: TaskID, previous_attempt: AttemptID, attempt: AttemptID,
+        enqueue: Callable[[], None],
+    ) -> bool:
+        """Record the real queue edge of an already committed SYSTEM retry.
+
+        This neither advances epochs nor consumes budget. Its predecessor must
+        have actually entered the queue; an exact repeat never queues twice.
+        """
+        if not callable(enqueue):
+            raise TypeError("retry handoff requires a queue callback")
+        with self._lock:
+            session = self._require_current_handoff_attempt(task_id, attempt)
+            if (not isinstance(previous_attempt, AttemptID)
+                    or previous_attempt.task_id != task_id
+                    or attempt.attempt_number != previous_attempt.attempt_number + 1):
+                raise ReconstructionRuntimeError("retry handoff changed predecessor identity")
+            if self._handoffs.get(attempt) == session.output_ids:
+                return False
+            if self._handoffs.get(previous_attempt) != session.output_ids:
+                raise ReconstructionRuntimeError("retry predecessor was never queued")
+            enqueue()
+            self._handoffs[attempt] = session.output_ids
+            self._handoffs.pop(previous_attempt, None)
+            return True
 
     @staticmethod
     def _same_recovery_preflight(
@@ -879,6 +975,7 @@ class ReconstructionCoordinator:
             ):
                 return False
             del self._sessions[task_id]
+            self._handoffs.pop(attempt_id, None)
             return True
 
 
@@ -889,6 +986,7 @@ __all__ = [
     "ReconstructionGraphNode",
     "ReconstructionGraphPlan",
     "ReconstructionOutcome",
+    "ReconstructionAdmissionReceipt",
     "PreparedReconstruction",
     "ReconstructionPlan",
     "ReconstructionRuntimeError",

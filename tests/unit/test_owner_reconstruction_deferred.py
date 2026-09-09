@@ -8,9 +8,11 @@ real owner/recovery reducers and no transport, threads, or processes.
 from __future__ import annotations
 
 from dataclasses import replace
+from queue import Queue
 
 import pytest
 
+from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.owner_reconstruction import (
     OwnedObjectReconstructionReducer, ReconstructionDeferred,
@@ -58,10 +60,13 @@ class _Fixture:
         self.recovery.record_task_success(task, self.spec.attempt_id)
         self.coordinator = ReconstructionCoordinator(self.recovery, self.owner)
 
-        self.source = ContainedTransferSource("deferred-export-pin")
+        outer = ObjectID.for_task(TaskID.derive(job, task, 1))
+        self.source = ContainedTransferSource(ContainedReferenceHold(
+            outer, self.owner_id, "deferred-export-pin",
+        ))
         self.token = "deferred-borrower"
         self.owner.add_contained_reference(
-            self.object_id, self.source.transfer_token
+            self.object_id, self.source.hold
         )
         self.owner.acquire_exported_reference(
             self.object_id, self.source, (self.requester, self.token)
@@ -86,6 +91,7 @@ class _Fixture:
             self.spec.attempt_id,
         )
         self.admission_calls: list[ObjectID] = []
+        self.queue = Queue()
         self.admission_mode = "deferred"
 
         def admit(object_id):
@@ -101,7 +107,9 @@ class _Fixture:
             if self.admission_mode == "value_error":
                 raise ValueError("invalid local reconstruction state")
             assert self.admission_mode == "start"
-            return self.coordinator.request(object_id)
+            return self.coordinator.handoff(
+                self.coordinator.request(object_id), self.queue.put
+            )
 
         self.reducer = OwnedObjectReconstructionReducer(
             self.owner_id, self.owner, self.recovery, admit
@@ -185,7 +193,7 @@ def test_capability_and_attempt_checks_precede_deferred_admission(
     if invalid == "source":
         request = replace(
             request, credential=BorrowedCredential(
-                ContainedTransferSource("unbound-source"), fixture.token
+                ContainedTransferSource(replace(fixture.source.hold, transfer_token="unbound-source")), fixture.token
             )
         )
     elif invalid == "inactive":
@@ -243,7 +251,7 @@ def test_deferral_preserves_transaction_binding_without_caching_the_failure() ->
     assert fixture.reducer.handle(exact).failure is Failure.NOT_LOST
     rebound = replace(
         exact, credential=BorrowedCredential(
-            ContainedTransferSource("changed-binding"), fixture.token
+            ContainedTransferSource(replace(fixture.source.hold, transfer_token="changed-binding")), fixture.token
         )
     )
     assert fixture.reducer.handle(rebound).failure is Failure.REQUEST_CONFLICT

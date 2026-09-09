@@ -19,13 +19,6 @@ from .contained_edges import (
     ContainedReferenceEdge,
     ContainedReferenceHold,
     IncomingContainedReferenceHold,
-    LegacyContainedReferenceHold,
-)
-from .contained_cycle import (
-    ContainedGraphManifest,
-    ContainedGraphManifestDisposition,
-    ContainedGraphManifestReceipt,
-    ContainedGraphTransactionState,
 )
 from .ids import (
     ActorID,
@@ -40,7 +33,6 @@ from .ids import (
     WorkerID,
 )
 from .resources import AllocationToken, ResourceVector
-from .task_outputs import TargetExecutionKey
 
 if TYPE_CHECKING:
     from .output_publication import (
@@ -88,52 +80,6 @@ def _validate_lease_execution_identity(
         raise ProtocolError("{} worker_id must be a WorkerID".format(operation))
 
 
-def _validate_target_execution(
-    value: object, task_id: TaskID, attempt_id: AttemptID, operation: str,
-    *, full_output_ids: Optional[Tuple[ObjectID, ...]] = None,
-    target_output_ids: Optional[Tuple[ObjectID, ...]] = None,
-) -> Optional[TargetExecutionKey]:
-    """Validate the optional partial-reconstruction execution identity.
-
-    ``TaskSpec`` remains the complete logical producer definition.  This value
-    only narrows which stable return slots one physical attempt may publish.
-    Every task/lease message echoes it so an exact replay cannot be rebound to
-    another target set.
-    """
-
-    if value is None:
-        return None
-    if not isinstance(value, TargetExecutionKey):
-        raise ProtocolError(
-            "{} target_execution must be a TargetExecutionKey or None"
-            .format(operation)
-        )
-    if value.task_id != task_id or value.attempt_id != attempt_id:
-        raise ProtocolError(
-            "{} target execution must match task and attempt".format(
-                operation
-            )
-        )
-    if (
-        full_output_ids is not None
-        and value.full_output_ids != tuple(full_output_ids)
-    ):
-        raise ProtocolError(
-            "{} target execution changed the complete output manifest"
-            .format(operation)
-        )
-    if (
-        target_output_ids is not None
-        and value.target_output_ids != tuple(target_output_ids)
-    ):
-        raise ProtocolError(
-            "{} target execution does not match target outputs".format(
-                operation
-            )
-        )
-    return value
-
-
 def _validate_acceptance_error(
     accepted: bool, error: Optional[str], operation: str
 ) -> None:
@@ -169,26 +115,10 @@ def _validate_reference_token(value: object, name: str) -> None:
         raise ProtocolError("{} must be a non-empty string".format(name))
 
 
-def _normalize_contained_reference_hold(
-    value: object, operation: str
-) -> IncomingContainedReferenceHold:
-    """Preserve typed authority or explicitly mark token-only legacy."""
-
-    if isinstance(value, (ContainedReferenceHold, LegacyContainedReferenceHold)):
-        hold = value
-    elif isinstance(value, str):
-        _validate_reference_token(value, "{} transfer_token".format(operation))
-        hold = LegacyContainedReferenceHold(value)
-    else:
-        raise ProtocolError(
-            "{} hold must be a contained-reference hold or legacy token"
-            .format(operation)
-        )
-    if not isinstance(hold.transfer_token, str) or not hold.transfer_token:
-        raise ProtocolError(
-            "{} transfer_token must be a non-empty string".format(operation)
-        )
-    return hold
+def _normalize_contained_reference_hold(value: object, operation: str) -> IncomingContainedReferenceHold:
+    if type(value) is not ContainedReferenceHold:
+        raise ProtocolError('{} requires a complete ContainedReferenceHold'.format(operation))
+    return ContainedReferenceHold(value.container_object_id, value.container_owner_worker_id, value.transfer_token)
 
 
 class PlacementGroupParticipantPhase(str, Enum):
@@ -280,8 +210,10 @@ class CreatePlacementGroupRequest:
             raise ProtocolError("create PG placement_group_id must be a PlacementGroupID")
         _validate_non_negative_integer(self.attempt, "create PG attempt")
         object.__setattr__(self, "bundles", _validate_pg_bundles(self.bundles))
-        if self.strategy not in {"PACK", "SPREAD", "STRICT_PACK", "STRICT_SPREAD"}:
-            raise ProtocolError("create PG strategy is invalid")
+        if len(self.bundles) > 2:
+            raise ProtocolError("mini-Ray placement groups support at most two bundles")
+        if self.strategy not in {"STRICT_PACK", "STRICT_SPREAD"}:
+            raise ProtocolError("create PG strategy must be STRICT_PACK or STRICT_SPREAD")
 
 
 @dataclass(frozen=True)
@@ -465,44 +397,7 @@ class DrainPlacementGroupsReply:
 
 
 @dataclass(frozen=True)
-class ProgressPublicationOwnerDeath:
-    """Advance one effect for every publication of an exact dead owner."""
-
-    owner_worker_id: WorkerID
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.owner_worker_id, WorkerID):
-            raise ProtocolError(
-                "publication owner-death progress requires a WorkerID"
-            )
-
-
-@dataclass(frozen=True)
-class ProgressPublicationOwnerDeathReply:
-    owner_worker_id: WorkerID
-    progressed: bool
-    clean: bool
-    active_publications: int
-
-    def __post_init__(self) -> None:
-        ProgressPublicationOwnerDeath(self.owner_worker_id)
-        if not isinstance(self.progressed, bool) or not isinstance(
-            self.clean, bool
-        ):
-            raise ProtocolError(
-                "owner-death progress flags must be bools"
-            )
-        _validate_non_negative_integer(
-            self.active_publications, "active_publications"
-        )
-        if self.clean != (self.active_publications == 0):
-            raise ProtocolError(
-                "owner-death clean flag must match active publications"
-            )
-
-
-@dataclass(frozen=True)
-class DrainPublicationOwnerDeaths:
+class DrainOwnerDeathFences:
     """Advance one bounded global publication owner-death cleanup round."""
 
     request_id: str
@@ -515,19 +410,19 @@ class DrainPublicationOwnerDeaths:
 
 
 @dataclass(frozen=True)
-class DrainPublicationOwnerDeathsReply:
+class DrainOwnerDeathFencesReply:
     request_id: str
     clean: bool
-    active_publications: int
+    active_fences: int
 
     def __post_init__(self) -> None:
-        DrainPublicationOwnerDeaths(self.request_id)
+        DrainOwnerDeathFences(self.request_id)
         if not isinstance(self.clean, bool):
             raise ProtocolError("owner-death drain clean flag must be a bool")
         _validate_non_negative_integer(
-            self.active_publications, "active_publications"
+            self.active_fences, "active_fences"
         )
-        if self.clean != (self.active_publications == 0):
+        if self.clean != (self.active_fences == 0):
             raise ProtocolError(
                 "owner-death drain clean flag must match active publications"
             )
@@ -1365,7 +1260,7 @@ class ReportNodeDeathReply:
     live_nodes: Tuple[NodeInfo, ...]
     death: Optional[NodeDeathRecord] = None
     error: Optional[str] = None
-    actor_migration_converged: bool = True
+    actor_state_converged: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.detection_id, str) or not self.detection_id:
@@ -1375,9 +1270,9 @@ class ReportNodeDeathReply:
         _validate_node_pid(self.node_pid, "node death reply")
         if not isinstance(self.disposition, NodeDeathDisposition):
             raise ProtocolError("node death reply disposition is invalid")
-        if not isinstance(self.actor_migration_converged, bool):
+        if not isinstance(self.actor_state_converged, bool):
             raise ProtocolError(
-                "node death actor_migration_converged must be a bool"
+                "node death actor_state_converged must be a bool"
             )
         _validate_non_negative_integer(self.membership_epoch, "membership_epoch")
         live_nodes = tuple(self.live_nodes)
@@ -1394,10 +1289,10 @@ class ReportNodeDeathReply:
         elif (
             not isinstance(self.error, str)
             or not self.error
-            or not self.actor_migration_converged
+            or not self.actor_state_converged
         ):
             raise ProtocolError(
-                "unapplied node death reply requires an error and no migration work"
+                "unapplied node death reply requires an error and no pending Actor state installation"
             )
 
 
@@ -1684,7 +1579,7 @@ class ContainedTransferSource:
     explicitly ownerless legacy hold; it can never alias the typed identity.
     """
 
-    hold: IncomingContainedReferenceHold | str
+    hold: IncomingContainedReferenceHold
 
     def __post_init__(self) -> None:
         hold = _normalize_contained_reference_hold(
@@ -1756,51 +1651,7 @@ class RefArg:
     owner_worker_id: WorkerID
 
 
-@dataclass(frozen=True)
-class StoredArg(RefArg):
-    """A by-value argument whose serialized stream lives in the object store.
-
-    ``RefArg`` means that the user supplied an ObjectRef and the Worker should
-    deserialize the referenced *object value*.  ``StoredArg`` instead means
-    that CoreWorker lifted an ``InlineArg.data`` stream out of ``TaskSpec``.
-    Keeping the serializer and nested-reference manifest beside the byte-free
-    object identity lets the Worker decode that stream with exactly the same
-    semantics as the original InlineArg after the Node has pulled it locally.
-    """
-
-    object_id: ObjectID
-    owner_worker_id: WorkerID
-    serializer: str = "pickle"
-    nested_refs: Tuple[NestedReferenceTransfer, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.serializer:
-            raise ProtocolError("serializer must be non-empty")
-        nested_refs = tuple(self.nested_refs)
-        if any(
-            not isinstance(reference, NestedReferenceTransfer)
-            for reference in nested_refs
-        ):
-            raise ProtocolError(
-                "stored argument nested_refs must contain "
-                "NestedReferenceTransfer values"
-            )
-        by_object: dict[ObjectID, NestedReferenceTransfer] = {}
-        for reference in nested_refs:
-            previous = by_object.get(reference.object_id)
-            if previous is not None:
-                if previous == reference:
-                    raise ProtocolError(
-                        "stored argument nested-reference manifest must be unique"
-                    )
-                raise ProtocolError(
-                    "one nested ObjectID cannot name conflicting transfers"
-                )
-            by_object[reference.object_id] = reference
-        object.__setattr__(self, "nested_refs", nested_refs)
-
-
-TaskArg = Union[InlineArg, RefArg, StoredArg]
+TaskArg = Union[InlineArg, RefArg]
 
 
 @dataclass(frozen=True)
@@ -1890,15 +1741,15 @@ class TaskSpec:
         if (
             isinstance(self.num_returns, bool)
             or not isinstance(self.num_returns, int)
-            or self.num_returns < 0
+            or self.num_returns != 1
         ):
-            raise ProtocolError("num_returns must be a non-negative integer")
+            raise ProtocolError("mini-Ray tasks require num_returns=1")
         if any(
-            not isinstance(arg, (InlineArg, RefArg, StoredArg))
+            not isinstance(arg, (InlineArg, RefArg))
             for arg in self.args
         ):
             raise ProtocolError(
-                "all task arguments must be InlineArg, RefArg, or StoredArg"
+                "all task arguments must be InlineArg or RefArg"
             )
         keyword_names = []
         for item in self.kwargs:
@@ -1907,9 +1758,9 @@ class TaskSpec:
             name, value = item
             if not isinstance(name, str) or not name:
                 raise ProtocolError("keyword argument names must be non-empty strings")
-            if not isinstance(value, (InlineArg, RefArg, StoredArg)):
+            if not isinstance(value, (InlineArg, RefArg)):
                 raise ProtocolError(
-                    "keyword argument values must be InlineArg, RefArg, or StoredArg"
+                    "keyword argument values must be InlineArg or RefArg"
                 )
             keyword_names.append(name)
         if len(keyword_names) != len(set(keyword_names)):
@@ -1941,7 +1792,7 @@ class TaskSpec:
                     )
         nested_by_object: dict[ObjectID, NestedReferenceTransfer] = {}
         for argument in arguments:
-            if not isinstance(argument, (InlineArg, StoredArg)):
+            if not isinstance(argument, InlineArg):
                 continue
             for transfer in argument.nested_refs:
                 hold = transfer.hold
@@ -1967,7 +1818,7 @@ class TaskSpec:
                     )
 
     def return_ids(self) -> Tuple[ObjectID, ...]:
-        return tuple(ObjectID(self.task_id, index) for index in range(self.num_returns))
+        return (ObjectID(self.task_id, 0),)
 
 
 @dataclass(frozen=True)
@@ -2027,8 +1878,8 @@ class RequestWorkerLease:
     dependencies: Tuple[ObjectStoreDescriptor, ...] = ()
     return_ids: Tuple[ObjectID, ...] = ()
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
     dependency_owner_routes: Tuple[DependencyOwnerRoute, ...] = ()
+    requester_owner_address: Optional[Tuple[str, int]] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.lease_id, LeaseID):
@@ -2063,22 +1914,9 @@ class RequestWorkerLease:
             raise ProtocolError("lease return_ids must contain ObjectID values")
         if any(object_id.task_id != self.task_id for object_id in return_ids):
             raise ProtocolError("lease return_ids must belong to task_id")
-        target_execution = _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id,
-            "lease request", target_output_ids=return_ids,
-        )
-        if target_execution is None:
-            if return_ids and return_ids != tuple(
-                ObjectID(self.task_id, index)
-                for index in range(len(return_ids))
-            ):
-                raise ProtocolError(
-                    "lease return_ids must be the ordered contiguous task returns"
-                )
-        elif not return_ids:
-            raise ProtocolError(
-                "targeted lease request requires its non-empty target returns"
-            )
+        # Empty manifests are only for lease probes that never execute a TaskSpec.
+        if return_ids and return_ids != (ObjectID(self.task_id, 0),):
+            raise ProtocolError("lease return_ids must contain the single task return at index 0")
         object.__setattr__(self, "return_ids", return_ids)
         key = self.scheduling_key
         _validate_pg_key(key, "lease request")
@@ -2108,6 +1946,10 @@ class RequestWorkerLease:
         except (AttributeError, TypeError, ValueError, ProtocolError) as exc:
             raise ProtocolError(f"invalid lease dependency owner routes: {exc}") from exc
         object.__setattr__(self, "dependency_owner_routes", routes)
+        if self.requester_owner_address is not None:
+            object.__setattr__(self, "requester_owner_address", _validate_bound_address(
+                self.requester_owner_address, "requester owner address"
+            ))
 
 
 @dataclass(frozen=True)
@@ -2220,7 +2062,6 @@ class GrantWorkerLease:
     allocation_token: AllocationToken
     dependencies: Tuple[ObjectStoreDescriptor, ...] = ()
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.lease_id, LeaseID):
@@ -2231,9 +2072,6 @@ class GrantWorkerLease:
             raise ProtocolError("grant attempt_id must be an AttemptID")
         if self.attempt_id.task_id != self.task_id:
             raise ProtocolError("grant attempt_id must belong to task_id")
-        _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id, "lease grant"
-        )
         if not isinstance(self.node_id, NodeID):
             raise ProtocolError("grant node_id must be a NodeID")
         if not isinstance(self.worker_id, WorkerID):
@@ -2294,10 +2132,9 @@ def revalidate_worker_lease_request(value: object) -> RequestWorkerLease:
 
     Reconstruct resource milli-units without float conversion or normalizing a
     malformed sparse vector. Empty return manifests remain valid for explicit
-    never-Pushed probes; ordinary and targeted manifests retain their existing
-    RequestWorkerLease validation.
+    never-Pushed probes; executable tasks require the single return at index 0.
     """
-    from .output_publication import _attempt, _execution, _object_id, _opaque, _require_type, _sequence
+    from .output_publication import _attempt, _object_id, _opaque, _require_type, _sequence
 
     try:
         _require_type(value, RequestWorkerLease, "worker lease request")
@@ -2319,10 +2156,6 @@ def revalidate_worker_lease_request(value: object) -> RequestWorkerLease:
                 raise ProtocolError("resource entries must be unique and ordered")
             resources[name] = units
             last_name = name
-        target = value.target_execution
-        if target is not None:
-            _require_type(target, TargetExecutionKey, "lease target_execution")
-            target = _execution(target)
         return RequestWorkerLease(
             lease_id=_opaque(value.lease_id, LeaseID, "lease_id"),
             task_id=_opaque(value.task_id, TaskID, "lease task_id"),
@@ -2338,8 +2171,8 @@ def revalidate_worker_lease_request(value: object) -> RequestWorkerLease:
                                for item in _sequence(value.dependencies, "request dependencies")),
             return_ids=tuple(_object_id(item) for item in _sequence(value.return_ids, "lease return_ids")),
             scheduling_key=_revalidate_lease_scheduling_key(value.scheduling_key),
-            target_execution=target,
             dependency_owner_routes=_sequence(value.dependency_owner_routes, "lease dependency owner routes"),
+            requester_owner_address=value.requester_owner_address,
         )
     except (AttributeError, TypeError, ValueError, ProtocolError) as exc:
         raise ProtocolError(f"invalid worker lease request: {exc}") from exc
@@ -2363,7 +2196,7 @@ def revalidate_worker_lease_grant(value: object) -> GrantWorkerLease:
     or shared in-process reply objects from changing retained replica custody.
     Validation alone never proves that the lease is still executable.
     """
-    from .output_publication import _attempt, _execution, _opaque, _require_type, _sequence
+    from .output_publication import _attempt, _opaque, _require_type, _sequence
 
     try:
         _require_type(value, GrantWorkerLease, "worker lease grant")
@@ -2377,10 +2210,6 @@ def revalidate_worker_lease_grant(value: object) -> GrantWorkerLease:
         _require_type(value.worker_address, tuple, "worker_address")
         _require_type(address[0], str, "worker address host")
         _require_type(address[1], int, "worker address port")
-        target = value.target_execution
-        if target is not None:
-            _require_type(target, TargetExecutionKey, "grant target_execution")
-            target = _execution(target)
         return GrantWorkerLease(
             _opaque(value.lease_id, LeaseID, "grant lease_id"),
             _opaque(value.task_id, TaskID, "grant task_id"),
@@ -2389,7 +2218,7 @@ def revalidate_worker_lease_grant(value: object) -> GrantWorkerLease:
             _opaque(value.worker_id, WorkerID, "grant worker_id"),
             address, AllocationToken(value.allocation_token.value),
             tuple(dependencies),
-            _revalidate_lease_scheduling_key(value.scheduling_key), target,
+            _revalidate_lease_scheduling_key(value.scheduling_key),
         )
     except (AttributeError, TypeError, ValueError, ProtocolError) as exc:
         raise ProtocolError(f"invalid worker lease grant: {exc}") from exc
@@ -2406,14 +2235,10 @@ class SpillbackWorkerLease:
     # It is optional so callers can fall back to a typed GetNodeAddress request.
     target_address: Optional[Tuple[str, int]] = None
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
 
     def __post_init__(self) -> None:
         if self.attempt_id.task_id != self.task_id:
             raise ProtocolError("spillback attempt_id must belong to task_id")
-        _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id, "spillback"
-        )
         if not isinstance(self.target_node_id, NodeID):
             raise ProtocolError("spillback target_node_id must be a NodeID")
         if self.target_address is not None:
@@ -2453,7 +2278,6 @@ class RejectWorkerLease:
     reason: LeaseRejectReason
     detail: str = ""
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.lease_id, LeaseID):
@@ -2466,10 +2290,6 @@ class RejectWorkerLease:
             raise ProtocolError("reject attempt_id must belong to task_id")
         if not isinstance(self.reason, LeaseRejectReason):
             raise ProtocolError("reject reason must be a LeaseRejectReason")
-        _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id,
-            "lease rejection",
-        )
         _validate_pg_key(self.scheduling_key, "lease rejection")
 
 
@@ -2482,14 +2302,10 @@ class StartWorkerLease:
     attempt_id: AttemptID
     worker_id: WorkerID
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
 
     def __post_init__(self) -> None:
         _validate_lease_execution_identity(
             self.lease_id, self.task_id, self.attempt_id, self.worker_id, "start"
-        )
-        _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id, "start"
         )
         _validate_pg_key(self.scheduling_key, "start")
 
@@ -2501,7 +2317,6 @@ class StartWorkerLeaseReply:
     accepted: bool
     error: Optional[str] = None
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
     node_incarnation: Optional[OutputPublicationNodeIncarnation] = None
 
     def __post_init__(self) -> None:
@@ -2514,12 +2329,6 @@ class StartWorkerLeaseReply:
         _validate_acceptance_error(self.accepted, self.error, "start reply")
         if self.accepted and self.state is not LeaseExecutionState.RUNNING:
             raise ProtocolError("an accepted start must report RUNNING")
-        if self.target_execution is not None and not isinstance(
-            self.target_execution, TargetExecutionKey
-        ):
-            raise ProtocolError(
-                "start reply target_execution must be a TargetExecutionKey or None"
-            )
         _validate_pg_key(self.scheduling_key, "start reply")
         if self.node_incarnation is not None:
             # A local import avoids reversing protocol/model import order.
@@ -2673,7 +2482,6 @@ class PushTask:
     worker_id: WorkerID
     spec: TaskSpec
     dependencies: Tuple[ObjectStoreDescriptor, ...] = ()
-    target_execution: Optional[TargetExecutionKey] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.lease_id, LeaseID):
@@ -2682,17 +2490,13 @@ class PushTask:
             raise ProtocolError("push worker_id must be a WorkerID")
         if not isinstance(self.spec, TaskSpec):
             raise ProtocolError("push spec must be a TaskSpec")
-        _validate_target_execution(
-            self.target_execution, self.spec.task_id, self.spec.attempt_id,
-            "push task", full_output_ids=self.spec.return_ids(),
-        )
         dependencies = _validate_dependencies(self.dependencies, "push task")
         references = tuple(
             argument
             for argument in (
                 self.spec.args + tuple(value for _, value in self.spec.kwargs)
             )
-            if isinstance(argument, (RefArg, StoredArg))
+            if isinstance(argument, RefArg)
         )
         reference_owners = {}
         for reference in references:
@@ -2711,7 +2515,7 @@ class PushTask:
         if dependency_owners != reference_owners:
             raise ProtocolError(
                 "push task dependencies must exactly cover its top-level "
-                "RefArgs and StoredArgs"
+                "RefArgs"
             )
         object.__setattr__(self, "dependencies", dependencies)
 
@@ -2763,12 +2567,9 @@ class ResultDescriptor:
             raise ProtocolError("result checksum must be a SHA-256 hex digest") from exc
 
 
-
-
 def _validate_output_publication_envelope(
     envelope: object, *, task_id: TaskID, attempt_id: AttemptID,
     worker_id: WorkerID, operation: str, lease_id: Optional[LeaseID] = None,
-    target_execution: Optional[TargetExecutionKey] = None,
     output_ids: Optional[Tuple[ObjectID, ...]] = None,
     owner_worker_id: Optional[WorkerID] = None, node_id: Optional[NodeID] = None,
 ) -> "OutputPublicationEnvelope":
@@ -2776,7 +2577,7 @@ def _validate_output_publication_envelope(
 
     from dataclasses import replace
     from .output_publication import (
-        OutputPublicationEnvelope, _attempt, _execution, _object_id, _opaque,
+        OutputPublicationEnvelope, _attempt, _object_id, _opaque,
     )
     from .task_outputs import TaskExecutionKey
 
@@ -2789,10 +2590,6 @@ def _validate_output_publication_envelope(
         worker_id = _opaque(worker_id, WorkerID, "reply worker_id")
         if lease_id is not None:
             lease_id = _opaque(lease_id, LeaseID, "reply lease_id")
-        if target_execution is not None:
-            if type(target_execution) is not TargetExecutionKey:
-                raise TypeError("target_execution must be a TargetExecutionKey")
-            target_execution = _execution(target_execution)
         if output_ids is not None:
             output_ids = tuple(_object_id(value) for value in output_ids)
         if owner_worker_id is not None:
@@ -2809,26 +2606,23 @@ def _validate_output_publication_envelope(
             or owner_worker_id is not None and header.owner_worker_id != owner_worker_id
             or node_id is not None and header.node_incarnation.node_id != node_id):
         raise ProtocolError(f"{operation} output publication changed lease, task, attempt, executor, owner, or Node")
-    if target_execution is None:
-        if type(publication_id.execution) is not TaskExecutionKey:
-            raise ProtocolError(f"{operation} output publication requires its exact target execution")
-    elif publication_id.execution != target_execution:
-        raise ProtocolError(f"{operation} output publication changed the selected or full output manifest")
+    if type(publication_id.execution) is not TaskExecutionKey:
+        raise ProtocolError(f"{operation} output publication requires an exact task execution")
     if output_ids is not None and publication_id.output_ids != output_ids:
-        raise ProtocolError(f"{operation} output publication changed its ordered selected outputs")
+        raise ProtocolError(f"{operation} output publication changed its single task output")
     return envelope
 
 
 def _validate_output_completion_witness(
     witness: object, *, lease_id: LeaseID, task_id: TaskID, attempt_id: AttemptID,
-    operation: str, target_execution: Optional[TargetExecutionKey] = None,
+    operation: str,
     output_ids: Optional[Tuple[ObjectID, ...]] = None,
 ) -> "OutputPublicationCompleteWitness":
     """Validate metadata Complete after the Node has retired reply payloads."""
 
     from dataclasses import replace
     from .output_publication import (
-        OutputPublicationCompleteWitness, _attempt, _execution, _object_id, _opaque,
+        OutputPublicationCompleteWitness, _attempt, _object_id, _opaque,
     )
     from .task_outputs import TaskExecutionKey
 
@@ -2839,10 +2633,6 @@ def _validate_output_completion_witness(
         lease_id = _opaque(lease_id, LeaseID, "reply lease_id")
         task_id = _opaque(task_id, TaskID, "reply task_id")
         attempt_id = _attempt(attempt_id)
-        if target_execution is not None:
-            if type(target_execution) is not TargetExecutionKey:
-                raise TypeError("target_execution must be a TargetExecutionKey")
-            target_execution = _execution(target_execution)
         if output_ids is not None:
             output_ids = tuple(_object_id(value) for value in output_ids)
     except (TypeError, ValueError, AttributeError) as exc:
@@ -2851,13 +2641,10 @@ def _validate_output_completion_witness(
     if (identity.lease_id != lease_id or identity.task_id != task_id
             or identity.attempt_id != attempt_id):
         raise ProtocolError(f"{operation} output completion changed lease, task, or attempt")
-    if target_execution is None:
-        if type(identity.execution) is not TaskExecutionKey:
-            raise ProtocolError(f"{operation} output completion requires its exact target execution")
-    elif identity.execution != target_execution:
-        raise ProtocolError(f"{operation} output completion changed the selected or full output manifest")
+    if type(identity.execution) is not TaskExecutionKey:
+        raise ProtocolError(f"{operation} output completion requires an exact task execution")
     if output_ids is not None and identity.output_ids != output_ids:
-        raise ProtocolError(f"{operation} output completion changed its ordered selected outputs")
+        raise ProtocolError(f"{operation} output completion changed its single task output")
     return witness
 
 
@@ -2878,7 +2665,6 @@ class CompleteWorkerLease:
     worker_id: WorkerID
     status: TaskReplyStatus
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
 
     def __post_init__(self) -> None:
         _validate_lease_execution_identity(
@@ -2890,9 +2676,6 @@ class CompleteWorkerLease:
         )
         if not isinstance(self.status, TaskReplyStatus):
             raise ProtocolError("completion status must be a TaskReplyStatus")
-        _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id, "complete"
-        )
         _validate_pg_key(self.scheduling_key, "complete")
 
 
@@ -2908,7 +2691,6 @@ class CompleteWorkerLeaseReply:
     released: bool
     error: Optional[str] = None
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
     output_publication: Optional["OutputPublicationEnvelope"] = None
     # Exact success metadata remains available after Node reply-cache retirement.
     # It contains no payload and cannot reconstruct a result for a cold caller.
@@ -2941,10 +2723,6 @@ class CompleteWorkerLeaseReply:
             raise ProtocolError("an accepted completion must report COMPLETED")
         if not self.accepted and self.released:
             raise ProtocolError("a rejected completion cannot release resources")
-        _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id,
-            "completion reply",
-        )
         _validate_pg_key(
             self.scheduling_key, "completion reply"
         )
@@ -2956,7 +2734,7 @@ class CompleteWorkerLeaseReply:
                 raise ProtocolError("output completion witness requires an accepted successful COMPLETED reply")
             witness = _validate_output_completion_witness(
                 self.output_completion, lease_id=self.lease_id, task_id=self.task_id,
-                attempt_id=self.attempt_id, target_execution=self.target_execution,
+                attempt_id=self.attempt_id,
                 operation="completion reply",
             )
             object.__setattr__(self, "output_completion", witness)
@@ -2967,7 +2745,7 @@ class CompleteWorkerLeaseReply:
             envelope = _validate_output_publication_envelope(
                 self.output_publication, lease_id=self.lease_id, task_id=self.task_id,
                 attempt_id=self.attempt_id, worker_id=self.worker_id,
-                target_execution=self.target_execution, operation="completion reply",
+                operation="completion reply",
             )
             object.__setattr__(self, "output_publication", envelope)
 
@@ -3000,7 +2778,6 @@ class GetWorkerLeaseOutcome:
     owner_worker_id: WorkerID
     object_ids: Tuple[ObjectID, ...]
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
 
     def __post_init__(self) -> None:
         _validate_lease_execution_identity(
@@ -3027,14 +2804,8 @@ class GetWorkerLeaseOutcome:
             raise ProtocolError(
                 "worker lease outcome object_ids must be unique"
             )
-        target_execution = _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id,
-            "worker lease outcome query", target_output_ids=object_ids,
-        )
-        if target_execution is not None and not object_ids:
-            raise ProtocolError(
-                "targeted worker lease outcome requires target objects"
-            )
+        if object_ids and object_ids != (ObjectID(self.task_id, 0),):
+            raise ProtocolError("worker lease outcome requires the single task return at index 0")
         object.__setattr__(self, "object_ids", object_ids)
         _validate_pg_key(
             self.scheduling_key, "worker lease outcome query"
@@ -3060,8 +2831,7 @@ class GetWorkerLeaseOutcomeReply:
     orphan_descriptors: Tuple[ObjectStoreDescriptor, ...] = ()
     error: Optional[str] = None
     scheduling_key: Optional[PlacementGroupSchedulingKey] = None
-    target_execution: Optional[TargetExecutionKey] = None
-    # Recovery carries the same selected-output handoff as ordinary success,
+    # Recovery carries the same single-output handoff as ordinary success,
     # or a byte-free Complete witness after payload retirement.
     output_publication: Optional["OutputPublicationEnvelope"] = None
     output_completion: Optional["OutputPublicationCompleteWitness"] = None
@@ -3076,7 +2846,7 @@ class GetWorkerLeaseOutcomeReply:
             self.attempt_id,
             self.executor_worker_id,
             self.owner_worker_id,
-            self.object_ids, self.scheduling_key, self.target_execution,
+            self.object_ids, self.scheduling_key,
         )
         if not isinstance(self.node_id, NodeID):
             raise ProtocolError(
@@ -3192,7 +2962,7 @@ class GetWorkerLeaseOutcomeReply:
             if (descriptors and descriptor_ids != request.object_ids
                     and self.output_publication is None):
                 raise ProtocolError(
-                    "recoverable descriptors must contain the complete execution target manifest"
+                    "recoverable descriptors must contain the complete execution output manifest"
                 )
             terminal_orphan_state = self.state in (
                 LeaseExecutionState.COMPLETED,
@@ -3235,7 +3005,7 @@ class GetWorkerLeaseOutcomeReply:
                 raise ProtocolError("output completion witness requires a found successful COMPLETED outcome")
             witness = _validate_output_completion_witness(
                 self.output_completion, lease_id=self.lease_id, task_id=self.task_id,
-                attempt_id=self.attempt_id, target_execution=request.target_execution,
+                attempt_id=self.attempt_id,
                 output_ids=request.object_ids, operation="worker lease outcome",
             )
             object.__setattr__(self, "output_completion", witness)
@@ -3248,7 +3018,7 @@ class GetWorkerLeaseOutcomeReply:
             envelope = _validate_output_publication_envelope(
                 self.output_publication, lease_id=self.lease_id, task_id=self.task_id,
                 attempt_id=self.attempt_id, worker_id=self.executor_worker_id,
-                target_execution=request.target_execution, output_ids=request.object_ids,
+                output_ids=request.object_ids,
                 owner_worker_id=self.owner_worker_id, node_id=self.node_id,
                 operation="worker lease outcome",
             )
@@ -3293,16 +3063,12 @@ class TaskReply:
     status: TaskReplyStatus
     results: Tuple[ResultDescriptor, ...] = ()
     error: Optional[RemoteErrorInfo] = None
-    target_execution: Optional[TargetExecutionKey] = None
     output_publication: Optional["OutputPublicationEnvelope"] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "results", tuple(self.results))
         if self.attempt_id.task_id != self.task_id:
             raise ProtocolError("reply attempt_id must belong to task_id")
-        target_execution = _validate_target_execution(
-            self.target_execution, self.task_id, self.attempt_id, "task reply"
-        )
         if any(result.object_id.task_id != self.task_id for result in self.results):
             raise ProtocolError("reply result IDs must belong to task_id")
         if self.status is TaskReplyStatus.SUCCEEDED and self.error is not None:
@@ -3311,20 +3077,15 @@ class TaskReply:
             raise ProtocolError("a failed task reply must contain an error")
         if self.status is not TaskReplyStatus.SUCCEEDED and self.results:
             raise ProtocolError("a failed task reply cannot publish results")
-        if self.status is TaskReplyStatus.SUCCEEDED and target_execution is not None:
-            if tuple(result.object_id for result in self.results) != (
-                target_execution.target_output_ids
-            ):
-                raise ProtocolError(
-                    "successful targeted reply must exactly publish its target outputs"
-                )
+        if self.status is TaskReplyStatus.SUCCEEDED:
+            if tuple(result.object_id for result in self.results) != (ObjectID(self.task_id, 0),):
+                raise ProtocolError("successful task reply must publish the single return at index 0")
         if self.output_publication is not None:
             if self.status is not TaskReplyStatus.SUCCEEDED:
                 raise ProtocolError("output publication requires a successful task reply")
             envelope = _validate_output_publication_envelope(
                 self.output_publication, task_id=self.task_id,
                 attempt_id=self.attempt_id, worker_id=self.worker_id,
-                target_execution=target_execution,
                 output_ids=tuple(result.object_id for result in self.results),
                 operation="task reply",
             )
@@ -3358,7 +3119,7 @@ class AcquireBorrowedObject:
     object_id: ObjectID
     owner_worker_id: WorkerID
     borrower_worker_id: WorkerID
-    source: BorrowSource | IncomingContainedReferenceHold | str
+    source: BorrowSource
     borrower_token: str
 
     def __post_init__(self) -> None:
@@ -3372,14 +3133,6 @@ class AcquireBorrowedObject:
         # contained-reference protocol.  Normalize it once so every owner-side
         # check and acknowledgement uses the typed source union.
         source = self.source
-        if isinstance(
-            source, (ContainedReferenceHold, LegacyContainedReferenceHold)
-        ):
-            source = ContainedTransferSource(source)
-            object.__setattr__(self, "source", source)
-        elif isinstance(source, str):
-            source = ContainedTransferSource(source)
-            object.__setattr__(self, "source", source)
         if not isinstance(source, (ContainedTransferSource, TaskHoldSource)):
             raise ProtocolError(
                 "borrow acquire source must be a contained transfer or task hold"
@@ -3391,7 +3144,7 @@ class AcquireBorrowedObjectReply:
     object_id: ObjectID
     owner_worker_id: WorkerID
     borrower_worker_id: WorkerID
-    source: BorrowSource | IncomingContainedReferenceHold | str
+    source: BorrowSource
     borrower_token: str
     accepted: bool
     acquired: bool
@@ -3405,14 +3158,6 @@ class AcquireBorrowedObjectReply:
         if not isinstance(self.borrower_worker_id, WorkerID):
             raise ProtocolError("borrow acquire reply borrower must be a WorkerID")
         source = self.source
-        if isinstance(
-            source, (ContainedReferenceHold, LegacyContainedReferenceHold)
-        ):
-            source = ContainedTransferSource(source)
-            object.__setattr__(self, "source", source)
-        elif isinstance(source, str):
-            source = ContainedTransferSource(source)
-            object.__setattr__(self, "source", source)
         if not isinstance(source, (ContainedTransferSource, TaskHoldSource)):
             raise ProtocolError(
                 "borrow acquire reply source must be a contained transfer or task hold"
@@ -3845,7 +3590,7 @@ class ReleaseContainedReference:
 
     object_id: ObjectID
     owner_worker_id: WorkerID
-    hold: IncomingContainedReferenceHold | str
+    hold: IncomingContainedReferenceHold
 
     def __post_init__(self) -> None:
         if not isinstance(self.object_id, ObjectID):
@@ -3872,7 +3617,7 @@ class ReleaseContainedReference:
 class ReleaseContainedReferenceReply:
     object_id: ObjectID
     owner_worker_id: WorkerID
-    hold: IncomingContainedReferenceHold | str
+    hold: IncomingContainedReferenceHold
     accepted: bool
     released: bool
     error: Optional[str] = None
@@ -4061,14 +3806,11 @@ class OwnedObjectReconstructionFailure(str, Enum):
 class BorrowedCredential:
     """An active ordinary borrower plus its immutable export binding."""
 
-    source: BorrowSource | str
+    source: BorrowSource
     borrower_token: str
 
     def __post_init__(self) -> None:
         source = self.source
-        if isinstance(source, str):
-            source = ContainedTransferSource(source)
-            object.__setattr__(self, "source", source)
         if not isinstance(source, (ContainedTransferSource, TaskHoldSource)):
             raise ProtocolError(
                 "borrowed reconstruction source must be a contained transfer "
@@ -4115,7 +3857,7 @@ class RequestOwnedObjectReconstruction:
     object_id: ObjectID
     owner_worker_id: WorkerID
     requester_worker_id: WorkerID
-    credential: ReconstructionCredential | BorrowSource | str
+    credential: ReconstructionCredential | BorrowSource
     borrower_token: Optional[str]
     expected_owner_attempt: AttemptID
 
@@ -4124,11 +3866,11 @@ class RequestOwnedObjectReconstruction:
         object_id: ObjectID,
         owner_worker_id: WorkerID,
         requester_worker_id: WorkerID,
-        credential: ReconstructionCredential | BorrowSource | str | None = None,
+        credential: ReconstructionCredential | BorrowSource | None = None,
         borrower_token: Optional[str] = None,
         expected_owner_attempt: Optional[AttemptID] = None,
         *,
-        source: BorrowSource | str | None = None,
+        source: BorrowSource | None = None,
     ) -> None:
         # ``source=...`` is the Phase-2A keyword spelling. Keep accepting it
         # while normalizing both old and new calls to one credential field.
@@ -4223,7 +3965,7 @@ class RequestOwnedObjectReconstructionReply:
     object_id: ObjectID
     owner_worker_id: WorkerID
     requester_worker_id: WorkerID
-    credential: ReconstructionCredential | BorrowSource | str
+    credential: ReconstructionCredential | BorrowSource
     borrower_token: Optional[str]
     expected_owner_attempt: AttemptID
     disposition: OwnedObjectReconstructionDisposition
@@ -4236,7 +3978,7 @@ class RequestOwnedObjectReconstructionReply:
         object_id: ObjectID,
         owner_worker_id: WorkerID,
         requester_worker_id: WorkerID,
-        credential: ReconstructionCredential | BorrowSource | str | None = None,
+        credential: ReconstructionCredential | BorrowSource | None = None,
         borrower_token: Optional[str] = None,
         expected_owner_attempt: Optional[AttemptID] = None,
         disposition: Optional[OwnedObjectReconstructionDisposition] = None,
@@ -4244,7 +3986,7 @@ class RequestOwnedObjectReconstructionReply:
         failure: Optional[OwnedObjectReconstructionFailure] = None,
         detail: Optional[str] = None,
         *,
-        source: BorrowSource | str | None = None,
+        source: BorrowSource | None = None,
     ) -> None:
         if credential is None:
             credential = source
@@ -4461,7 +4203,7 @@ class RequestDropOwnedObject:
     object_id: ObjectID
     owner_worker_id: WorkerID
     requester_worker_id: WorkerID
-    source: BorrowSource | str
+    source: BorrowSource
     borrower_token: str
     expected_owner_attempt: AttemptID
     node_id: Optional[NodeID] = None
@@ -4475,9 +4217,6 @@ class RequestDropOwnedObject:
         if not isinstance(self.requester_worker_id, WorkerID):
             raise ProtocolError("owned drop requester must be a WorkerID")
         source = self.source
-        if isinstance(source, str):
-            source = ContainedTransferSource(source)
-            object.__setattr__(self, "source", source)
         if not isinstance(source, (ContainedTransferSource, TaskHoldSource)):
             raise ProtocolError(
                 "owned drop source must be a contained transfer or task hold"
@@ -4502,7 +4241,7 @@ class RequestDropOwnedObjectReply:
     object_id: ObjectID
     owner_worker_id: WorkerID
     requester_worker_id: WorkerID
-    source: BorrowSource | str
+    source: BorrowSource
     borrower_token: str
     expected_owner_attempt: AttemptID
     requested_node_id: Optional[NodeID]
@@ -4703,99 +4442,6 @@ class ActorWorkerExitRecord:
 
 
 @dataclass(frozen=True)
-class ActorNodeLossRecord:
-    """One Actor route fenced by a committed physical Node death.
-
-    This proof is deliberately distinct from :class:`ActorWorkerExitRecord`.
-    A Worker-exit proof authorizes replacement only on the same still-live Node;
-    this value embeds a committed ``PROCESS_EXIT`` Node tombstone and therefore
-    authorizes the next Actor generation to move to a different Node.
-    """
-
-    actor_id: ActorID
-    generation: ActorGeneration
-    route_epoch: int
-    worker_id: WorkerID
-    worker_pid: int
-    node_death: NodeDeathRecord
-    class_definition: ActorClassDefinition
-    constructor_payload: bytes
-    resources: ResourceVector
-    owner_worker_id: WorkerID
-
-    def __post_init__(self) -> None:
-        _validate_actor_identity(self.actor_id, self.generation, "actor node loss")
-        _validate_non_negative_integer(
-            self.route_epoch, "actor node loss route_epoch"
-        )
-        if not isinstance(self.worker_id, WorkerID):
-            raise ProtocolError("actor node loss worker_id must be a WorkerID")
-        if (
-            isinstance(self.worker_pid, bool)
-            or not isinstance(self.worker_pid, int)
-            or self.worker_pid <= 0
-        ):
-            raise ProtocolError("actor node loss worker_pid must be positive")
-        if not isinstance(self.node_death, NodeDeathRecord):
-            raise ProtocolError(
-                "actor node loss requires a committed NodeDeathRecord"
-            )
-        if self.node_death.reason is not NodeDeathReason.PROCESS_EXIT:
-            raise ProtocolError(
-                "actor node loss migration requires PROCESS_EXIT Node death"
-            )
-        if not isinstance(self.class_definition, ActorClassDefinition):
-            raise ProtocolError(
-                "actor node loss requires its immutable class definition"
-            )
-        if not isinstance(self.constructor_payload, bytes):
-            raise ProtocolError(
-                "actor node loss constructor_payload must be bytes"
-            )
-        if not isinstance(self.resources, ResourceVector):
-            raise ProtocolError("actor node loss resources must be a ResourceVector")
-        if not isinstance(self.owner_worker_id, WorkerID):
-            raise ProtocolError(
-                "actor node loss owner_worker_id must be a WorkerID"
-            )
-
-    @property
-    def node_id(self) -> NodeID:
-        return self.node_death.node_id
-
-    @property
-    def node_pid(self) -> int:
-        return self.node_death.node_pid
-
-    @property
-    def registration_epoch(self) -> int:
-        return self.node_death.registration_epoch
-
-    @property
-    def detection_id(self) -> str:
-        return self.node_death.detection_id
-
-    @property
-    def exit_code(self) -> int:
-        return self.node_death.exit_code
-
-
-ActorRestartProof = Union[ActorWorkerExitRecord, ActorNodeLossRecord]
-
-
-class ActorNodeLossDisposition(str, Enum):
-    """Result of reducing one committed Node death against one Actor."""
-
-    APPLIED = "APPLIED"
-    ALREADY_APPLIED = "ALREADY_APPLIED"
-    IGNORED_EXPECTED = "IGNORED_EXPECTED"
-    UNKNOWN = "UNKNOWN"
-    UNRELATED = "UNRELATED"
-    STALE = "STALE"
-    CONFLICT = "CONFLICT"
-
-
-@dataclass(frozen=True)
 class ActorSnapshot:
     """Payload-free authoritative view of one logical Actor.
 
@@ -4812,7 +4458,7 @@ class ActorSnapshot:
     route_epoch: int
     restarts_used: int
     max_restarts: int
-    last_exit: Optional[ActorRestartProof] = None
+    last_exit: Optional[ActorWorkerExitRecord] = None
     node_id: Optional[NodeID] = None
     worker_id: Optional[WorkerID] = None
     worker_address: Optional[Tuple[str, int]] = None
@@ -4835,7 +4481,7 @@ class ActorSnapshot:
         if self.last_exit is not None:
             if (
                 not isinstance(
-                    self.last_exit, (ActorWorkerExitRecord, ActorNodeLossRecord)
+                    self.last_exit, ActorWorkerExitRecord
                 )
                 or self.last_exit.actor_id != self.actor_id
             ):
@@ -5003,8 +4649,7 @@ class ReserveActorWorkerRequest:
     owner_worker_id: WorkerID
     target_node_id: NodeID
     route_epoch: int = 0
-    restart: Optional[ActorRestartProof] = None
-    migration_failures: Tuple[NodeDeathRecord, ...] = ()
+    restart: Optional[ActorWorkerExitRecord] = None
 
     def __post_init__(self) -> None:
         _validate_actor_identity(
@@ -5021,77 +4666,43 @@ class ReserveActorWorkerRequest:
         if not isinstance(self.target_node_id, NodeID):
             raise ProtocolError("actor target_node_id must be a NodeID")
         _validate_non_negative_integer(self.route_epoch, "actor route_epoch")
-        failures = tuple(self.migration_failures)
-        object.__setattr__(self, "migration_failures", failures)
-        if any(not isinstance(item, NodeDeathRecord) for item in failures):
-            raise ProtocolError(
-                "actor migration failures must contain NodeDeathRecord values"
-            )
         if self.generation.generation == 0:
-            if self.restart is not None or failures:
-                raise ProtocolError(
-                    "initial actor reservation cannot contain restart proof or "
-                    "migration failures"
-                )
+            if self.restart is not None:
+                raise ProtocolError("initial actor reservation cannot contain restart proof")
             return
-        if not isinstance(
-            self.restart, (ActorWorkerExitRecord, ActorNodeLossRecord)
-        ):
-            raise ProtocolError(
-                "restart actor reservation requires an exit proof"
-            )
+        if not isinstance(self.restart, ActorWorkerExitRecord):
+            raise ProtocolError("restart actor reservation requires a Worker exit proof")
         if (
             self.restart.actor_id != self.actor_id
             or self.restart.generation.next() != self.generation
         ):
-            raise ProtocolError(
-                "actor restart proof does not authorize this incarnation"
-            )
+            raise ProtocolError("actor restart proof does not authorize this incarnation")
         if self.route_epoch <= self.restart.route_epoch:
-            raise ProtocolError(
-                "actor restart route_epoch must advance beyond the old route"
-            )
-        if isinstance(self.restart, ActorWorkerExitRecord):
-            if self.restart.node_id != self.target_node_id or failures:
-                raise ProtocolError(
-                    "actor Worker-exit proof authorizes only same-Node restart"
-                )
-            return
+            raise ProtocolError("actor restart route_epoch must advance beyond the old route")
+        if self.restart.node_id != self.target_node_id:
+            raise ProtocolError("actor Worker-exit proof authorizes only same-Node restart")
 
-        if (
-            self.class_definition != self.restart.class_definition
-            or self.constructor_payload != self.restart.constructor_payload
-            or self.resources != self.restart.resources
-            or self.owner_worker_id != self.restart.owner_worker_id
-        ):
-            raise ProtocolError(
-                "actor migration changed the Node-loss-authorized lifetime spec"
-            )
-        if self.target_node_id == self.restart.node_id:
-            raise ProtocolError(
-                "actor Node-loss proof requires a cross-Node migration target"
-            )
-        seen_nodes = {self.restart.node_id}
-        previous_epoch = self.restart.node_death.death_epoch
-        for failure in failures:
-            if failure.reason is not NodeDeathReason.PROCESS_EXIT:
-                raise ProtocolError(
-                    "actor migration target failures require PROCESS_EXIT"
-                )
-            if failure.node_id in seen_nodes:
-                raise ProtocolError(
-                    "actor migration target failures must name unique Nodes"
-                )
-            if failure.death_epoch <= previous_epoch:
-                raise ProtocolError(
-                    "actor migration target failures must be ordered by death epoch"
-                )
-            seen_nodes.add(failure.node_id)
-            previous_epoch = failure.death_epoch
-        if self.target_node_id in seen_nodes:
-            raise ProtocolError(
-                "actor migration target is already fenced by a Node death"
-            )
+
+class ActorWorkerFailure(str, Enum):
+    CAPACITY_UNAVAILABLE = "CAPACITY_UNAVAILABLE"
+    CONSTRUCTOR_FAILED = "CONSTRUCTOR_FAILED"
+    STARTUP_FAILED = "STARTUP_FAILED"
+    INVALID_REQUEST = "INVALID_REQUEST"
+    NODE_STOPPING = "NODE_STOPPING"
+
+
+@dataclass(frozen=True)
+class ActorWorkerStartupFailure:
+    failure: ActorWorkerFailure
+    error: str
+
+    def __post_init__(self) -> None:
+        if self.failure not in (
+            ActorWorkerFailure.CONSTRUCTOR_FAILED, ActorWorkerFailure.STARTUP_FAILED
+        ) or not isinstance(self.failure, ActorWorkerFailure):
+            raise ProtocolError("Actor startup failure must identify constructor or startup")
+        if not isinstance(self.error, str) or not self.error:
+            raise ProtocolError("Actor startup failure requires an error")
 
 
 @dataclass(frozen=True)
@@ -5104,6 +4715,7 @@ class ReserveActorWorkerReply:
     worker_address: Optional[Tuple[str, int]] = None
     worker_pid: Optional[int] = None
     error: Optional[str] = None
+    failure: Optional[ActorWorkerFailure] = None
 
     def __post_init__(self) -> None:
         _validate_actor_endpoint_reply(
@@ -5112,6 +4724,11 @@ class ReserveActorWorkerReply:
             worker_address=self.worker_address, worker_pid=self.worker_pid,
             error=self.error, operation="reserve actor worker reply",
         )
+        if self.accepted:
+            if self.failure is not None:
+                raise ProtocolError("accepted Actor reservation cannot have a failure")
+        elif not isinstance(self.failure, ActorWorkerFailure):
+            raise ProtocolError("rejected Actor reservation requires a typed failure")
 
 
 @dataclass(frozen=True)
@@ -5339,8 +4956,13 @@ class SealObjectReply:
     size_bytes: int
     checksum: str
     error: Optional[str] = None
+    absence_fenced: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.sealed) is not bool or type(self.absence_fenced) is not bool:
+            raise ProtocolError("seal flags must be booleans")
+        if self.sealed and self.absence_fenced:
+            raise ProtocolError("sealed bytes cannot also be fenced absent")
         if not isinstance(self.object_id, ObjectID):
             raise ProtocolError("seal reply object_id must be an ObjectID")
         if not isinstance(self.node_id, NodeID):
@@ -6072,8 +5694,6 @@ class InstallOwnerDeathFenceReply(_ValidatedOwnerDeathFenceWireMessage):
         )
 
 
-
-
 @dataclass(frozen=True)
 class CancelWorkerLease:
     """Fence an unresolved lease without knowing its Worker allocation.
@@ -6226,7 +5846,6 @@ class CancelWorkerLeaseReply:
                         or grant.task_id != request.task_id
                         or grant.attempt_id != request.attempt_id
                         or grant.scheduling_key != request.scheduling_key
-                        or grant.target_execution != request.target_execution
                         or grant.dependencies != complete
                         or inventory.descriptors != complete):
                     raise ProtocolError("retired grant and dependency inventory disagree")
@@ -6753,245 +6372,6 @@ def _revalidate_opaque_id(value: object, expected: type, label: str) -> object:
     return expected(value.value)
 
 
-
-
-@dataclass(frozen=True)
-class PrepareContainedGraph(_ValidatedPublicationWireMessage):
-    manifest: ContainedGraphManifest
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.manifest, ContainedGraphManifest):
-            raise ProtocolError(
-                "graph prepare manifest must be a ContainedGraphManifest"
-            )
-
-
-@dataclass(frozen=True)
-class CommitContainedGraph(_ValidatedPublicationWireMessage):
-    manifest: ContainedGraphManifest
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.manifest, ContainedGraphManifest):
-            raise ProtocolError(
-                "graph commit manifest must be a ContainedGraphManifest"
-            )
-
-
-@dataclass(frozen=True)
-class AbortContainedGraph(_ValidatedPublicationWireMessage):
-    manifest: ContainedGraphManifest
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.manifest, ContainedGraphManifest):
-            raise ProtocolError(
-                "graph abort manifest must be a ContainedGraphManifest"
-            )
-
-
-@dataclass(frozen=True)
-class ReleaseContainedGraphContainer(
-    _ValidatedPublicationWireMessage
-):
-    """Retire one container while preserving the complete batch identity."""
-
-    manifest: ContainedGraphManifest
-    container_object_id: ObjectID
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.manifest, ContainedGraphManifest):
-            raise ProtocolError(
-                "graph container release manifest must be a "
-                "ContainedGraphManifest"
-            )
-        if not isinstance(self.container_object_id, ObjectID):
-            raise ProtocolError(
-                "graph container release requires an ObjectID"
-            )
-        if not any(
-            edge.container_object_id == self.container_object_id
-            for edge in self.manifest.ordered_edges
-        ):
-            raise ProtocolError(
-                "graph container release ObjectID must identify at least one "
-                "manifest edge container"
-            )
-
-
-ContainedGraphRequest = Union[
-    PrepareContainedGraph,
-    CommitContainedGraph,
-    AbortContainedGraph,
-    ReleaseContainedGraphContainer,
-]
-
-
-@dataclass(frozen=True)
-class ContainedGraphReply(_ValidatedPublicationWireMessage):
-    """Echo the exact mutation request and its pure-authority receipt."""
-
-    request: ContainedGraphRequest
-    receipt: Optional[ContainedGraphManifestReceipt] = None
-    error_kind: Optional[StoredPublicationRPCErrorKind] = None
-    error: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(
-            self.request,
-            (PrepareContainedGraph, CommitContainedGraph,
-             AbortContainedGraph, ReleaseContainedGraphContainer),
-        ):
-            raise ProtocolError(
-                "graph reply request must be a contained graph mutation"
-            )
-        succeeded = self.receipt is not None
-        _validate_publication_wire_error(
-            succeeded=succeeded, error_kind=self.error_kind, error=self.error,
-            operation="contained graph mutation",
-        )
-        if succeeded:
-            if not isinstance(self.receipt, ContainedGraphManifestReceipt):
-                raise ProtocolError(
-                    "graph reply receipt must be a manifest receipt"
-                )
-            if self.receipt.manifest != self.request.manifest:
-                raise ProtocolError(
-                    "graph reply receipt must echo the exact manifest"
-                )
-            state = self.receipt.state
-            disposition = self.receipt.disposition
-            if isinstance(self.request, PrepareContainedGraph):
-                valid = (
-                    state in (
-                        ContainedGraphTransactionState.PREPARED,
-                        ContainedGraphTransactionState.COMMITTED,
-                    )
-                    and disposition in (
-                        ContainedGraphManifestDisposition.APPLIED,
-                        ContainedGraphManifestDisposition.ALREADY_PREPARED,
-                        ContainedGraphManifestDisposition.ALREADY_COMMITTED,
-                    )
-                    and not self.receipt.released_edges
-                )
-            elif isinstance(self.request, CommitContainedGraph):
-                valid = (
-                    state is ContainedGraphTransactionState.COMMITTED
-                    and disposition in (
-                        ContainedGraphManifestDisposition.APPLIED,
-                        ContainedGraphManifestDisposition.ALREADY_COMMITTED,
-                    )
-                    and not self.receipt.released_edges
-                )
-            elif isinstance(self.request, AbortContainedGraph):
-                valid = (
-                    state is ContainedGraphTransactionState.ABORTED
-                    and disposition in (
-                        ContainedGraphManifestDisposition.APPLIED,
-                        ContainedGraphManifestDisposition.ALREADY_ABORTED,
-                    )
-                    and not self.receipt.released_edges
-                )
-            else:
-                released = self.receipt.released_edges
-                expected = tuple(
-                    edge for edge in self.request.manifest.ordered_edges
-                    if edge.container_object_id == self.request.container_object_id
-                )
-                valid = (
-                    state is ContainedGraphTransactionState.COMMITTED
-                    and bool(expected)
-                    and (
-                        (
-                            disposition
-                            is ContainedGraphManifestDisposition.RELEASED
-                            and released == expected
-                        )
-                        or (
-                            disposition
-                            is ContainedGraphManifestDisposition.ALREADY_RELEASED
-                            # Keep the full manifest identity, but echo only
-                            # this container's exact ordered edge subset.
-                            and released == expected
-                        )
-                    )
-                )
-            if not valid:
-                raise ProtocolError(
-                    "contained graph receipt state or disposition contradicts "
-                    "its exact mutation request"
-                )
-
-    @property
-    def accepted(self) -> bool:
-        return self.receipt is not None
-
-
-@dataclass(frozen=True)
-class GetContainedGraph(_ValidatedPublicationWireMessage):
-    transaction_id: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.transaction_id, str) or not self.transaction_id:
-            raise ProtocolError(
-                "contained graph transaction_id must be a non-empty string"
-            )
-
-
-@dataclass(frozen=True)
-class GetContainedGraphReply(_ValidatedPublicationWireMessage):
-    request: GetContainedGraph
-    disposition: StoredPublicationQueryDisposition
-    manifest: Optional[ContainedGraphManifest] = None
-    error_kind: Optional[StoredPublicationRPCErrorKind] = None
-    error: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.request, GetContainedGraph):
-            raise ProtocolError(
-                "contained graph query reply must echo its exact request"
-            )
-        if not isinstance(
-            self.disposition, StoredPublicationQueryDisposition
-        ):
-            raise ProtocolError(
-                "stored graph query reply disposition is invalid"
-            )
-        if self.disposition is StoredPublicationQueryDisposition.FOUND:
-            if not isinstance(self.manifest, ContainedGraphManifest):
-                raise ProtocolError(
-                    "FOUND stored graph query requires a manifest"
-                )
-            if self.manifest.transaction_id != self.request.transaction_id:
-                raise ProtocolError(
-                    "stored graph query returned another transaction"
-                )
-            _validate_publication_wire_error(
-                succeeded=True, error_kind=self.error_kind, error=self.error,
-                operation="contained graph query",
-            )
-        elif self.disposition is StoredPublicationQueryDisposition.NOT_FOUND:
-            if self.manifest is not None:
-                raise ProtocolError(
-                    "NOT_FOUND stored graph query cannot contain a manifest"
-                )
-            _validate_publication_wire_error(
-                succeeded=True, error_kind=self.error_kind, error=self.error,
-                operation="contained graph query",
-            )
-        else:
-            if self.manifest is not None:
-                raise ProtocolError(
-                    "rejected stored graph query cannot contain a manifest"
-                )
-            _validate_publication_wire_error(
-                succeeded=False, error_kind=self.error_kind, error=self.error,
-                operation="contained graph query",
-            )
-
-
-ContainedGraphRPCErrorKind = StoredPublicationRPCErrorKind
-ContainedGraphQueryDisposition = StoredPublicationQueryDisposition
-
-
 def _revalidate_worker_death(value: object) -> WorkerDeathRecord:
     if not isinstance(value, WorkerDeathRecord):
         raise TypeError("owner_death must be a WorkerDeathRecord")
@@ -7132,13 +6512,6 @@ LeaseSpillback = SpillbackWorkerLease
 LeaseReject = RejectWorkerLease
 
 ProtocolMessage = Union[
-    PrepareContainedGraph,
-    CommitContainedGraph,
-    AbortContainedGraph,
-    ReleaseContainedGraphContainer,
-    ContainedGraphReply,
-    GetContainedGraph,
-    GetContainedGraphReply,
     PrepareStoredContainedPin,
     PromoteStoredContainedPin,
     StoredContainedPinReply,
@@ -7150,10 +6523,8 @@ ProtocolMessage = Union[
     RemovePlacementGroupReply,
     DrainPlacementGroupsRequest,
     DrainPlacementGroupsReply,
-    ProgressPublicationOwnerDeath,
-    ProgressPublicationOwnerDeathReply,
-    DrainPublicationOwnerDeaths,
-    DrainPublicationOwnerDeathsReply,
+    DrainOwnerDeathFences,
+    DrainOwnerDeathFencesReply,
     DrainActorsRequest,
     DrainActorsReply,
     PreparePlacementGroupRequest,
@@ -7191,7 +6562,6 @@ ProtocolMessage = Union[
     InstallClusterSnapshotReply,
     ActorClassDefinition,
     ActorWorkerExitRecord,
-    ActorNodeLossRecord,
     ActorSnapshot,
     CreateActorRequest,
     CreateActorReply,
@@ -7204,6 +6574,7 @@ ProtocolMessage = Union[
     InstallActorState,
     InstallActorStateReply,
     ActorWorkerStartup,
+    ActorWorkerStartupFailure,
     ActorCallRequest,
     ActorCallReply,
     RegisterFunction,

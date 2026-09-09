@@ -1,0 +1,86 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "host_python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "snapshot_sha256": "db30e584ad090be8163ef7c149975acd86ac6b3f40a92746186dd6c0001d8e1a",
+  "modified_snapshot_files": {
+    "pyproject.toml": "1d40acba410a38b46ee1c8385c0faed5089a2dba237b8388da5c76352484c6c6",
+    "uv.lock": "642c93f87460dde26f47c06cf4d4908c2dc90834981957355ab2f8eff4b2e999"
+  },
+  "records": [
+    {
+      "command": [
+        "C:/Users/t-hdong/.local/bin/uv.exe",
+        "--version"
+      ],
+      "exit_code": 0,
+      "log": "00.txt"
+    },
+    {
+      "command": [
+        "C:/Users/t-hdong/.local/bin/uv.exe",
+        "lock",
+        "--check",
+        "--offline",
+        "--python",
+        "C:/Users/t-hdong/Desktop/gao/audit/mini-ray-venv/Scripts/python.exe",
+        "--no-python-downloads",
+        "--cache-dir",
+        "C:/Users/t-hdong/Desktop/gao/audit/uv-cache"
+      ],
+      "exit_code": 0,
+      "log": "01.txt"
+    },
+    {
+      "command": [
+        "C:/Users/t-hdong/.local/bin/uv.exe",
+        "sync",
+        "--frozen",
+        "--extra",
+        "test",
+        "--offline",
+        "--python",
+        "C:/Users/t-hdong/Desktop/gao/audit/mini-ray-venv/Scripts/python.exe",
+        "--no-python-downloads",
+        "--cache-dir",
+        "C:/Users/t-hdong/Desktop/gao/audit/uv-cache"
+      ],
+      "exit_code": 0,
+      "log": "02.txt"
+    },
+    {
+      "command": [
+        "C:/Users/t-hdong/.local/bin/uv.exe",
+        "pip",
+        "freeze",
+        "--python",
+        "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\stage1-dependency-repro\\project\\.venv\\Scripts\\python.exe"
+      ],
+      "exit_code": 2,
+      "log": "03.txt"
+    },
+    {
+      "command": [
+        "C:/Users/t-hdong/.local/bin/uv.exe",
+        "pip",
+        "freeze",
+        "--python",
+        "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\stage1-dependency-repro\\project\\.venv\\Scripts\\python.exe",
+        "--cache-dir",
+        "C:/Users/t-hdong/Desktop/gao/audit/uv-cache"
+      ],
+      "exit_code": 0,
+      "log": "04.txt"
+    },
+    {
+      "command": [
+        "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\stage1-dependency-repro\\project\\.venv\\Scripts\\python.exe",
+        "-c",
+        "import importlib.metadata as m; import miniray; print(miniray.__file__); print(m.metadata(\"mini-ray\")[\"Requires-Python\"]); print(m.version(\"mini-ray\"))"
+      ],
+      "exit_code": 0,
+      "log": "05.txt"
+    }
+  ],
+  "scope": "Windows frozen editable installation and import only; no runtime tests or Linux installation claim",
+  "note": "Initial freeze metadata command lacked explicit workspace cache and failed before reading environment; subsequent freeze supplied cache and succeeded. Frozen build/install itself succeeded."
+}

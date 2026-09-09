@@ -184,15 +184,13 @@ def test_one_task_emits_cross_process_golden_trace_and_cleans_up() -> None:
         records = _wait_for_golden_trace(task_id, deadline)
         golden = _SUCCESS_CONTRACT.match(records, task_id=task_id)
         assert golden.ok, golden.explain()
-        publication_requests = tuple(
-            golden.rpc_matches[key][0]
-            for key in (
-                "intent_rpc", "arm_rpc", "terminal_rpc", "adopted_rpc"
-            )
+        publication_keys = (
+            "prepare_rpc", "register_handoff_rpc", "complete_rpc", "retire_rpc",
         )
+        publication_requests = tuple(golden.rpc_matches[key][0] for key in publication_keys)
         assert all(record.event == "rpc_request_sent" for record in publication_requests)
-        assert len({record.event_id for record in publication_requests}) == 4
-        assert len({dict(record.fields)["rpc_id"] for record in publication_requests}) == 4
+        assert len({record.event_id for record in publication_requests}) == len(publication_keys)
+        assert len({dict(record.fields)["rpc_id"] for record in publication_requests}) == len(publication_keys)
         task_records = _records_for_task(records, task_id)
         dependency_ready = tuple(
             record for record in task_records
@@ -221,13 +219,12 @@ def test_one_task_emits_cross_process_golden_trace_and_cleans_up() -> None:
             and record.event == "task_finished"
         )
         assert finished.process_sequence < object_ready[0].process_sequence
-        # The owner's first READY/wake is earlier than adoption and payload
-        # retirement, not the later object_ready completion-tail observation.
+        # The owner's first READY/wake precedes Node payload retirement and
+        # the later object_ready completion-tail observation.
         owner_publication_tail = (
             golden.event_matches["owner_ready"][0],
-            golden.rpc_matches["adopted_rpc"][0],
-            golden.event_matches["core_adopted_ack"][0],
             golden.rpc_matches["retire_rpc"][0],
+            golden.rpc_matches["retire_rpc"][3],
             golden.event_matches["payload_retired"][0],
         )
         assert all(

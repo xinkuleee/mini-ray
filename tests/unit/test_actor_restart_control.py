@@ -301,7 +301,8 @@ def test_typed_restart_rejection_commits_dead_and_exact_replay_does_not_reserve(
         reservations.append(request)
         return protocol.ReserveActorWorkerReply(
             request.actor_id, request.generation, False,
-            error="constructor raised ValueError",
+            error="constructor raised ValueError: resource file missing",
+            failure=protocol.ActorWorkerFailure.CONSTRUCTOR_FAILED,
         )
 
     def install(_address, request):
@@ -337,3 +338,89 @@ def test_typed_restart_rejection_commits_dead_and_exact_replay_does_not_reserve(
         protocol.ActorState.DEAD,
     ]
     assert actors.restart_reservation_for(exit_record) is None
+
+
+@pytest.mark.parametrize("kind", tuple(protocol.ActorWorkerFailure))
+def test_matching_typed_rejection_is_terminal_without_capacity_retry(kind) -> None:
+    nodes, actors, _request, exited = _setup()
+    calls = []
+    def reserve(_address, request):
+        calls.append(request)
+        return protocol.ReserveActorWorkerReply(
+            request.actor_id, request.generation, False, error="resource rejection",
+            failure=kind,
+        )
+    coordinator = ActorCoordinator(nodes, actors, reserve_actor_worker=reserve,
+        install_actor_state=lambda _address, message: protocol.InstallActorStateReply(
+            message.owner_worker_id, message.snapshot, True))
+    reply = coordinator.report_worker_exit(protocol.ReportActorWorkerExit(exited))
+    assert reply.snapshot.state is protocol.ActorState.DEAD
+    assert len(calls) == 1
+    replay = coordinator.report_worker_exit(protocol.ReportActorWorkerExit(exited))
+    assert replay.snapshot == reply.snapshot and len(calls) == 1
+
+
+def test_reservation_rejection_requires_typed_failure_and_success_forbids_it() -> None:
+    _nodes, _actors, request, exited = _setup()
+    with pytest.raises(protocol.ProtocolError, match="typed failure"):
+        protocol.ReserveActorWorkerReply(request.actor_id, request.generation, False, error="resource")
+    with pytest.raises(protocol.ProtocolError, match="cannot have a failure"):
+        protocol.ReserveActorWorkerReply(
+            request.actor_id, request.generation, True, exited.node_id, exited.worker_id,
+            ("127.0.0.1", 14105), exited.worker_pid,
+            failure=protocol.ActorWorkerFailure.CONSTRUCTOR_FAILED,
+        )
+
+
+@pytest.mark.parametrize("constructor_fails", (True, False))
+def test_actor_startup_reports_typed_phase_without_parsing_error_text(monkeypatch, constructor_fails) -> None:
+    import cloudpickle
+    from miniray import actor_worker
+
+    class ConstructorFails:
+        def __init__(self):
+            raise RuntimeError("resource file missing in constructor")
+        def inc(self):
+            return 1
+
+    class Constructed:
+        def inc(self):
+            return 1
+
+    class ReadyCapture:
+        def __init__(self):
+            self.messages = []
+            self.closed = False
+        def send(self, message):
+            self.messages.append(message)
+        def close(self):
+            self.closed = True
+
+    class NoTrace:
+        def emit(self, *args, **kwargs):
+            pass
+        def close(self):
+            pass
+
+    def fail_server_startup(*args, **kwargs):
+        raise RuntimeError("resource file missing in server startup")
+
+    monkeypatch.setattr(actor_worker, "sink_from_config", lambda _config: NoTrace())
+    monkeypatch.setattr(actor_worker, "ActorWorkerServer", fail_server_startup)
+    _nodes, _actors, request, exited = _setup()
+    payload = cloudpickle.dumps(ConstructorFails if constructor_fails else Constructed)
+    definition = protocol.ActorClassDefinition(
+        request.class_definition.key, payload, hashlib.sha256(payload).hexdigest(), ("inc",)
+    )
+    ready = ReadyCapture()
+    with pytest.raises(RuntimeError, match="resource file missing"):
+        actor_worker.actor_worker_main(
+            request.actor_id, request.generation, exited.worker_id, definition,
+            cloudpickle.dumps(((), {})), exited.node_id, ("127.0.0.1", 14101), ready,
+        )
+    assert ready.closed and len(ready.messages) == 1
+    ok, failure = ready.messages[0]
+    assert ok is False and isinstance(failure, protocol.ActorWorkerStartupFailure)
+    expected = (protocol.ActorWorkerFailure.CONSTRUCTOR_FAILED if constructor_fails
+                else protocol.ActorWorkerFailure.STARTUP_FAILED)
+    assert failure.failure is expected and "resource file missing" in failure.error

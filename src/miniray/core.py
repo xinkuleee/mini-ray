@@ -1,11 +1,9 @@
 """Submission, object ownership and recovery for Drivers and ordinary Workers.
 
-CoreWorker manages logical identities, reference lifetimes, dependency admission
-and lineage recovery. Ordinary tasks obtain Node leases before direct PushTask
-submission to Workers. Owners retain INLINE bytes and STORED-object metadata;
-ordinary success still uses synchronous Node/GCS publication coordination.
-Actor creation and placement groups use GCS control, while Actor calls follow
-their dedicated Worker routes. Node resource allocation is not a Core duty.
+CoreWorker combines logical identity, dependency admission, owner handoff and
+lineage recovery. Tasks obtain a Node lease and submit directly to its Worker.
+Ordinary results are handed to their owner; GCS retains membership/Actor/PG
+control only. Node resources and physical result custody remain Node duties.
 """
 
 from __future__ import annotations
@@ -28,16 +26,13 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 import cloudpickle
 
 from . import protocol
+from .output_handoff import OutputHandoffTable, OutputHandoffPhase
 from .actor_client import ActorCallFence, ActorClientTable
 from .contained_edges import (
     ContainedReferenceEdge, ContainedReferenceHold,
-    IncomingContainedReferenceHold, LegacyContainedReferenceHold,
+    IncomingContainedReferenceHold,
     LineageReferenceEdge,
     ObjectMetadataCollectionPlan,
-)
-from .contained_cycle import (
-    ContainedGraphManifestDisposition, ContainedGraphManifestReceipt,
-    ContainedGraphTransactionState,
 )
 from .dependency import (
     encode_task_argument,
@@ -115,12 +110,6 @@ from .node_death_view import GET_NODE_DEATH_VIEW, GetInstalledNodeDeaths, GetIns
 from .runtime_binding import current_execution_context
 from .trace import EventSink, causal_scope, current_cause_id
 from .task_outputs import TaskExecutionKey, validate_num_returns
-from .task_outputs import TargetExecutionKey
-from .targeted_reconstruction import (
-    TargetedReconstructionCoordinator, TargetedReconstructionError,
-    TargetedReconstructionSession, TargetedRequestDisposition,
-    TargetedSessionPhase,
-)
 from .transport import (
     Address,
     RemoteCallError,
@@ -155,10 +144,6 @@ _GET_RETAINED_OWNED_OBJECT_HANDLER = "get_retained_owned_object"
 _REPORT_RETAINED_OBJECT_LOCATION_HANDLER = "report_retained_object_location"
 _RELEASE_OWNED_OBJECT_FOR_TASK_HANDLER = "release_owned_object_for_task"
 _RELEASE_CONTAINED_REFERENCE_HANDLER = "release_contained_reference"
-_COMMIT_CONTAINED_GRAPH_HANDLER = "commit_contained_graph"
-_RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER = (
-    "release_contained_graph_container"
-)
 _RPC_TOTAL_TIMEOUT_SECONDS = 4.0
 _RPC_CONNECT_TIMEOUT_SECONDS = 0.5
 _RPC_CALL_DEADLINE: ContextVar[Optional[float]] = ContextVar(
@@ -389,32 +374,6 @@ class _ReleaseAttemptBorrow:
     key: tuple[WorkerID, ObjectID, AttemptID]
 
 
-@dataclass
-class _ExportPinReleaseObligation:
-    """One exact local contained pin awaiting a durable tombstone."""
-
-    object_id: ObjectID
-    hold: IncomingContainedReferenceHold | str
-    retry_scheduled: bool = False
-    retry_round: int = 0
-
-    @property
-    def key(
-        self,
-    ) -> tuple[ObjectID, IncomingContainedReferenceHold | str]:
-        return self.object_id, self.hold
-
-    @property
-    def transfer_token(self) -> str:
-        """Compatibility projection for diagnostics and older tests."""
-
-        token = (
-            self.hold
-            if isinstance(self.hold, str)
-            else self.hold.transfer_token
-        )
-        assert isinstance(token, str)
-        return token
 
 
 @dataclass
@@ -425,11 +384,6 @@ class _ObjectGcObligation:
     pending_drops: dict[NodeID, protocol.DropObjectReplica]
     pending_edges: set[ContainedReferenceEdge]
     output_plan: OutputOwnerPublicationCollectionPlan | None = None
-    output_cleanup_reported: bool = False
-    graph_release_request: (
-        protocol.ReleaseContainedGraphContainer | None
-    ) = None
-    graph_release_receipt: object | None = None
     retry_scheduled: bool = False
     retry_round: int = 0
 
@@ -454,10 +408,6 @@ class _RetryForeignLineageCollection:
     receipt: ForeignLineageCollectionReceipt
 
 
-@dataclass(frozen=True)
-class _RetryExportPinRelease:
-    key: tuple[ObjectID, IncomingContainedReferenceHold | str]
-    scheduled_round: int
 
 
 @dataclass(frozen=True)
@@ -559,22 +509,6 @@ class _NodeDeathObserved:
 
     death: protocol.NodeDeathRecord
     membership_epoch: int
-
-
-@dataclass(frozen=True)
-class _StartTargetedReconstruction:
-    """Coordinator event closing one TaskID's OPEN target set."""
-
-    task_id: TaskID
-    round: int = 0
-
-
-@dataclass(frozen=True)
-class _DelayedTargetedReconstruction:
-    """Backoff wrapper for a foreign-lineage renewal still WAITING."""
-
-    event: _StartTargetedReconstruction
-    due_at: float
 
 
 @dataclass(frozen=True)
@@ -769,18 +703,6 @@ def _run_reference_event_loop(mailbox: _ReferenceEventMailbox) -> None:
                                     core._drive_foreign_lineage_collection(
                                         event.receipt, from_retry=True
                                     )
-                        finally:
-                            continue
-                    if isinstance(event, _RetryExportPinRelease):
-                        try:
-                            if mailbox.core_reference is not None:
-                                core = mailbox.core_reference()
-                                if core is not None and (
-                                    core._claim_export_pin_release_retry(
-                                        event.key, event.scheduled_round
-                                    )
-                                ):
-                                    core._drive_export_pin_release(event.key)
                         finally:
                             continue
                     if isinstance(event, _ReleaseAttemptBorrow):
@@ -1198,35 +1120,12 @@ class _PendingTask:
     # and SYSTEM retries, but never enter readiness gating or Node pull.
     nested_local_holds: tuple[ObjectID, ...] = ()
     nested_foreign_guards: tuple[_ForeignDependencyGuard, ...] = ()
-    target_execution: TargetExecutionKey | None = None
-    reconstruction_origin_attempt: AttemptID | None = None
-    execution: TaskExecutionKey | TargetExecutionKey = field(init=False)
+    execution: TaskExecutionKey = field(init=False)
 
     def __post_init__(self) -> None:
-        execution: TaskExecutionKey | TargetExecutionKey
-        if self.target_execution is None:
-            execution = TaskExecutionKey.from_task_spec(self.spec)
-        else:
-            if self.target_execution.task_id != self.spec.task_id:
-                raise ValueError("target execution belongs to another task")
-            if self.target_execution.attempt_id != self.spec.attempt_id:
-                raise ValueError("target execution attempt disagrees with spec")
-            if self.target_execution.full_output_ids != self.spec.return_ids():
-                raise ValueError("target execution changed the full manifest")
-            execution = self.target_execution
-            if self.reconstruction_origin_attempt is None:
-                raise ValueError(
-                    "targeted pending task requires reconstruction origin"
-                )
-        execution_outputs = (
-            execution.output_ids
-            if isinstance(execution, TaskExecutionKey)
-            else execution.target_output_ids
-        )
-        if self.object_id != execution_outputs[0]:
-            raise ValueError(
-                "pending compatibility object_id must be first execution output"
-            )
+        execution = TaskExecutionKey.from_task_spec(self.spec)
+        if self.object_id != execution.output_ids[0]:
+            raise ValueError("pending object_id must be the task output")
         object.__setattr__(self, "execution", execution)
 
     @property
@@ -1235,27 +1134,16 @@ class _PendingTask:
 
     @property
     def output_ids(self) -> tuple[ObjectID, ...]:
-        return (
-            self.execution.output_ids
-            if isinstance(self.execution, TaskExecutionKey)
-            else self.execution.target_output_ids
-        )
+        return self.execution.output_ids
 
     @property
     def full_output_ids(self) -> tuple[ObjectID, ...]:
-        return (
-            self.execution.output_ids
-            if isinstance(self.execution, TaskExecutionKey)
-            else self.execution.full_output_ids
-        )
+        return self.execution.output_ids
 
     @property
     def task_key(self) -> object:
-        """One logical submission or targeted reconstruction session."""
-
-        if self.reconstruction_origin_attempt is None:
-            return self.task_id
-        return self.task_id, self.reconstruction_origin_attempt
+        """One logical task, including all of its physical attempts."""
+        return self.task_id
 
 
 class _DispatchKind(str, Enum):
@@ -1610,9 +1498,6 @@ class CoreWorker:
         self._reconstruction = ReconstructionCoordinator(
             self._recovery, self._owner_table
         )
-        self._targeted_reconstruction = TargetedReconstructionCoordinator(
-            self._recovery, self._owner_table
-        )
         self._owned_reconstruction = OwnedObjectReconstructionReducer(
             self.worker_id,
             self._owner_table,
@@ -1688,10 +1573,6 @@ class CoreWorker:
         self._borrowed_release_obligations: dict[
             _BorrowReleaseKey, _BorrowReleaseObligation
         ] = {}
-        self._export_pin_release_obligations: dict[
-            tuple[ObjectID, IncomingContainedReferenceHold | str],
-            _ExportPinReleaseObligation,
-        ] = {}
         self._inflight_submissions = 0
         self._object_gc_obligations: dict[ObjectID, _ObjectGcObligation] = {}
         # Compatibility alias for the earlier inline-only teaching slice.
@@ -1721,7 +1602,7 @@ class CoreWorker:
         self._submissions = queue.Queue()  # type: queue.Queue[object]
         self._ready_tasks = queue.Queue()  # type: queue.Queue[object]
         self._blocked_tasks: dict[object, _PendingTask] = {}
-        self._delayed_ready = queue.PriorityQueue()  # type: queue.PriorityQueue[tuple[float, int, _DelayedReadyTask | _DelayedTargetedReconstruction]]
+        self._delayed_ready = queue.PriorityQueue()  # type: queue.PriorityQueue[tuple[float, int, _DelayedReadyTask]]
         self._capacity_sequence = 0
         self._accepted_task_count = 0
         # Every admitted logical execution keeps reconstruction and last-ref
@@ -3043,129 +2924,9 @@ class CoreWorker:
             mailbox, _RetryInlineGc(object_id), delay
         )
 
-    def request_export_pin_release(
-        self,
-        object_id: ObjectID,
-        hold: IncomingContainedReferenceHold | str,
-    ) -> bool:
-        """Persist and start rollback of one locally owned export pin.
 
-        Registration precedes the first release attempt.  A transient owner
-        table failure therefore cannot turn rollback into forgotten work, and
-        an exact replay is safe because contained releases are tombstoned.
-        """
 
-        if not isinstance(object_id, ObjectID):
-            raise TypeError("export pin object_id must be an ObjectID")
-        if not isinstance(
-            hold, (str, ContainedReferenceHold, LegacyContainedReferenceHold)
-        ):
-            raise TypeError(
-                "export pin hold must be a contained-reference hold or token"
-            )
-        obligation = _ExportPinReleaseObligation(
-            object_id, hold
-        )
-        with self._completion:
-            table = getattr(
-                self, "_export_pin_release_obligations", None
-            )
-            if table is None:
-                table = {}
-                self._export_pin_release_obligations = table
-            previous = table.setdefault(obligation.key, obligation)
-            if previous != obligation:
-                raise ValueError(
-                    "export pin release identity changed across replay"
-                )
-        return self._drive_export_pin_release(obligation.key)
 
-    def _schedule_export_pin_release(
-        self, key: tuple[ObjectID, IncomingContainedReferenceHold | str]
-    ) -> None:
-        mailbox = getattr(self, "_reference_mailbox", None)
-        if mailbox is None:
-            return
-        with self._state_lock:
-            obligation = getattr(
-                self, "_export_pin_release_obligations", {}
-            ).get(key)
-            if obligation is None or obligation.retry_scheduled:
-                return
-            obligation.retry_scheduled = True
-            obligation.retry_round += 1
-            scheduled_round = obligation.retry_round
-            delay = min(
-                0.25, 0.01 * (2 ** min(obligation.retry_round - 1, 5))
-            )
-        self._schedule_reference_event(
-            mailbox, _RetryExportPinRelease(key, scheduled_round), delay
-        )
-
-    def _claim_export_pin_release_retry(
-        self,
-        key: tuple[ObjectID, IncomingContainedReferenceHold | str],
-        expected_round: int,
-    ) -> bool:
-        with self._state_lock:
-            obligation = getattr(
-                self, "_export_pin_release_obligations", {}
-            ).get(key)
-            if (
-                obligation is None
-                or not obligation.retry_scheduled
-                or obligation.retry_round != expected_round
-            ):
-                return False
-            obligation.retry_scheduled = False
-            return True
-
-    def _drive_export_pin_release(
-        self,
-        key: tuple[ObjectID, IncomingContainedReferenceHold | str],
-        *,
-        schedule_retry: bool = True,
-    ) -> bool:
-        # Serialize exact replays.  A background timer and shutdown pass may
-        # race, but only one may cross the owner-table mutation at a time.
-        with self._completion:
-            obligation = getattr(
-                self, "_export_pin_release_obligations", {}
-            ).get(key)
-            if obligation is None:
-                return True
-            try:
-                released = self._owner_table.release_contained_reference(
-                    obligation.object_id, obligation.hold
-                )
-                seen = self._owner_table.contained_release_was_seen(
-                    obligation.object_id, obligation.hold
-                )
-            except Exception:
-                released = False
-                seen = False
-            if not seen:
-                retry = schedule_retry
-            else:
-                retry = False
-            current = getattr(
-                self, "_export_pin_release_obligations", {}
-            ).get(key)
-            if seen and current is obligation:
-                self._export_pin_release_obligations.pop(key, None)
-                self._completion.notify_all()
-            elif current is not obligation:
-                return current is None
-        if retry:
-            self._schedule_export_pin_release(key)
-            return False
-        if not seen:
-            return False
-        if released:
-            self._drive_reference_collection_best_effort(
-                obligation.object_id
-            )
-        return True
 
     def _gc_obligations(self) -> dict[ObjectID, _ObjectGcObligation]:
         """Lazily normalize narrow fixtures onto the unified GC table."""
@@ -3245,12 +3006,9 @@ class CoreWorker:
         exact retired metadata; its current descriptor may already be gone or
         belong to a reconstructed attempt. No deletion RPC is issued here.
         """
-        from .output_recovery import OutputRecoveryOwnerDecision
-
-        rejected = tuple(identity for identity, choice in getattr(self, "_output_loss_choices", {}).items()
+        rejected = tuple(identity for identity, keep in getattr(self, '_output_loss_choices', {}).items()
                          if identity.attempt_id == descriptor.producer_attempt_id
-                         and any(slot.object_id == descriptor.object_id
-                                 and slot.decision is OutputRecoveryOwnerDecision.DROP for slot in choice.slots))
+                         and descriptor.object_id in identity.output_ids and not keep)
         request = self._owner_table.retired_output_replica(descriptor, rejected_publications=rejected)
         if request is None:
             request = self._owner_table.retired_stored_replica(descriptor)
@@ -3346,7 +3104,7 @@ class CoreWorker:
         object_id: ObjectID,
         owner_worker_id: WorkerID,
         owner_address: Address,
-        hold: IncomingContainedReferenceHold | str,
+        hold: IncomingContainedReferenceHold,
     ) -> ObjectRef:
         """Acquire one unique owner token before exposing a restored ref."""
 
@@ -3360,7 +3118,7 @@ class CoreWorker:
             self.worker_id.hex, uuid.uuid4().hex
         )
         request = protocol.AcquireBorrowedObject(
-            object_id, owner_worker_id, self.worker_id, hold,
+            object_id, owner_worker_id, self.worker_id, protocol.ContainedTransferSource(hold),
             borrower_token,
         )
         release = protocol.ReleaseBorrowedObject(
@@ -3566,17 +3324,173 @@ class CoreWorker:
         ) from last_error
 
     def put(self, value: object) -> ObjectRef:
-        """Create an owner-held object without replayable task lineage."""
+        return self._put_value(value)
 
-        if _contains_object_ref(value):
-            raise TypeError("ray.put does not accept values containing ObjectRefs")
-        put_index = self._begin_put()
+    def _put_value(self, value: object) -> ObjectRef:
+        from .put_handoff import discover_put
+        index = self._begin_put()
+        identity = ObjectID.for_task(TaskID.for_put(self.job_id, self.worker_id, index), 0)
+        attempt = AttemptID(identity.task_id, 0)
+        work = None
         try:
-            return self._put_serialized(
-                cloudpickle.dumps(value), admitted_put_index=put_index
-            )
+            prepared = discover_put(value, identity, self.worker_id, self.owner_address, self.inline_threshold)
+            with self._state_lock:
+                self._owner_table.register(identity, current_attempt=attempt, producer_task_spec=None)
+                self._objects[identity] = _ObjectWaiter(threading.Event())
+                self._recovery_manager().register_put(identity)
+                work = {'prepared': prepared, 'attempt': attempt, 'started': set(), 'acked': set(),
+                        'releases': {}, 'seal': None, 'route': None, 'aborted': False, 'driver': True}
+                obligations = getattr(self, '_put_handoffs', None)
+                if obligations is None:
+                    obligations = self._put_handoffs = {}
+                obligations[identity] = work
+            for stage, kind in (('prepare', protocol.PrepareStoredContainedPin), ('promote', protocol.PromoteStoredContainedPin)):
+                for transfer in prepared.manifest.transfers:
+                    request = kind(transfer=transfer, authority_worker_id=transfer.contained_owner_worker_id)
+                    work['started'].add((stage, transfer))
+                    reply = self._put_child_rpc(transfer, stage + '_stored_contained_pin', request)
+                    if type(reply) is not protocol.StoredContainedPinReply or reply.request != request or not reply.accepted:
+                        raise SystemTaskError('put child handoff did not acknowledge its exact request')
+                    work['acked'].add((stage, transfer))
+            manifest = prepared.manifest
+            node_id = self.node_id
+            seal = None
+            route = None
+            if manifest.tier is protocol.ResultStorage.OBJECT_STORE:
+                seal = protocol.SealObject.from_data(identity, attempt, self.worker_id, prepared.payload)
+                route = self._require_home_route('explicit put')
+            while True:
+                if seal is not None:
+                    work['route'], work['seal'] = route, seal
+                    try:
+                        reply = self._rpc(route.address, 'seal_object', seal)
+                    except BaseException:
+                        with self._state_lock:
+                            dead = self._node_is_dead(route.node_id)
+                            next_route = self._home_route
+                        if dead and next_route is not None and next_route.node_id != route.node_id:
+                            route = next_route
+                            continue
+                        raise
+                with self._state_lock:
+                    if seal is not None:
+                        if self._node_is_dead(route.node_id):
+                            next_route = self._home_route
+                            if next_route is None or next_route.node_id == route.node_id:
+                                raise NodeDiedError('put Node died without a survivor')
+                            route = next_route
+                            continue
+                        if (type(reply) is not protocol.SealObjectReply
+                                or (reply.object_id, reply.node_id, reply.size_bytes, reply.checksum)
+                                != (identity, route.node_id, manifest.size_bytes, manifest.checksum)):
+                            raise SystemTaskError('put seal changed request identity')
+                        reply = replace(reply)
+                        if not reply.sealed:
+                            if reply.absence_fenced:
+                                work['seal'] = None
+                            raise SystemTaskError(reply.error or 'put seal was rejected')
+                        node_id = route.node_id
+                    descriptor = protocol.ResultDescriptor(
+                        identity, manifest.tier, manifest.size_bytes, self.worker_id, node_id, manifest.checksum,
+                        prepared.payload if manifest.tier is protocol.ResultStorage.INLINE else None,
+                    )
+                    if work['aborted']:
+                        raise SystemTaskError('put was aborted before owner installation')
+                    # Death handling and owner installation share this lock.
+                    # A winning death reroutes above; a later death observes
+                    # a real committed owner result and follows ordinary loss.
+                    if not self._owner_table.publish_put_value(identity, attempt, descriptor, manifest.edges):
+                        raise SystemTaskError('put owner installation was fenced')
+                    work['committed'] = True
+                    if descriptor.storage is protocol.ResultStorage.OBJECT_STORE:
+                        self._stored_descriptors[identity] = descriptor
+                    self._put_handoffs.pop(identity, None)
+                    self._wake_object(identity)
+                    break
+            try:
+                return self._new_object_ref(identity)
+            except BaseException:
+                self._enqueue_inline_gc_check(identity)
+                raise
+        except BaseException as exc:
+            if work is not None and not work.get('committed', False):
+                work['aborted'] = True
+                work['driver'] = False
+                self._drive_put_handoff_cleanup(identity)
+                self._publish_error(identity, attempt, exc)
+            raise
         finally:
+            if work is not None:
+                work['driver'] = False
             self._end_put()
+
+    def _put_child_rpc(self, transfer, handler, request):
+        if transfer.contained_owner_worker_id == self.worker_id:
+            return getattr(self, handler)(request)
+        return self._borrow_rpc(transfer.contained_owner_address, handler, request)
+
+    def _drive_put_handoff_cleanup(self, identity) -> bool:
+        with self._state_lock:
+            work = getattr(self, '_put_handoffs', {}).get(identity)
+            if work is None:
+                return True
+            if not work['aborted'] or work['driver']:
+                return False
+            work['driver'] = True
+        try:
+            for transfer in work['prepared'].manifest.transfers:
+                if not any((stage, transfer) in work['started'] for stage in ('prepare', 'promote')):
+                    continue
+                for hold in (transfer.final_hold, transfer.provisional_hold):
+                    request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
+                    if request in work['releases']:
+                        continue
+                    with self._state_lock:
+                        death = self._owner_table.dead_worker_record(transfer.contained_owner_worker_id)
+                    if death is not None:
+                        work['releases'][request] = death
+                        continue
+                    reply = self._put_child_rpc(transfer, 'release_contained_reference', request)
+                    if (type(reply) is not protocol.ReleaseContainedReferenceReply or not reply.accepted
+                            or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
+                        return False
+                    work['releases'][request] = replace(reply)
+            if work['seal'] is not None:
+                route, seal = work['route'], work['seal']
+                with self._state_lock:
+                    dead = self._node_is_dead(route.node_id)
+                if not dead:
+                    drop = work.get('drop')
+                    if drop is None:
+                        # Resolve an unknown Seal once; once Drop may have been
+                        # sent, replay only Drop so a deletion fence cannot stall
+                        # cleanup by correctly refusing another Seal.
+                        reply = self._rpc(route.address, 'seal_object', seal)
+                        if (type(reply) is not protocol.SealObjectReply
+                                or reply.object_id != identity or reply.node_id != route.node_id
+                                or reply.size_bytes != work['prepared'].manifest.size_bytes
+                                or reply.checksum != work['prepared'].manifest.checksum):
+                            return False
+                        reply = replace(reply)
+                        if not reply.sealed and not reply.absence_fenced:
+                            return False
+                        drop = protocol.DropObjectReplica(identity, work['attempt'], self.worker_id, route.node_id, reply.checksum)
+                        work['drop'] = drop
+                    dropped = self._rpc(route.address, _DROP_OBJECT_REPLICA_HANDLER, drop)
+                    if (type(dropped) is not protocol.DropObjectReplicaReply
+                            or dropped.status not in (protocol.DropObjectReplicaStatus.DROPPED, protocol.DropObjectReplicaStatus.ALREADY_DROPPED)
+                            or (dropped.object_id, dropped.producer_attempt_id, dropped.owner_worker_id, dropped.node_id, dropped.checksum)
+                            != (drop.object_id, drop.producer_attempt_id, drop.owner_worker_id, drop.node_id, drop.checksum)):
+                        return False
+            with self._state_lock:
+                self._put_handoffs.pop(identity, None)
+                self._completion.notify_all()
+            self._enqueue_inline_gc_check(identity)
+            return True
+        except Exception:
+            return False
+        finally:
+            work['driver'] = False
 
     def _begin_put(self) -> int:
         """Reserve one put identity and join the shutdown drain."""
@@ -3598,145 +3512,6 @@ class CoreWorker:
                 raise AssertionError("CoreWorker in-flight put count became negative")
             self._completion.notify_all()
 
-    def _put_serialized(
-        self, payload: bytes, *, force_object_store: bool = False,
-        admitted_put_index: int | None = None,
-    ) -> ObjectRef:
-        """Publish already-serialized bytes as one owner-held object.
-
-        Task argument encoding must inspect the exact wire bytes before it can
-        decide whether the value fits the per-task inline budget.  Reusing this
-        helper lets an over-budget argument become a ``StoredArg`` without
-        serializing user state a second time.  ``force_object_store``
-        is private because cumulative budgeting may lift an individually small
-        value; public :meth:`put` retains its ordinary per-object threshold.
-        """
-
-        if not isinstance(payload, bytes):
-            raise TypeError("serialized put payload must be bytes")
-        owns_admission = admitted_put_index is None
-        put_index = (
-            self._begin_put() if owns_admission else admitted_put_index
-        )
-        if (
-            isinstance(put_index, bool)
-            or not isinstance(put_index, int)
-            or put_index < 0
-        ):
-            if owns_admission:
-                self._end_put()
-            raise ValueError("admitted put index must be a non-negative integer")
-
-        object_id: Optional[ObjectID] = None
-        attempt_id: Optional[AttemptID] = None
-        try:
-            task_id = TaskID.for_put(self.job_id, self.worker_id, put_index)
-            attempt_id = AttemptID(task_id, 0)
-            object_id = ObjectID.for_task(task_id, 0)
-            with self._state_lock:
-                self._owner_table.register(
-                    object_id,
-                    current_attempt=attempt_id,
-                    producer_task_spec=None,
-                )
-                self._objects[object_id] = _ObjectWaiter(threading.Event())
-                # Install the waiter before the recovery identity so every
-                # subsequent failure can publish and wake a terminal result.
-                # Both registrations still occur under the Core composition
-                # lock, before bytes become observable.
-                self._recovery_manager().register_put(object_id)
-
-            if not force_object_store and len(payload) <= self.inline_threshold:
-                if not self._owner_table.publish_inline(object_id, attempt_id, payload):
-                    raise SystemTaskError("put object publication was fenced")
-            else:
-                seal = protocol.SealObject.from_data(
-                    object_id, attempt_id, self.worker_id, payload
-                )
-                route = self._require_home_route("large put")
-                while True:
-                    checksum = hashlib.sha256(payload).hexdigest()
-                    try:
-                        reply = self._rpc(route.address, "seal_object", seal)
-                    except BaseException as exc:
-                        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                            raise
-                        with self._state_lock:
-                            route_died = route.node_id in getattr(
-                                self, "_dead_nodes", {}
-                            )
-                            next_route = getattr(self, "_home_route", None)
-                        if not route_died:
-                            # Reachability alone is never a death proof.
-                            raise
-                        if next_route is None:
-                            raise NodeDiedError(
-                                "large put lost its sealing Node and no survivor remains"
-                            )
-                        route = next_route
-                        continue
-                    with self._state_lock:
-                        route_died = route.node_id in getattr(
-                            self, "_dead_nodes", {}
-                        )
-                        if not route_died:
-                            if (
-                                not isinstance(reply, protocol.SealObjectReply)
-                                or not reply.sealed
-                                or reply.object_id != object_id
-                                or reply.node_id != route.node_id
-                                or reply.size_bytes != len(payload)
-                                or reply.checksum != checksum
-                            ):
-                                raise SystemTaskError(
-                                    getattr(reply, "error", None)
-                                    or "Node rejected or corrupted the put object seal"
-                                )
-                            descriptor = protocol.ResultDescriptor(
-                                object_id=object_id,
-                                storage=protocol.ResultStorage.OBJECT_STORE,
-                                size_bytes=len(payload),
-                                owner_worker_id=self.worker_id,
-                                node_id=route.node_id,
-                                checksum=checksum,
-                                inline_data=None,
-                            )
-                            if not self._owner_table.publish_stored(
-                                object_id, attempt_id, route.node_id,
-                                descriptor=descriptor,
-                            ):
-                                raise SystemTaskError(
-                                    "put object publication was fenced"
-                                )
-                            self._stored_descriptors[object_id] = descriptor
-                            break
-                        next_route = getattr(self, "_home_route", None)
-                    if next_route is None:
-                        raise NodeDiedError(
-                            "large put lost its sealing Node and no survivor remains"
-                        )
-                    # The first seal may have committed before the Node exited.
-                    # Its death proves those bytes are gone, so retrying the same
-                    # immutable object/attempt identity on the new home is safe.
-                    route = next_route
-
-            self._wake_object(object_id)
-            try:
-                return self._new_object_ref(object_id)
-            except BaseException:
-                # Publication is already READY, so _publish_error below is
-                # intentionally fenced.  Hand an otherwise-unreferenced value
-                # to the normal owner-driven collector instead of leaking its
-                # metadata/replica when Python handle construction fails.
-                self._enqueue_inline_gc_check(object_id)
-                raise
-        except BaseException as exc:
-            if object_id is not None and attempt_id is not None:
-                self._publish_error(object_id, attempt_id, exc)
-            raise
-        finally:
-            if owns_admission:
-                self._end_put()
 
     def create_actor(
         self,
@@ -4954,6 +4729,111 @@ class CoreWorker:
             )
         return self._stored_contained_pin_transition(request, prepare=True)
 
+    def _output_handoff_table(self):
+        table = getattr(self, "_output_handoffs", None)
+        if table is None:
+            table = self._output_handoffs = OutputHandoffTable()
+        return table
+
+    def register_output_handoff(self, request):
+        """Own the exact cleanup manifest before child effects can start."""
+        from . import output_protocol as wire
+        if type(request) is not wire.RegisterOutputHandoff:
+            raise TypeError("owner registration requires RegisterOutputHandoff")
+        request = replace(request)
+        manifest = request.manifest
+        identity = manifest.publication_id
+        try:
+            with self._state_lock:
+                if not self._owner_protocol_open or manifest.header.owner_worker_id != self.worker_id:
+                    raise ValueError("output owner is stopped or does not match")
+                state = self._owner_table.snapshot(identity.output_ids[0])
+                if state.current_attempt != identity.attempt_id or state.state is not ObjectState.PENDING:
+                    raise ValueError("output handoff requires the current pending owner attempt")
+                if self._node_is_dead(manifest.header.node_incarnation.node_id):
+                    raise ValueError("publishing Node is dead")
+                pending = getattr(self, "_task_finish_barriers", {}).get(identity.output_ids[0])
+                if pending is None or pending.execution != identity.execution:
+                    raise ValueError("output handoff has no accepted task execution")
+                snapshot = self._output_handoff_table().register(manifest, state.current_attempt)
+                if snapshot.phase is not OutputHandoffPhase.PENDING:
+                    raise ValueError("historical handoff is not a new forward permission")
+                return wire.OutputHandoffReply(request, True, snapshot)
+        except Exception as exc:
+            return wire.OutputHandoffReply(request, False, error=str(exc) or type(exc).__name__)
+
+    def report_output_handoff_complete(self, request):
+        from . import output_protocol as wire
+        if type(request) is not wire.ReportOutputHandoffComplete:
+            raise TypeError("owner completion requires its exact witness")
+        request = replace(request)
+        try:
+            with self._state_lock:
+                if not self._owner_protocol_open:
+                    raise ValueError("output owner is stopped")
+                snapshot = self._output_handoff_table().record_complete(request.witness)
+                self._completion.notify_all()
+                return wire.OutputHandoffReply(request, True, snapshot)
+        except Exception as exc:
+            return wire.OutputHandoffReply(request, False, error=str(exc) or type(exc).__name__)
+
+    def report_output_handoff_rollback(self, request):
+        """Accept exact Node compensation, even when registration was rejected.
+
+        An absent owner record permits no downstream effect: the Node must
+        report an empty compensation plan. An unknown registration ACK is
+        resolved from the actual table; it never bypasses the Node journal's
+        complete, manifest-bound compensation receipts.
+        """
+        from . import output_protocol as wire
+        from .output_publication_journal import OutputPublicationStage
+        if type(request) is not wire.ReportOutputHandoffRollback:
+            raise TypeError("owner rollback requires its exact manifest and receipts")
+        try:
+            request = replace(request)
+            manifest, tombstone = request.manifest, request.tombstone
+            identity = manifest.publication_id
+            if manifest.header.owner_worker_id != self.worker_id:
+                raise ValueError("rollback targets another output owner")
+            if len(manifest.slots) != 1:
+                raise ValueError("rollback requires a single-output manifest")
+            for effect in tombstone.plan.effects:
+                if effect.slot_index != 0:
+                    raise ValueError("rollback effect names another output")
+                if (effect.stage in (OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE)
+                        and effect.transfer_index >= len(manifest.slots[0].transfers)):
+                    raise ValueError("rollback effect names an absent child transfer")
+            with self._state_lock:
+                table = self._output_handoff_table()
+                snapshot = table.query(identity)
+                if snapshot is not None and snapshot.manifest is not None and snapshot.manifest != manifest:
+                    raise ValueError("rollback changed its registered handoff manifest")
+                if snapshot is not None and (snapshot.adoption is not None or snapshot.complete is not None):
+                    raise ValueError("successful handoff cannot be reported as a rollback")
+                if (snapshot is None or snapshot.manifest is None) and tombstone.plan.effects:
+                    raise ValueError("unregistered handoff cannot have authorized child or byte effects")
+                receipts = getattr(self, "_output_rollback_receipts", None)
+                if receipts is None:
+                    receipts = self._output_rollback_receipts = {}
+                previous = receipts.get(identity)
+                if previous is not None and previous != tombstone:
+                    raise ValueError("rollback replay changed its cleanup receipts")
+                snapshot = table.abort_manifest(
+                    manifest, "node rollback:" + tombstone.plan.rollback_id,
+                )
+                receipts[identity] = tombstone
+                return wire.OutputHandoffReply(request, True, snapshot)
+        except Exception as exc:
+            return wire.OutputHandoffReply(request, False, error=str(exc) or type(exc).__name__)
+
+    def get_output_handoff(self, request):
+        from . import output_protocol as wire
+        if type(request) is not wire.GetOutputHandoff:
+            raise TypeError("owner history query requires GetOutputHandoff")
+        request = replace(request)
+        with self._state_lock:
+            return wire.OutputHandoffReply(request, True, self._output_handoff_table().query(request.publication_id))
+
     def promote_stored_contained_pin(
         self, request: protocol.PromoteStoredContainedPin
     ) -> protocol.StoredContainedPinReply:
@@ -5028,6 +4908,9 @@ class CoreWorker:
         the same obligation.
         """
 
+        if object_id in getattr(self, "_put_handoffs", {}):
+            if not self._drive_put_handoff_cleanup(object_id):
+                return
         started_plan: ObjectMetadataCollectionPlan | None = None
         with self._state_lock:
             if self._has_late_replica_cleanup_locked(object_id):
@@ -5086,16 +4969,11 @@ class CoreWorker:
                     size_bytes = None
                     checksum = None
                 output_plan = None
-                graph_request = None
                 if output_publication is not None:
                     output_plan = self._owner_table.begin_output_publication_collection(
                         object_id, collection_id="collect:{}".format(uuid.uuid4().hex)
                     )
                     plan = None if output_plan is None else output_plan.metadata_plan
-                    if output_plan is not None and output_plan.membership.slot.edges:
-                        graph_request = protocol.ReleaseContainedGraphContainer(
-                            output_plan.membership.manifest.to_graph_manifest(), object_id
-                        )
                 else:
                     plan = self._owner_table.begin_collection(
                         object_id,
@@ -5126,7 +5004,6 @@ class CoreWorker:
                     pending_drops=drops,
                     pending_edges=set(plan.contained_releases),
                     output_plan=output_plan,
-                    graph_release_request=graph_request,
                 )
                 # This assignment is the durable in-memory barrier.  Never
                 # issue Drop/Release before it becomes shutdown-visible.
@@ -5148,10 +5025,9 @@ class CoreWorker:
                 contained_edge_count=len(started_plan.contained_releases),
             )
 
-        # A graph-associated object represents real final child holds.  Release
-        # all of those exact holds first, then retire the committed graph, and
-        # only then delete bytes.  Generic stored values have no graph barrier
-        # and retain the existing direct drop path.
+        # Outgoing edges represent real final child holds. Release every exact
+        # hold before deleting bytes; values without child edges need only
+        # their physical replica cleanup.
         for edge in tuple(obligation.pending_edges):
             request = protocol.ReleaseContainedReference(
                 edge.contained_object_id, edge.contained_owner_worker_id,
@@ -5182,41 +5058,8 @@ class CoreWorker:
                     if self._gc_obligations().get(object_id) is obligation:
                         obligation.pending_edges.discard(edge)
 
-        if (
-            obligation.graph_release_request is not None
-            and not obligation.pending_edges
-            and obligation.graph_release_receipt is None
-        ):
-            graph_request = obligation.graph_release_request
-            assert graph_request is not None
-            try:
-                reply = self._rpc(
-                    self.gcs_address,
-                    _RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER,
-                    graph_request,
-                )
-            except Exception:
-                reply = None
-            expected_edges = obligation.output_plan.membership.slot.edges
-            receipt = getattr(reply, "receipt", None)
-            if (
-                isinstance(reply, protocol.ContainedGraphReply)
-                and reply.request == graph_request
-                and isinstance(receipt, ContainedGraphManifestReceipt)
-                and receipt.manifest == graph_request.manifest
-                and receipt.state is ContainedGraphTransactionState.COMMITTED
-                and receipt.disposition in (
-                    ContainedGraphManifestDisposition.RELEASED,
-                    ContainedGraphManifestDisposition.ALREADY_RELEASED,
-                )
-                and tuple(receipt.released_edges) == expected_edges
-            ):
-                with self._state_lock:
-                    if self._gc_obligations().get(object_id) is obligation:
-                        obligation.graph_release_receipt = receipt
 
-        drops_admitted = (obligation.graph_release_request is None
-                          or obligation.graph_release_receipt is not None)
+        drops_admitted = not obligation.pending_edges
         if drops_admitted:
             for node_id, request in tuple(obligation.pending_drops.items()):
                 try:
@@ -5250,22 +5093,6 @@ class CoreWorker:
                         status=reply.status.value,
                     )
 
-        if (obligation.output_plan is not None and not obligation.pending_edges
-                and not obligation.pending_drops and drops_admitted
-                and not obligation.output_cleanup_reported):
-            from . import output_protocol as wire
-            membership = obligation.output_plan.membership
-            proof = OutputPublicationSlotCleanupProof(
-                OutputPublicationCompleteWitness.for_manifest(membership.manifest),
-                self.worker_id, membership.slot_index, object_id, obligation.plan.collection_id,
-            )
-            request = wire.ReportOutputPublicationSlotCollected(proof)
-            try:
-                reply = self._rpc(self.gcs_address, wire.REPORT_OUTPUT_PUBLICATION_HANDLER, request)
-                if type(reply) is wire.OutputRecoveryReply and reply.request == request and reply.accepted:
-                    obligation.output_cleanup_reported = True
-            except Exception:
-                pass
 
         completed = False
         released_lineage_dependencies: list[ObjectID] = []
@@ -5276,11 +5103,6 @@ class CoreWorker:
                 and not self._has_late_replica_cleanup_locked(object_id)
                 and not obligation.pending_drops
                 and not obligation.pending_edges
-                and (
-                    obligation.graph_release_request is None
-                    or obligation.graph_release_receipt is not None
-                )
-                and (obligation.output_plan is None or obligation.output_cleanup_reported)
             ):
                 recovery = self._recovery_manager()
                 forget_plan = recovery.validate_forget_collected_object(
@@ -5293,12 +5115,6 @@ class CoreWorker:
                         obligation.plan
                     )
                 )
-                if lineage_releases and not getattr(
-                    forget_plan, "remove_task", False
-                ):
-                    raise SystemTaskError(
-                        "owner and recovery disagree on final task sibling"
-                    )
                 # Validate every hold before either authority is deleted.
                 for edge in lineage_releases:
                     dependency = self._owner_table.snapshot(
@@ -5348,7 +5164,7 @@ class CoreWorker:
                 # owner and recovery commits have succeeded.
                 if obligation.output_plan is not None:
                     collected = self._owner_table.complete_output_publication_collection(
-                        obligation.output_plan, obligation.graph_release_receipt
+                        obligation.output_plan
                     ).collection
                 else:
                     self._owner_table.validate_complete_collection(obligation.plan)
@@ -5358,16 +5174,6 @@ class CoreWorker:
                         "task lineage authority changed during collection"
                     )
                 recovery.commit_forget_collected_object(forget_plan)
-                if getattr(forget_plan, "remove_task", False):
-                    cleanup = (
-                        self._owner_table
-                        .validate_forget_target_execution_state(
-                            object_id.task_id
-                        )
-                    )
-                    self._owner_table.commit_forget_target_execution_state(
-                        cleanup
-                    )
                 foreign_receipt = (
                     None if foreign_prepared_receipt is None
                     else ForeignLineageCollectionReceipt(
@@ -5472,19 +5278,6 @@ class CoreWorker:
 
         self._drive_late_replica_cleanup(schedule_retry=False)
         with self._state_lock:
-            export_pin_releases = tuple(
-                getattr(self, "_export_pin_release_obligations", {})
-            )
-        for key in export_pin_releases:
-            self._drive_export_pin_release(key, schedule_retry=False)
-        with self._state_lock:
-            for key in export_pin_releases:
-                obligation = getattr(
-                    self, "_export_pin_release_obligations", {}
-                ).get(key)
-                if obligation is not None:
-                    obligation.retry_scheduled = False
-        with self._state_lock:
             object_ids = tuple(self._gc_obligations())
         for object_id in object_ids:
             self._reference_released(object_id)
@@ -5516,7 +5309,6 @@ class CoreWorker:
             return not bool(
                 self._gc_obligations()
                 or self._has_late_replica_cleanup_locked()
-                or getattr(self, "_export_pin_release_obligations", {})
                 or getattr(self, "_attempt_borrow_releases", {})
                 or getattr(self, "_borrowed_release_obligations", {})
             )
@@ -5940,9 +5732,6 @@ class CoreWorker:
             if replies is None:
                 replies = {}
                 self._owned_drop_replies = replies
-            replay = replies.get(request.operation_id)
-            if replay is not None:
-                return replay
             claims = getattr(self, "_owned_drop_claims", None)
             if claims is None:
                 claims = {}
@@ -5954,6 +5743,13 @@ class CoreWorker:
                     failure=protocol.DropOwnedObjectFailure.REQUEST_CONFLICT,
                     detail="drop operation_id is bound to another request",
                 )
+            replay = replies.get(request.operation_id)
+            if replay is not None:
+                # A terminal reply survives credential release and epoch
+                # changes, but only for the complete original request.
+                if claimed is None:
+                    raise RuntimeError("cached drop reply has no request binding")
+                return replay
             if request.owner_worker_id != self.worker_id:
                 return self._owned_drop_reply(
                     request, protocol.DropOwnedObjectDisposition.FAILED,
@@ -6338,7 +6134,7 @@ class CoreWorker:
             protocol.PlacementGroupSchedulingKey
         ] = None,
         _enqueue: bool = False,
-    ) -> tuple[_PendingTask, ObjectRef | tuple[ObjectRef, ...]]:
+    ) -> tuple[_PendingTask, ObjectRef]:
         """Build, retain, then atomically publish one submitted task.
 
         The initial lock reserves logical identity.  Foreign owner RPCs happen
@@ -6380,7 +6176,6 @@ class CoreWorker:
         installed_waiters: list[ObjectID] = []
         prepared_refs: tuple[tuple[ObjectRef, object], ...] = ()
         bound_refs: tuple[ObjectRef, ...] = ()
-        lifted_argument_refs: list[ObjectRef] = []
         enqueued = False
         accepted_incremented = False
         try:
@@ -6400,10 +6195,7 @@ class CoreWorker:
                 task_id,
                 attempt_id,
             )
-            output_ids = tuple(
-                ObjectID.for_task(task_id, index)
-                for index in range(num_returns)
-            )
+            output_ids = (ObjectID.for_task(task_id, 0),)
             object_id = output_ids[0]
             prepared_refs = self._prepare_local_object_refs(output_ids)
             nested_transfers: dict[
@@ -6469,12 +6261,9 @@ class CoreWorker:
                 nested_transfers[key] = transfer
                 return transfer
 
-            # Ray budgets task arguments cumulatively, rather than deciding
-            # solely from each Python value in isolation.  Encode in canonical
-            # TaskSpec order exactly once, then lift an over-budget InlineArg's
-            # byte stream into ObjectStore.  StoredArg preserves the serializer
-            # and nested-reference manifest, so nested handles remain lifetime
-            # edges rather than being mistaken for ordinary object contents.
+            # The teaching API requires explicit put for large by-value inputs.
+            # Encoding is still once per argument; partial nested holds use the
+            # common submission rollback if the cumulative budget is exceeded.
             inline_bytes = 0
             inline_budget = getattr(
                 self, "inline_threshold", _DEFAULT_INLINE_THRESHOLD_BYTES
@@ -6490,26 +6279,9 @@ class CoreWorker:
                     return argument
                 next_inline_bytes = inline_bytes + len(argument.data)
                 if next_inline_bytes > inline_budget:
-                    # Cumulative pressure can lift an argument smaller than the
-                    # ordinary put threshold, so force physical store backing.
-                    # The returned handle is only a temporary bridge: task and
-                    # producer-lineage holds take over before it is closed.
-                    lifted = self._put_serialized(
-                        argument.data, force_object_store=True
-                    )
-                    try:
-                        lifted_argument_refs.append(lifted)
-                    except BaseException:
-                        # Close the tiny gap between publication and joining
-                        # the submission cleanup ledger.  This is mainly an
-                        # allocation-failure guard; ordinary list append does
-                        # not execute user code.
-                        lifted.close()
-                        raise
-                    return protocol.StoredArg(
-                        lifted.object_id, lifted.owner_worker_id,
-                        serializer=argument.serializer,
-                        nested_refs=argument.nested_refs,
+                    raise ValueError(
+                        "task arguments exceed the inline budget; use ray.put(value) "
+                        "and pass its ObjectRef for large inputs"
                     )
                 inline_bytes = next_inline_bytes
                 return argument
@@ -6831,40 +6603,31 @@ class CoreWorker:
                     self._record_orphan_foreign_guard_release(guard)
             raise
         finally:
-            # Internal put handles never escape the submission call.  On
-            # success the Task's submitted + lineage holds are already
-            # installed; on failure the common rollback above removed every
-            # such hold first.  Closing here therefore has no lifetime gap and
-            # also makes partial multi-argument encoding failure collectable.
-            try:
-                for lifted in lifted_argument_refs:
-                    lifted.close()
-            finally:
-                # Even a defensive cleanup failure must not leave shutdown
-                # waiting forever on a submission that has already resolved.
-                with self._completion:
-                    self._inflight_submissions = (
-                        getattr(self, "_inflight_submissions", 1) - 1
+            # Even a defensive cleanup failure must not leave shutdown
+            # waiting forever on a submission that has already resolved.
+            with self._completion:
+                self._inflight_submissions = (
+                    getattr(self, "_inflight_submissions", 1) - 1
+                )
+                if self._inflight_submissions < 0:
+                    raise AssertionError(
+                        "CoreWorker in-flight submission count became negative"
                     )
-                    if self._inflight_submissions < 0:
-                        raise AssertionError(
-                            "CoreWorker in-flight submission count became negative"
-                        )
-                    self._completion.notify_all()
-                submissions = getattr(self, "_submissions", None)
-                if (
-                    submissions is not None
-                    and getattr(self, "_coordinator", None) is not None
-                    and getattr(self, "_inflight_submissions", 0) == 0
-                    and (
-                        not getattr(self, "_accepting", True)
-                        or bool(
-                            getattr(self, "_orphan_foreign_guard_releases", {})
-                        )
+                self._completion.notify_all()
+            submissions = getattr(self, "_submissions", None)
+            if (
+                submissions is not None
+                and getattr(self, "_coordinator", None) is not None
+                and getattr(self, "_inflight_submissions", 0) == 0
+                and (
+                    not getattr(self, "_accepting", True)
+                    or bool(
+                        getattr(self, "_orphan_foreign_guard_releases", {})
                     )
-                ):
-                    submissions.put(_WAKE_COORDINATOR)
-        return pending, refs[0] if len(refs) == 1 else refs
+                )
+            ):
+                submissions.put(_WAKE_COORDINATOR)
+        return pending, refs[0]
 
     def _retain_foreign_dependency_guard(
         self, guard: _ForeignDependencyGuard
@@ -7263,14 +7026,12 @@ class CoreWorker:
                 )
 
     def _retire_lost_output_memberships(self, object_id: ObjectID) -> bool:
-        """Retire exactly one LOST slot before reusing its stable identity.
+        """Retire one LOST output before reusing its stable identity.
 
         One exact plan is retained across RPC ambiguity.  Child holds and the
-        old graph disappear only with their matching receipts; incoming refs
-        and task lineage stay at the owner until a later attempt or normal GC.
-        No user function or serializer is invoked by this cleanup. A sibling
-        may still be finishing another selected execution; callers must admit
-        each target explicitly instead of sweeping every LOST sibling.
+        physical replicas disappear only with their matching receipts; incoming
+        refs and task lineage stay at the owner until a later attempt or normal
+        GC. No user function or serializer is invoked by this cleanup.
         """
         from . import output_protocol as wire
 
@@ -7297,7 +7058,7 @@ class CoreWorker:
                         if member.slot.tier is protocol.ResultStorage.OBJECT_STORE else ()
                     )},
                 )
-                current = {"plan": plan, "child": {}, "graph": {}, "replica": {}, "reported": set()}
+                current = {"plan": plan, "child": {}, "replica": {}}
                 work[object_id] = current
             tickets = getattr(self, "_output_retirement_tickets", None)
             if tickets is None:
@@ -7319,13 +7080,6 @@ class CoreWorker:
                             or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
                         raise SystemTaskError("output retirement child ACK mismatch")
                     current["child"][request] = reply
-            for member in plan.memberships:
-                if member.slot.edges and member.object_id not in current["graph"]:
-                    request = protocol.ReleaseContainedGraphContainer(member.manifest.to_graph_manifest(), member.object_id)
-                    reply = self._rpc(self.gcs_address, _RELEASE_CONTAINED_GRAPH_CONTAINER_HANDLER, request)
-                    if not isinstance(reply, protocol.ContainedGraphReply) or not reply.accepted or reply.request != request:
-                        raise SystemTaskError("output retirement graph ACK mismatch")
-                    current["graph"][member.object_id] = reply.receipt
             for request in plan.replica_drops:
                 if request in current["replica"]:
                     continue
@@ -7341,25 +7095,12 @@ class CoreWorker:
                         != (request.object_id, request.producer_attempt_id, request.owner_worker_id, request.node_id, request.checksum)):
                     raise SystemTaskError("output retirement replica ACK mismatch")
                 current["replica"][request] = reply
-            for member in plan.memberships:
-                if member.object_id in current["reported"]:
-                    continue
-                proof = OutputPublicationSlotCleanupProof(
-                    OutputPublicationCompleteWitness.for_manifest(member.manifest), self.worker_id,
-                    member.slot_index, member.object_id, plan.retirement_id,
-                )
-                request = wire.ReportOutputPublicationSlotCollected(proof)
-                reply = self._rpc(self.gcs_address, wire.REPORT_OUTPUT_PUBLICATION_HANDLER, request)
-                if type(reply) is not wire.OutputRecoveryReply or not reply.accepted or reply.request != request:
-                    raise SystemTaskError("output retirement report ACK mismatch")
-                current["reported"].add(member.object_id)
             with self._state_lock:
                 if any(self._has_late_replica_cleanup_locked(member.object_id) for member in plan.memberships):
                     self._schedule_late_replica_cleanup_locked()
                     return False
                 self._owner_table.complete_output_publication_retirement(
                     plan, released_edges=tuple(current["child"][request] for request in plan.contained_releases),
-                    graph_receipts=tuple(current["graph"][member.object_id] for member in plan.memberships if member.slot.edges),
                     dropped_replicas=tuple(current["replica"][request] for request in plan.replica_drops),
                 )
                 work.pop(object_id, None)
@@ -7388,33 +7129,6 @@ class CoreWorker:
                      or self._has_late_replica_cleanup_locked(object_id))
             ):
                 return None
-            spec = snapshot.producer_task_spec
-            sibling_snapshots = (
-                tuple(
-                    self._owner_table.snapshot(output_id)
-                    for output_id in spec.return_ids()
-                )
-                if isinstance(spec, protocol.TaskSpec)
-                else ()
-            )
-            all_lost_same_attempt = bool(sibling_snapshots) and all(
-                sibling.state is ObjectState.LOST
-                and sibling.current_attempt == snapshot.current_attempt
-                for sibling in sibling_snapshots
-            )
-            targeted_session = self._targeted_reconstruction_coordinator().current_session(
-                object_id.task_id
-            )
-            use_targeted = (
-                isinstance(spec, protocol.TaskSpec)
-                and len(spec.return_ids()) > 1
-                and (
-                    targeted_session is not None
-                    or snapshot.state is ObjectState.LOST and not all_lost_same_attempt
-                )
-            )
-        if use_targeted:
-            return self._request_targeted_reconstruction(object_id, snapshot, return_requested_outcome)
         with self._state_lock:
             snapshot = self._owner_table.snapshot(object_id)
             coordinator = self._reconstruction_coordinator()
@@ -7430,7 +7144,7 @@ class CoreWorker:
                     raise SystemTaskError(
                         "pending reconstruction did not join its active attempt"
                     )
-                return joined
+                return coordinator.handoff(joined, lambda _plan: None)
             if snapshot.state is not ObjectState.LOST:
                 return None
             producer_spec = snapshot.producer_task_spec
@@ -7456,10 +7170,6 @@ class CoreWorker:
                 object_id=str(object_id),
             )
             try:
-                if coordinator.has_active_lineage_producer(
-                    object_id, self._targeted_reconstruction_coordinator().active_task_ids()
-                ):
-                    return None
                 graph = coordinator.preflight_graph(object_id)
             except ReconstructionRuntimeError as exc:
                 raise SystemTaskError(str(exc)) from exc
@@ -7482,9 +7192,14 @@ class CoreWorker:
                     object_id=str(graph_node.object_id),
                     action=graph_node.action.value,
                 )
+                if graph_node.action.value == "PENDING_JOIN":
+                    if object_id in graph_node.output_ids:
+                        requested_outcome = coordinator.handoff(
+                            coordinator.request(graph_node.object_id), lambda _plan: None
+                        )
+                    continue
                 if (
-                    graph_node.action.value == "PENDING_JOIN"
-                    or self._owner_table.snapshot(
+                    self._owner_table.snapshot(
                         graph_node.object_id
                     ).state is not ObjectState.LOST
                 ):
@@ -7499,7 +7214,9 @@ class CoreWorker:
                         object_id=str(graph_node.object_id),
                     )
                     if object_id in graph_node.output_ids:
-                        requested_outcome = outcome
+                        requested_outcome = coordinator.handoff(
+                            coordinator.request(graph_node.object_id), lambda _plan: None
+                        )
                     continue
                 if outcome.disposition is ReconstructionDisposition.FAILED:
                     error = outcome.decision.error
@@ -7553,10 +7270,6 @@ class CoreWorker:
                 for output_id in step.output_ids
             ):
                 return None
-            if coordinator.has_active_lineage_producer(
-                object_id, self._targeted_reconstruction_coordinator().active_task_ids()
-            ):
-                return None
             # No old output metadata is retired until every graph finish gate
             # and foreign input exchange passed. A blocked descendant must
             # leave the entire earlier graph untouched, not only its attempts.
@@ -7579,10 +7292,6 @@ class CoreWorker:
             if any(output_id in getattr(self, "_task_finish_barriers", {})
                    or self._has_late_replica_cleanup_locked(output_id)
                    for step, _outcome in prepared_graph_steps for output_id in step.output_ids):
-                return None
-            if coordinator.has_active_lineage_producer(
-                object_id, self._targeted_reconstruction_coordinator().active_task_ids()
-            ):
                 return None
             # Preflight all assignment-only local transitions before committing
             # any producer. Retirement itself never advances an attempt.
@@ -7644,7 +7353,7 @@ class CoreWorker:
 
                 def rewrite_foreign(argument: object) -> object:
                     if not isinstance(
-                        argument, (protocol.InlineArg, protocol.StoredArg)
+                        argument, protocol.InlineArg
                     ):
                         return argument
                     by_key = {
@@ -7680,8 +7389,6 @@ class CoreWorker:
                             ),
                         )
                     )
-                if object_id in graph_node.output_ids:
-                    requested_outcome = outcome
                 for stale_id in plan.clear_descriptor_ids:
                     self._stored_descriptors.pop(stale_id, None)
                 for pending_id in plan.clear_waiter_ids:
@@ -7732,7 +7439,11 @@ class CoreWorker:
                 )
                 self._accepted_task_count += plan.accepted_count_delta
                 self._install_task_finish_barrier_locked(pending)
-                self._enqueue_reconstruction_task(pending)
+                outcome = coordinator.handoff(
+                    outcome, lambda _plan: self._enqueue_reconstruction_task(pending)
+                )
+                if object_id in graph_node.output_ids:
+                    requested_outcome = outcome
                 started_plans.append(plan)
             self._completion.notify_all()
             if not started_plans and not any(
@@ -7743,13 +7454,17 @@ class CoreWorker:
                     "recursive reconstruction preflight produced no START/JOIN work"
                 )
         for plan in started_plans:
-            self._emit(
-                "object_reconstruction_started",
-                object_id=str(plan.requested_object_id),
-                output_ids=tuple(str(value) for value in plan.output_ids),
-                task_id=str(plan.task_id),
-                attempt_id=str(plan.attempt_id),
-            )
+            try:
+                self._emit(
+                    "object_reconstruction_started",
+                    object_id=str(plan.requested_object_id),
+                    output_ids=tuple(str(value) for value in plan.output_ids),
+                    task_id=str(plan.task_id),
+                    attempt_id=str(plan.attempt_id),
+                )
+            except Exception:
+                # Observation cannot erase the already accepted queue fact.
+                pass
         if return_requested_outcome and requested_outcome is None:
             raise SystemTaskError(
                 "reconstruction admission did not resolve the requested object"
@@ -7768,364 +7483,9 @@ class CoreWorker:
             raise TypeError("reconstruction queue accepts only _PendingTask")
         self._submissions.put(pending)
 
-    def _request_targeted_reconstruction(
-        self, object_id: ObjectID, snapshot: object,
-        return_requested_outcome: bool,
-    ) -> Optional[ReconstructionOutcome]:
-        """Record one loss; a later coordinator event closes OPEN targets."""
 
-        with self._state_lock:
-            targeted = self._targeted_reconstruction_coordinator()
-            current = self._owner_table.snapshot(object_id)
-            session = targeted.current_session(object_id.task_id)
-            joining = (
-                session is not None and session.phase is TargetedSessionPhase.STARTED
-                and object_id in session.target_output_ids
-                and current.state is ObjectState.PENDING
-                and current.current_attempt == session.execution.attempt_id
-            )
-            if object_id in getattr(self, "_task_finish_barriers", {}) and not joining:
-                return None
-            if not self._accepting:
-                raise RuntimeShuttingDownError(
-                    "cannot start reconstruction while CoreWorker is shutting down"
-                )
-            attempt_id = (session.expected_attempts[object_id] if joining
-                          else current.current_attempt)
-            if not isinstance(attempt_id, AttemptID):
-                raise UnreconstructableObjectError(
-                    "lost task output has no producer attempt"
-                )
-            try:
-                request = targeted.request(object_id, attempt_id)
-            except TargetedReconstructionError as exc:
-                raise SystemTaskError(str(exc)) from exc
-            if request.disposition in (
-                TargetedRequestDisposition.OPENED,
-                TargetedRequestDisposition.MERGED,
-            ):
-                self._submissions.put(
-                    _StartTargetedReconstruction(object_id.task_id)
-                )
-            self._completion.notify_all()
-        if return_requested_outcome:
-            # Owner-routed protocol currently expects an immediate START/JOIN
-            # acknowledgement.  Drive the queued closure synchronously while
-            # retaining exactly the same OPEN/START transaction.
-            admitted = self._start_open_targeted_reconstruction(object_id.task_id)
-            with self._state_lock:
-                session = targeted.current_session(object_id.task_id)
-                if (session is None or session.execution is None
-                        or object_id not in session.target_output_ids):
-                    # An OPEN or QUEUED_NEXT loss is a deferral, not an ACK
-                    # that this slot joined an unrelated current execution.
-                    return None
-            action = (
-                RecoveryAction.START_RECONSTRUCTION
-                if admitted is not None and admitted.execution == session.execution
-                else RecoveryAction.JOIN_RECONSTRUCTION
-            )
-            decision = RecoveryDecision(
-                    action, task_id=object_id.task_id,
-                    attempt_id=session.execution.attempt_id,
-                    requested_object_id=object_id,
-                    output_ids=session.full_manifest.output_ids,
-                    producer_task_spec=getattr(snapshot, "producer_task_spec", None),
-                    reason="targeted reconstruction session",
-            )
-            return ReconstructionOutcome(
-                ReconstructionDisposition.START
-                if action is RecoveryAction.START_RECONSTRUCTION
-                else ReconstructionDisposition.JOIN,
-                decision,
-            )
-        return None
 
-    def _defer_targeted_reconstruction(self, task_id: TaskID, round: int) -> None:
-        """Retain one bounded-delay START wake when an OPEN session cannot run.
 
-        A cleanup ACK or finish barrier can arrive without another public get.
-        Keeping an explicit event prevents that OPEN session from being stranded.
-        Stale wakes are harmless: START always rereads the canonical session.
-        """
-        with self._state_lock:
-            targeted = self._targeted_reconstruction_coordinator()
-            session = targeted.current_session(task_id)
-            if (session is None or session.phase is not TargetedSessionPhase.OPEN
-                    or not self._accepting and targeted.open_failure(task_id) is None):
-                return
-            delay = min(
-                _PUSH_RETRY_MAX_SECONDS,
-                _PUSH_RETRY_BASE_SECONDS * (2 ** min(round, 8)),
-            )
-            self._submissions.put(_DelayedTargetedReconstruction(
-                _StartTargetedReconstruction(task_id, round + 1),
-                time.monotonic() + delay,
-            ))
-
-    def _targeted_lineage_inputs_locked(
-        self, session: TargetedReconstructionSession,
-    ) -> tuple[protocol.TaskSpec, tuple[ObjectID, ...], tuple[ObjectID, ...]]:
-        """Validate local input lifetimes before retirement or attempt mutation.
-
-        Nested refs remain lifetime edges, not readiness dependencies. This
-        preflight performs neither a remote renewal nor an owner transition.
-        """
-        spec = self._owner_table.snapshot(session.target_output_ids[0]).producer_task_spec
-        if not isinstance(spec, protocol.TaskSpec):
-            raise SystemTaskError("targeted reconstruction has no TaskSpec lineage")
-        if spec.scheduling_key is not None and getattr(self, "_placement_group_states", {}).get((
-            spec.scheduling_key.placement_group_id, spec.scheduling_key.attempt,
-        )) is protocol.PlacementGroupPhaseStatus.LOST:
-            raise PlacementGroupLostError(
-                "cannot reconstruct an output from a terminal LOST placement-group attempt"
-            )
-        try:
-            dependencies, nested_holds = self._reconstruction_coordinator().lineage_inputs(spec)
-            for dependency_id in dict.fromkeys(dependencies + nested_holds):
-                dependency = self._owner_table.snapshot(dependency_id)
-                if dependency.collection_pending:
-                    raise ReconstructionRuntimeError(
-                        "targeted input metadata collection is pending"
-                    )
-        except (ReconstructionRuntimeError, UnknownObjectError) as exc:
-            raise SystemTaskError(str(exc)) from exc
-        return spec, dependencies, nested_holds
-
-    def _start_open_targeted_reconstruction(
-        self, task_id: TaskID, *, round: int = 0
-    ) -> Optional[TargetedReconstructionSession]:
-        """Preflight, renew, retire and atomically admit one selected execution."""
-
-        targeted = self._targeted_reconstruction_coordinator()
-        with self._state_lock:
-            failure = targeted.open_failure(task_id)
-        if failure is not None:
-            # Cleanup continues during shutdown, but a latched admission
-            # failure can never turn back into a new user-code execution.
-            self._fail_open_targeted_reconstruction(task_id, failure)
-            return None
-        renewal_required = False
-        proposed_attempt: AttemptID | None = None
-
-        def preview():
-            try:
-                return targeted.preview_start(task_id)
-            except TargetedReconstructionError as exc:
-                raise SystemTaskError(str(exc)) from exc
-
-        with self._state_lock:
-            if not self._accepting:
-                raise RuntimeShuttingDownError(
-                    "cannot start targeted reconstruction during shutdown"
-                )
-            session = targeted.current_session(task_id)
-            if session is None or session.phase is not TargetedSessionPhase.OPEN:
-                return
-            if any(
-                (object_id in getattr(self, "_task_finish_barriers", {})
-                 or self._has_late_replica_cleanup_locked(object_id))
-                for object_id in session.target_output_ids
-            ):
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            # Preview intentionally carries no executable owner CAS: old
-            # publication membership must survive a failed prerequisite.
-            proposal = preview()
-            inputs = self._targeted_lineage_inputs_locked(proposal)
-            proposed_attempt = proposal.execution.attempt_id
-            registry = getattr(self, "_foreign_lineage_registry", None)
-            renewal_required = (
-                registry is not None and registry.snapshot(task_id) is not None
-            )
-        if renewal_required:
-            assert proposed_attempt is not None
-            renewal = self._foreign_lineage_runtime.drive_renewal(
-                task_id, proposed_attempt
-            )
-            if renewal.disposition is ForeignLineageRenewalDisposition.WAITING:
-                if not self._accepting:
-                    raise RuntimeShuttingDownError(
-                        "cannot continue targeted reconstruction during shutdown"
-                    )
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            if renewal.disposition is ForeignLineageRenewalDisposition.FAILED:
-                raise SystemTaskError(
-                    renewal.failure
-                    or "foreign lineage renewal could not converge"
-                )
-        with self._state_lock:
-            if not self._accepting:
-                raise RuntimeShuttingDownError(
-                    "cannot retire targeted reconstruction during shutdown"
-                )
-            session = targeted.current_session(task_id)
-            if session is None or session.phase is not TargetedSessionPhase.OPEN:
-                return
-            if any(
-                (object_id in getattr(self, "_task_finish_barriers", {})
-                 or self._has_late_replica_cleanup_locked(object_id))
-                for object_id in session.target_output_ids
-            ):
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            if preview() != proposal:
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            if self._targeted_lineage_inputs_locked(proposal) != inputs:
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            if renewal_required:
-                assert proposed_attempt is not None
-                self._foreign_lineage_runtime.validate_renewal_ready(
-                    task_id, proposed_attempt
-                )
-        for output_id in proposal.target_output_ids:
-            if not self._retire_lost_output_memberships(output_id):
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-        with self._state_lock:
-            if not self._accepting:
-                raise RuntimeShuttingDownError(
-                    "cannot commit targeted reconstruction during shutdown"
-                )
-            session = targeted.current_session(task_id)
-            if session is None or session.phase is not TargetedSessionPhase.OPEN:
-                return
-            if any(object_id in getattr(self, "_task_finish_barriers", {})
-                   or self._has_late_replica_cleanup_locked(object_id)
-                   for object_id in session.target_output_ids):
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            # New targets can merge while the retirement RPC is in flight.
-            # They must pass their own preflight and cleanup on another turn,
-            # never be swept into an unreviewed START here.
-            if preview() != proposal:
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            if self._targeted_lineage_inputs_locked(proposal) != inputs:
-                self._defer_targeted_reconstruction(task_id, round)
-                return
-            if renewal_required:
-                self._foreign_lineage_runtime.validate_renewal_ready(
-                    task_id, proposed_attempt
-                )
-            try:
-                prepared = targeted.validate_start(task_id)
-                if prepared.session != proposal:
-                    self._defer_targeted_reconstruction(task_id, round)
-                    return
-                started = targeted.commit_start(prepared)
-            except TargetedReconstructionError as exc:
-                raise SystemTaskError(str(exc)) from exc
-            execution = started.execution
-            assert execution is not None
-            if renewal_required:
-                self._foreign_lineage_runtime.complete_renewal(
-                    task_id, execution.attempt_id
-                )
-            record = (
-                None if registry is None else registry.snapshot(task_id)
-            )
-            top_guards: list[_ForeignDependencyGuard] = []
-            nested_guards: list[_ForeignDependencyGuard] = []
-            if record is not None:
-                for edge in record.edges:
-                    guard = _ForeignDependencyGuard(
-                        edge.dependency_object_id, edge.owner_worker_id,
-                        edge.owner_address, edge.borrower_worker_id,
-                        "lineage:{}:{}".format(
-                            edge.task_id, edge.dependency_object_id
-                        ),
-                        edge.hold,
-                    )
-                    if edge.roles & ForeignLineageRole.TOP_LEVEL:
-                        top_guards.append(guard)
-                    if (
-                        edge.roles & ForeignLineageRole.NESTED
-                        and not edge.roles & ForeignLineageRole.TOP_LEVEL
-                    ):
-                        nested_guards.append(guard)
-            spec, dependencies, nested_holds = inputs
-            whole = self._reconstruction_coordinator()
-            dependency_hold = protocol.TaskReferenceHold(
-                protocol.TaskReferenceHoldKind.SUBMITTED,
-                spec.owner_worker_id, spec.task_id, execution.attempt_id,
-            )
-            retried_spec = whole.rewrite_nested_holds(
-                spec, dependency_hold
-            )
-            foreign_by_key = {
-                (guard.object_id, guard.owner_worker_id): guard
-                for guard in top_guards + nested_guards
-            }
-
-            def rewrite_foreign(argument: object) -> object:
-                if not isinstance(
-                    argument, (protocol.InlineArg, protocol.StoredArg)
-                ):
-                    return argument
-                return replace(
-                    argument, nested_refs=tuple(
-                        replace(
-                            transfer,
-                            hold=foreign_by_key[(
-                                transfer.object_id, transfer.owner_worker_id
-                            )].hold,
-                        )
-                        if (
-                            transfer.object_id, transfer.owner_worker_id
-                        ) in foreign_by_key else transfer
-                        for transfer in argument.nested_refs
-                    )
-                )
-
-            if record is not None:
-                retried_spec = replace(
-                    retried_spec,
-                    args=tuple(rewrite_foreign(value) for value in retried_spec.args),
-                    kwargs=tuple(
-                        (name, rewrite_foreign(value))
-                        for name, value in retried_spec.kwargs
-                    ),
-                )
-            for object_id in execution.target_output_ids:
-                self._stored_descriptors.pop(object_id, None)
-                self._object_waiter(object_id).event.clear()
-            installed: list[ObjectID] = []
-            try:
-                for dependency_id in dict.fromkeys(
-                    dependencies + nested_holds
-                ):
-                    self._owner_table.add_submitted_reference(
-                        dependency_id, dependency_hold
-                    )
-                    installed.append(dependency_id)
-            except BaseException:
-                for dependency_id in reversed(installed):
-                    self._owner_table.release_submitted_reference(
-                        dependency_id, dependency_hold
-                    )
-                raise
-            pending = _PendingTask(
-                execution.target_output_ids[0], retried_spec,
-                protected_dependencies=dependencies,
-                dependency_hold=dependency_hold,
-                nested_local_holds=tuple(
-                    value for value in nested_holds
-                    if value not in dependencies
-                ),
-                target_execution=execution,
-                reconstruction_origin_attempt=execution.attempt_id,
-                foreign_dependency_guards=tuple(top_guards),
-                nested_foreign_guards=tuple(nested_guards),
-            )
-            self._accepted_task_count += 1
-            self._install_task_finish_barrier_locked(pending)
-            self._submissions.put(pending)
-            self._completion.notify_all()
-            return started
 
     def _get_borrowed_object(
         self, ref: ObjectRef, timeout: Optional[float],
@@ -8895,14 +8255,6 @@ class CoreWorker:
         # incoming contained token.  Drive it before consulting distributed
         # liveness; otherwise the token would make shutdown return early and
         # the exact release obligation would never receive its shutdown pass.
-        with self._state_lock:
-            export_pin_releases = tuple(
-                getattr(self, "_export_pin_release_obligations", {})
-            )
-        for key in export_pin_releases:
-            self._drive_export_pin_release(key, schedule_retry=False)
-        if getattr(self, "_export_pin_release_obligations", {}):
-            return False
         if (
             self._owner_table.has_active_distributed_references()
             if preserve_owner_protocol
@@ -8957,14 +8309,6 @@ class CoreWorker:
         # reference mailbox, then re-evaluate distributed liveness from the
         # owner authority that the records may have changed.
         if not self._sync_node_deaths() or not self._sync_worker_deaths():
-            return False
-        with self._state_lock:
-            export_pin_releases = tuple(
-                getattr(self, "_export_pin_release_obligations", {})
-            )
-        for key in export_pin_releases:
-            self._drive_export_pin_release(key, schedule_retry=False)
-        if getattr(self, "_export_pin_release_obligations", {}):
             return False
         if (
             self._owner_table.has_active_distributed_references()
@@ -9070,6 +8414,7 @@ class CoreWorker:
             or getattr(self, "_protocol_unresolved", {})
             or getattr(self, "_inflight_submissions", 0)
             or getattr(self, "_inflight_puts", 0)
+            or getattr(self, "_put_handoffs", {})
             or getattr(self, "_inflight_borrow_ops", 0)
             or getattr(self, "_inflight_pg_control_ops", 0)
             or getattr(self, "_actor_control_ops", 0)
@@ -9077,8 +8422,8 @@ class CoreWorker:
             or self._has_late_replica_cleanup_locked()
             or self._owner_table.has_active_output_retirements()
             or getattr(self, "_output_retirement_work", {})
+            or getattr(self, "_output_node_cleanup", {})
             or getattr(self, "_task_finish_barriers", {})
-            or getattr(self, "_export_pin_release_obligations", {})
             or getattr(self, "_orphan_foreign_guard_releases", {})
             or getattr(self, "_foreign_guard_release_retries", {})
             or getattr(self, "_attempt_borrow_releases", {})
@@ -9245,6 +8590,8 @@ class CoreWorker:
         while True:
             self._poll_node_deaths_best_effort()
             self._poll_worker_deaths_best_effort()
+            for put_id in tuple(getattr(self, "_put_handoffs", {})):
+                self._drive_put_handoff_cleanup(put_id)
             for output_id in tuple(getattr(self, "_output_retirement_work", {})):
                 self._retire_lost_output_memberships(output_id)
             self._retry_orphan_foreign_guard_releases()
@@ -9256,6 +8603,8 @@ class CoreWorker:
                     stop_seen
                     and self._accepted_task_count == 0
                     and getattr(self, "_inflight_submissions", 0) == 0
+                    and getattr(self, "_inflight_puts", 0) == 0
+                    and not getattr(self, "_put_handoffs", {})
                     and not getattr(
                         self, "_orphan_foreign_guard_releases", {}
                     )
@@ -9264,8 +8613,6 @@ class CoreWorker:
                     )
                     and not getattr(self, "_active_task_finishes", set())
                     and not getattr(self, "_finishing_tasks", set())
-                    and not self._targeted_reconstruction_coordinator(
-                    ).active_task_ids()
                 )
             if complete:
                 for _dispatcher in self._dispatchers:
@@ -9286,91 +8633,14 @@ class CoreWorker:
                 if isinstance(item, _DelayedReadyTask):
                     self._schedule_delayed_ready(item)
                     continue
-                if isinstance(item, _DelayedTargetedReconstruction):
-                    self._schedule_delayed_ready(item)
-                    continue
                 if isinstance(item, _NodeDeathObserved):
                     self._classify_node_death(item)
-                    continue
-                if isinstance(item, _StartTargetedReconstruction):
-                    try:
-                        self._start_open_targeted_reconstruction(
-                            item.task_id, round=item.round
-                        )
-                    except BaseException as exc:
-                        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                            raise
-                        self._fail_open_targeted_reconstruction(
-                            item.task_id, exc
-                        )
                     continue
                 assert isinstance(item, _PendingTask)
                 self._admit_or_block(item)
             finally:
                 self._submissions.task_done()
 
-    def _fail_open_targeted_reconstruction(
-        self, task_id: TaskID, exc: BaseException
-    ) -> None:
-        """Retire old selected effects before exposing an admission error.
-
-        The terminal choice is latched independently of the cleanup ACKs.
-        Otherwise a failed prerequisite either loses the old GC identity or
-        a later retry can run user code after failure cleanup has started.
-        """
-
-        error = exc if isinstance(exc, BaseException) else SystemTaskError(str(exc))
-        with self._state_lock:
-            targeted = self._targeted_reconstruction_coordinator()
-            session = targeted.current_session(task_id)
-            if session is None:
-                return
-            if session.phase is TargetedSessionPhase.STARTED and (
-                session.execution is not None
-            ):
-                try:
-                    failure = targeted.validate_terminal_failure(
-                        task_id, session.execution.attempt_id, error
-                    )
-                    targeted.commit_terminal_failure(failure)
-                except Exception:
-                    return
-                for object_id in session.target_output_ids:
-                    self._stored_descriptors.pop(object_id, None)
-                    self._wake_object(object_id)
-                self._completion.notify_all()
-                return
-            error = targeted.begin_open_failure(task_id, error)
-            if any(object_id in getattr(self, "_task_finish_barriers", {})
-                   or self._has_late_replica_cleanup_locked(object_id)
-                   for object_id in session.target_output_ids):
-                self._defer_targeted_reconstruction(task_id, 1)
-                return
-        for object_id in session.target_output_ids:
-            if not self._retire_lost_output_memberships(object_id):
-                self._defer_targeted_reconstruction(task_id, 1)
-                return
-        with self._state_lock:
-            current = targeted.current_session(task_id)
-            if current is None or current.phase is not TargetedSessionPhase.OPEN:
-                return
-            if (current != session
-                    or any(object_id in getattr(self, "_task_finish_barriers", {})
-                           or self._has_late_replica_cleanup_locked(object_id)
-                           for object_id in current.target_output_ids)):
-                self._defer_targeted_reconstruction(task_id, 1)
-                return
-            try:
-                failed_ids = targeted.fail_open(task_id, error)
-            except Exception:
-                self._defer_targeted_reconstruction(task_id, 1)
-                return
-            for object_id in failed_ids:
-                self._stored_descriptors.pop(object_id, None)
-                self._wake_object(object_id)
-            self._completion.notify_all()
-        for object_id in failed_ids:
-            self._enqueue_inline_gc_check(object_id)
 
     def _admit_or_block(self, pending: _PendingTask) -> None:
         if not self._is_current_task_pending(pending):
@@ -9633,7 +8903,7 @@ class CoreWorker:
                 self._admit_or_block(pending)
 
     def _schedule_delayed_ready(
-        self, delayed: _DelayedReadyTask | _DelayedTargetedReconstruction
+        self, delayed: _DelayedReadyTask
     ) -> None:
         self._capacity_sequence += 1
         self._delayed_ready.put((
@@ -9652,10 +8922,7 @@ class CoreWorker:
             popped_due, popped_sequence, popped = self._delayed_ready.get_nowait()
             assert (popped_due, popped_sequence) == (due_at, sequence)
             self._delayed_ready.task_done()
-            if isinstance(popped, _DelayedTargetedReconstruction):
-                self._submissions.put(popped.event)
-            else:
-                self._ready_tasks.put(popped.ready)
+            self._ready_tasks.put(popped.ready)
 
     def _next_coordinator_timeout(self) -> Optional[float]:
         now = time.monotonic()
@@ -9680,6 +8947,8 @@ class CoreWorker:
             if getattr(self, "_orphan_foreign_guard_releases", {}):
                 candidates.append(now + _FOREIGN_DEPENDENCY_POLL_SECONDS)
             if getattr(self, "_output_retirement_work", {}):
+                candidates.append(now + _FOREIGN_DEPENDENCY_POLL_SECONDS)
+            if getattr(self, "_put_handoffs", {}):
                 candidates.append(now + _FOREIGN_DEPENDENCY_POLL_SECONDS)
         if any(
             pending.foreign_dependency_guards
@@ -9788,8 +9057,8 @@ class CoreWorker:
                     continue
                 if snapshot.current_attempt != pending.spec.attempt_id:
                     # Retry/reconstruction can be admitted after a lane's
-                    # terminal observation.  Validate only execution outputs:
-                    # healthy targeted siblings may keep their old attempts.
+                    # terminal observation. Validate the current output attempt
+                    # before closing this older execution's finish barrier.
                     return False
             if pending.task_key in getattr(
                 self, "_protocol_unresolved", {}
@@ -9834,7 +9103,7 @@ class CoreWorker:
                 # These RETAINED credentials are producer-lineage holds, not
                 # attempt-execution holds.  They survive task success/failure
                 # and every SYSTEM retry, and are released only after final
-                # sibling metadata collection.
+                # output metadata collection.
                 already_released.update(foreign_guards)
             for key, guard in foreign_guards.items():
                 if key in already_released:
@@ -10082,13 +9351,7 @@ class CoreWorker:
                 inventory = protocol.revalidate_lease_dependency_inventory(location_state.inventory)
                 request = location_state.lease_request
                 cancel = location_state.cancellation_reply
-                if (inventory.lease_request != request or request.dependencies != dependencies
-                        or request.task_id != pending.task_id or request.attempt_id != pending.spec.attempt_id
-                        or request.requester_worker_id != self.worker_id or request.return_ids != pending.output_ids
-                        or request.scheduling_key != pending.spec.scheduling_key
-                        or request.target_execution != pending.target_execution
-                        or not cancel.accepted or not cancel.cancelled
-                        or cancel.dependency_inventory != inventory):
+                if ((inventory.lease_request != request) or (request.dependencies != dependencies) or (request.task_id != pending.task_id) or (request.attempt_id != pending.spec.attempt_id) or (request.requester_worker_id != self.worker_id) or (request.return_ids != pending.output_ids) or (request.scheduling_key != pending.spec.scheduling_key) or (not cancel.accepted) or (not cancel.cancelled) or (cancel.dependency_inventory != inventory)):
                     raise SystemTaskError("ungranted custody changed its frozen attempt or inventory")
             try:
                 self._report_granted_dependency_locations(pending, prepared, dependencies, location_state)
@@ -10117,12 +9380,7 @@ class CoreWorker:
             raise SystemTaskError(
                 "prepared TaskSpec changed the placement-group scheduling key"
             )
-        if push_state is not None and (
-            push_state.push.spec.scheduling_key != pending.spec.scheduling_key
-            or push_state.grant.scheduling_key != pending.spec.scheduling_key
-            or push_state.push.target_execution != pending.target_execution
-            or push_state.grant.target_execution != pending.target_execution
-        ):
+        if (push_state is not None) and ((push_state.push.spec.scheduling_key != pending.spec.scheduling_key) or (push_state.grant.scheduling_key != pending.spec.scheduling_key)):
             raise SystemTaskError(
                 "PushTask replay changed the placement-group scheduling key"
             )
@@ -10131,12 +9389,8 @@ class CoreWorker:
             # requires a new lease.  Never carry a prior attempt's grant/report
             # state across that boundary.
             if (
-                location_state.grant.task_id != pending.spec.task_id
-                or location_state.grant.attempt_id != pending.spec.attempt_id
-                or location_state.grant.scheduling_key
-                != pending.spec.scheduling_key
-                or location_state.grant.target_execution
-                != pending.target_execution
+                (location_state.grant.task_id != pending.spec.task_id) or (location_state.grant.attempt_id != pending.spec.attempt_id) or (location_state.grant.scheduling_key
+                != pending.spec.scheduling_key)
             ):
                 raise SystemTaskError(
                     "location-report replay state belongs to another task attempt or scheduling key"
@@ -10237,8 +9491,9 @@ class CoreWorker:
                     dependencies=dependencies,
                     return_ids=pending.output_ids,
                     scheduling_key=scheduling_key,
-                    target_execution=pending.target_execution,
+
                     dependency_owner_routes=self._dependency_owner_routes(pending, dependencies),
+                    requester_owner_address=self.owner_address,
                 )
                 if request_address is None:
                     dead_terminal = self._consume_node_death_at_lane(
@@ -10434,9 +9689,7 @@ class CoreWorker:
 
             assert grant is not None and granting_node_address is not None
             if (
-                grant.task_id != pending.spec.task_id
-                or grant.attempt_id != pending.spec.attempt_id
-                or grant.target_execution != pending.target_execution
+                (grant.task_id != pending.spec.task_id) or (grant.attempt_id != pending.spec.attempt_id)
             ):
                 raise SystemTaskError(
                     "worker grant identity changed before location reporting"
@@ -10514,7 +9767,7 @@ class CoreWorker:
                 dependencies=grant.dependencies,
                 task_spec=spec,
                 attempt_id=pending.spec.attempt_id,
-                target_execution=pending.target_execution,
+
             )
             if not isinstance(push_message, protocol.PushTask):
                 raise SystemTaskError("could not construct a typed PushTask")
@@ -10620,9 +9873,9 @@ class CoreWorker:
             self._validate_task_reply_identity(pending, worker_id, reply)
             self._validate_ordinary_reply_domain(reply)
             # A Node-completed INLINE publication carries its exact bytes and
-            # graph identity in the reply.  Once received, publishing-Node death
+            # handoff identity in the reply. Once received, publishing-Node death
             # cannot turn that irreversible hand-off into an ordinary retry;
-            # Core must commit/adopt it (or release the committed graph).
+            # Core must resolve that exact handoff and its child holds.
             if reply.output_publication is None:
                 dead_terminal = self._consume_node_death_at_lane(
                     pending, grant.node_id
@@ -10630,19 +9883,12 @@ class CoreWorker:
                 if dead_terminal is not None:
                     return dead_terminal
             # Ordinary TaskReply converges the remote execution here.  A
-            # completed stored publication has a second remote protocol; keep
+            # completed publication still needs its owner adoption ACK; keep
             # the Push fence continuously until `_publish_reply` overwrites it
             # with the exact adoption obligation.
             if reply.output_publication is None:
                 self._clear_protocol_unresolved(pending)
             if reply.status is protocol.TaskReplyStatus.SYSTEM_ERROR:
-                if pending.target_execution is not None:
-                    return self._resolve_ambiguous_push_outcome(
-                        pending, _PushRequestState(
-                            push, grant, granting_node_address, worker_address,
-                            lease_request=request,
-                        )
-                    )
                 return self._retry_explicit_system_failure(pending, reply)
             with self._state_lock:
                 self._registered_functions.add(function_cache_key)
@@ -11019,8 +10265,6 @@ class CoreWorker:
         if reply.output_publication is None:
             self._clear_protocol_unresolved(pending)
         if reply.status is protocol.TaskReplyStatus.SYSTEM_ERROR:
-            if pending.target_execution is not None:
-                return self._resolve_ambiguous_push_outcome(pending, state)
             return self._retry_explicit_system_failure(pending, reply)
         function_cache_key = (state.push.worker_id, pending.spec.function)
         with self._state_lock:
@@ -11057,7 +10301,7 @@ class CoreWorker:
             owner_worker_id=pending.spec.owner_worker_id,
             object_ids=pending.output_ids,
             scheduling_key=pending.spec.scheduling_key,
-            target_execution=pending.target_execution,
+
         )
         dead_terminal = self._consume_node_death_at_lane(
             pending, state.grant.node_id
@@ -11087,7 +10331,7 @@ class CoreWorker:
             )
         if reply.cleanup_pending:
             # The worker/CPU can already be released while its output saga
-            # still owes child/graph/replica cleanup. The exact Node ACK is
+            # still owes child-hold and replica cleanup. The exact Node ACK is
             # required before any new attempt, even after Worker loss.
             return self._schedule_ambiguous_push(
                 pending, state.push.spec, state.push.dependencies,
@@ -11125,7 +10369,7 @@ class CoreWorker:
                 recovered = protocol.TaskReply(
                     pending.task_id, pending.spec.attempt_id, state.push.worker_id,
                     protocol.TaskReplyStatus.SUCCEEDED, output_publication.results,
-                    target_execution=pending.target_execution, output_publication=output_publication,
+                     output_publication=output_publication,
                 )
                 return self._publish_reply(pending, recovered, expected_node_id=reply.node_id, expected_lease_id=state.grant.lease_id)
             output_completion = getattr(reply, "output_completion", None)
@@ -11355,18 +10599,7 @@ class CoreWorker:
         except Exception:
             return False
         return (
-            isinstance(reply, protocol.GetWorkerLeaseOutcomeReply)
-            and reply.lease_id == request.lease_id
-            and reply.task_id == request.task_id
-            and reply.attempt_id == request.attempt_id
-            and reply.executor_worker_id == request.executor_worker_id
-            and reply.owner_worker_id == request.owner_worker_id
-            and reply.object_ids == request.object_ids
-            and reply.node_id == state.grant.node_id
-            and reply.scheduling_key == request.scheduling_key
-            and state.grant.scheduling_key == request.scheduling_key
-            and reply.target_execution == request.target_execution
-            and state.grant.target_execution == request.target_execution
+            (isinstance(reply, protocol.GetWorkerLeaseOutcomeReply)) and (reply.lease_id == request.lease_id) and (reply.task_id == request.task_id) and (reply.attempt_id == request.attempt_id) and (reply.executor_worker_id == request.executor_worker_id) and (reply.owner_worker_id == request.owner_worker_id) and (reply.object_ids == request.object_ids) and (reply.node_id == state.grant.node_id) and (reply.scheduling_key == request.scheduling_key) and (state.grant.scheduling_key == request.scheduling_key)
         )
 
     def _handle_ambiguous_lease(
@@ -11470,13 +10703,7 @@ class CoreWorker:
         terminal_error: BaseException,
     ) -> bool:
         if (
-            lease_request.lease_id != grant.lease_id
-            or lease_request.task_id != grant.task_id
-            or lease_request.attempt_id != grant.attempt_id
-            or lease_request.requester_worker_id != self.worker_id
-            or lease_request.scheduling_key != grant.scheduling_key
-            or lease_request.target_execution != grant.target_execution
-            or grant.target_execution != pending.target_execution
+            (lease_request.lease_id != grant.lease_id) or (lease_request.task_id != grant.task_id) or (lease_request.attempt_id != grant.attempt_id) or (lease_request.requester_worker_id != self.worker_id) or (lease_request.scheduling_key != grant.scheduling_key)
         ):
             raise SystemTaskError(
                 "known grant does not match its frozen lease request"
@@ -11630,11 +10857,7 @@ class CoreWorker:
                 self._validate_lease_reply_identity(request, historical)
                 self._require_lease_grant(historical, expected_node_id=cancellation.target_node_id)
                 self._validate_granted_dependencies(request.dependencies, historical)
-                if (request.dependencies != dependencies or request.task_id != pending.task_id
-                        or request.attempt_id != pending.spec.attempt_id or request.requester_worker_id != self.worker_id
-                        or request.return_ids != pending.output_ids or request.target_execution != pending.target_execution
-                        or request.scheduling_key != pending.spec.scheduling_key
-                        or (cancellation.known_grant is not None and historical != cancellation.known_grant)):
+                if ((request.dependencies != dependencies) or (request.task_id != pending.task_id) or (request.attempt_id != pending.spec.attempt_id) or (request.requester_worker_id != self.worker_id) or (request.return_ids != pending.output_ids) or (request.scheduling_key != pending.spec.scheduling_key) or ((cancellation.known_grant is not None) and (historical != cancellation.known_grant))):
                     return replay_cancel()
             elif cancellation.known_grant is not None or (dependencies and reply.released):
                 # A known committed grant cannot disappear from an ACK. An
@@ -11732,40 +10955,6 @@ class CoreWorker:
                 return False
             if deferred is not None:
                 self._clear_protocol_unresolved(pending)
-            if pending.target_execution is not None:
-                targeted = self._targeted_reconstruction_coordinator()
-                try:
-                    retry = targeted.retry_system_failure(
-                        pending.task_id, pending.spec.attempt_id, error
-                    )
-                except TargetedReconstructionError:
-                    try:
-                        failure = targeted.validate_terminal_failure(
-                            pending.task_id, pending.spec.attempt_id, error
-                        )
-                        targeted.commit_terminal_failure(failure)
-                    except TargetedReconstructionError as exc:
-                        raise SystemTaskError(str(exc)) from exc
-                    for object_id in pending.output_ids:
-                        self._stored_descriptors.pop(object_id, None)
-                        self._wake_object(object_id)
-                    return True
-                assert retry.execution is not None
-                retried = replace(
-                    pending,
-                    spec=replace(
-                        pending.spec, attempt_id=retry.execution.attempt_id
-                    ),
-                    target_execution=retry.execution,
-                )
-                self._install_task_finish_barrier_locked(retried)
-                self._submissions.put(retried)
-                self._emit(
-                    "task_retried", task_id=str(pending.task_id),
-                    old_attempt_id=str(pending.spec.attempt_id),
-                    attempt_id=str(retry.execution.attempt_id),
-                )
-                return False
             recovery = self._recovery_manager()
             coordinator = self._reconstruction_coordinator()
             try:
@@ -11788,7 +10977,7 @@ class CoreWorker:
                 )
                 # Both authorities are now fully preflighted.  Their validated
                 # commits contain assignments only and cannot consume retry
-                # budget without advancing every output sibling.
+                # budget without advancing the logical output attempt.
                 self._owner_table.commit_validated_advance_task_outputs(
                     owner_plan
                 )
@@ -11798,7 +10987,13 @@ class CoreWorker:
                     spec=replace(pending.spec, attempt_id=decision.attempt_id),
                 )
                 self._install_task_finish_barrier_locked(retried)
-                self._submissions.put(retried)
+                if reconstruction_retry:
+                    coordinator.handoff_retry(
+                        pending.task_id, pending.spec.attempt_id, decision.attempt_id,
+                        lambda: self._submissions.put(retried),
+                    )
+                else:
+                    self._submissions.put(retried)
                 self._emit(
                     "task_retried",
                     task_id=str(pending.spec.task_id),
@@ -11838,16 +11033,6 @@ class CoreWorker:
             self._reconstruction = coordinator
         return coordinator
 
-    def _targeted_reconstruction_coordinator(
-        self,
-    ) -> TargetedReconstructionCoordinator:
-        coordinator = getattr(self, "_targeted_reconstruction", None)
-        if coordinator is None:
-            coordinator = TargetedReconstructionCoordinator(
-                self._recovery_manager(), self._owner_table
-            )
-            self._targeted_reconstruction = coordinator
-        return coordinator
 
     def _ensure_foreign_lineage_runtime(self) -> ForeignLineageRuntime:
         """Lazily compose lineage state for narrow ``object.__new__`` tests."""
@@ -11892,9 +11077,7 @@ class CoreWorker:
         expected = (request.lease_id, request.task_id, request.attempt_id)
         actual = (reply.lease_id, reply.task_id, reply.attempt_id)
         if (
-            actual != expected
-            or reply.scheduling_key != request.scheduling_key
-            or reply.target_execution != request.target_execution
+            (actual != expected) or (reply.scheduling_key != request.scheduling_key)
         ):
             raise SystemTaskError(
                 "worker lease reply identity or scheduling key does not match its request"
@@ -11929,10 +11112,7 @@ class CoreWorker:
         if not isinstance(reply, protocol.TaskReply):
             raise SystemTaskError("worker returned an invalid task reply")
         if (
-            reply.task_id != pending.spec.task_id
-            or reply.attempt_id != pending.spec.attempt_id
-            or reply.worker_id != worker_id
-            or reply.target_execution != pending.target_execution
+            (reply.task_id != pending.spec.task_id) or (reply.attempt_id != pending.spec.attempt_id) or (reply.worker_id != worker_id)
         ):
             raise SystemTaskError(
                 "worker task reply identity does not match the pushed task"
@@ -11943,7 +11123,7 @@ class CoreWorker:
         """Reject obsolete success formats before clearing the Push fence."""
         if (reply.status is protocol.TaskReplyStatus.SUCCEEDED
                 and type(reply.output_publication) is not OutputPublicationEnvelope):
-            raise SystemTaskError("ordinary Task success requires its exact selected-output envelope")
+            raise SystemTaskError("ordinary Task success requires its exact single-output envelope")
 
     def _decode_reply(
         self,
@@ -12004,8 +11184,8 @@ class CoreWorker:
 
         ``ObjectOwnerTable`` independently freezes the same identity.  This
         Core-side check protects the owner table's immutable canonical result:
-        replay that changes any sibling cannot overwrite even one existing
-        descriptor before the owner batch validation rejects the manifest.
+        a changed replay cannot overwrite the existing descriptor before owner
+        publication validation rejects the manifest.
         The producing attempt is bound by the owner snapshot; the descriptor
         itself binds object, owner, original publication node, storage, size,
         and checksum.  ``_stored_descriptors`` is deliberately not consulted:
@@ -12165,170 +11345,120 @@ class CoreWorker:
                 tickets.discard(identity)
 
     def _drive_output_node_loss_once(self, pending: _PendingTask, obligation: _OutputNodeLossObligation) -> bool:
-        from . import output_protocol as wire
-        from .output_recovery import (
-            OutputRecoveryAction, OutputRecoveryOwnerDecision, OutputRecoveryOwnerDecisionRecord, OutputSlotDecision,
-        )
+        from .output_handoff import NodeLostOutputResolution
         identity = obligation.publication_id
-        with self._state_lock:
-            if self._output_replay_is_obsolete_locked(pending, identity):
-                return True
-            self._mark_protocol_unresolved(pending, "output_node_loss", obligation, target_node_id=obligation.node_death.node_id)
         try:
-            query = wire.GetOutputNodeLoss(identity, self.worker_id, obligation.node_death)
-            reply = self._rpc(self.gcs_address, wire.GET_OUTPUT_NODE_LOSS_HANDLER, query)
-            if type(reply) is not wire.GetOutputNodeLossReply or reply.request != query:
-                raise SystemTaskError("invalid output Node-loss query reply")
-            reply = replace(reply)
             with self._state_lock:
                 if self._output_replay_is_obsolete_locked(pending, identity):
                     return True
-            if not reply.found:
-                # Exact frozen workset absence proves no publication child
-                # effect could have started, unless local authoritative custody
-                # already proves Complete. Contradictory history is not retry
-                # permission and cannot erase that known-success witness.
-                with self._state_lock:
-                    known = getattr(self, "_output_result_custody", {}).get(identity, obligation.envelope)
-                    known_witness = self._known_output_completion_locked(pending, identity)
-                    if known is not None or known_witness is not None:
-                        raise SystemTaskError("absent publication contradicts locally known Complete")
-                self._clear_protocol_unresolved(pending)
-                return self._retry_system_failure(pending, NodeDiedError("publisher died before output intent"))
-            work, snapshot = reply.work, reply.snapshot
-            envelope = obligation.envelope
-            with self._state_lock:
-                envelope = getattr(self, "_output_result_custody", {}).get(identity, envelope)
-                known_witness = (envelope.complete if envelope is not None
-                                 else self._known_output_completion_locked(pending, identity))
-                if known_witness is not None and work.action is OutputRecoveryAction.PRECOMPLETE_ROLLBACK:
-                    raise SystemTaskError("pre-Complete recovery contradicts locally known Complete")
-                if envelope is None and known_witness is not None:
-                    # Adopted owner fields are real custody even if a scratch
-                    # handoff cache was retired before this loss notification.
-                    envelope = self._locally_retained_output_completion(
-                        pending, known_witness, allow_lost_stored=True,
-                    )
-                    if envelope is not None and identity not in getattr(self, "_output_loss_choices", {}):
-                        self._output_result_custody[identity] = envelope
-            if snapshot.owner_decision is None and work.action is not OutputRecoveryAction.PRECOMPLETE_ROLLBACK:
-                with self._state_lock:
-                    # Latch custody after the query, not from a stale queued
-                    # obligation captured before another lane received bytes.
-                    choices = getattr(self, "_output_loss_choices", None)
-                    if choices is None:
-                        choices = {}
-                        self._output_loss_choices = choices
-                    decision = choices.get(identity)
-                    if decision is None:
-                        envelope = getattr(self, "_output_result_custody", {}).get(identity, envelope)
-                        complete = snapshot.complete or (None if envelope is None else envelope.complete)
-                        vector = tuple(OutputSlotDecision(
-                            index, slot.object_id,
-                            OutputRecoveryOwnerDecision.KEEP if (
-                                envelope is not None and slot.tier is protocol.ResultStorage.INLINE
-                                or complete is not None and self._owner_table.surviving_output_locations(
-                                    work.manifest, index, unavailable_nodes=tuple(getattr(self, "_dead_nodes", {})),
-                                )
-                            )
-                            else OutputRecoveryOwnerDecision.DROP,
-                        ) for index, slot in enumerate(work.manifest.slots))
-                        decision = OutputRecoveryOwnerDecisionRecord(
-                            identity, work.manifest.manifest_digest, self.worker_id,
-                            "owner-node-loss:{}:{}".format(obligation.node_death.detection_id, identity.graph_transaction_id),
-                            vector, complete,
+                self._mark_protocol_unresolved(pending, 'output_node_loss', obligation, target_node_id=obligation.node_death.node_id)
+                table = self._output_handoff_table()
+                handoff = table.query(identity)
+                envelope = getattr(self, '_output_result_custody', {}).get(identity, obligation.envelope)
+                if handoff is None or handoff.manifest is None:
+                    # No owner registration ACK means no authorized child effect.
+                    table.abort(identity, 'unregistered publisher Node died')
+                    self._clear_protocol_unresolved(pending)
+                    return self._retry_system_failure(pending, NodeDiedError('publisher died before owner handoff registration'))
+                manifest = handoff.manifest
+                if manifest.header.owner_worker_id != self.worker_id or manifest.publication_id.execution != pending.execution:
+                    raise SystemTaskError('Node-loss handoff changed owner execution')
+                complete = handoff.complete or (None if envelope is None else envelope.complete)
+                if complete is not None and handoff.complete is None:
+                    table.record_complete(complete)
+                works = getattr(self, '_output_node_cleanup', None)
+                if works is None:
+                    works = self._output_node_cleanup = {}
+                work = works.get(identity)
+                if work is None:
+                    slot = manifest.slots[0]
+                    keep = bool(complete is not None and (
+                        envelope is not None and slot.tier is protocol.ResultStorage.INLINE
+                        or self._owner_table.surviving_output_locations(
+                            manifest, 0, unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
                         )
-                        choices[identity] = decision
-                request = wire.DecideOutputNodeLoss(work, decision)
-                result = self._rpc(self.gcs_address, wire.DECIDE_OUTPUT_NODE_LOSS_HANDLER, request)
-                if type(result) is not wire.OutputNodeLossReply or result.request != request:
-                    raise SystemTaskError("invalid output Node-loss owner decision ACK")
-                result = replace(result)
-                snapshot = result.snapshot
-            if snapshot.resolution is None:
-                request = wire.ProgressOutputNodeLoss(work)
-                result = self._rpc(self.gcs_address, wire.PROGRESS_OUTPUT_NODE_LOSS_HANDLER, request)
-                if type(result) is not wire.OutputNodeLossReply or result.request != request:
-                    raise SystemTaskError("invalid output Node-loss progress ACK")
-                result = replace(result)
-                snapshot = result.snapshot
-            if snapshot.resolution is None:
-                raise SystemTaskError("output Node-loss cleanup remains pending")
-            resolution = snapshot.resolution
+                    ))
+                    work = {'manifest': manifest, 'complete': complete, 'keep': keep, 'acks': {}}
+                    works[identity] = work
+                    self._output_loss_choices = getattr(self, '_output_loss_choices', {})
+                    self._output_loss_choices[identity] = keep
+                    if not keep and handoff.phase is not OutputHandoffPhase.ADOPTED:
+                        table.abort(identity, 'publishing Node died before payload adoption')
+            if not work['keep']:
+                for transfer in manifest.slots[0].transfers:
+                    for hold in (transfer.final_hold, transfer.provisional_hold):
+                        request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
+                        if request in work['acks']:
+                            continue
+                        with self._state_lock:
+                            owner_death = self._owner_table.dead_worker_record(transfer.contained_owner_worker_id)
+                        if owner_death is not None:
+                            work['acks'][request] = owner_death
+                            continue
+                        reply = self._borrow_rpc(transfer.contained_owner_address, _RELEASE_CONTAINED_REFERENCE_HANDLER, request)
+                        if (type(reply) is not protocol.ReleaseContainedReferenceReply or not reply.accepted
+                                or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
+                            raise SystemTaskError('Node-loss child release changed exact identity')
+                        work['acks'][request] = replace(reply)
+            resolution = NodeLostOutputResolution(
+                identity, manifest.manifest_digest, self.worker_id, obligation.node_death,
+                complete=work['complete'], keep=work['keep'], cleanup=tuple(dict.fromkeys(work['acks'].values())),
+            )
             with self._state_lock:
-                if resolution.kept_slots:
-                    envelope = getattr(self, "_output_result_custody", {}).get(identity, envelope)
                 if self._output_replay_is_obsolete_locked(pending, identity):
                     return True
                 self._owner_table.resolve_output_node_loss(
-                    work.manifest, resolution, envelope if resolution.kept_slots else None,
-                    unavailable_nodes=tuple(getattr(self, "_dead_nodes", {})),
+                    manifest, resolution, envelope if work['keep'] else None,
+                    unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
                 )
-                for slot in work.manifest.slots:
-                    current = self._owner_table.snapshot(slot.object_id)
-                    locations = tuple(node for node in current.locations if not self._node_is_dead(node))
-                    if (current.state is ObjectState.READY_STORED and locations
-                            and current.canonical_stored_result is not None):
-                        self._stored_descriptors[slot.object_id] = replace(
-                            current.canonical_stored_result, node_id=min(locations),
-                        )
-                    else:
-                        self._stored_descriptors.pop(slot.object_id, None)
+                current = self._owner_table.snapshot(pending.object_id)
+                if work['keep'] and current.state in (ObjectState.READY_INLINE, ObjectState.READY_STORED):
+                    # The local resolution adopted surviving bytes. LOST is
+                    # deliberately not a payload-adoption acknowledgement.
+                    proof = OutputPublicationAdoptionProof(
+                        resolution.complete, self.worker_id,
+                        'output-owner:{}:{}'.format(identity.transaction_id, manifest.manifest_digest),
+                    )
+                    self._output_handoff_table().adopt(proof)
+                if current.state is ObjectState.READY_STORED and current.locations:
+                    self._stored_descriptors[pending.object_id] = replace(current.canonical_stored_result, node_id=min(current.locations))
+                else:
+                    self._stored_descriptors.pop(pending.object_id, None)
                 if resolution.complete is not None:
                     recovery = self._recovery_manager()
                     record = recovery.task_record(pending.task_id)
-                    repair_current = record.current_attempt == pending.spec.attempt_id
-                    if repair_current and record.state.value != "SUCCEEDED":
+                    if record.state.value != 'SUCCEEDED':
                         transition = recovery.validate_task_success(pending.task_id, pending.spec.attempt_id)
                         if transition.decision.action is not RecoveryAction.ACCEPT_SUCCESS:
-                            raise SystemTaskError("recovery fenced late output loss resolution")
+                            raise SystemTaskError('owner fenced known-success Node-loss receipt')
                         recovery.commit_validated_transition(transition)
-                    for output_id in pending.output_ids:
-                        self._wake_object(output_id)
-                    ordinary = getattr(self, "_reconstruction", None)
-                    if ordinary is not None and pending.target_execution is None:
-                        ordinary.complete(pending.task_id, pending.spec.attempt_id)
-                    if repair_current and pending.target_execution is not None:
-                        promoted = self._targeted_reconstruction_coordinator().complete_lost_output_publication(
-                            pending.task_id, pending.spec.attempt_id
-                        )
-                        if promoted is not None:
-                            self._submissions.put(_StartTargetedReconstruction(promoted.task_id))
+                    self._reconstruction_coordinator().complete(pending.task_id, pending.spec.attempt_id)
+                    self._wake_object(pending.object_id)
                 self._clear_protocol_unresolved(pending)
-                completed = getattr(self, "_output_loss_completed", None)
-                if completed is None:
-                    completed = set()
-                    self._output_loss_completed = completed
-                if resolution.complete is not None:
-                    completed.add(identity)
-                getattr(self, "_output_result_custody", {}).pop(identity, None)
+                self._output_loss_completed = getattr(self, '_output_loss_completed', set())
+                self._output_loss_completed.add(identity)
+                getattr(self, '_output_result_custody', {}).pop(identity, None)
+                works.pop(identity, None)
             if resolution.complete is None:
-                terminal = self._retry_system_failure(pending, NodeDiedError("publisher completion unknown after exact cleanup"))
-                with self._state_lock:
-                    completed.add(identity)
-                return terminal
+                return self._retry_system_failure(pending, NodeDiedError('publisher completion unknown after exact child cleanup'))
             return True
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception:
             retried = replace(obligation, round=obligation.round + 1)
             with self._state_lock:
-                if self._output_replay_is_obsolete_locked(pending, identity):
-                    return True
-                self._mark_protocol_unresolved(pending, "output_node_loss_wait", retried, target_node_id=obligation.node_death.node_id)
-                delay = min(_PUSH_RETRY_MAX_SECONDS, _PUSH_RETRY_BASE_SECONDS * 2 ** min(retried.round, 8))
+                self._mark_protocol_unresolved(pending, 'output_node_loss_wait', retried, target_node_id=obligation.node_death.node_id)
                 self._submissions.put(_DelayedReadyTask(
-                    _ReadyTask(pending, pending.spec, output_node_loss=retried), time.monotonic() + delay
+                    _ReadyTask(pending, pending.spec, output_node_loss=retried), time.monotonic() + 0.05,
                 ))
             return False
 
     def _output_replay_is_obsolete_locked(self, pending, identity) -> bool:
         """Fence old work at each local boundary, including after RPC.
 
-        A targeted successor may advance only a formerly healthy sibling.
-        Checking this execution's output epochs alone cannot detect that task
-        attempt change; the recovery authority and exact task marker also
-        participate.  Never clear a successor's marker here.
+        The recovery authority, exact task marker and current object attempt
+        must all identify this execution. Never clear a successor's marker
+        when an old reply arrives.
         """
         if (pending.task_key in getattr(self, "_finished_tasks", set())
                 or identity in getattr(self, "_output_loss_completed", set())):
@@ -12340,29 +11470,7 @@ class CoreWorker:
         if recovery is not None:
             record = recovery.task_record(pending.task_id)
             if record.current_attempt != pending.spec.attempt_id:
-                # Another targeted session can advance a disjoint sibling
-                # while this committed batch still owes adoption ACKs.  Its
-                # exact marker/finish barrier retain only that metadata tail;
-                # an arbitrary old receipt alone cannot keep work alive.
-                retained_tail = (
-                    unresolved is not None
-                    and isinstance(unresolved.obligation, (_OutputAdoptionObligation, _OutputNodeLossObligation))
-                    and unresolved.obligation.envelope is not None
-                    and unresolved.obligation.envelope.publication_id == identity
-                    and pending.target_execution is not None
-                    and all((barrier := getattr(self, "_task_finish_barriers", {}).get(output_id)) is not None
-                            and barrier.execution == pending.execution
-                            and barrier.task_key == pending.task_key
-                            and barrier.dependency_hold == pending.dependency_hold
-                            for output_id in pending.output_ids)
-                )
-                if not retained_tail:
-                    return True
-                receipt = self._owner_table.output_owner_publication_receipt(
-                    OutputOwnerPublicationPlan(pending.execution, unresolved.obligation.envelope)
-                )
-                if receipt is None or not receipt.committed:
-                    return True
+                return True
         return any(self._owner_table.contains(output_id)
                    and self._owner_table.snapshot(output_id).current_attempt != pending.spec.attempt_id
                    for output_id in pending.output_ids)
@@ -12427,7 +11535,7 @@ class CoreWorker:
     def _drive_output_publication_adoption(
         self, pending: _PendingTask, obligation: _OutputAdoptionObligation,
     ) -> bool:
-        """Adopt one Complete through the shared graph and one owner batch CAS.
+        """Adopt one Complete through the registered handoff and owner CAS.
 
         The retained envelope is the sole payload custody.  Every remote call
         replays exact metadata, and a failed acknowledgement keeps the task's
@@ -12454,46 +11562,19 @@ class CoreWorker:
             death = getattr(self, "_dead_nodes", {}).get(obligation.node_id)
         proof = OutputPublicationAdoptionProof(
             envelope.complete, self.worker_id,
-            "output-owner:{}:{}".format(identity.graph_transaction_id, envelope.manifest.manifest_digest),
+            "output-owner:{}:{}".format(identity.transaction_id, envelope.manifest.manifest_digest),
         )
         plan = OutputOwnerPublicationPlan(pending.execution, envelope)
         if death is not None:
             return self._drive_output_node_loss(pending, _OutputNodeLossObligation(identity, death, envelope))
         try:
-            def report(message):
-                # Scope only the observation chain: the original RPC and typed
-                # acknowledgement remain the publication authority.
-                with causal_scope(current_cause_id()):
-                    reply = self._rpc(self.gcs_address, wire.REPORT_OUTPUT_PUBLICATION_HANDLER, message)
-                    if type(reply) is not wire.OutputRecoveryReply or reply.request != message or not reply.accepted:
-                        raise SystemTaskError("GCS did not ACK the exact output publication fact")
-                    reply = replace(reply)
-                    try:
-                        acknowledged = reply.ack.snapshot.publication_id
-                        self._emit("output_publication_ack",
-                                   stage=reply.ack.stage.value, accepted=reply.accepted,
-                                   task_id=str(acknowledged.task_id),
-                                   attempt_id=str(acknowledged.attempt_id),
-                                   lease_id=str(acknowledged.lease_id),
-                                   manifest_digest=reply.ack.snapshot.manifest_digest)
-                    except BaseException:
-                        # Projection or sink failure must not retry a business
-                        # operation whose exact ACK has already been validated.
-                        pass
-                    return reply
-
             with self._state_lock:
+                handoff = self._output_handoff_table().query(identity)
+                if handoff is None or handoff.manifest != envelope.manifest or handoff.phase is OutputHandoffPhase.ABORTED:
+                    raise SystemTaskError('output has no current registered owner handoff')
+                self._output_handoff_table().record_complete(envelope.complete)
                 previous = self._owner_table.output_owner_publication_receipt(plan)
             ready_observation = None
-            if previous is None:
-                report(wire.ReportOutputPublicationTerminal(envelope.complete))
-                graph = envelope.manifest.to_graph_manifest()
-                if graph is not None:
-                    request = protocol.CommitContainedGraph(graph)
-                    reply = self._rpc(self.gcs_address, _COMMIT_CONTAINED_GRAPH_HANDLER, request)
-                    if (not isinstance(reply, protocol.ContainedGraphReply) or reply.request != request
-                            or not reply.accepted or reply.receipt.state is not ContainedGraphTransactionState.COMMITTED):
-                        raise SystemTaskError("GCS did not ACK the complete output graph")
             with self._state_lock:
                 # This check is deliberately after every external step.  A
                 # cached registration snapshot is never authority for bytes.
@@ -12503,20 +11584,14 @@ class CoreWorker:
                     raise SystemTaskError("output publication needs Node-loss resolution")
                 previous = self._owner_table.output_owner_publication_receipt(plan)
                 if previous is None:
-                    if pending.target_execution is not None:
-                        coordinator = self._targeted_reconstruction_coordinator()
-                        success = coordinator.validate_output_publication_success(envelope)
-                        promoted = coordinator.commit_output_publication_success(success)
-                    else:
-                        self._owner_table.validate_output_publication(plan)
-                        recovery = self._recovery_manager()
-                        success = recovery.validate_task_success(pending.task_id, pending.spec.attempt_id)
-                        if success.decision.action is not RecoveryAction.ACCEPT_SUCCESS:
-                            raise SystemTaskError("recovery fenced output publication")
-                        if not self._owner_table.commit_output_publication(plan).committed:
-                            raise SystemTaskError("owner fenced output batch CAS")
-                        recovery.commit_validated_transition(success)
-                        promoted = None
+                    self._owner_table.validate_output_publication(plan)
+                    recovery = self._recovery_manager()
+                    success = recovery.validate_task_success(pending.task_id, pending.spec.attempt_id)
+                    if success.decision.action is not RecoveryAction.ACCEPT_SUCCESS:
+                        raise SystemTaskError("recovery fenced output publication")
+                    if not self._owner_table.commit_output_publication(plan).committed:
+                        raise SystemTaskError("owner fenced output batch CAS")
+                    recovery.commit_validated_transition(success)
                     for result in envelope.results:
                         if result.storage is protocol.ResultStorage.OBJECT_STORE:
                             self._stored_descriptors[result.object_id] = result
@@ -12526,10 +11601,8 @@ class CoreWorker:
                     # releasing the authority lock, never inside owner CAS.
                     ready_observation = (identity, envelope.manifest.manifest_digest,
                                          len(pending.output_ids))
-                    if promoted is not None:
-                        self._submissions.put(_StartTargetedReconstruction(promoted.task_id))
                     ordinary = getattr(self, "_reconstruction", None)
-                    if ordinary is not None and pending.target_execution is None:
+                    if ordinary is not None:
                         ordinary.complete(pending.task_id, pending.spec.attempt_id)
                 elif not previous.committed:
                     raise SystemTaskError("output owner receipt was fenced")
@@ -12545,12 +11618,6 @@ class CoreWorker:
                         if success.decision.action is not RecoveryAction.ACCEPT_SUCCESS:
                             raise SystemTaskError("owner receipt cannot repair stale recovery")
                         recovery.commit_validated_transition(success)
-                    if repair_current and pending.target_execution is not None:
-                        promoted = self._targeted_reconstruction_coordinator().complete_lost_output_publication(
-                            pending.task_id, pending.spec.attempt_id
-                        )
-                        if promoted is not None:
-                            self._submissions.put(_StartTargetedReconstruction(promoted.task_id))
                     if repair_current:
                         for result in envelope.results:
                             if result.storage is protocol.ResultStorage.OBJECT_STORE:
@@ -12558,8 +11625,9 @@ class CoreWorker:
                         for output_id in pending.output_ids:
                             self._wake_object(output_id)
                     ordinary = getattr(self, "_reconstruction", None)
-                    if ordinary is not None and pending.target_execution is None:
+                    if ordinary is not None:
                         ordinary.complete(pending.task_id, pending.spec.attempt_id)
+                self._output_handoff_table().adopt(proof)
             if ready_observation is not None:
                 try:
                     ready_identity, ready_digest, ready_count = ready_observation
@@ -12572,7 +11640,6 @@ class CoreWorker:
                                manifest_digest=ready_digest, return_count=ready_count)
                 except BaseException:
                     pass
-            report(wire.ReportOutputPublicationAdopted(proof))
             request = wire.AckOutputPublicationAdopted(proof)
             with causal_scope(current_cause_id()):
                 reply = self._rpc(self._resolve_node_address(obligation.node_id), wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, request)
@@ -12617,7 +11684,7 @@ class CoreWorker:
         expected_node_id: Optional[NodeID] = None,
         expected_lease_id: Optional[LeaseID] = None,
     ) -> bool:
-        """Publish ordinary Task results through the one selected-output path."""
+        """Publish ordinary Task results through the single-output path."""
         if (not isinstance(reply, protocol.TaskReply)
                 or reply.task_id != pending.task_id
                 or reply.attempt_id != pending.spec.attempt_id):
@@ -12637,7 +11704,7 @@ class CoreWorker:
                 or envelope.manifest.header.executor_worker_id != reply.worker_id
                 or expected_lease_id is not None and envelope.publication_id.lease_id != expected_lease_id
                 or expected_node_id is not None and envelope.manifest.header.node_incarnation.node_id != expected_node_id):
-            raise SystemTaskError("ordinary Task success requires its exact selected-output envelope")
+            raise SystemTaskError("ordinary Task success requires its exact single-output envelope")
         with self._state_lock:
             if self._output_replay_is_obsolete_locked(pending, envelope.publication_id):
                 return False
@@ -12657,14 +11724,12 @@ class CoreWorker:
         ActorWorker owns its lifetime allocation. Its plain result descriptors
         use the same owner table / physical store, not the ordinary Task output
         publication protocol. Nested output references are outside this slice;
-        an invalid reply cannot authorize graph or orphan cleanup effects.
+        an invalid reply cannot authorize contained-reference cleanup effects.
         """
         if not isinstance(reply, protocol.TaskReply):
             raise SystemTaskError("Actor returned an invalid task reply")
         reply = replace(reply)
-        if (reply.task_id != pending.task_id or reply.attempt_id != pending.spec.attempt_id
-                or reply.target_execution is not None or len(pending.output_ids) != 1
-                or reply.output_publication is not None):
+        if ((reply.task_id != pending.task_id) or (reply.attempt_id != pending.spec.attempt_id) or (len(pending.output_ids) != 1) or (reply.output_publication is not None)):
             raise SystemTaskError("Actor reply cannot publish ordinary Task or contained-reference output")
         if reply.status is not protocol.TaskReplyStatus.SUCCEEDED:
             self._publish_error(pending.object_id, pending.spec.attempt_id, _remote_error(reply))
@@ -12969,30 +12034,16 @@ class CoreWorker:
             if not self._is_current_task_pending(pending):
                 return False
             try:
-                if pending.target_execution is not None:
-                    targeted = self._targeted_reconstruction_coordinator()
-                    failure = targeted.validate_terminal_failure(
-                        pending.task_id, attempt_id, error
-                    )
-                    tuple(
-                        self._objects[object_id]
-                        for object_id in pending.output_ids
-                    )
-                    targeted.commit_terminal_failure(failure)
-                    for object_id in pending.output_ids:
-                        self._stored_descriptors.pop(object_id, None)
-                    published = True
-                else:
-                    published = self._publish_whole_task_error_locked(
-                        pending, error, failure_kind, recovery_plan
-                    )
+                published = self._publish_whole_task_error_locked(
+                    pending, error, failure_kind, recovery_plan
+                )
             except Exception:
                 return False
             if published:
                 for object_id in pending.output_ids:
                     self._wake_object(object_id)
                 coordinator = getattr(self, "_reconstruction", None)
-                if coordinator is not None and pending.target_execution is None:
+                if coordinator is not None:
                     coordinator.complete(pending.task_id, attempt_id)
         if published:
             for object_id in pending.output_ids:
@@ -13067,7 +12118,7 @@ class CoreWorker:
         )
 
     def _is_current_task_pending(self, pending: _PendingTask) -> bool:
-        """Whether every declared sibling admits this physical attempt."""
+        """Whether the declared output admits this physical attempt."""
 
         return all(
             self._is_current_pending(object_id, pending.spec.attempt_id)
@@ -13174,12 +12225,10 @@ class CoreWorker:
 
             positional = resolve_task_arguments(
                 spec.args, is_ready=is_ready, materialize_ref=materialize,
-                materialize_stored=load_payload,
             )
             keyword_args = tuple(argument for _, argument in spec.kwargs)
             keyword = resolve_task_arguments(
                 keyword_args, is_ready=is_ready, materialize_ref=materialize,
-                materialize_stored=load_payload,
             )
             assert positional.values is not None and keyword.values is not None
             return (
@@ -13260,18 +12309,11 @@ class CoreWorker:
 
             def prepare(argument: protocol.TaskArg) -> protocol.TaskArg:
                 if not isinstance(
-                    argument, (protocol.RefArg, protocol.StoredArg)
+                    argument, protocol.RefArg
                 ):
                     return argument
-                stored_value = isinstance(argument, protocol.StoredArg)
 
                 def ready_inline(payload: bytes) -> protocol.TaskArg:
-                    if stored_value:
-                        assert isinstance(argument, protocol.StoredArg)
-                        return protocol.InlineArg(
-                            payload, serializer=argument.serializer,
-                            nested_refs=argument.nested_refs,
-                        )
                     return protocol.InlineArg(
                         payload, serializer="cloudpickle"
                     )
@@ -13734,22 +12776,26 @@ class CoreWorker:
                         query = protocol.GetWorkerLeaseOutcome(
                             state.grant.lease_id, pending.task_id, pending.spec.attempt_id,
                             state.grant.worker_id, self.worker_id, pending.output_ids,
-                            state.grant.scheduling_key, pending.target_execution,
+                            state.grant.scheduling_key,
                         )
                         candidate = self._rpc(state.granting_node_address, _GET_WORKER_LEASE_OUTCOME_HANDLER, query)
                         if type(candidate) is protocol.GetWorkerLeaseOutcomeReply:
                             candidate = deepcopy(replace(candidate))
-                            if (candidate.found is True and candidate.worker_alive is False
+                            exact_outcome = (
+                                candidate.lease_id, candidate.task_id, candidate.attempt_id,
+                                candidate.executor_worker_id, candidate.owner_worker_id,
+                                candidate.object_ids, candidate.node_id, candidate.scheduling_key,
+                            ) == (
+                                query.lease_id, query.task_id, query.attempt_id,
+                                query.executor_worker_id, query.owner_worker_id,
+                                query.object_ids, state.grant.node_id, query.scheduling_key,
+                            )
+                            if (exact_outcome and candidate.found is True
+                                    and candidate.worker_alive is False
                                     and candidate.state is protocol.LeaseExecutionState.WORKER_LOST
                                     and candidate.completion_status is None and not candidate.cleanup_pending
                                     and not candidate.descriptors and not candidate.orphan_descriptors
-                                    and candidate.output_publication is None and candidate.output_completion is None
-                                    and (candidate.lease_id, candidate.task_id, candidate.attempt_id,
-                                         candidate.executor_worker_id, candidate.owner_worker_id, candidate.object_ids,
-                                         candidate.node_id, candidate.scheduling_key, candidate.target_execution)
-                                    == (query.lease_id, query.task_id, query.attempt_id, query.executor_worker_id,
-                                        query.owner_worker_id, query.object_ids, state.grant.node_id,
-                                        query.scheduling_key, query.target_execution)):
+                                    and candidate.output_publication is None and candidate.output_completion is None):
                                 state = replace(state, execution_outcome=candidate)
                                 checkpoint("location_executor_lost")
             except (KeyboardInterrupt, SystemExit):
@@ -13909,9 +12955,8 @@ class CoreWorker:
         """Trace one accepted terminal reply and its actual ready outputs.
 
         ``reply.results`` is the publication manifest validated immediately
-        before this helper is called.  For ordinary execution it is the full
-        output manifest; for targeted reconstruction it is exactly the selected
-        subset.  Keeping ObjectReady after TaskFinished in this one helper makes
+        before this helper is called. Initial execution and reconstruction use
+        the same single-output manifest. Keeping ObjectReady after TaskFinished makes
         that semantic order independent of the initial/replay transport path.
         """
 

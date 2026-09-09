@@ -40,17 +40,6 @@ def _spec(
     )
 
 
-def _three_node_spec() -> PlacementGroupSpec:
-    return PlacementGroupSpec(
-        _id(PlacementGroupID, 11),
-        tuple(
-            Bundle(index, ResourceVector({"CPU": 1}))
-            for index in range(3)
-        ),
-        PlacementStrategy.STRICT_SPREAD,
-    )
-
-
 def _reply(operation, status, error=None):
     participant = operation.participant
     return ReservationReply(
@@ -95,9 +84,25 @@ def _advance_to(
 def test_spec_rejects_empty_bundle_set_before_planning() -> None:
     with pytest.raises(ValueError, match="non-empty"):
         PlacementGroupSpec(
-            _id(PlacementGroupID, 9), (), PlacementStrategy.PACK
+            _id(PlacementGroupID, 9), (), PlacementStrategy.STRICT_PACK
         )
 
+
+@pytest.mark.parametrize("count", (3, 4))
+def test_spec_rejects_more_than_two_bundles_before_planning(count) -> None:
+    with pytest.raises(ValueError, match="at most two"):
+        PlacementGroupSpec(
+            _id(PlacementGroupID, 9),
+            tuple(Bundle(index, ResourceVector({"CPU": 1})) for index in range(count)),
+        )
+
+
+def test_spec_defaults_to_strict_pack_and_rejects_soft_strategies() -> None:
+    bundles = (Bundle(0, ResourceVector({"CPU": 1})),)
+    assert PlacementGroupSpec(_id(PlacementGroupID, 9), bundles).strategy is PlacementStrategy.STRICT_PACK
+    for strategy in ("PACK", "SPREAD"):
+        with pytest.raises(ValueError):
+            PlacementGroupSpec(_id(PlacementGroupID, 9), bundles, strategy)
 
 def test_plan_freezes_canonical_participants_and_is_invisible_until_all_commits() -> None:
     coordinator = PlacementGroupCoordinator()
@@ -173,7 +178,7 @@ def test_reply_validates_attempt_node_digest_and_phase() -> None:
 def test_pending_and_infeasible_have_no_participant_operations() -> None:
     pending = PlacementGroupCoordinator()
     pending_snapshot = pending.create(
-        _spec(strategy=PlacementStrategy.PACK), (_node(1, total=2, available=0),)
+        _spec(strategy=PlacementStrategy.STRICT_PACK), (_node(1, total=2, available=0),)
     )
     assert pending_snapshot.phase is PlacementGroupPhase.PENDING
     assert pending.next_operations(pending_snapshot.spec.placement_group_id) == ()
@@ -189,7 +194,7 @@ def test_pending_and_infeasible_have_no_participant_operations() -> None:
 def test_retry_pending_uses_fresh_capacity_without_changing_attempt() -> None:
     coordinator = PlacementGroupCoordinator()
     initial = coordinator.create(
-        _spec(strategy=PlacementStrategy.PACK),
+        _spec(strategy=PlacementStrategy.STRICT_PACK),
         (_node(1, total=2, available=0),),
     )
 
@@ -219,7 +224,7 @@ def test_retry_pending_uses_fresh_capacity_without_changing_attempt() -> None:
 def test_retry_pending_can_converge_to_terminal_infeasible() -> None:
     coordinator = PlacementGroupCoordinator()
     initial = coordinator.create(
-        _spec(strategy=PlacementStrategy.PACK),
+        _spec(strategy=PlacementStrategy.STRICT_PACK),
         (_node(1, total=2, available=0),),
     )
 
@@ -253,7 +258,7 @@ def test_created_remove_uses_abort_operations_and_visibility_closes_immediately(
 def test_shutdown_cancel_maps_each_phase_to_cleanup_or_terminal() -> None:
     pending = PlacementGroupCoordinator()
     pending_snapshot = pending.create(
-        _spec(strategy=PlacementStrategy.PACK),
+        _spec(strategy=PlacementStrategy.STRICT_PACK),
         (_node(1, total=2, available=0),),
     )
     cancelled_pending = pending.cancel_for_shutdown(
@@ -494,10 +499,10 @@ def test_exact_late_committed_replay_cannot_mutate_lost_attempt() -> None:
     assert coordinator.visible_placement(placement_group_id) is None
 
 
-def test_every_survivor_abort_ack_leaves_terminal_phase_lost() -> None:
+def test_survivor_abort_ack_leaves_terminal_phase_lost() -> None:
     coordinator = PlacementGroupCoordinator()
     snapshot = coordinator.create(
-        _three_node_spec(), (_node(1), _node(2), _node(3))
+        _spec(), (_node(1), _node(2))
     )
     placement_group_id = snapshot.spec.placement_group_id
 
@@ -507,7 +512,7 @@ def test_every_survivor_abort_ack_leaves_terminal_phase_lost() -> None:
     assert lost.phase is PlacementGroupPhase.LOST
     assert tuple(
         operation.participant.node_id for operation in aborts
-    ) == (_id(NodeID, 2), _id(NodeID, 3))
+    ) == (_id(NodeID, 2),)
     for operation in aborts:
         reduced = coordinator.apply_reply(
             _reply(operation, ParticipantReplyStatus.ABORTED)
@@ -520,7 +525,7 @@ def test_every_survivor_abort_ack_leaves_terminal_phase_lost() -> None:
 def test_pending_infeasible_and_removed_are_unaffected_by_node_death() -> None:
     pending = PlacementGroupCoordinator()
     pending_before = pending.create(
-        _spec(strategy=PlacementStrategy.PACK),
+        _spec(strategy=PlacementStrategy.STRICT_PACK),
         (_node(1, total=2, available=0),),
     )
     assert pending_before.phase is PlacementGroupPhase.PENDING

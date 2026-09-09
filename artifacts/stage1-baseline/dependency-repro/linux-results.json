@@ -1,0 +1,72 @@
+{
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-libc",
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "records": [
+    {
+      "command": [
+        "/dev/shm/mini-ray-install-check/uv-x86_64-unknown-linux-musl/uv",
+        "--version"
+      ],
+      "exit_code": 0,
+      "log": "linux-00.txt"
+    },
+    {
+      "command": [
+        "/dev/shm/mini-ray-install-check/uv-x86_64-unknown-linux-musl/uv",
+        "lock",
+        "--check",
+        "--offline",
+        "--python",
+        "/dev/shm/mini-ray-install-check/python/bin/python3.12",
+        "--no-python-downloads",
+        "--cache-dir",
+        "/dev/shm/mini-ray-install-check/uv-cache"
+      ],
+      "exit_code": 0,
+      "log": "linux-01.txt"
+    },
+    {
+      "command": [
+        "/dev/shm/mini-ray-install-check/uv-x86_64-unknown-linux-musl/uv",
+        "sync",
+        "--frozen",
+        "--extra",
+        "test",
+        "--python",
+        "/dev/shm/mini-ray-install-check/python/bin/python3.12",
+        "--no-python-downloads",
+        "--cache-dir",
+        "/dev/shm/mini-ray-install-check/uv-cache"
+      ],
+      "exit_code": 0,
+      "log": "linux-02.txt"
+    },
+    {
+      "command": [
+        "/dev/shm/mini-ray-install-check/uv-x86_64-unknown-linux-musl/uv",
+        "pip",
+        "freeze",
+        "--python",
+        "/dev/shm/mini-ray-install-check/project/.venv/bin/python",
+        "--cache-dir",
+        "/dev/shm/mini-ray-install-check/uv-cache"
+      ],
+      "exit_code": 0,
+      "log": "linux-03.txt"
+    },
+    {
+      "command": [
+        "/dev/shm/mini-ray-install-check/project/.venv/bin/python",
+        "-c",
+        "import importlib.metadata as m; import miniray; print(miniray.__file__); print(m.metadata(\"mini-ray\")[\"Requires-Python\"]); print(m.version(\"mini-ray\"))"
+      ],
+      "exit_code": 0,
+      "log": "linux-04.txt"
+    }
+  ],
+  "files": {
+    "pyproject.toml": "1d40acba410a38b46ee1c8385c0faed5089a2dba237b8388da5c76352484c6c6",
+    "uv.lock": "642c93f87460dde26f47c06cf4d4908c2dc90834981957355ab2f8eff4b2e999"
+  },
+  "scope": "Linux frozen dependency install and import only; no runtime tests"
+}

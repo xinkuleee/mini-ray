@@ -1,0 +1,33 @@
+TaskID:         87fac9700a3e1f08f1ab9f21c495830d
+ObjectID:       87fac9700a3e1f08f1ab9f21c495830d:0
+owner WorkerID: 3277ac515f5eed3387c170ba0de31839
+executor PID:   403 result: 49
+
+Canonical trace (volatile IDs and timestamps omitted):
+ordinary_task_success: ordinary task: direct submission, owner handoff, result readiness and custody retirement
+01. Owner CoreWorker : task_submitted
+02. Owner CoreWorker : dependency_ready [dependency_count=0]
+03. Owner CoreWorker -> NodeServer : request_worker_lease [request_sent]
+04. NodeServer -> Owner CoreWorker : request_worker_lease [reply_received, transport_ok=true]
+05. Owner CoreWorker : lease_granted
+06. Owner CoreWorker -> Execution Worker : push_task [request_sent]
+07. Execution Worker : task_started
+08. Execution Worker -> NodeServer : start_worker_lease [request_sent]
+09. NodeServer -> Execution Worker : start_worker_lease [reply_received, transport_ok=true]
+10. Execution Worker -> NodeServer : prepare_output_publication [request_sent]
+11. NodeServer -> OwnerService (Driver owner) : register_output_handoff [request_sent]
+12. OwnerService (Driver owner) -> NodeServer : register_output_handoff [reply_received, transport_ok=true]
+13. NodeServer -> Execution Worker : prepare_output_publication [reply_received, transport_ok=true]
+14. Execution Worker -> NodeServer : complete_worker_lease [request_sent]
+15. NodeServer : output_lease_completed [status=SUCCEEDED, released=true]
+16. NodeServer -> Execution Worker : complete_worker_lease [reply_received, transport_ok=true]
+17. Execution Worker : task_succeeded
+18. Execution Worker -> Owner CoreWorker : push_task [reply_received, transport_ok=true]
+19. Owner CoreWorker : output_owner_ready [return_count=1]
+20. Owner CoreWorker -> NodeServer : ack_output_publication_adopted [request_sent]
+21. NodeServer -> Owner CoreWorker : ack_output_publication_adopted [reply_received, transport_ok=true]
+22. Owner CoreWorker : output_payload_retired
+23. Owner CoreWorker : task_finished [status=SUCCEEDED]
+24. Owner CoreWorker : object_ready [storage=INLINE]
+register_output_handoff: Node -> OwnerService; transport_ok is an RPC observation.
+owner_ready: owner CAS/wake; payload_retired: reply custody, not object GC.

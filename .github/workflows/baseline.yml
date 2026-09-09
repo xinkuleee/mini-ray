@@ -1,0 +1,122 @@
+name: First-stage baseline
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      UV_NO_PROGRESS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.26"
+          enable-cache: false
+
+      - name: Install frozen baseline dependencies
+        shell: bash
+        run: |
+          mkdir -p baseline-evidence
+          uv sync --frozen --extra test --python 3.12 2>&1 | tee baseline-evidence/sync.log
+
+      - name: Record source and resolved environment
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import sys
+
+          evidence = Path("baseline-evidence")
+          evidence.mkdir(exist_ok=True)
+          environment_python = Path(".venv/bin/python")
+          python = str(environment_python.absolute()) if environment_python.exists() else sys.executable
+          commands = [
+              ["git", "rev-parse", "HEAD"],
+              ["uname", "-a"],
+              [python, "--version"],
+              ["uv", "--version"],
+              ["uv", "pip", "freeze", "--python", python],
+          ]
+          records = []
+          for command in commands:
+              try:
+                  result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                          text=True, timeout=15)
+                  record = {"command": command, "exit_code": result.returncode, "output": result.stdout}
+              except (OSError, subprocess.TimeoutExpired) as exc:
+                  record = {"command": command, "exit_code": None, "error": str(exc)}
+              records.append(record)
+          (evidence / "version.json").write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+          (evidence / "version.txt").write_text(
+              "\n".join("$ " + " ".join(record["command"]) + "\n"
+                        + record.get("output", record.get("error", "")) for record in records), encoding="utf-8")
+          for source in (Path("uv.lock"), Path("scripts/baseline_manifest.json")):
+              if source.is_file():
+                  shutil.copyfile(source, evidence / source.name)
+          PY
+
+      - name: Run pure baseline and serial exact smokes
+        shell: bash
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          from scripts.run_baseline import _load_manifest
+
+          evidence = Path("baseline-evidence")
+          manifest = _load_manifest()
+          selections = [("pure", None), *(("smoke", selector) for selector in manifest.smoke)]
+          results = []
+          for index, (mode, selector) in enumerate(selections):
+              command = [sys.executable, "scripts/run_baseline.py", "--" + mode]
+              if selector is not None:
+                  command.append(selector)
+              prefix = f"{index:02d}-{mode}"
+              print("Running:", selector or "fixed pure batch", flush=True)
+              # Each baseline child owns its 30-second test-tree deadline and
+              # cleanup. Do not kill that cleanup owner with an outer timeout.
+              with (evidence / (prefix + ".log")).open("w", encoding="utf-8") as output:
+                  result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
+              record = {"mode": mode, "selector": selector, "command": command,
+                        "exit_code": result.returncode, "log": prefix + ".log"}
+              results.append(record)
+              (evidence / (prefix + ".json")).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+              (evidence / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+              print("Exit:", result.returncode, flush=True)
+              if result.returncode:
+                  print((evidence / (prefix + ".log")).read_text(encoding="utf-8"), flush=True)
+                  raise SystemExit(result.returncode)
+          PY
+
+      - name: Upload baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: baseline-evidence/
+          if-no-files-found: warn

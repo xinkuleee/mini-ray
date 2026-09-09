@@ -152,7 +152,6 @@ def _assert_push(observed, reference, node, request, grant):
     assert push.spec.return_ids() == request.return_ids == (reference.object_id,)
     assert push.dependencies == grant.dependencies
     assert push.spec.scheduling_key is grant.scheduling_key is request.scheduling_key is None
-    assert push.target_execution is grant.target_execution is request.target_execution is None
     assert sum(_byte_field_sizes(push)) < _PAYLOAD_BYTES
     replies = tuple(
         (index, reply_address, message, reply)
@@ -164,7 +163,7 @@ def _assert_push(observed, reference, node, request, grant):
     assert reply_index > send_index and reply_address == address and message == push
     assert type(reply) is protocol.TaskReply and reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert (reply.task_id, reply.attempt_id, reply.worker_id) == (task_id, request.attempt_id, node.worker_id)
-    assert reply.error is None and reply.target_execution is None
+    assert reply.error is None
     return send_index, push
 
 
@@ -373,7 +372,7 @@ def test_stored_dependency_selects_data_first_hop_and_resources_can_spill_back_h
         for _address, request, _reply in source_leases + plain_leases + home_leases:
             assert request.requester_node_id == home.node_id
             assert request.requester_worker_id == core.worker_id
-            assert request.scheduling_key is None and request.target_execution is None
+            assert request.scheduling_key is None
             assert sum(_byte_field_sizes(request)) < _PAYLOAD_BYTES
         assert not source_leases[0][1].dependencies
         assert not plain_request.resources.get(_HOME_RESOURCE, 0)

@@ -1,0 +1,2 @@
+Using CPython 3.12.13 interpreter at: /dev/shm/mini-ray-install-check/python/bin/python3.12
+Resolved 8 packages in 1ms

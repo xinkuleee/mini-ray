@@ -62,11 +62,12 @@ def main() -> None:
         assert worker_pid == context.worker_pid and value == 49
         print("executor PID:  ", worker_pid, "result:", value)
         # Core submit -> Node lease -> direct Worker push -> owner publication.
-        # GCS is not a Task queue, but mini's ordinary success still needs its
-        # synchronous publication ACKs. The canonical path shows those calls.
+        # Node registers the cleanup manifest at this Driver's OwnerService
+        # before completing the output; ordinary publication has no GCS gate.
         contract = load_trace_contract(SUCCESS_TRACE_CONTRACT)
         print("\nCanonical trace (volatile IDs and timestamps omitted):")
         print(_canonical_trace(contract, str(result_ref.object_id.task_id), deadline))
+        print("register_output_handoff: Node -> OwnerService; transport_ok is an RPC observation.")
         print("owner_ready: owner CAS/wake; payload_retired: reply custody, not object GC.")
     finally:
         cleanup_deadline = time.monotonic() + _CLEANUP_SECONDS

@@ -71,16 +71,19 @@ class PlacementGroupAttempt:
 class PlacementGroupSpec:
     placement_group_id: PlacementGroupID
     bundles: tuple[Bundle, ...]
-    strategy: PlacementStrategy = PlacementStrategy.PACK
+    strategy: PlacementStrategy = PlacementStrategy.STRICT_PACK
 
     def __post_init__(self) -> None:
         if not isinstance(self.placement_group_id, PlacementGroupID):
             raise TypeError("placement_group_id must be a PlacementGroupID")
-        bundles = tuple(sorted(tuple(self.bundles), key=lambda value: value.index))
+        bundles = tuple(self.bundles)
         if not bundles:
             raise ValueError("placement group bundles must be non-empty")
         if any(not isinstance(bundle, Bundle) for bundle in bundles):
             raise TypeError("bundles must contain Bundle values")
+        if len(bundles) > 2:
+            raise ValueError("placement groups support at most two bundles")
+        bundles = tuple(sorted(bundles, key=lambda value: value.index))
         indexes = tuple(bundle.index for bundle in bundles)
         if len(indexes) != len(set(indexes)):
             raise ValueError("bundle indexes must be unique")

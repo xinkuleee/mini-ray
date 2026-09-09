@@ -2,19 +2,20 @@
 
 Each exact case starts one GCS, two Nodes, and one Worker per Node. Worker A
 owns an output submitted to Worker B, while the nested child belongs to the
-live Driver. The existing INTENT or PROMOTIONS gate holds B's real Prepare.
+live Driver. The existing OWNER_REGISTER or PROMOTIONS gate holds B's real Prepare.
 One exact registered Worker-A SIGKILL is the only injected fault; Node A stays
 alive and replaces that Worker once. Two logical tasks, no task retries, one
 tiny Driver put, 8 KiB padding, two 1 MiB stores, and one listener/connection.
 No extra test threads, Actors, placement groups, or tracing.
 
-The Driver observes a real exact child-release reply through a passive method
-wrapper installed before OwnerService binds its callbacks. GCS sends that
-release only after every owner-wide Node fence is acknowledged. Only then is
-the existing publication gate opened. Waiting for owner_cleaned FIRST would
-deadlock the test against Prepare's still-held nonblocking adapter ticket.
-The ordinary post-gate fence rejects forward work; automatic owner cleanup
-must get the same live executor's real Finalize ACK before owner_cleaned.
+The Driver observes exact child-release replies through a passive method
+wrapper installed before OwnerService binds its callbacks. After real owner
+death, read-only GCS membership confirms the surviving Nodes have acknowledged
+the existing owner-wide fences. Only then is the publication gate opened: Node
+cleanup needs Prepare's adapter ticket and cannot release children while that
+gate remains held. The resumed Prepare must be fenced; local Node cleanup must
+obtain the same live executor's actual Finalize ACK. There is no GCS publication
+record, graph query or test-driven cleanup RPC.
 
 Node-entry observers do no scheduling or cleanup. They check returned spawn
 identities, actual status replies, rejection/Finalize results, and after the
@@ -27,7 +28,8 @@ the 30-second runner, followed by its existing bounded process-tree grace.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, is_dataclass, replace
+from enum import Enum
 import hashlib
 import multiprocessing as mp
 import os
@@ -42,7 +44,10 @@ import miniray as ray
 from miniray import api as api_module, node as node_module, output_protocol as wire, protocol
 from miniray.api import _get_runtime
 from miniray.core import CoreWorker, _worker_death_reference_id
-from miniray.ids import AttemptID
+from miniray.control import GET_NODES_HANDLER, GET_WORKER_STATE_HANDLER
+from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.output_handoff import OutputHandoffPhase
+from miniray.output_publication import OutputPublicationEnvelope
 from miniray.output_publication_journal import OutputPublicationJournalState, OutputPublicationStage
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.publication_gate import (
@@ -54,11 +59,7 @@ from miniray.recovery import TaskState
 from miniray.resources import AllocationState
 from miniray.runtime_binding import current_core_worker
 from tests.integration.test_task_path import _close_reference as _close_local
-from tests.integration.test_output_owner_death_path import _worker_state
-from tests.integration.test_stored_outer_node_loss_path import (
-    _assert_metadata_only, _graph, _pid_exists, _poll_until, _query,
-    _recovery, _release_connection, _remaining,
-)
+from miniray.transport import request as rpc_request
 
 
 pytestmark = pytest.mark.multiprocess_smoke
@@ -70,6 +71,84 @@ _SOURCE_VALUE = ("live-driver-child-after-owner-death", 42)
 _PADDING = b"P" * (8 * 1024)
 
 
+def _remaining(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("precomplete owner-death deadline expired")
+    return remaining
+
+
+def _poll_until(predicate, deadline, detail):
+    wake = threading.Event()
+    while True:
+        assert deadline > time.monotonic(), detail
+        result = predicate()
+        if result:
+            return result
+        wake.wait(min(0.01, _remaining(deadline)))
+
+
+def _query(address, handler, request, deadline):
+    remaining = _remaining(deadline)
+    return rpc_request(address, handler, request, connect_timeout=min(0.5, remaining),
+                       request_timeout=min(2.0, remaining), deadline=deadline)
+
+
+def _worker_state(context, worker_id, deadline):
+    reply = _query(context.gcs_address, GET_WORKER_STATE_HANDLER,
+                   protocol.GetWorkerState(worker_id), deadline)
+    assert type(reply) is protocol.GetWorkerStateReply and reply.found and reply.worker_id == worker_id
+    return reply
+
+
+def _handoff(owner_address, publication_id, deadline):
+    request = wire.GetOutputHandoff(publication_id)
+    reply = _query(owner_address, wire.GET_OUTPUT_HANDOFF_HANDLER, request, deadline)
+    assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
+    assert reply.snapshot is not None and reply.snapshot.publication_id == publication_id
+    _assert_metadata_only(reply)
+    return reply.snapshot
+
+
+def _assert_metadata_only(value):
+    if isinstance(value, (AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID)):
+        return
+    assert not isinstance(value, (bytes, bytearray, memoryview, OutputPublicationEnvelope,
+                                  protocol.ResultDescriptor, protocol.ObjectStoreDescriptor))
+    if is_dataclass(value) and not isinstance(value, type):
+        for item in fields(value):
+            _assert_metadata_only(getattr(value, item.name))
+    elif isinstance(value, (tuple, list, set, frozenset)):
+        for item in value:
+            _assert_metadata_only(item)
+    else:
+        assert value is None or isinstance(value, (str, int, float, bool, Enum))
+
+
+def _pid_exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _release_connection(connection, marker, deadline):
+    if connection is None:
+        return
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            connection.settimeout(min(0.2, remaining))
+            connection.sendall(marker)
+    except OSError:
+        pass
+    finally:
+        connection.close()
+
+
 def _node_process_with_lifecycle_observations(*args):
     """Record real effects; failed observations only fail the child at exit."""
     node_type = node_module.NodeServer
@@ -79,7 +158,7 @@ def _node_process_with_lifecycle_observations(*args):
     original_rpc = node_type._background_rpc
     owner_node = bool(args[1].get(_OWNER_RESOURCE, 0))
     spawned, seen_nodes, manifests = [], [], []
-    spawn_calls = prepare_accepted = arm_or_terminal = 0
+    spawn_calls = prepare_accepted = complete_reports = 0
     inspected = ()
     prepare_fenced = False
     worker_finalize = None
@@ -117,15 +196,19 @@ def _node_process_with_lifecycle_observations(*args):
             if not owner_node and "death-fenced" in str(exc):
                 prepare_fenced = True
             raise
-        if not owner_node and reply.accepted:
-            prepare_accepted += 1
+        if not owner_node:
+            if reply.accepted:
+                prepare_accepted += 1
+            elif (request.manifest.header.owner_worker_id in node._owner_death_fences
+                  and "death-fenced" in (reply.error or "")):
+                prepare_fenced = True
         return reply
 
     def rpc(node, address, handler, request, **options):
-        nonlocal arm_or_terminal, worker_finalize
-        if (not owner_node and handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER
-                and type(request) in (wire.ArmOutputPublication, wire.ReportOutputPublicationTerminal)):
-            arm_or_terminal += 1
+        nonlocal complete_reports, worker_finalize
+        if (not owner_node and handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER
+                and type(request) is wire.ReportOutputHandoffComplete):
+            complete_reports += 1
         reply = original_rpc(node, address, handler, request, **options)
         if not owner_node and handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER:
             if (type(reply) is wire.FinalizeOutputOwnerDeathReply and reply.request == request
@@ -152,14 +235,15 @@ def _node_process_with_lifecycle_observations(*args):
         if not owner_node:
             (manifest,) = manifests
             identity = manifest.publication_id
-            assert prepare_fenced and prepare_accepted == arm_or_terminal == 0
+            assert prepare_fenced and prepare_accepted == complete_reports == 0
             assert worker_finalize == (spawned[0][2], wire.FinalizeOutputOwnerDeath(
                 manifest, node._owner_death_fences[manifest.header.owner_worker_id],
             ))
             snapshot = node._output_publication_journal.snapshot(identity)
             assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.retained_result_slots
             assert snapshot.complete is None and snapshot.rollback_tombstone is None
-            assert not any(effect.stage is OutputPublicationStage.ARM_COMPLETE for effect in snapshot.intents)
+            assert node._output_publication_journal._records[identity].owner_death == node._owner_death_fences[manifest.header.owner_worker_id]
+            assert any(effect.stage is OutputPublicationStage.OWNER_REGISTER for effect in snapshot.intents)
             assert node._output_publications.owner_death_finished(identity)
             record = node._leases[identity.lease_id]
             assert record.state is protocol.LeaseExecutionState.ABANDONED and record.completion is None
@@ -222,7 +306,7 @@ def _physical(node, object_id, deadline):
 
 
 def _run_precomplete_owner_death(phase):
-    assert phase in (OutputPublicationGatePhase.AFTER_INTENT_ACK, OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
+    assert phase in (OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK, OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
     promoted = phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK
     listener = connection = context = core = report = death = source = factory = None
     owner_node = executor_node = transfer = manifest = None
@@ -297,14 +381,13 @@ def _run_precomplete_owner_death(phase):
         assert len(publication.output_ids) == 1 and publication.output_ids == publication.full_output_ids
         (output_id,) = publication.output_ids
         assert output_id != factory.object_id and output_id != source.object_id
-        before = _recovery(context, publication, deadline)
+        before = _handoff(owner_node.worker_address, publication, deadline)
         manifest = before.manifest
         assert manifest.manifest_digest == arrival.manifest_digest
         assert manifest.header.owner_worker_id == owner_node.worker_id
         assert manifest.header.executor_worker_id == executor_node.worker_id
-        assert not before.armed and before.complete is before.adopted is before.rollback is None
-        assert before.owner_death is before.owner_cleaned is before.frozen_node_death is None
-        assert before.owner_decision is before.resolution is None and before.slot_collections == ()
+        assert before.phase is OutputHandoffPhase.PENDING
+        assert before.complete is before.adoption is before.abort_reason is None
         (slot,) = manifest.slots
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE and slot.object_id == output_id
         assert len(_PADDING) < slot.size_bytes < 32 * 1024
@@ -323,10 +406,6 @@ def _run_precomplete_owner_death(phase):
         assert transfer.provisional_hold not in at_gate.contained_holds
         assert core.owner_table.contained_release_was_seen(source.object_id, transfer.provisional_hold) is promoted
         assert not core.owner_table.contained_release_was_seen(source.object_id, transfer.final_hold)
-        graph = _graph(context, publication, deadline)
-        assert graph.disposition is (protocol.StoredPublicationQueryDisposition.FOUND if promoted
-                                     else protocol.StoredPublicationQueryDisposition.NOT_FOUND)
-        assert graph.manifest == (manifest.to_graph_manifest() if promoted else None)
         physical = _physical(executor_node, output_id, deadline)
         assert physical.found is promoted and physical.sealed is promoted
         if promoted:
@@ -359,27 +438,32 @@ def _run_precomplete_owner_death(phase):
         assert death.incarnation == owner_before.incarnation and death.reason is protocol.WorkerDeathReason.PROCESS_EXIT
         assert death.exit_code == -signal.SIGKILL
         assert _pid_exists(owner_node.node_pid) and _pid_exists(executor_node.node_pid)
-        assert release_observed.wait(_remaining(deadline)), "GCS never reached the child release after Node fences"
-        with observation_lock:
-            assert transfer.final_hold in observed_releases and not observation_errors
-        fenced = _recovery(context, publication, deadline)
-        assert fenced.owner_death == death and fenced.owner_cleaned is None
-        assert fenced.manifest == manifest and not fenced.armed and fenced.complete is None
-        # This release is the causal Node-fence barrier, not owner_cleaned.
-        # The latter cannot happen while Prepare still owns the adapter ticket.
+        # GetNodes is read-only and excludes Nodes with an outstanding
+        # owner-wide fence. It does not drive publication/child cleanup.
+        def nodes_fenced():
+            reply = _query(context.gcs_address, GET_NODES_HANDLER, protocol.GetNodes(), deadline)
+            assert type(reply) is protocol.GetNodesReply
+            visible = {info.node_id: info for info in reply.nodes}
+            if set(visible) != {owner_node.node_id, executor_node.node_id}:
+                return None
+            for node in (owner_node, executor_node):
+                assert visible[node.node_id].node_pid == node.node_pid
+                assert visible[node.node_id].state is protocol.NodeMembershipState.ALIVE
+            return reply
+
+        _poll_until(nodes_fenced, deadline, "surviving Nodes did not acknowledge owner fences")
         connection.settimeout(_remaining(deadline))
         connection.sendall(OUTPUT_PUBLICATION_GATE_RELEASE)
         connection.close()
         connection = None
+        assert release_observed.wait(_remaining(deadline)), "Node did not release the final child hold"
 
-        def owner_cleanup_finished():
-            state = _recovery(context, publication, deadline)
-            return state if state.owner_cleaned is not None else None
+        def child_holds_released():
+            with observation_lock:
+                return (set(observed_releases) == {transfer.final_hold, transfer.provisional_hold}
+                        and not observation_errors)
 
-        after = _poll_until(owner_cleanup_finished, deadline, "live executor did not finish owner-death cleanup")
-        assert after.owner_death == after.owner_cleaned == death and after.manifest == manifest
-        assert not after.armed and after.complete is after.adopted is after.rollback is None
-        assert after.resolution is after.frozen_node_death is None and not after.forward_allowed
+        _poll_until(child_holds_released, deadline, "Node did not acknowledge both exact child releases")
         executor_after = _worker_state(context, executor_node.worker_id, deadline)
         assert executor_after.state is protocol.WorkerMembershipState.ALIVE
         assert executor_after.incarnation == executor_before.incarnation and executor_after.death is None
@@ -432,7 +516,6 @@ def _run_precomplete_owner_death(phase):
         pids.update(final_live_pids)
         assert len(pids) == 6 and not _pid_exists(owner_node.worker_pid)
         assert not runtime.node_deaths  # Neither live Node was the injected target.
-        assert _recovery(context, publication, deadline) == after
     finally:
         cleanup_deadline = time.monotonic() + 3.0
         api_module._node_process_main = original_entry
@@ -479,7 +562,7 @@ def _run_precomplete_owner_death(phase):
 
 
 def test_owner_death_after_intent_fences_unmaterialized_output_and_cleans_live_executor():
-    _run_precomplete_owner_death(OutputPublicationGatePhase.AFTER_INTENT_ACK)
+    _run_precomplete_owner_death(OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK)
 
 
 def test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds():

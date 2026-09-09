@@ -17,7 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 if __package__:
     from . import run_bounded_test as bounded
@@ -153,16 +153,6 @@ def _pytest_command(manifest: ReviewedPureManifest) -> list[str]:
     ]
 
 
-def _child_environment(environment: Mapping[str, str]) -> dict[str, str]:
-    env = dict(environment)
-    # Prevent ambient pytest options/plugins from adding selectors, disabling
-    # the marker, or enabling parallel workers outside the reviewed command.
-    env.pop("PYTEST_ADDOPTS", None)
-    env.pop("PYTEST_PLUGINS", None)
-    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
-    return env
-
-
 def _describe(manifest: ReviewedPureManifest, *, list_selectors: bool) -> None:
     print(_NOTICE, flush=True)
     print("{}: {} whole files + {} exact nodes; reviewed {}.".format(
@@ -197,10 +187,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _describe(manifest, list_selectors=args.list)
     if args.list:
         return 0
+    try:
+        bounded._require_posix_execution()
+    except RuntimeError as exc:
+        parser.error(str(exc))
     command = _pytest_command(manifest)
     process = subprocess.Popen(
         command, cwd=str(PROJECT_ROOT), start_new_session=True,
-        env=_child_environment(os.environ),
+        env=bounded._child_environment(os.environ),
     )
     try:
         result = process.wait(timeout=bounded.TEST_TIMEOUT_SECONDS)

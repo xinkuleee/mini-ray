@@ -29,10 +29,11 @@ from .protocol import (
 )
 from .reconstruction_runtime import (
     ReconstructionDisposition,
+    ReconstructionAdmissionReceipt,
     ReconstructionOutcome,
 )
 from .recovery import (
-    RecoveryAction, RecoveryManager, ReconstructionSnapshot, TaskState,
+    RecoveryAction, RecoveryManager, ReconstructionSnapshot,
 )
 
 
@@ -52,8 +53,9 @@ class OwnedObjectReconstructionReducer:
     """Validate, linearize, and remember owner-routed reconstruction.
 
     ``admit_reconstruction`` is the sole START/JOIN authority.  It must commit
-    its local owner/recovery transition before returning an outcome.  The
-    reducer only reads those authorities before and after the callback. A
+    its local owner/recovery transition and actual queue handoff before
+    returning a receipted outcome. The reducer reads those authorities only
+    before admission; its first ACK uses the immutable handoff receipt. A
     concurrent composition layer supplies ``snapshot_reconstruction`` to read
     both under its state lock; that lock must not span admission or its RPCs.
 
@@ -136,6 +138,17 @@ class OwnedObjectReconstructionReducer:
                     "the owner Worker has a committed death record",
                 )
 
+            key = self._transaction_key(request)
+            claimed = self._claims.get(key)
+            if claimed is not None and claimed != request:
+                return self._failure(
+                    request,
+                    OwnedObjectReconstructionFailure.REQUEST_CONFLICT,
+                    "the reconstruction transaction was already bound to "
+                    "different request fields",
+                    remember=True,
+                )
+
             try:
                 owner, recovery = self._snapshots(request.object_id)
             except UnknownObjectError:
@@ -151,16 +164,6 @@ class OwnedObjectReconstructionReducer:
                     "local reconstruction authority could not read object state",
                 )
 
-            key = self._transaction_key(request)
-            claimed = self._claims.get(key)
-            if claimed is not None and claimed != request:
-                return self._failure(
-                    request,
-                    OwnedObjectReconstructionFailure.REQUEST_CONFLICT,
-                    "the reconstruction transaction was already bound to "
-                    "different request fields",
-                    remember=True,
-                )
             credential_failure = self._validate_credential(request, owner)
             if credential_failure is not None:
                 failure, detail = credential_failure
@@ -362,25 +365,16 @@ class OwnedObjectReconstructionReducer:
                 "local reconstruction authority returned a mismatched identity",
             )
 
-        # Admission can enqueue a fast execution which finishes before its
-        # first ACK is constructed. Completion clears active_recovery, so the
-        # ACK may use matching same-attempt terminal facts as well as an active
-        # attempt. Pair the reads: a PENDING owner followed by a newer terminal
-        # recovery snapshot is not a coherent admission receipt.
-        try:
-            owner_after, recovery_after = self._snapshots(request.object_id)
-        except Exception:
+        # Execution may finish, lose its output, or advance again before the
+        # first ACK. Current state cannot prove or disprove the earlier queue
+        # admission. Only the actual handoff's immutable local receipt can.
+        receipt = outcome.admission
+        if (not isinstance(receipt, ReconstructionAdmissionReceipt)
+                or not receipt.matches(outcome, self._owner, self._recovery)):
             return self._failure(
                 request,
                 OwnedObjectReconstructionFailure.AUTHORITY_REJECTED,
-                "local reconstruction authority did not preserve object state",
-            )
-        if not self._matches_committed_attempt(owner_after, recovery_after, attempt):
-            return self._failure(
-                request,
-                OwnedObjectReconstructionFailure.AUTHORITY_REJECTED,
-                "local reconstruction authority did not commit one attempt "
-                "across owner and recovery state",
+                "local reconstruction authority did not provide an exact queue handoff receipt",
             )
 
         disposition = (
@@ -400,32 +394,6 @@ class OwnedObjectReconstructionReducer:
         )
         self._replies[request] = reply
         return reply
-
-    @staticmethod
-    def _matches_committed_attempt(
-        owner: ObjectOwnerSnapshot,
-        recovery: ReconstructionSnapshot,
-        attempt: AttemptID,
-    ) -> bool:
-        if owner.current_attempt != attempt or recovery.current_attempt != attempt:
-            return False
-        if recovery.active_recovery == attempt:
-            return (
-                owner.state is ObjectState.PENDING
-                and recovery.task_state in (TaskState.RETRY_PENDING, TaskState.RUNNING)
-            )
-        if recovery.active_recovery is not None:
-            return False
-        if owner.state in (ObjectState.READY_INLINE, ObjectState.READY_STORED):
-            return recovery.task_state is TaskState.SUCCEEDED
-        if owner.state is ObjectState.ERROR:
-            return recovery.task_state in (
-                TaskState.APPLICATION_FAILED, TaskState.SYSTEM_FAILED,
-            )
-        # This is a same-attempt state proof, not a history of admitted work.
-        # In particular, later loss/retry and targeted ERROR + logical task
-        # SUCCEEDED need their own evidence; do not widen acceptance here.
-        return False
 
     def _failure_from_decision(
         self,
