@@ -41,7 +41,7 @@ class FakeTaskSpec:
         return self.outputs
 
 
-def producer_spec(*, returns: int = 2) -> FakeTaskSpec:
+def producer_spec(*, returns: int = 1) -> FakeTaskSpec:
     tid = task_id()
     return FakeTaskSpec(
         tid,
@@ -99,26 +99,21 @@ def test_system_retry_budget_counts_attempts_after_the_initial_attempt() -> None
     assert record.state is TaskState.SYSTEM_FAILED
 
 
-def test_reconstruction_keeps_logical_ids_and_merges_all_outputs_by_task() -> None:
-    spec = producer_spec(returns=2)
+def test_reconstruction_keeps_logical_id_and_joins_the_same_output() -> None:
+    spec = producer_spec(returns=1)
     manager = RecoveryManager()
     manager.register_task(spec, max_retries=2)
-    manager.record_task_success(spec.task_id, spec.attempt_id)
-
-    start = manager.request_reconstruction(spec.outputs[0])
-    joined = manager.request_reconstruction(spec.outputs[1])
-
-    assert start.action is RecoveryAction.START_RECONSTRUCTION
-    assert start.should_submit
-    assert start.task_id == spec.task_id
+    manager.commit_transition(manager.validate_task_success(spec.task_id, spec.attempt_id))
+    start = manager.commit_transition(manager.validate_request_reconstruction(spec.outputs[0]))
+    joined = manager.commit_transition(manager.validate_request_reconstruction(spec.outputs[0]))
+    assert start.action is RecoveryAction.START_RECONSTRUCTION and start.should_submit
+    assert start.task_id == spec.task_id and start.output_ids == spec.outputs
     assert start.attempt_id == AttemptID(spec.task_id, 1)
-    assert start.output_ids == spec.outputs
     assert start.producer_task_spec is spec
-    assert joined.action is RecoveryAction.JOIN_RECONSTRUCTION
-    assert not joined.should_submit
-    assert joined.task_id == start.task_id
-    assert joined.attempt_id == start.attempt_id
+    assert joined.action is RecoveryAction.JOIN_RECONSTRUCTION and not joined.should_submit
+    assert joined.task_id == start.task_id and joined.attempt_id == start.attempt_id
     assert manager.active_recovery(spec.task_id) == start.attempt_id
+    assert manager.task_record(spec.task_id).retries_started == 1
 
 
 def test_stale_reconstruction_completion_cannot_clear_the_current_recovery() -> None:
@@ -143,31 +138,65 @@ def test_stale_reconstruction_completion_cannot_clear_the_current_recovery() -> 
     assert manager.active_recovery(spec.task_id) == second_recovery.attempt_id
 
 
-def test_targeted_terminal_failure_preserves_task_lineage_and_remaining_budget() -> None:
-    spec = producer_spec(returns=3)
-    manager = RecoveryManager()
+def test_single_output_terminal_reconstruction_failure_keeps_budget_and_fences_late_attempt() -> None:
+    from dataclasses import replace
+    from miniray import protocol
+    import hashlib
+    from miniray.ids import NodeID, WorkerID
+    from miniray.resources import ResourceVector
+    from miniray.ownership import ObjectOwnerTable, ObjectState
+    from miniray.task_outputs import TaskExecutionKey
+
+    job = opaque_id(JobID, 7)
+    tid = TaskID.derive(job, TaskID.for_driver(job), 0)
+    spec = protocol.TaskSpec(job, tid, AttemptID(tid, 0),
+        protocol.FunctionKey(job, __name__, "single_recovery", "1"), (), 1,
+        ResourceVector(), opaque_id(WorkerID, 8), max_retries=3)
+    output, = spec.return_ids()
+    execution = TaskExecutionKey.from_task_spec(spec)
+    manager, owner = RecoveryManager(), ObjectOwnerTable()
     manager.register_task(spec, max_retries=3)
-    manager.record_task_success(spec.task_id, spec.attempt_id)
-    started = manager.request_reconstruction(spec.outputs[0])
-    error = SystemTaskError("target execution cannot continue")
-
-    plan = manager.validate_terminal_reconstruction_failure(
-        spec.task_id, started.attempt_id, error
-    )
-    assert manager.task_record(spec.task_id).state is TaskState.RETRY_PENDING
-    assert plan.decision.action is RecoveryAction.FAIL_RECONSTRUCTION_TARGETS
-    manager.commit_validated_transition(plan)
-
-    record = manager.task_record(spec.task_id)
-    assert record.state is TaskState.SUCCEEDED
-    assert record.current_attempt == started.attempt_id
-    assert record.retries_started == 1
-    assert record.retries_remaining == 2
-    assert manager.active_recovery(spec.task_id) is None
-    assert manager.lineage_for_object(spec.outputs[2]) is not None
-    later = manager.request_reconstruction(spec.outputs[2])
-    assert later.action is RecoveryAction.START_RECONSTRUCTION
-    assert later.attempt_id == AttemptID(spec.task_id, 2)
+    owner.register_task_outputs(spec, local_tokens=("live",))
+    node = opaque_id(NodeID, 9)
+    descriptor = protocol.ResultDescriptor(output, protocol.ResultStorage.OBJECT_STORE, 1,
+        spec.owner_worker_id, node, hashlib.sha256(b"x").hexdigest())
+    assert owner.publish_stored(output, spec.attempt_id, node, descriptor=descriptor)
+    assert owner.mark_lost(output, spec.attempt_id)
+    manager.commit_transition(manager.validate_task_success(tid, spec.attempt_id))
+    with owner._lock:
+        start = manager.validate_request_reconstruction(output)
+        advance = owner.validate_advance_task_outputs(execution, start.decision.attempt_id)
+        assert advance is not None
+        owner.commit_validated_advance_task_outputs(advance)
+        manager.commit_validated_transition(start)
+    attempt = start.decision.attempt_id
+    current_execution = TaskExecutionKey(execution.manifest, attempt)
+    before = replace(manager.task_record(tid))
+    error = SystemTaskError("current reconstruction cannot continue")
+    with owner._lock:
+        plan = manager.validate_terminal_system_failure(tid, attempt, error)
+        owner_plan = owner.validate_publish_task_error(current_execution, error)
+        assert manager.task_record(tid) == before
+        assert owner.snapshot(output).state is ObjectState.PENDING
+        assert plan.decision.action is RecoveryAction.FAIL_RETRY_EXHAUSTED
+        assert owner_plan is not None
+        owner.commit_validated_publish_task_error(owner_plan)
+        manager.commit_validated_transition(plan)
+    record = replace(manager.task_record(tid))
+    assert record.state is TaskState.SYSTEM_FAILED and record.current_attempt == attempt
+    assert record.retries_started == 1 and record.retries_remaining == 2
+    assert manager.active_recovery(tid) is None
+    assert owner.snapshot(output).state is ObjectState.ERROR
+    assert owner.snapshot(output).error is error
+    assert manager.lineage_for_object(output).task_spec is spec
+    stale = manager.validate_terminal_system_failure(tid, spec.attempt_id, SystemTaskError("late"))
+    assert stale.decision.action is RecoveryAction.FENCE_STALE_ATTEMPT
+    manager.commit_transition(stale)
+    assert manager.task_record(tid) == record
+    assert owner.validate_publish_task_error(execution, SystemTaskError("late")) is None
+    repeated = manager.validate_request_reconstruction(output).decision
+    assert repeated.action is RecoveryAction.FAIL_RETRY_EXHAUSTED
+    assert not repeated.should_submit and repeated.output_ids == (output,)
 
 
 def test_commit_validated_transition_is_assignment_only() -> None:
@@ -217,7 +246,7 @@ def test_exhausted_reconstruction_returns_a_stable_explicit_decision() -> None:
 def test_transition_validation_is_side_effect_free_until_commit(
     transition: str,
 ) -> None:
-    spec = producer_spec(returns=3)
+    spec = producer_spec(returns=1)
     manager = RecoveryManager()
     manager.register_task(spec, max_retries=2)
     before = manager.task_record(spec.task_id)

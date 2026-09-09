@@ -1,7 +1,7 @@
 """Pure wire contracts for request-scoped dependency custody inventory.
 
-Each fixture has two three-byte descriptor identities, one three-slot target
-manifest and no physical store. Constructors, deep validators and pickle
+Each fixture has two three-byte dependency identities, one output at attempt
+two and no physical store. Constructors, deep validators and pickle
 round-trips alone run: no Core/Node, listener, process, thread, wait or user
 function. The fixed corruption tables never grow or retry at runtime.
 """
@@ -14,7 +14,6 @@ import pytest
 from miniray import protocol
 from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, PlacementGroupID, TaskID, WorkerID
 from miniray.resources import AllocationToken, ResourceVector
-from miniray.task_outputs import TargetExecutionKey, TargetOutputManifest, TaskOutputManifest
 
 
 pytestmark = pytest.mark.unit
@@ -27,11 +26,7 @@ def _id(kind, number):
 def _request():
     task = _id(TaskID, 1)
     source, target, home = (_id(NodeID, value) for value in (3, 4, 5))
-    full = TaskOutputManifest.for_task(task, 3)
-    execution = TargetExecutionKey(
-        TargetOutputManifest(full, (full.output_ids[0], full.output_ids[2])),
-        AttemptID(task, 2),
-    )
+    attempt = AttemptID(task, 2)
     dependencies = tuple(
         protocol.ObjectStoreDescriptor(
             ObjectID.for_task(_id(TaskID, 11 + index)), _id(WorkerID, 7 + index),
@@ -40,14 +35,13 @@ def _request():
         for index, checksum in enumerate(("a", "c"))
     )
     return protocol.RequestWorkerLease(
-        _id(LeaseID, 2), task, execution.attempt_id,
+        _id(LeaseID, 2), task, attempt,
         ResourceVector({"CPU": "0.125", "custom": 2}), home, _id(WorkerID, 6),
         preferred_node_id=home, target_node_id=target, dependencies=dependencies,
-        return_ids=execution.target_output_ids,
+        return_ids=(ObjectID.for_task(task),),
         scheduling_key=protocol.PlacementGroupSchedulingKey(
             _id(PlacementGroupID, 9), 1, 0, target, "b" * 64,
         ),
-        target_execution=execution,
     )
 
 
@@ -65,7 +59,7 @@ def _grant(inventory):
         request.lease_id, request.task_id, request.attempt_id, inventory.node_id,
         _id(WorkerID, 20), ("worker.invalid", 21), AllocationToken("inventory-grant"),
         tuple(replace(item, node_id=inventory.node_id) for item in request.dependencies),
-        request.scheduling_key, request.target_execution,
+        request.scheduling_key,
     )
 
 
@@ -126,12 +120,12 @@ def test_inventory_detaches_all_nested_request_resources_manifest_and_descriptor
     assert rebuilt.dependencies[0].object_id is not original.dependencies[0].object_id
     assert rebuilt.dependencies[0].producer_attempt_id is not original.dependencies[0].producer_attempt_id
     assert rebuilt.return_ids[0] is not original.return_ids[0]
-    assert rebuilt.target_execution is not original.target_execution
-    assert rebuilt.target_execution.manifest.full_manifest is not original.target_execution.manifest.full_manifest
+    assert rebuilt.attempt_id is not original.attempt_id
+    assert rebuilt.attempt_id.task_id is not original.attempt_id.task_id
     assert rebuilt.scheduling_key is not original.scheduling_key
     object.__setattr__(original.resources, "_items", (("CPU", 999),))
     object.__setattr__(original.dependencies[0], "checksum", "d" * 64)
-    object.__setattr__(original.target_execution.manifest, "target_output_ids", ())
+    object.__setattr__(original.return_ids[0], "return_index", 1)
     object.__setattr__(original.scheduling_key, "bundle_index", 8)
     assert inventory == frozen and rebuilt == frozen.lease_request
     assert inventory.descriptors[0].checksum == "a" * 64
@@ -150,8 +144,8 @@ def test_inventory_detaches_all_nested_request_resources_manifest_and_descriptor
     ("dependencies.0.checksum", "z" * 64),
     ("return_ids.0.return_index", False),
     ("scheduling_key.bundle_index", True),
-    ("target_execution.attempt_id.attempt_number", True),
-    ("target_execution.manifest.full_manifest.output_ids.0.return_index", False),
+    ("attempt_id.task_id.value", b"short"),
+    ("return_ids.0.task_id.value", b"short"),
 ))
 def test_full_request_deep_revalidation_rejects_nested_corruption(path, replacement):
     request = _request()
@@ -239,11 +233,8 @@ def test_cancel_reply_requires_complete_inventory_matching_retired_grant():
     bad_requests = (
         replace(request, requester_worker_id=_id(WorkerID, 37)),
         replace(request, dependencies=(replace(request.dependencies[0], checksum="e" * 64), request.dependencies[1])),
-        replace(request, return_ids=(request.return_ids[0],),
-                target_execution=TargetExecutionKey(
-                    TargetOutputManifest(request.target_execution.manifest.full_manifest, (request.return_ids[0],)),
-                    request.attempt_id,
-                )),
+        replace(request, task_id=_id(TaskID, 38), attempt_id=AttemptID(_id(TaskID, 38), 2),
+                return_ids=(ObjectID.for_task(_id(TaskID, 38)),)),
     )
     for candidate in (replace(inventory, descriptors=inventory.descriptors[:1]),
                       *(_inventory(request=item) for item in bad_requests)):
@@ -252,7 +243,7 @@ def test_cancel_reply_requires_complete_inventory_matching_retired_grant():
     changed_grant = replace(grant, dependencies=grant.dependencies[:1])
     with pytest.raises(protocol.ProtocolError):
         replace(reply, retired_grant=changed_grant)
-    assert fields(protocol.CancelWorkerLeaseReply)[-1].name == "dependency_inventory"
+    assert "dependency_inventory" in {field.name for field in fields(protocol.CancelWorkerLeaseReply)}
 
 
 def test_no_grant_cancel_can_echo_empty_inventory_but_not_execution_permission():
@@ -339,7 +330,7 @@ def test_identity_only_cancel_and_empty_probe_request_keep_their_existing_surfac
     with pytest.raises(protocol.ProtocolError):
         pickle.loads(pickle.dumps(cancellation))
     assert legacy_reply.attempt_id.attempt_number == 2
-    probe = replace(original, dependencies=(), return_ids=(), target_execution=None, scheduling_key=None)
+    probe = replace(original, dependencies=(), return_ids=(), scheduling_key=None)
     assert protocol.revalidate_worker_lease_request(probe) == probe
     empty = _inventory((), request=probe)
     assert not empty.descriptors and not empty.lease_request.return_ids

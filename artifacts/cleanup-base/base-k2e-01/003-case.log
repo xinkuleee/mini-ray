@@ -1,0 +1,193 @@
+...FFFF                                                                  [100%]
+=================================== FAILURES ===================================
+__________ test_dependency_is_protected_until_dispatch_releases_hold ___________
+
+    @pytest.mark.unit
+    def test_dependency_is_protected_until_dispatch_releases_hold() -> None:
+        core = _core_without_runtime()
+        outputs = _outputs(core)
+        dependency, dependency_ref = core._register_submission(
+            _definition(core), (), {}, ResourceVector()
+        )
+>       assert core._publish_reply(dependency, _reply(core, outputs, dependency, 9))
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_core_owner_integration.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_core_owner_integration.py:85: in _reply
+    reply = outputs.complete(push, (value,))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/_pure_output_runtime.py:132: in complete
+    self.adapter.prepare(outputs.manifest, outputs.slot_payloads)
+src/miniray/output_publication_node.py:168: in prepare
+    self._register_owner(replace(manifest))
+tests/unit/_pure_output_runtime.py:78: in _register_owner
+    snapshot = self._owner_rpc(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.unit._pure_output_runtime.PureOutputRuntime object at 0x76a27fc13470>
+request = RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicati...dc815f82410cc11', transfers=()),), manifest_digest='5fbbb1ae922a4054972a7991cdcd3bb5448bc017ac203d3fc365511f6632885b'))
+method = <bound method CoreWorker.register_output_handoff of <miniray.core.CoreWorker object at 0x76a27fc134d0>>
+
+    def _owner_rpc(self, request, method):
+        _metadata(request)
+        self.calls.append((type(request).__name__, request))
+        reply = method(request)
+        assert type(reply) is wire.OutputHandoffReply
+>       assert reply.request == request and reply.accepted, reply.error
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: output handoff has no accepted task execution
+
+tests/unit/_pure_output_runtime.py:73: AssertionError
+___ test_reply_publishes_owner_state_before_waking_and_fences_stale_attempt ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x76a27fc13e60>
+
+    @pytest.mark.unit
+    def test_reply_publishes_owner_state_before_waking_and_fences_stale_attempt(monkeypatch) -> None:
+        core = _core_without_runtime()
+        outputs = _outputs(core)
+        pending, ref = core._register_submission(
+            _definition(core), (), {}, ResourceVector(), max_retries=1
+        )
+        failure = SystemTaskError("advance to a current retry attempt")
+        recovery_plan = core._recovery_manager().validate_task_failure(
+            pending.spec.task_id, pending.spec.attempt_id, failure, error=failure
+        )
+        next_attempt = recovery_plan.decision.attempt_id
+        assert next_attempt == pending.spec.attempt_id.next()
+        owner_plan = core.owner_table.validate_advance_task_outputs(
+            pending.execution, next_attempt
+        )
+        core.owner_table.commit_validated_advance_task_outputs(owner_plan)
+        core._recovery_manager().commit_transition(recovery_plan)
+        payload = cloudpickle.dumps(42)
+>       stale_reply = _reply(core, outputs, pending, 42)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_core_owner_integration.py:247: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_core_owner_integration.py:85: in _reply
+    reply = outputs.complete(push, (value,))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/_pure_output_runtime.py:132: in complete
+    self.adapter.prepare(outputs.manifest, outputs.slot_payloads)
+src/miniray/output_publication_node.py:168: in prepare
+    self._register_owner(replace(manifest))
+tests/unit/_pure_output_runtime.py:78: in _register_owner
+    snapshot = self._owner_rpc(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.unit._pure_output_runtime.PureOutputRuntime object at 0x76a27fc03110>
+request = RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicati...72101275ed291ea', transfers=()),), manifest_digest='bff6661182ed86fb3fad01acba25bab8417dcffe9b32bce605f5279ad881a9b7'))
+method = <bound method CoreWorker.register_output_handoff of <miniray.core.CoreWorker object at 0x76a27fdca1b0>>
+
+    def _owner_rpc(self, request, method):
+        _metadata(request)
+        self.calls.append((type(request).__name__, request))
+        reply = method(request)
+        assert type(reply) is wire.OutputHandoffReply
+>       assert reply.request == request and reply.accepted, reply.error
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: output handoff requires the current pending owner attempt
+
+tests/unit/_pure_output_runtime.py:73: AssertionError
+______________ test_shutdown_error_fences_a_late_successful_reply ______________
+
+    @pytest.mark.unit
+    def test_shutdown_error_fences_a_late_successful_reply() -> None:
+        """A cancelled lease cannot authorize a late success before local finish.
+    
+        The old descriptor-only success is now a malformed protocol delivery, not
+        a legal Complete envelope. A live Push/adoption instead prevents shutdown
+        from choosing ERROR; publication continuations have separate regressions.
+        """
+>       from tests.unit.test_cancelled_grant_inventory import _node
+
+tests/unit/test_core_owner_integration.py:295: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../mini-ray-cleanup-runtime/packages/_pytest/assertion/rewrite.py:186: in exec_module
+    exec(co, module.__dict__)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Pure cancellation inventory wire and real Node reducer contracts.
+    
+    Safety: two threadless Nodes, two 1 KiB stores and two tiny dependency values.
+    At most six synchronous source pin/chunk/release calls create one actual grant.
+    No Core, GCS, user function, socket, process, thread, timer, wait or sleep runs;
+    runtime tripwires make accidental infrastructure use fail immediately. Worker
+    loss uses the real local reclaim reducer with a passive process-state fake.
+    """
+    
+    from copy import deepcopy
+    from dataclasses import fields, replace
+    import multiprocessing.process
+    import pickle
+    import socket
+    import subprocess
+    import threading
+    import time
+    from types import SimpleNamespace
+    
+    import pytest
+    
+    from miniray import node as node_module, protocol
+    from miniray.ids import (
+        AttemptID, LeaseID, NodeID, ObjectID, PlacementGroupID, TaskID, WorkerID,
+    )
+    from miniray.node import NodeServer
+    from miniray.object_manager import ObjectManager
+    from miniray.object_store import ObjectStore
+    from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
+>   from miniray.task_outputs import (
+        TargetExecutionKey, TargetOutputManifest, TaskOutputManifest,
+    )
+E   ImportError: cannot import name 'TargetExecutionKey' from 'miniray.task_outputs' (/dev/shm/mini-ray-cleanup-candidates/base-k2e-01/src/miniray/task_outputs.py)
+
+tests/unit/test_cancelled_grant_inventory.py:30: ImportError
+______________ test_successful_reply_fences_a_late_shutdown_error ______________
+
+    @pytest.mark.unit
+    def test_successful_reply_fences_a_late_shutdown_error() -> None:
+        core = _core_without_runtime()
+        outputs = _outputs(core)
+        pending, ref = core._register_submission(
+            _definition(core), (), {}, ResourceVector()
+        )
+        payload = cloudpickle.dumps(42)
+>       reply = _reply(core, outputs, pending, 42)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_core_owner_integration.py:393: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_core_owner_integration.py:85: in _reply
+    reply = outputs.complete(push, (value,))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/_pure_output_runtime.py:132: in complete
+    self.adapter.prepare(outputs.manifest, outputs.slot_payloads)
+src/miniray/output_publication_node.py:168: in prepare
+    self._register_owner(replace(manifest))
+tests/unit/_pure_output_runtime.py:78: in _register_owner
+    snapshot = self._owner_rpc(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.unit._pure_output_runtime.PureOutputRuntime object at 0x76a27fbd01d0>
+request = RegisterOutputHandoff(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicati...72101275ed291ea', transfers=()),), manifest_digest='cc4c68efd43e746dc351ac27c5848291d22660059410f97df2481a4a3fb27fd9'))
+method = <bound method CoreWorker.register_output_handoff of <miniray.core.CoreWorker object at 0x76a27fbd3500>>
+
+    def _owner_rpc(self, request, method):
+        _metadata(request)
+        self.calls.append((type(request).__name__, request))
+        reply = method(request)
+        assert type(reply) is wire.OutputHandoffReply
+>       assert reply.request == request and reply.accepted, reply.error
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: output handoff has no accepted task execution
+
+tests/unit/_pure_output_runtime.py:73: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_core_owner_integration.py::test_dependency_is_protected_until_dispatch_releases_hold
+FAILED tests/unit/test_core_owner_integration.py::test_reply_publishes_owner_state_before_waking_and_fences_stale_attempt
+FAILED tests/unit/test_core_owner_integration.py::test_shutdown_error_fences_a_late_successful_reply
+FAILED tests/unit/test_core_owner_integration.py::test_successful_reply_fences_a_late_shutdown_error
+4 failed, 3 passed in 2.34s

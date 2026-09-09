@@ -18,13 +18,13 @@ import time
 
 import pytest
 
-from miniray import node as node_module, protocol
+from miniray import node as node_module, output_protocol as wire, protocol
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
-from miniray.node import NodeServer, _LeaseOutcome, _LeaseRecord
+from miniray.node import NodeServer, _LeaseOutcome, _LeaseRecord, _WorkerSlot
 from miniray.output_publication_journal import OutputPublicationJournalState, OutputPublicationStage
-from miniray.output_recovery import OutputRecoveryStage
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.resources import AllocationState, AllocationToken, NodeSnapshot, ResourceLedger, ResourceVector
-from tests.unit._pure_node_output import prepare_ref_free_output
+from tests.unit._pure_node_output_current import prepare_ref_free_output
 
 
 def _id(id_type: type, byte: int):
@@ -82,6 +82,9 @@ def _lease_fixture() -> tuple[
         allocation_token=allocation,
     )
     record = _LeaseRecord(request, allocation, grant)
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(worker_id, active_lease_id=lease_id)}
+    node.num_workers_per_node = 1
     node._leases[lease_id] = record
     node._lease_outcomes[lease_id] = _LeaseOutcome(request, grant)
     return node, request, grant
@@ -121,7 +124,7 @@ def test_start_and_complete_are_idempotent_and_release_once() -> None:
     repeated_complete = node._handle_complete_worker_lease(complete)
     assert first_complete.accepted and first_complete.released
     assert first_complete.output_publication.manifest == publication.manifest
-    assert publication.recovery.snapshot(publication.manifest.publication_id).complete is None
+    assert publication.handoffs.query(publication.manifest.publication_id).complete is None
     assert repeated_complete.accepted and not repeated_complete.released
     assert repeated_complete.state is protocol.LeaseExecutionState.COMPLETED
     assert node.resource_ledger.available == node.resource_ledger.total
@@ -191,7 +194,7 @@ def _no_worker_exit_runtime(monkeypatch):
         pytest.fail("pure Worker-exit reducer attempted runtime infrastructure")
 
     for kind, method in (
-        (NodeServer, "__init__"), (NodeServer, "_stop_worker"),
+        (NodeServer, "__init__"),
         (NodeServer, "_stop_workers"), (NodeServer, "_stop_worker_slot"),
         (threading.Thread, "start"), (threading.Thread, "join"),
         (threading.Timer, "start"), (threading.Event, "wait"),
@@ -235,6 +238,10 @@ def _worker_exit_lease_fixture():
     node._worker_address = ("worker-exit.invalid", 1)
     node._worker_pid = node._worker_process.pid
     node._worker_exitcode, node._worker_forced = None, False
+    node._worker_order = (node.worker_id,)
+    node._workers = {node.worker_id: _WorkerSlot(node.worker_id, process=node._worker_process,
+        address=node._worker_address, pid=node._worker_pid)}
+    node.num_workers_per_node = 1
     node._leases, node._lease_outcomes, node._lease_cancellations = {}, {}, {}
     node._lease_request_locks, node._inflight_lease_requests = {}, 0
     node.event_sink = None
@@ -272,7 +279,7 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     identity = publication.manifest.publication_id
     prepared = publication.journal.snapshot(identity)
     assert prepared.ready_to_complete and prepared.retained_result_slots == (0,)
-    assert prepared.complete is None and publication.recovery.snapshot(identity).armed
+    assert prepared.complete is None and publication.handoffs.query(identity).manifest == publication.manifest
     assert publication.manifest.slots[0].size_bytes <= 32
     assert node.object_store.capacity_bytes == 1024 and node.object_store.used_bytes == 0
     release_calls = []
@@ -311,7 +318,7 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     assert record.state is protocol.LeaseExecutionState.WORKER_LOST
     assert record.completion is None and record.output_complete_inflight is None
     assert publication.journal.snapshot(identity) == prepared
-    assert publication.recovery.snapshot(identity).complete is None
+    assert publication.handoffs.query(identity).complete is None
     assert not node._handle_start_worker_lease(start).accepted
     assert node.resource_ledger.snapshot() == released_ledger
 
@@ -325,13 +332,15 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     assert before_cleanup.cleanup_pending and before_cleanup.completion_status is None
     assert before_cleanup.output_publication is None and before_cleanup.output_completion is None
     reports = []
-    report_rollback = publication.recovery.report_rollback
+    report_rollback = publication.report_rollback
 
     def observe_rollback(tombstone, *, manifest):
         assert manifest == publication.manifest and not reports
         reply = report_rollback(tombstone, manifest=manifest)
-        assert reply.stage is OutputRecoveryStage.ROLLED_BACK
-        assert reply.snapshot.rollback == tombstone
+        assert type(reply) is wire.OutputHandoffReply and reply.accepted
+        assert reply.request == wire.ReportOutputHandoffRollback(manifest, tombstone)
+        assert reply.snapshot.phase is OutputHandoffPhase.ABORTED
+        assert reply.snapshot.abort_reason == tombstone.plan.rollback_id
         reports.append((tombstone, reply))
         return reply
 
@@ -347,9 +356,10 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     assert cleaned.rollback.effects[0].stage is OutputPublicationStage.SLOT_DROP
     assert cleaned.rollback.effects[0].slot_index == 0
     assert len(reports) == 1 and reports[0][0] == cleaned.rollback_tombstone
-    assert publication.recovery.snapshot(identity).rollback == cleaned.rollback_tombstone
-    assert publication.recovery.snapshot(identity).complete is None
-    assert publication.recovery.snapshot(identity).adopted is None
+    assert publication.rollback_reports == reports
+    assert publication.handoffs.query(identity).abort_reason == cleaned.rollback.rollback_id
+    assert publication.handoffs.query(identity).complete is None
+    assert publication.handoffs.query(identity).adoption is None
     assert publication.adapter.rollback_reported(identity)
     assert not publication.adapter.pending_rollbacks()
     assert not publication.adapter.pending_terminal_reports()

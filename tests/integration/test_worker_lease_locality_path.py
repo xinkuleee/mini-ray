@@ -167,7 +167,7 @@ def _child_story(calls, index, reference, nested, descriptor, parent, data_node,
     assert grant.node_id == data_node.node_id and grant.worker_id == data_node.worker_id
     assert grant.worker_address == data_node.worker_address
     assert lease.scheduling_key is grant.scheduling_key is None
-    assert lease.target_execution is grant.target_execution is None
+    assert lease.attempt_id.task_id == grant.attempt_id.task_id == task_id
     assert lease.return_ids == (reference.object_id,)
     assert (grant.task_id, grant.attempt_id, grant.lease_id) == (task_id, AttemptID(task_id, 0), lease.lease_id)
     assert lease.attempt_id == grant.attempt_id
@@ -258,7 +258,8 @@ def _child_story(calls, index, reference, nested, descriptor, parent, data_node,
     assert push.spec.scheduling_key is None and push.spec.max_retries == 0
     assert push.spec.args == (protocol.RefArg(nested.object_id, nested.owner_worker_id),) and not push.spec.kwargs
     assert push.spec.resources == lease.resources and push.spec.return_ids() == lease.return_ids
-    assert push.dependencies == grant.dependencies and push.target_execution is None
+    assert push.dependencies == grant.dependencies
+    assert push.spec.return_ids() == (reference.object_id,)
     assert type(reply) is protocol.TaskReply and reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert (reply.task_id, reply.attempt_id, reply.worker_id) == (task_id, lease.attempt_id, data_node.worker_id)
     assert reply.output_publication.manifest.header.owner_worker_id == parent.worker_id

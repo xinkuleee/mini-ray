@@ -36,7 +36,8 @@ def test_bind_and_request_detach_full_identity_and_preserve_exact_replay():
     assert frozen == original and frozen is not request
     assert frozen.resources is not request.resources
     assert frozen.dependencies[0] is not request.dependencies[0]
-    assert frozen.target_execution is not request.target_execution
+    assert frozen.attempt_id is not request.attempt_id
+    assert frozen.return_ids[0] is not request.return_ids[0]
     assert frozen.scheduling_key is not request.scheduling_key
     registry.bind(frozen)
     assert registry.snapshot(original.lease_id).descriptors == ()
@@ -192,7 +193,7 @@ def test_two_leases_reusing_one_replica_require_independent_custody_acknowledgem
     task = TaskID(b"q" * 16)
     second_request = replace(
         first_request, lease_id=LeaseID(b"l" * 16), task_id=task,
-        attempt_id=type(first_request.attempt_id)(task, 0), target_execution=None,
+        attempt_id=type(first_request.attempt_id)(task, 0),
         return_ids=(ObjectID.for_task(task),),
     )
     registry.bind(second_request)

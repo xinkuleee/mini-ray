@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "943de8b32a1a7718bdf6ccab1e8c07b4d67ac1f0",
+  "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_worker_lease_locality_path.py\n M tests/unit/test_cluster_shutdown_barrier.py\n M tests/unit/test_lease_dependency_inventory.py\n M tests/unit/test_lease_dependency_registry.py\n",
+  "archive_sha256": "d361b243cd208f172aeeb552edf957192410508dfce99d21f403e7af9d41aa30",
+  "file_count": 494,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

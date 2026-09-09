@@ -15,3 +15,5 @@ K2a完成：43项确认无消费者的定义/字段/import/便利接口从16个�
 K2b迁移前置：5个替代纯文件18case通过，Actor普通restart真实smoke通过。修复原合同要求的Actor结果Ref拒绝（含hidden reducer），未增加ActorRef支持；18个旧helper导入已提取。尚未据此批删旧测试。
 
 K2c迁移前置：foreign-lineage4、owner API10、owned-drop8、owner-service4、dead-worker3、foreign-finish14均通过。七个待迁API仍保留到旧消费者闭合；不以新case通过直接跳过原混合文件合同。
+
+K2d/e切片：cluster19、worker locality重试1、lease inventory39/registry13、Node monitor1、Node lease4、recovery13通过。worker locality初次Node启动超时原日志保留。core-owner4个fixture未完成真实准入导致失败，待修；该file与5个SRC死亡smoke尚未验收，不删除关联SRC。

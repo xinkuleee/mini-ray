@@ -262,15 +262,15 @@ def _install_runtime(
             return protocol.DrainPlacementGroupsReply(
                 message.request_id, accepted=True, clean=pg_drain_clean
             )
-        assert handler == api.DRAIN_PUBLICATION_OWNER_DEATHS_HANDLER
-        assert isinstance(message, protocol.DrainPublicationOwnerDeaths)
+        assert handler == api.DRAIN_OWNER_DEATH_FENCES_HANDLER
+        assert isinstance(message, protocol.DrainOwnerDeathFences)
         owner_death_drain_round += 1
         events.append(("gcs_owner_death_drain", message.request_id))
         owner_death_clean_now = (
             owner_death_drain_clean
             and owner_death_drain_round > owner_death_drain_pending_rounds
         )
-        return protocol.DrainPublicationOwnerDeathsReply(
+        return protocol.DrainOwnerDeathFencesReply(
             message.request_id, owner_death_clean_now,
             0 if owner_death_clean_now else 1,
         )
@@ -492,7 +492,7 @@ def test_membership_change_invalidates_all_control_drain_acks(
             address, handler, message, request_timeout=request_timeout
         )
         if (
-            handler == api.DRAIN_PUBLICATION_OWNER_DEATHS_HANDLER
+            handler == api.DRAIN_OWNER_DEATH_FENCES_HANDLER
             and not injected
         ):
             injected = True
