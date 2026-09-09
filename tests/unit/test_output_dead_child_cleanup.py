@@ -1,4 +1,4 @@
-"""Pure Node rollback proof fallback: two tiny slots, no live RPC or threads."""
+"""Pure Node rollback proof fallback: one tiny output and two child owners, no live RPC or threads."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from miniray.output_publication import OutputPublicationConflictError
 from miniray.output_publication_journal import OutputPublicationStage as Stage
 from miniray.output_publication_node import OutputPublicationRemoteError
 from miniray.transport import TransportTimeout
-from tests.unit.test_output_publication import _assert_metadata
+from tests.unit._pure_output_runtime import _metadata as _assert_metadata
 from tests.unit.test_output_publication_node_server import _node
 
 
@@ -262,7 +262,10 @@ def test_departed_slot_uses_pending_registration_proof_not_replacement_endpoint(
 
 
 def test_dead_executor_child_cleanup_does_not_discharge_remaining_live_child_hold():
-    fixture, node, _record, _complete = _node()
+    # Rollback visits transfer intents in reverse order. Put the executor
+    # last so its actual death is settled before the independent live owner
+    # is intentionally blocked; the two-child dependency remains explicit.
+    fixture, node, _record, _complete = _node(reverse_children=True)
     fixture.prepare()
     proof = _proof(
         fixture.values.executor, node_id=node.node_id, node_pid=node._node_pid,
@@ -322,10 +325,10 @@ def _rollback_at_first_child_effect():
     fixture, node, _record, _complete = _node()
     fixture.prepare()
     rollback_id = "child-proof-consumption"
-    # Two selected slots: one graph ABORT and two slot DROPs precede the
-    # first child release.  Do not execute any child callback during setup.
-    assert len(fixture.manifest.slots) == 2
-    assert fixture.adapter.rollback(fixture.id, rollback_id, max_effects=3) is None
+    # The one stored output Drop precedes child release. No child callback
+    # runs during setup; both independent child-owner obligations remain.
+    assert len(fixture.manifest.slots) == 1
+    assert fixture.adapter.rollback(fixture.id, rollback_id, max_effects=1) is None
     effect = fixture.journal.next_rollback_effect(fixture.id)
     assert effect.stage is Stage.FINAL_RELEASE
     transfer = fixture.manifest.slots[effect.slot_index].transfers[effect.transfer_index]

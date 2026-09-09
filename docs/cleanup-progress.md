@@ -23,3 +23,5 @@ K2g：原adopted-owner与四个publisher死亡窗口在当前B handoff/Node/实�
 K2h：foreignwait修fixture后5通过；Task真实Seal/Drop/owner rollback未知组合1通过；explicit put含PENDING Ref跨Node导入真实smoke1通过。core-owner6通过1仅旧错误文案待同步，未记整体通过。
 
 K2i：core-owner7、sourceRef/Taskseal2、NodeMember6、NodeWorkerDeath8通过。关联6个旧SRC接口删除并AST核验，Node5未执行因父fixture规范hash变化被正确拒绝，下一冻结重登后验收。
+
+K2j发布族：discovery34/protocol37/journal23、Node-server13/owner-death10/dead-child28/replica22通过；publication50通过1异常类型断言、finalize6通过3旧progress预期失败均已精确修测试，待下一冻结复验。保留所有失败及hash拒绝记录，未降低runtime校验。

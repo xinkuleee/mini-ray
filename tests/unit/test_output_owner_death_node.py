@@ -1,4 +1,4 @@
-"""Pure Node finalization: two tiny slots, one fake Worker, no live I/O.
+"""Pure Node finalization: one tiny stored output, one fake Worker, no live I/O.
 
 The real journal, store, lease ledger and Node handlers are composed in memory.
 Each fault/replay sequence is explicit and bounded; the imported autouse
@@ -113,7 +113,7 @@ def test_worker_cleanup_ack_loss_retains_node_payload_and_replays_exact_request(
     node._background_rpc = rpc
     with pytest.raises(TimeoutError, match="ACK lost"):
         node._handle_finalize_output_owner_death(request)
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0, 1)
+    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
     assert not fixture.adapter.owner_death_finished(fixture.id)
     assert not fixture.adapter._tickets
     assert node._handle_finalize_output_owner_death(request).cleaned
@@ -180,11 +180,11 @@ def test_worker_unavailability_is_not_a_confirmed_custody_cleanup(monkeypatch, o
 
 def test_wrong_partial_write_claim_cannot_authorize_deletion(monkeypatch):
     fixture, node, _record, _complete, request = _fixture(monkeypatch, phase="partial")
-    object_id = fixture.manifest.slots[1].object_id
+    object_id = fixture.manifest.slots[0].object_id
     claim = node._local_replica_write_claims[object_id]
-    node._local_replica_write_claims[object_id] = replace(
-        claim, effect=replace(claim.effect, slot_index=0),
-    )
+    wrong_effect = replace(claim.effect)
+    object.__setattr__(wrong_effect, "slot_index", 1)
+    node._local_replica_write_claims[object_id] = replace(claim, effect=wrong_effect)
     node._background_rpc = lambda *_: pytest.fail("wrong claim reached Worker")
     assert not node._handle_finalize_output_owner_death(request).cleaned
     assert fixture.store.contains(object_id, sealed_only=False)

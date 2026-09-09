@@ -1,0 +1,109 @@
+......FFF                                                                [100%]
+=================================== FAILURES ===================================
+_ test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback[partial] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7cf27f227350>
+phase = 'partial'
+
+    @pytest.mark.parametrize("phase", ("partial", "running", "complete"))
+    def test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback(monkeypatch, phase):
+        fixture, node, record, complete, request = _fixture(monkeypatch, phase=phase)
+        calls = []
+    
+        def rpc(address, handler, message):
+            assert address == record.grant.worker_address
+            assert handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER and message == request
+            assert not node._state_lock._is_owned()
+            calls.append(message)
+            assert len(calls) <= 2
+            return wire.FinalizeOutputOwnerDeathReply(message, len(calls) == 2)
+    
+        node._background_rpc = rpc
+        first = node._handle_finalize_output_owner_death(request)
+        assert not first.cleaned and calls == [request]
+        assert record.state is (protocol.LeaseExecutionState.COMPLETED if phase == "complete"
+                                else protocol.LeaseExecutionState.ABANDONED)
+        before = fixture.journal.snapshot(fixture.id)
+        assert before.rollback is None and before.rollback_tombstone is None
+        assert not fixture.adapter.owner_death_finished(fixture.id)
+        # Owner cleanup may already have released CPU, but the live Worker's
+        # pending ACK belongs to that same terminal, not a new rollback saga.
+>       assert not node._drive_output_publications()
+E       assert not True
+E        +  where True = _drive_output_publications()
+E        +    where _drive_output_publications = <miniray.node.NodeServer object at 0x7cf27f226120>._drive_output_publications
+
+tests/unit/test_node_publication_owner_death_finalize.py:170: AssertionError
+_ test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback[running] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7cf27f239c70>
+phase = 'running'
+
+    @pytest.mark.parametrize("phase", ("partial", "running", "complete"))
+    def test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback(monkeypatch, phase):
+        fixture, node, record, complete, request = _fixture(monkeypatch, phase=phase)
+        calls = []
+    
+        def rpc(address, handler, message):
+            assert address == record.grant.worker_address
+            assert handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER and message == request
+            assert not node._state_lock._is_owned()
+            calls.append(message)
+            assert len(calls) <= 2
+            return wire.FinalizeOutputOwnerDeathReply(message, len(calls) == 2)
+    
+        node._background_rpc = rpc
+        first = node._handle_finalize_output_owner_death(request)
+        assert not first.cleaned and calls == [request]
+        assert record.state is (protocol.LeaseExecutionState.COMPLETED if phase == "complete"
+                                else protocol.LeaseExecutionState.ABANDONED)
+        before = fixture.journal.snapshot(fixture.id)
+        assert before.rollback is None and before.rollback_tombstone is None
+        assert not fixture.adapter.owner_death_finished(fixture.id)
+        # Owner cleanup may already have released CPU, but the live Worker's
+        # pending ACK belongs to that same terminal, not a new rollback saga.
+>       assert not node._drive_output_publications()
+E       assert not True
+E        +  where True = _drive_output_publications()
+E        +    where _drive_output_publications = <miniray.node.NodeServer object at 0x7cf27f239520>._drive_output_publications
+
+tests/unit/test_node_publication_owner_death_finalize.py:170: AssertionError
+_ test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback[complete] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7cf27f232b40>
+phase = 'complete'
+
+    @pytest.mark.parametrize("phase", ("partial", "running", "complete"))
+    def test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback(monkeypatch, phase):
+        fixture, node, record, complete, request = _fixture(monkeypatch, phase=phase)
+        calls = []
+    
+        def rpc(address, handler, message):
+            assert address == record.grant.worker_address
+            assert handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER and message == request
+            assert not node._state_lock._is_owned()
+            calls.append(message)
+            assert len(calls) <= 2
+            return wire.FinalizeOutputOwnerDeathReply(message, len(calls) == 2)
+    
+        node._background_rpc = rpc
+        first = node._handle_finalize_output_owner_death(request)
+        assert not first.cleaned and calls == [request]
+        assert record.state is (protocol.LeaseExecutionState.COMPLETED if phase == "complete"
+                                else protocol.LeaseExecutionState.ABANDONED)
+        before = fixture.journal.snapshot(fixture.id)
+        assert before.rollback is None and before.rollback_tombstone is None
+        assert not fixture.adapter.owner_death_finished(fixture.id)
+        # Owner cleanup may already have released CPU, but the live Worker's
+        # pending ACK belongs to that same terminal, not a new rollback saga.
+>       assert not node._drive_output_publications()
+E       assert not True
+E        +  where True = _drive_output_publications()
+E        +    where _drive_output_publications = <miniray.node.NodeServer object at 0x7cf27f231730>._drive_output_publications
+
+tests/unit/test_node_publication_owner_death_finalize.py:170: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_node_publication_owner_death_finalize.py::test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback[partial]
+FAILED tests/unit/test_node_publication_owner_death_finalize.py::test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback[running]
+FAILED tests/unit/test_node_publication_owner_death_finalize.py::test_busy_worker_finalize_does_not_start_an_ordinary_supervisor_rollback[complete]
+3 failed, 6 passed in 3.58s

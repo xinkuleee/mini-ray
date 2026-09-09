@@ -1,4 +1,8 @@
-"""Pure multi-slot discovery: no Core, RPC, pins, threads or processes."""
+"""Pure single-output discovery: no Core, RPC, pins, threads or processes.
+
+Detached ObjectRefs carry explicit source metadata for serialization tests;
+these cases do not claim live borrower admission or remote hold acquisition.
+"""
 
 from __future__ import annotations
 
@@ -26,26 +30,18 @@ from miniray.ref_transfer import (
 from miniray.publication_sources import (
     BorrowedContainedSource, OwnedContainedSource, PreparedContainedTransfer,
 )
-from miniray.task_outputs import (
-    TargetExecutionKey, TargetOutputManifest, TaskExecutionKey, TaskOutputManifest,
-)
+from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
 
 
 pytestmark = pytest.mark.unit
 
 
-def _header(count: int = 2, *, selected: tuple[int, ...] | None = None):
+def _header(count: int = 1):
     job = JobID.random()
     task = TaskID.derive(job, TaskID.for_driver(job), 1)
     full = TaskOutputManifest.for_task(task, count)
     attempt = AttemptID(task, 0)
-    execution = (
-        TaskExecutionKey(full, attempt) if selected is None
-        else TargetExecutionKey(
-            TargetOutputManifest(full, tuple(full.output_ids[index] for index in selected)),
-            attempt,
-        )
-    )
+    execution = TaskExecutionKey(full, attempt)
     return OutputPublicationHeader(
         OutputPublicationID(LeaseID.random(), execution), job,
         WorkerID.random(), WorkerID.random(),
@@ -65,7 +61,8 @@ def _borrowed(header, *, source=None, index=41):
     )
     handle._borrower_token = "exact-borrower-token"
     handle._borrow_source = source or protocol.ContainedTransferSource(
-        "original-containing-object"
+        ContainedReferenceHold(ObjectID.for_task(TaskID.derive(header.job_id, task, 1)),
+                               handle.owner_worker_id, "original-containing-object")
     )
     return handle
 
@@ -114,8 +111,8 @@ class _EphemeralOwnedReference:
         return list, ((reference,),)
 
 
-def test_each_selected_slot_is_serialized_once_before_batch_becomes_observable():
-    header = _header(3)
+def test_one_output_serializes_each_reducer_once_before_becoming_observable():
+    header = _header()
     reductions = []
     session = OutputDiscoverySession(header, inline_threshold=1024)
     observed = []
@@ -125,50 +122,45 @@ def test_each_selected_slot_is_serialized_once_before_batch_becomes_observable()
             observed.append(session.discovered)
             return int, (7,)
 
-    result = session.discover((
+    result = session.discover(([
         _CountedReduction("first", reductions), _Observe(),
         _CountedReduction("last", reductions),
-    ))
+    ],))
     assert reductions == ["first", "last"]
     assert observed == [None]
     assert session.discovered is result
-    assert tuple(cloudpickle.loads(payload) for payload in result.slot_payloads) == (
-        "first", 7, "last",
-    )
+    assert len(result.slot_payloads) == 1
+    assert cloudpickle.loads(result.slot_payloads[0]) == ["first", 7, "last"]
     with pytest.raises(RuntimeError, match="one-shot"):
-        session.discover((1, 2, 3))
+        session.discover(([1, 2, 3],))
     assert reductions == ["first", "last"]
 
 
-def test_per_slot_threshold_equality_does_not_apply_argument_cumulative_budget():
-    header = _header(3)
+def test_single_value_threshold_equality_and_larger_payload_choose_exact_tier():
+    header = _header()
     small = b"x"
     threshold = len(cloudpickle.dumps(small))
     session = OutputDiscoverySession(header, inline_threshold=threshold)
-    result = session.discover((small, small, b"y" * 64))
-    assert tuple(slot.tier for slot in result.manifest.slots) == (
-        protocol.ResultStorage.INLINE, protocol.ResultStorage.INLINE,
-        protocol.ResultStorage.OBJECT_STORE,
-    )
+    result = session.discover((small,))
+    assert result.manifest.slots[0].tier is protocol.ResultStorage.INLINE
     assert result.manifest.slots[0].size_bytes == threshold
-    assert result.manifest.slots[1].size_bytes == threshold
-    assert sum(slot.size_bytes for slot in result.manifest.slots[:2]) > threshold
-    assert result.manifest.to_graph_manifest() is None
+    larger = OutputDiscoverySession(header, inline_threshold=threshold).discover((b"y" * 64,))
+    assert larger.manifest.slots[0].tier is protocol.ResultStorage.OBJECT_STORE
+    assert larger.manifest.slots[0].size_bytes > threshold
+    assert result.manifest.ordered_edges == ()
 
 
-def test_same_python_ref_memoizes_per_slot_but_siblings_have_independent_holds():
+def test_same_python_ref_aliases_share_one_transfer_within_the_single_value():
     header = _header()
     child = _owned(header)
     result_session = OutputDiscoverySession(header, inline_threshold=2048)
-    result = result_session.discover(([child, child], {"child": child}))
-    first, second = result.manifest.slots
-    assert len(first.transfers) == len(second.transfers) == 1
-    left, right = first.transfers[0], second.transfers[0]
-    assert left.contained_object_id == right.contained_object_id == child.object_id
-    assert left.final_hold != right.final_hold
+    result = result_session.discover((([child, child], {"child": child}),))
+    first = result.manifest.slots[0]
+    assert len(first.transfers) == 1
+    left = first.transfers[0]
+    assert left.contained_object_id == child.object_id
     assert left.final_hold.container_object_id == header.publication_id.output_ids[0]
-    assert right.final_hold.container_object_id == header.publication_id.output_ids[1]
-    assert result_session.source_references == (child, child)
+    assert result_session.source_references == (child,)
     imports = []
 
     def restore(*identity):
@@ -176,12 +168,11 @@ def test_same_python_ref_memoizes_per_slot_but_siblings_have_independent_holds()
         return object()
 
     with importing_references(restore):
-        decoded_first = cloudpickle.loads(result.slot_payloads[0])
-        decoded_second = cloudpickle.loads(result.slot_payloads[1])
+        decoded_first, decoded_second = cloudpickle.loads(result.slot_payloads[0])
     assert decoded_first[0] is decoded_first[1]
-    assert decoded_first[0] is not decoded_second["child"]
-    assert tuple(identity[3] for identity in imports) == (left.final_hold, right.final_hold)
-    assert len(result.manifest.to_graph_manifest().ordered_edges) == 2
+    assert decoded_first[0] is decoded_second["child"]
+    assert tuple(identity[3] for identity in imports) == (left.final_hold,)
+    assert result.manifest.ordered_edges == first.edges
 
 
 def test_distinct_python_handles_for_one_child_keep_existing_export_semantics():
@@ -205,7 +196,8 @@ def test_owned_and_borrowed_sources_are_exact_metadata_with_no_pin_or_rpc(
     header = _header()
     upstream_task = TaskID.random()
     source = (
-        protocol.ContainedTransferSource("exact-upstream")
+        protocol.ContainedTransferSource(ContainedReferenceHold(
+            ObjectID.for_task(upstream_task), WorkerID.random(), "exact-upstream"))
         if source_kind == "contained"
         else protocol.TaskHoldSource(protocol.TaskReferenceHold(
             protocol.TaskReferenceHoldKind.RETAINED, header.executor_worker_id,
@@ -222,10 +214,10 @@ def test_owned_and_borrowed_sources_are_exact_metadata_with_no_pin_or_rpc(
         header, inline_threshold=1,
         owner_address=lambda: route_calls.append("local-route") or ("127.0.0.1", 31003),
     )
-    result = session.discover((owned, {"borrowed": borrowed}))
+    result = session.discover(((owned, {"borrowed": borrowed}),))
     assert route_calls == ["local-route"]
     owned_transfer = result.manifest.slots[0].transfers[0]
-    borrowed_transfer = result.manifest.slots[1].transfers[0]
+    borrowed_transfer = result.manifest.slots[0].transfers[1]
     assert owned_transfer.source == OwnedContainedSource(header.executor_worker_id)
     assert owned_transfer.contained_owner_address == ("127.0.0.1", 31003)
     assert borrowed_transfer.source == BorrowedContainedSource(
@@ -239,16 +231,15 @@ def test_owned_and_borrowed_sources_are_exact_metadata_with_no_pin_or_rpc(
     assert session.source_references == ()
 
 
-def test_discovery_metadata_and_payloads_are_separate_and_wire_roundtrip_exact():
+@pytest.mark.parametrize("stored", (False, True))
+def test_discovery_metadata_and_payloads_are_separate_and_wire_roundtrip_exact(stored):
     header = _header()
     child = _owned(header)
-    session = OutputDiscoverySession(header, inline_threshold=1024)
-    result = session.discover(({"child": child}, b"P" * 4096))
-    assert tuple(slot.tier for slot in result.manifest.slots) == (
-        protocol.ResultStorage.INLINE, protocol.ResultStorage.OBJECT_STORE,
-    )
+    session = OutputDiscoverySession(header, inline_threshold=0 if stored else 4096)
+    result = session.discover(({"child": child, "padding": b"P" * 32},))
+    assert result.manifest.slots[0].tier is (
+        protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     _assert_metadata(result.manifest)
-    _assert_metadata(result.manifest.to_graph_manifest())
     assert result == pickle.loads(pickle.dumps(result))
     for slot, payload in zip(result.manifest.slots, result.slot_payloads):
         assert slot.size_bytes == len(payload)
@@ -259,27 +250,27 @@ def test_discovery_metadata_and_payloads_are_separate_and_wire_roundtrip_exact()
         result.slot_payloads = ()
 
 
-def test_target_subset_uses_original_slot_indices_and_stable_tokens():
-    header = _header(4, selected=(1, 3))
+def test_single_output_tokens_bind_child_order_lease_and_canonical_index():
+    header = _header()
     child = _owned(header)
     sessions = [OutputDiscoverySession(header, inline_threshold=1024) for _ in range(2)]
-    first, replay = (session.discover((child, child)) for session in sessions)
+    first, replay = (session.discover((child,)) for session in sessions)
     assert first == replay
-    assert tuple(slot.object_id.return_index for slot in first.manifest.slots) == (1, 3)
-    assert first.manifest.execution.full_output_ids == header.publication_id.full_output_ids
+    assert tuple(slot.object_id.return_index for slot in first.manifest.slots) == (0,)
+    assert first.manifest.execution.output_ids == header.publication_id.output_ids
     calls = []
     custom = OutputDiscoverySession(
         header, inline_threshold=1024,
-        token_factory=lambda slot, transfer: calls.append((slot, transfer)) or "fixed-token",
-    ).discover((child, child))
-    assert calls == [(1, 0), (3, 0)]
-    left, right = (slot.transfers[0].final_hold for slot in custom.manifest.slots)
-    assert left.transfer_token == right.transfer_token == "fixed-token"
+        token_factory=lambda slot, transfer: calls.append((slot, transfer)) or "fixed-token-{}".format(transfer),
+    ).discover(([_owned(header, index=45), _owned(header, index=46)],))
+    assert calls == [(0, 0), (0, 1)]
+    left, right = (transfer.final_hold for transfer in custom.manifest.slots[0].transfers)
+    assert (left.transfer_token, right.transfer_token) == ("fixed-token-0", "fixed-token-1")
     assert left != right
     changed = replace(header, publication_id=replace(
         header.publication_id, lease_id=LeaseID.random()
     ))
-    other = OutputDiscoverySession(changed, inline_threshold=1024).discover((child, child))
+    other = OutputDiscoverySession(changed, inline_threshold=1024).discover((child,))
     assert first.manifest.slots[0].transfers[0].final_hold != other.manifest.slots[0].transfers[0].final_hold
 
 
@@ -287,10 +278,10 @@ def test_discovery_retains_ephemeral_sources_until_explicit_all_promotions_relea
     header = _header()
     weak_handles = []
     session = OutputDiscoverySession(header, inline_threshold=1024)
-    result = session.discover((
+    result = session.discover(([
         _EphemeralOwnedReference(header, weak_handles, index=99),
         _EphemeralOwnedReference(header, weak_handles, index=100),
-    ))
+    ],))
     assert len(weak_handles) == 2
     assert all(reference() is not None for reference in weak_handles)
     assert len(session.source_references) == 2
@@ -302,14 +293,14 @@ def test_discovery_retains_ephemeral_sources_until_explicit_all_promotions_relea
     assert all(reference() is None for reference in weak_handles)
 
 
-def test_failure_in_later_slot_clears_prior_source_custody_and_forbids_retry():
+def test_late_reducer_failure_in_one_value_clears_sources_and_forbids_retry():
     header = _header()
     weak_handles = []
     session = OutputDiscoverySession(header, inline_threshold=1024)
 
     def attempt():
         try:
-            session.discover((_EphemeralOwnedReference(header, weak_handles), _Unserializable()))
+            session.discover(([_EphemeralOwnedReference(header, weak_handles), _Unserializable()],))
         except ValueError as error:
             assert str(error) == "later slot cannot serialize"
         else:
@@ -383,15 +374,16 @@ def test_discovery_restores_outer_export_scope_after_success_and_failure():
     assert current_exporter() is None
 
 
-def test_late_slot_identity_conflict_aborts_the_complete_batch_before_effects():
+def test_conflicting_child_owner_in_one_value_aborts_before_effects():
     header = _header()
     first = _borrowed(header)
     second = ObjectRef(first.object_id, WorkerID.random(), first.owner_address)
     second._borrower_token = "different-owner-borrow"
-    second._borrow_source = protocol.ContainedTransferSource("different-owner-source")
+    second._borrow_source = protocol.ContainedTransferSource(ContainedReferenceHold(
+        ObjectID.for_task(TaskID.random()), second.owner_worker_id, "different-owner-source"))
     session = OutputDiscoverySession(header, inline_threshold=1024)
     with pytest.raises(OutputPublicationConflictError, match="conflicting owners"):
-        session.discover((first, second))
+        session.discover(([first, second],))
     assert session.discovered is None
     assert session.source_references == ()
 
@@ -417,7 +409,7 @@ def test_reentrant_reducer_cannot_release_or_restart_discovery_custody():
     assert session.discovered is result
 
 
-@pytest.mark.parametrize("values", ((), (1,), (1, 2, 3), b"not-a-slot-sequence", {0: 1, 1: 2}))
+@pytest.mark.parametrize("values", ((), (1, 2), (1, 2, 3), b"not-a-slot-sequence", {0: 1, 1: 2}))
 def test_wrong_selected_manifest_shape_never_invokes_any_reducer(values):
     session = OutputDiscoverySession(_header(), inline_threshold=1024)
     with pytest.raises((TypeError, ValueError), match="selected|slots"):
@@ -451,13 +443,13 @@ def test_bad_token_or_final_manifest_rejection_clears_all_source_handles():
 
 
 def test_discovered_payload_batch_rejects_partial_or_corrupted_streams():
-    result = OutputDiscoverySession(_header(), inline_threshold=1024).discover((1, 2))
+    result = OutputDiscoverySession(_header(), inline_threshold=1024).discover(((1, 2),))
     with pytest.raises(ValueError, match="exactly cover"):
-        replace(result, slot_payloads=result.slot_payloads[:1])
+        replace(result, slot_payloads=())
     with pytest.raises(ValueError, match="does not match"):
-        replace(result, slot_payloads=(b"wrong", result.slot_payloads[1]))
+        replace(result, slot_payloads=(b"wrong",))
     with pytest.raises(TypeError, match="serialized bytes"):
-        replace(result, slot_payloads=(bytearray(result.slot_payloads[0]), result.slot_payloads[1]))
+        replace(result, slot_payloads=(bytearray(result.slot_payloads[0]),))
 
 
 def test_discovery_uses_explicit_owner_route_and_embeds_exact_final_hold():

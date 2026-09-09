@@ -1,0 +1,52 @@
+..........F........................................                      [100%]
+=================================== FAILURES ===================================
+_____ test_borrowed_contained_source_fingerprint_binds_complete_typed_hold _____
+
+    def test_borrowed_contained_source_fingerprint_binds_complete_typed_hold():
+        fixture = _Fixture()
+        transfer = fixture.slots[0].transfers[1]
+        source = transfer.source
+        originals = (
+            protocol.ContainedTransferSource(ContainedReferenceHold(
+                ObjectID.for_task(_id(TaskID, 12)), fixture.foreign_owner, "source-pin"
+            )),
+            protocol.ContainedTransferSource(ContainedReferenceHold(
+                ObjectID.for_task(_id(TaskID, 13)), fixture.foreign_owner, "source-pin"
+            )),
+            protocol.ContainedTransferSource(ContainedReferenceHold(
+                ObjectID.for_task(_id(TaskID, 12)), fixture.foreign_owner, "another-source-pin"
+            )),
+        )
+        digests = []
+        for original in originals:
+            changed_transfer = replace(transfer, source=replace(source, original_source=original))
+            slot = replace(fixture.slots[0], transfers=(changed_transfer,))
+            manifest = OutputPublicationManifest.create(fixture.header, (slot,))
+            _assert_metadata(manifest)
+            digests.append(manifest.manifest_digest)
+        assert len(set(digests)) == len(originals)
+        with pytest.raises((TypeError, ValueError)):
+            # The old generic source spelling may still construct, but current
+            # publication custody requires the complete typed containing hold.
+>           replace(source, original_source=protocol.ContainedTransferSource("source-pin"))
+                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_output_publication.py:305: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<string>:4: in __init__
+    ???
+src/miniray/protocol.py:1581: in __post_init__
+    hold = _normalize_contained_reference_hold(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 'source-pin', operation = 'contained transfer source'
+
+    def _normalize_contained_reference_hold(value: object, operation: str) -> IncomingContainedReferenceHold:
+        if type(value) is not ContainedReferenceHold:
+>           raise ProtocolError('{} requires a complete ContainedReferenceHold'.format(operation))
+E           miniray.errors.ProtocolError: contained transfer source requires a complete ContainedReferenceHold
+
+src/miniray/protocol.py:116: ProtocolError
+=========================== short test summary info ============================
+FAILED tests/unit/test_output_publication.py::test_borrowed_contained_source_fingerprint_binds_complete_typed_hold
+1 failed, 50 passed in 4.07s

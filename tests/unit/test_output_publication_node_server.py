@@ -1,7 +1,7 @@
-"""Bounded synchronous Node/GCS/child-owner unified publication handlers.
+"""Bounded synchronous Node/owner/child-owner publication handlers.
 
 No Node constructor, sockets, worker process, background thread or waits.
-One real resource ledger, two tiny results and at most four child transfers.
+One real resource ledger, one tiny result and at most two child transfers.
 """
 
 from dataclasses import replace
@@ -14,10 +14,22 @@ import pytest
 
 from miniray import output_protocol as wire, protocol
 from miniray.node import NodeServer, _LeaseRecord, _WorkerSlot
+from miniray.object_manager import ObjectManager
+from miniray.object_store import ObjectStore
+from miniray.output_handoff import OutputHandoffTable, OutputHandoffPhase
+from miniray.output_publication import OutputPublicationCompleteWitness, OutputPublicationEnvelope, OutputPublicationManifest
+from miniray.output_publication_journal import OutputPublicationJournal
+from miniray.output_publication_node import OutputPublicationNodeAdapter
+from miniray.ownership import ObjectOwnerTable
+from miniray.publication_sources import BorrowedContainedSource
+from miniray.resources import AllocationToken, ResourceLedger
 from miniray.output_publication_journal import OutputPublicationAdoptionProof, OutputPublicationJournalState
 from miniray.publication_gate import OutputPublicationGatePhase
 from miniray.resources import NodeSnapshot, ResourceVector
-from tests.unit.test_output_publication_node import _Fixture, _bind_real_node_storage
+
+
+
+from tests.unit.test_output_publication import _Fixture as _Values
 
 
 pytestmark = pytest.mark.unit
@@ -35,8 +47,122 @@ def _no_runtime(monkeypatch):
     monkeypatch.setattr(time, "sleep", forbidden)
 
 
-def _node(*, refs=True, target=False):
-    fixture = _Fixture(refs=refs, target=target)
+
+class _Fixture:
+    """Node journal/store and real owner/child reducers; no GCS publication state."""
+
+    def __init__(self, *, refs=True, stored=True, reverse_children=False):
+        self.values = _Values(refs=refs, stored=stored)
+        if reverse_children:
+            assert refs
+            slot, = self.values.slots
+            self.values.slots = (replace(slot, transfers=tuple(reversed(slot.transfers))),)
+            self.values.manifest = OutputPublicationManifest.create(self.values.header, self.values.slots)
+            self.values.witness = OutputPublicationCompleteWitness.for_manifest(self.values.manifest)
+            self.values.envelope = OutputPublicationEnvelope(
+                self.values.manifest, self.values.witness, self.values.results)
+        self.manifest, self.id = self.values.manifest, self.values.publication_id
+        self.journal, self.handoffs = OutputPublicationJournal(), OutputHandoffTable()
+        self.store, self.child_owners = ObjectStore(1024), {}
+        self.events, self.fault = [], None
+        self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
+        self.token = AllocationToken("test-output-lease")
+        self.ledger.allocate(ResourceVector({"CPU": 1}), self.token)
+        for transfer in self.manifest.slots[0].transfers:
+            table = self.child_owners.setdefault(transfer.contained_owner_worker_id, ObjectOwnerTable())
+            table.register(transfer.contained_object_id, local_token="source-live")
+            if isinstance(transfer.source, BorrowedContainedSource):
+                source = transfer.source.original_source
+                root_borrower = (self.values.executor, "upstream-root")
+                table.add_borrowed_reference(transfer.contained_object_id, root_borrower)
+                table.retain_borrowed_reference_for_task(transfer.contained_object_id, root_borrower, source.hold)
+                table.acquire_exported_reference(transfer.contained_object_id, source, transfer.source.owner_table_token)
+        self.adapter = OutputPublicationNodeAdapter(self.journal,
+            register_owner=self.register_owner, report_complete=self.report_complete,
+            report_rollback=self.report_rollback, prepare_child=self.prepare_child,
+            promote_child=self.promote_child, release_child=self.release_child,
+            seal_replica=self.unbound_storage, drop_replica=self.unbound_storage)
+
+    def unbound_storage(self, *_args):
+        pytest.fail("Node storage must be explicitly bound before effects")
+
+    def hit(self, stage):
+        self.events.append(stage)
+        if self.fault == stage:
+            self.fault = None
+            raise TimeoutError("injected effect-then-lost-ACK: " + stage)
+
+    def register_owner(self, manifest):
+        request = wire.RegisterOutputHandoff(manifest)
+        snapshot = self.handoffs.register(manifest, self.id.attempt_id)
+        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert reply.request == request and reply.snapshot.manifest == manifest
+        self.hit("owner-register")
+
+    def report_complete(self, witness):
+        request = wire.ReportOutputHandoffComplete(witness)
+        snapshot = self.handoffs.record_complete(witness)
+        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert reply.request == request and reply.snapshot.complete == witness
+        self.hit("complete-report")
+
+    def report_rollback(self, tombstone, *, manifest):
+        request = wire.ReportOutputHandoffRollback(manifest, tombstone)
+        assert tombstone == self.journal.snapshot(self.id).rollback_tombstone
+        snapshot = self.handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
+        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert reply.request == request and snapshot.phase is OutputHandoffPhase.ABORTED
+        self.hit("rollback-report")
+
+    def prepare_child(self, address, request):
+        assert address == request.transfer.contained_owner_address
+        result = self.child_owners[request.authority_worker_id].prepare_stored_contained_reference(
+            request.transfer, authority_worker_id=request.authority_worker_id)
+        self.hit("prepare")
+        return protocol.StoredContainedPinReply(request, result)
+
+    def promote_child(self, address, request):
+        assert address == request.transfer.contained_owner_address
+        result = self.child_owners[request.authority_worker_id].promote_stored_contained_reference(
+            request.transfer, authority_worker_id=request.authority_worker_id)
+        self.hit("promote")
+        return protocol.StoredContainedPinReply(request, result)
+
+    def release_child(self, address, request):
+        assert address in (("127.0.0.1", 30101), ("127.0.0.1", 30102))
+        released = self.child_owners[request.owner_worker_id].release_contained_reference(request.object_id, request.hold)
+        self.hit("release")
+        return protocol.ReleaseContainedReferenceReply(request.object_id, request.owner_worker_id, request.hold, True, released)
+
+    def prepare(self):
+        self.adapter.prepare(self.manifest, self.values.payloads)
+
+    def assert_no_pins_or_bytes(self):
+        assert self.store.used_bytes == 0
+        assert self.journal.snapshot(self.id).retained_result_slots == ()
+        for transfer in self.manifest.slots[0].transfers:
+            snapshot = self.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
+            assert transfer.provisional_hold not in snapshot.contained_holds
+            assert transfer.final_hold not in snapshot.contained_holds
+
+
+def _bind_real_node_storage(fixture):
+    node = object.__new__(NodeServer)
+    incarnation = fixture.manifest.header.node_incarnation
+    node.node_id, node._node_pid, node._registration_epoch = incarnation.node_id, incarnation.node_pid, incarnation.registration_epoch
+    node._state_lock = threading.RLock()
+    node._object_store = fixture.store
+    node._object_manager = ObjectManager(node.node_id, fixture.store)
+    node._sealed_metadata, node._dropped_metadata = {}, {}
+    node._local_replica_write_claims, node._object_localization_locks = {}, {}
+    node._owner_death_fences = {}
+    node._output_publication_journal = fixture.journal
+    fixture.adapter._seal_replica = node._seal_output_publication_replica
+    fixture.adapter._drop_replica = node._drop_output_publication_replica
+    return node
+
+def _node(*, refs=True, stored=True, reverse_children=False):
+    fixture = _Fixture(refs=refs, stored=stored, reverse_children=reverse_children)
     node = _bind_real_node_storage(fixture)
     values = fixture.values
     node._ledger = fixture.ledger
@@ -55,11 +181,10 @@ def _node(*, refs=True, target=False):
     request = protocol.RequestWorkerLease(
         values.lease, values.task, values.attempt, ResourceVector({"CPU": 1}),
         values.node, values.owner, return_ids=values.publication_id.output_ids,
-        target_execution=values.execution if target else None,
     )
     grant = protocol.GrantWorkerLease(
         values.lease, values.task, values.attempt, values.node, values.executor,
-        ("worker.invalid", 1), fixture.token, target_execution=request.target_execution,
+        ("worker.invalid", 1), fixture.token,
     )
     record = _LeaseRecord(request, fixture.token, grant, state=protocol.LeaseExecutionState.RUNNING)
     node._leases = {values.lease: record}
@@ -68,18 +193,17 @@ def _node(*, refs=True, target=False):
         address=grant.worker_address, pid=1801, active_lease_id=values.lease,
     )}
     node._worker_order = (values.executor,)
-    node._legacy_worker_compat = False
     node._output_publications = fixture.adapter
     complete = protocol.CompleteWorkerLease(
         values.lease, values.task, values.attempt, values.executor,
-        protocol.TaskReplyStatus.SUCCEEDED, target_execution=request.target_execution,
+        protocol.TaskReplyStatus.SUCCEEDED,
     )
     return fixture, node, record, complete
 
 
-@pytest.mark.parametrize("refs,target", ((True, False), (False, False), (True, True)))
-def test_handlers_complete_mixed_selected_outputs_locally_without_terminal_rpc(refs, target):
-    fixture, node, record, complete = _node(refs=refs, target=target)
+@pytest.mark.parametrize("refs,stored", ((True, True), (False, True), (True, False)))
+def test_handlers_complete_single_output_locally_without_owner_complete_rpc(refs, stored):
+    fixture, node, record, complete = _node(refs=refs, stored=stored)
     prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
     assert prepared.accepted
     assert record.output_publication_id == fixture.id
@@ -87,19 +211,19 @@ def test_handlers_complete_mixed_selected_outputs_locally_without_terminal_rpc(r
     assert reply.accepted and reply.released
     assert reply.output_publication == fixture.values.envelope
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
-    assert fixture.recovery.snapshot(fixture.id).complete is None
+    assert fixture.handoffs.query(fixture.id).complete is None
     replay = node._handle_complete_worker_lease_inner(complete)
     assert replay.accepted and not replay.released
     assert replay.output_publication == reply.output_publication
     query = protocol.GetWorkerLeaseOutcome(
         fixture.values.lease, fixture.values.task, fixture.values.attempt, fixture.values.executor,
-        fixture.values.owner, fixture.id.output_ids, target_execution=record.request.target_execution,
+        fixture.values.owner, fixture.id.output_ids,
     )
     outcome = node._handle_get_worker_lease_outcome(query)
     assert outcome.output_publication == reply.output_publication
-    assert len(outcome.descriptors) == 1
+    assert len(outcome.descriptors) == int(stored)
     assert node._drive_output_publications()
-    assert fixture.recovery.snapshot(fixture.id).complete == fixture.values.witness
+    assert fixture.handoffs.query(fixture.id).complete == fixture.values.witness
 
 
 def test_failure_complete_releases_cpu_but_withholds_ack_until_all_compensation():
@@ -124,7 +248,7 @@ def test_failure_complete_releases_cpu_but_withholds_ack_until_all_compensation(
     else:
         pytest.fail("bounded rollback did not consume its effects")
     fixture.assert_no_pins_or_bytes()
-    assert fixture.recovery.snapshot(fixture.id).rollback is not None
+    assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ABORTED
     outcome = node._handle_get_worker_lease_outcome(query)
     assert outcome.found and not outcome.cleanup_pending and outcome.state is protocol.LeaseExecutionState.COMPLETED
     assert outcome.completion_status is protocol.TaskReplyStatus.SYSTEM_ERROR
@@ -153,7 +277,7 @@ def test_lost_rollback_report_ack_withholds_failed_outcome_after_local_cleanup()
     assert observed
     assert fixture.store.used_bytes == 0
     assert fixture.journal.snapshot(fixture.id).rollback_tombstone is not None
-    assert fixture.recovery.snapshot(fixture.id).rollback is not None
+    assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ABORTED
     assert not fixture.adapter.rollback_reported(fixture.id)
     assert node._handle_get_worker_lease_outcome(query).cleanup_pending
     assert node._handle_complete_worker_lease_inner(failed).accepted
@@ -177,7 +301,7 @@ def test_wrong_lease_manifest_has_no_journal_record_or_child_effect():
 
 def test_early_success_complete_cannot_fence_a_later_valid_prepare():
     fixture, node, record, complete = _node()
-    fixture.fault = "intent"
+    fixture.fault = "owner-register"
     request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
     with pytest.raises(TimeoutError):
         node._handle_prepare_output_publication(request)
@@ -267,7 +391,7 @@ def test_preboundary_complete_error_does_not_block_worker_loss_rollback(monkeypa
     fixture.assert_no_pins_or_bytes()
 
 
-def test_configured_checkpoints_follow_exact_intent_promotions_and_arm_acknowledgements():
+def test_configured_checkpoints_follow_exact_owner_registration_and_promotions():
     fixture, node, record, complete = _node()
     observed = []
 
@@ -279,41 +403,32 @@ def test_configured_checkpoints_follow_exact_intent_promotions_and_arm_acknowled
             assert fixture.id in fixture.adapter._tickets
             assert arrival.publication_id == fixture.id
             assert arrival.manifest_digest == fixture.manifest.manifest_digest
-            saved = fixture.recovery.snapshot(fixture.id)
+            saved = fixture.handoffs.query(fixture.id)
             local = fixture.journal.snapshot(fixture.id)
             assert saved.complete is None and local.complete is None
             assert record.state is protocol.LeaseExecutionState.RUNNING
-            if arrival.phase is OutputPublicationGatePhase.AFTER_INTENT_ACK:
-                assert not saved.armed and local.materialized_slots == ()
+            if arrival.phase is OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK:
+                assert saved.manifest == fixture.manifest and local.materialized_slots == ()
                 assert fixture.store.used_bytes == 0
-                assert not fixture.graph.snapshot().prepared_edges
-            elif arrival.phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK:
-                assert not saved.armed and local.ready_to_arm
-                assert fixture.store.used_bytes > 0
-                for slot in fixture.manifest.slots:
-                    for transfer in slot.transfers:
-                        holds = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
-                        assert transfer.final_hold in holds and transfer.provisional_hold not in holds
+                assert not local.ready_to_complete
             else:
-                assert arrival.phase is OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE
-                assert saved.armed and local.ready_to_complete
+                assert arrival.phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK
+                assert local.ready_to_complete and fixture.store.used_bytes > 0
+                for transfer in fixture.manifest.slots[0].transfers:
+                    holds = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
+                    assert transfer.final_hold in holds and transfer.provisional_hold not in holds
             observed.append(arrival.phase)
 
     node._output_publication_gate = Gate()
     fixture.adapter._test_checkpoint = node._test_output_publication_checkpoint
-    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-        fixture.manifest, fixture.values.payloads,
-    )).accepted
-    assert observed == [
-        OutputPublicationGatePhase.AFTER_INTENT_ACK,
-        OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK,
-        OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE,
-    ]
+    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)).accepted
+    assert observed == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
+                        OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK]
     assert node._handle_complete_worker_lease_inner(complete).accepted
 
 
-def test_armed_prepare_replay_cannot_emit_an_earlier_precomplete_checkpoint():
-    fixture, node, _record, complete = _node(refs=False)
+def test_promoted_prepare_replay_cannot_emit_an_earlier_checkpoint():
+    fixture, node, _record, complete = _node()
     calls = []
 
     class Gate:
@@ -323,16 +438,15 @@ def test_armed_prepare_replay_cannot_emit_an_earlier_precomplete_checkpoint():
     node._output_publication_gate = Gate()
     fixture.adapter._test_checkpoint = node._test_output_publication_checkpoint
     request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
-    fixture.fault = "arm"
-    with pytest.raises(TimeoutError, match="arm"):
+    fixture.fault = "promote"
+    with pytest.raises(TimeoutError, match="promote"):
         node._handle_prepare_output_publication(request)
-    assert calls == [OutputPublicationGatePhase.AFTER_INTENT_ACK, OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK]
-    assert fixture.recovery.snapshot(fixture.id).armed
+    assert calls == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK]
     assert not fixture.journal.snapshot(fixture.id).ready_to_complete
-    for phase in (OutputPublicationGatePhase.AFTER_INTENT_ACK, OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK):
+    for phase in (OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK, OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK):
         with pytest.raises(RuntimeError, match="acknowledged phase"):
             node._test_output_publication_checkpoint(fixture.manifest, phase)
     assert node._handle_prepare_output_publication(request).accepted
-    assert calls[-1] is OutputPublicationGatePhase.AFTER_ARM_ACK_BEFORE_COMPLETE
-    assert len(calls) == 3
+    assert calls == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
+                     OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK]
     assert node._handle_complete_worker_lease_inner(complete).accepted

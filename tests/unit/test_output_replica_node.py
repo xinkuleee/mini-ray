@@ -19,7 +19,7 @@ from miniray.output_publication_journal import (
     OutputPublicationJournalState, OutputPublicationJournalStateError,
     OutputPublicationStage as Stage,
 )
-from tests.unit.test_output_publication import _Fixture as _Values
+from tests.unit.test_output_publication_node_server import _Values
 
 
 pytestmark = pytest.mark.unit
@@ -41,7 +41,7 @@ def _no_runtime(monkeypatch):
 
 class _Fixture:
     def __init__(self, *, node=None, attempt=3):
-        values = _Values(refs=False, target=True)
+        values = _Values(refs=False, stored=True)
         publication_id = replace(values.publication_id, execution=replace(
             values.execution, attempt_id=ids.AttemptID(values.task, attempt),
         ))
@@ -49,8 +49,8 @@ class _Fixture:
             replace(values.header, publication_id=publication_id), values.slots,
         )
         self.id = publication_id
-        self.payload = values.payloads[1]
-        self.descriptor = values.results[1]
+        self.payload = values.payloads[0]
+        self.descriptor = values.results[0]
         self.object_id = self.descriptor.object_id
         if node is None:
             node = object.__new__(NodeServer)
@@ -69,8 +69,8 @@ class _Fixture:
         self.node = node
         self.journal = node._output_publication_journal
         self.journal.open(self.manifest)
-        self.journal.ack_intent(OutputPublicationAck(self.journal.begin_intent(self.id)))
-        self.effect = self.journal.begin_materialize(self.id, 1)
+        self.journal.ack_owner_registered(OutputPublicationAck(self.journal.begin_owner_register(self.id)))
+        self.effect = self.journal.begin_materialize(self.id, 0)
         self.request = protocol.DropObjectReplica(
             self.object_id, self.id.attempt_id, self.descriptor.owner_worker_id,
             self.descriptor.node_id, self.descriptor.checksum,
@@ -97,9 +97,9 @@ class _Fixture:
         return self.node._drop_output_publication_replica(effect, self.request)
 
 
-def test_selected_ordinal_seal_is_idempotent_and_uses_ordinary_metadata():
+def test_single_output_seal_is_idempotent_and_uses_ordinary_metadata():
     fixture = _Fixture()
-    assert fixture.effect.slot_index == 1 and fixture.object_id.return_index == 3
+    assert fixture.effect.slot_index == 0 and fixture.object_id.return_index == 0
     assert fixture.seal() == fixture.descriptor
     assert fixture.seal() == fixture.descriptor
     assert fixture.node._sealed_metadata == {fixture.object_id: fixture.metadata}
@@ -276,7 +276,8 @@ def test_malformed_materialization_identity_is_rejected_before_claim(changed):
     if changed == "digest":
         effect = replace(effect, manifest_digest="0" * 64)
     elif changed == "ordinal":
-        effect = replace(effect, slot_index=0)
+        effect = replace(effect)
+        object.__setattr__(effect, "slot_index", 1)
     elif changed == "attempt":
         effect = replace(effect, publication_id=replace(effect.publication_id, execution=replace(
             effect.publication_id.execution, attempt_id=ids.AttemptID(fixture.id.task_id, 77),
@@ -300,8 +301,9 @@ def test_drop_requires_exact_next_rollback_effect_and_deep_request_identity():
         fixture.drop(drop)
     fixture.journal.begin_materialize(fixture.id, 0)
     fixture.journal.begin_rollback(fixture.id, "ordered-rollback")
-    wrong = replace(drop, slot_index=0)
-    with pytest.raises(OutputPublicationJournalStateError):
+    wrong = replace(drop)
+    object.__setattr__(wrong, "slot_index", 1)
+    with pytest.raises(OutputPublicationConflictError):
         fixture.node._drop_output_publication_replica(wrong, fixture.request)
     request = replace(fixture.request, producer_attempt_id=ids.AttemptID(fixture.id.task_id, 88))
     with pytest.raises(OutputPublicationConflictError):
