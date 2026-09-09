@@ -1,0 +1,50 @@
+[
+  {
+    "path": "tests/integration/test_nested_large_argument_path.py",
+    "action": "delete_old_implementation_after_migration",
+    "sha256": "f64255b3ee7ac3dd0e13595df495e6e26dd3d48adcf0a6f4c3ab624e798acc0f",
+    "physical_lines": 741,
+    "evidence": [
+      "artifacts/cleanup-base/k2h/002-case.log",
+      "artifacts/cleanup-base/k2h/003-case.log",
+      "artifacts/cleanup-base/k2i/001-case.log"
+    ],
+    "reason": "Auto lift/multislot/generic export-pin family retired. Explicit put retains pending nested import; actual Task Seal/Drop/owner rollback ACK gates retry; actual discovered source Ref holds Worker drain until release; single-output equivalents and negative rejection preserved."
+  },
+  {
+    "path": "tests/unit/test_large_argument_lift.py",
+    "action": "delete_old_implementation_after_migration",
+    "sha256": "1f0f84e25b5ccc956babcf41db9da0dd2f8e7142736cbe56005c855bb56fbf3b",
+    "physical_lines": 946,
+    "evidence": [
+      "artifacts/cleanup-base/k2h/002-case.log",
+      "artifacts/cleanup-base/k2h/003-case.log",
+      "artifacts/cleanup-base/k2i/001-case.log"
+    ],
+    "reason": "Auto lift/multislot/generic export-pin family retired. Explicit put retains pending nested import; actual Task Seal/Drop/owner rollback ACK gates retry; actual discovered source Ref holds Worker drain until release; single-output equivalents and negative rejection preserved."
+  },
+  {
+    "path": "tests/unit/test_multi_return_partial_seal_cleanup.py",
+    "action": "delete_old_implementation_after_migration",
+    "sha256": "3ae4a4e9869b20e31365ddb7d6f2c18e84b30c6f8a0aac00727a6acccf4c1591",
+    "physical_lines": 472,
+    "evidence": [
+      "artifacts/cleanup-base/k2h/002-case.log",
+      "artifacts/cleanup-base/k2h/003-case.log",
+      "artifacts/cleanup-base/k2i/001-case.log"
+    ],
+    "reason": "Auto lift/multislot/generic export-pin family retired. Explicit put retains pending nested import; actual Task Seal/Drop/owner rollback ACK gates retry; actual discovered source Ref holds Worker drain until release; single-output equivalents and negative rejection preserved."
+  },
+  {
+    "path": "tests/unit/test_worker_export_pin_rollback.py",
+    "action": "delete_old_implementation_after_migration",
+    "sha256": "3d058add93d178b136f68fdaafa50e874dc10fb608e84c5b1fc945d37f481b10",
+    "physical_lines": 1108,
+    "evidence": [
+      "artifacts/cleanup-base/k2h/002-case.log",
+      "artifacts/cleanup-base/k2h/003-case.log",
+      "artifacts/cleanup-base/k2i/001-case.log"
+    ],
+    "reason": "Auto lift/multislot/generic export-pin family retired. Explicit put retains pending nested import; actual Task Seal/Drop/owner rollback ACK gates retry; actual discovered source Ref holds Worker drain until release; single-output equivalents and negative rejection preserved."
+  }
+]
