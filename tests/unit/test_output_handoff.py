@@ -349,7 +349,7 @@ def test_rollback_rejects_wrong_owner_or_out_of_manifest_effect_without_binding(
     else:
         effects = (OutputPublicationEffect(
             f.identity, f.manifest.manifest_digest, OutputPublicationStage.PROVISIONAL_RELEASE,
-            0, 1 if invalid == "absent-child-index" else 0,
+            1 if invalid == "absent-child-index" else 0,
         ),)
     plan = OutputPublicationRollbackPlan(f.identity, f.manifest.manifest_digest, "invalid", effects)
     tombstone = OutputPublicationRollbackTombstone(plan, tuple(OutputPublicationAck(effect) for effect in effects))

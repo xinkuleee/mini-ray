@@ -181,7 +181,7 @@ def test_wrong_partial_write_claim_cannot_authorize_deletion(monkeypatch):
     object_id = (fixture.manifest.publication_id).object_id
     claim = node._local_replica_write_claims[object_id]
     wrong_effect = replace(claim.effect)
-    object.__setattr__(wrong_effect, "slot_index", 1)
+    object.__setattr__(wrong_effect, "transfer_index", 0)
     node._local_replica_write_claims[object_id] = replace(claim, effect=wrong_effect)
     node._background_rpc = lambda *_: pytest.fail("wrong claim reached Worker")
     assert not node._handle_finalize_output_owner_death(request).cleaned

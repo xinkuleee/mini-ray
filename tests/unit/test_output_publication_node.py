@@ -218,7 +218,7 @@ def test_single_output_uses_owner_registration_and_local_complete(refs, stored):
     assert "terminal" not in fixture.events
     assert fixture.handoffs.query(fixture.id).complete is None
     assert fixture.adapter.pending_terminal_reports() == (fixture.values.witness,)
-    assert fixture.journal.materialized_result(fixture.id, 0).inline_data == (None if stored else (fixture.values.payload))
+    assert fixture.journal.materialized_result(fixture.id).inline_data == (None if stored else (fixture.values.payload))
     if stored:
         assert fixture.store.get((fixture.manifest.publication_id).object_id) == (fixture.values.payload)
     else:

@@ -350,7 +350,7 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     assert cleaned.rollback.rollback_id == "output-worker-lost:{}".format(request.lease_id)
     assert len(cleaned.rollback.effects) == 1
     assert cleaned.rollback.effects[0].stage is OutputPublicationStage.SLOT_DROP
-    assert cleaned.rollback.effects[0].slot_index == 0
+    assert cleaned.rollback.effects[0].transfer_index is None
     assert len(reports) == 1 and reports[0][0] == cleaned.rollback_tombstone
     assert publication.rollback_reports == reports
     assert publication.handoffs.query(identity).abort_reason == cleaned.rollback.rollback_id

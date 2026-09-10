@@ -20,7 +20,10 @@
 
 TaskID/ObjectID 表示稳定逻辑身份；AttemptID、Worker/Node incarnation 和 Actor generation 表示执行世代。
 请求还绑定 lease 或 put operation、owner、manifest digest、hold/source 等字段。同一请求身份不能换字段重放。
-当前内部仍有单元素 output/slot 容器；它们不表示公共 API 支持独立多返回槽。
+TaskExecution只保存AttemptID，TaskID与唯一ObjectID由它派生。发布清单保存一个value，
+PreparedOutput保存一份payload，成功Envelope保存一个result；用户tuple/list不会被拆成多个返回槽。
+Node journal内部也只保存一个可空result和一个retirement。lease/TaskReply边界仍有明确的单元素适配，
+child、replica和borrower保持多值；effect和owner退休的恒零索引正在后续独立评估。
 
 入口：[api.py](../src/miniray/api.py)、[core.py](../src/miniray/core.py)、[control.py](../src/miniray/control.py)、
 [node.py](../src/miniray/node.py)、[ids.py](../src/miniray/ids.py)、[task_outputs.py](../src/miniray/task_outputs.py)。

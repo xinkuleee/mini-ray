@@ -4684,8 +4684,6 @@ class CoreWorker:
             if manifest.header.owner_worker_id != self.worker_id:
                 raise ValueError("rollback targets another output owner")
             for effect in tombstone.plan.effects:
-                if effect.slot_index != 0:
-                    raise ValueError("rollback effect names another output")
                 if (effect.stage in (OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE)
                         and effect.transfer_index >= len(manifest.value.transfers)):
                     raise ValueError("rollback effect names an absent child transfer")

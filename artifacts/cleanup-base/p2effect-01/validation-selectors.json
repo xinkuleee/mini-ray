@@ -1,0 +1,38 @@
+{
+  "status": "READY_FOR_ROOT_EXISTING_FINITE_EXECUTION_NOT_RUN",
+  "execution": "audit/two-version-cleanup/execution/base-p2effect-01",
+  "patch": "audit/p2-effect-scalar-trial/effect-scalar.patch",
+  "minimum_pure": [
+    "tests/unit/test_output_publication_journal.py",
+    "tests/unit/test_output_publication_node.py",
+    "tests/unit/test_output_replica_node.py",
+    "tests/unit/test_output_owner_death_node.py",
+    "tests/unit/test_output_handoff.py"
+  ],
+  "minimum_actual": [
+    {
+      "selector": "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+      "marker": "multiprocess_smoke",
+      "purpose": "ordinary true Worker/Node/Core"
+    },
+    {
+      "selector": "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects",
+      "marker": "multiprocess_smoke",
+      "purpose": "contained stored real Prepare/Complete/adoption/GC"
+    }
+  ],
+  "additional_existing": [
+    "tests/unit/test_cross_cleanup_receipts.py",
+    "tests/unit/test_worker_stored_publication.py",
+    "tests/unit/test_node_lease_execution.py",
+    "tests/unit/test_single_output_journal_retirement.py",
+    "tests/integration/test_cross_cleanup_receipt_path.py::test_publication_rollback_receipt_replays_after_same_object_retry_seals",
+    "tests/integration/test_output_child_owner_worker_loss_path.py::test_dead_executor_child_cleanup_precedes_retry_on_same_live_node",
+    "tests/integration/test_unreported_complete_node_loss_path.py::test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before_retry"
+  ],
+  "not_registered_in_P1": [
+    "tests/unit/test_owner_finalize_replica_receipts.py"
+  ],
+  "manifest": "No selectors or markers added. Existing 311 reviewed migrations /26 pure /32 gate smokes preserved; only actual input hashes refreshed for independent execution.",
+  "cost": "Unchanged finite original cases and 30-second process-tree runner. No new fault matrix. All sixteen affected test files adapted even beyond initial execution slice."
+}

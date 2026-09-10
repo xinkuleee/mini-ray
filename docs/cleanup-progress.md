@@ -67,3 +67,5 @@ K4正式构造切片：base-k4d-01同源码343passed/1deselected及32个smoke均
 K4/P1完成：TaskExecution(attempt_id)、manifest.value、PreparedOutput.payload、Envelope.result已实际应用14个源码消费者和107个保留测试/helper；用户tuple/list仍一次序列化为一个结果，child/replica多值保留。隔离trial02同版343passed/1deselected、32/32smoke首次全部通过含7main；当前应用版再验同纯gate及ownerINLINE6/retirement26/pool2，通过。两份受测快照映射只差换行、模块说明和审查hash，未改标成同一HEAD实测。试验首轮漏迁两处payload调用的失败已保存并修复。14个受影响源码净减183物理行/141代码行；收益是去掉单输出外层维度，不是已达到20k预算。Node journal与owner退休index/map属于后续P2/P3，K5/K6、K7与E尚未完成。
 
 K5/P2部分完成：journal内部result/retirement各改一个可空值，纯gate343/1deselected、journal23/retirement3及普通/含Ref实际发布GC均通过。另实际试做adapter八表合一，Node35/ownerdeath2及同两真实场景通过，但pending查询从O(未决)退化到O(全部历史)，还增加record/getter与锁查询；据此不采纳该合并，保当前分阶段outbox。P2恒零effect与公开snapshot边界仍在独立试做，不能把部分决定写成全P2完成。
+
+K5/P2 effect子项完成：实际退出effect恒零slot_index和prepare/materialize/promote/read参数，保child ordinal和所有claim/epoch/digest/owner物理检查；4源码/16测试闭合。纯343/1deselected、journal23/replica22/ownerDeath10和普通、含Ref stored实际发布GC全部通过，应用20文件与受测文本精确一致。净减33物理行，无新RPC/权威。退休tombstone与公开snapshot最后单元素投影仍在独立试做，P2全包尚未关闭。

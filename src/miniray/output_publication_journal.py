@@ -76,9 +76,6 @@ _TRANSFER_STAGES = frozenset((
     OutputPublicationStage.PREPARE, OutputPublicationStage.PROMOTE,
     OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE,
 ))
-_SLOT_STAGES = frozenset((
-    OutputPublicationStage.MATERIALIZE, OutputPublicationStage.SLOT_DROP,
-))
 _ROLLBACK_STAGES = frozenset((
     OutputPublicationStage.SLOT_DROP,
     OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE,
@@ -92,12 +89,11 @@ class _WireValue:
 
 @dataclass(frozen=True)
 class OutputPublicationEffect(_WireValue):
-    """Exact operation key; indices address the frozen manifest, not IDs."""
+    """Exact stage key; only child operations carry a transfer index."""
 
     publication_id: OutputPublicationID
     manifest_digest: str
     stage: OutputPublicationStage
-    slot_index: Optional[int] = None
     transfer_index: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -105,16 +101,10 @@ class OutputPublicationEffect(_WireValue):
         _require_type(self.stage, OutputPublicationStage, "stage")
         object.__setattr__(self, "publication_id", replace(self.publication_id))
         object.__setattr__(self, "manifest_digest", _checksum(self.manifest_digest, "manifest_digest"))
-        if self.stage in _TRANSFER_STAGES | _SLOT_STAGES:
-            _uint(self.slot_index, "slot_index")
-            if self.slot_index != 0:
-                raise OutputPublicationConflictError("slot_index is outside the selected execution")
-        elif self.slot_index is not None:
-            raise ValueError("batch effect cannot carry a slot_index")
         if self.stage in _TRANSFER_STAGES:
             _uint(self.transfer_index, "transfer_index")
         elif self.transfer_index is not None:
-            raise ValueError("non-transfer effect cannot carry a transfer_index")
+            raise OutputPublicationConflictError("non-transfer effect cannot carry a transfer_index")
 
 
 @dataclass(frozen=True)
@@ -303,22 +293,22 @@ class OutputPublicationJournal:
     def ack_owner_registered(self, acknowledgement: OutputPublicationAck) -> bool:
         return self._ack_forward(acknowledgement, OutputPublicationStage.OWNER_REGISTER)
 
-    def begin_prepare(self, publication_id: OutputPublicationID, slot_index: int, transfer_index: int) -> OutputPublicationEffect:
-        return self._begin(publication_id, OutputPublicationStage.PREPARE, slot_index, transfer_index)
+    def begin_prepare(self, publication_id: OutputPublicationID, transfer_index: int) -> OutputPublicationEffect:
+        return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
 
     def ack_prepared(self, acknowledgement: OutputPublicationAck) -> bool:
         return self._ack_forward(acknowledgement, OutputPublicationStage.PREPARE)
 
-    def begin_materialize(self, publication_id: OutputPublicationID, slot_index: int) -> OutputPublicationEffect:
-        return self._begin(publication_id, OutputPublicationStage.MATERIALIZE, slot_index)
+    def begin_materialize(self, publication_id: OutputPublicationID) -> OutputPublicationEffect:
+        return self._begin(publication_id, OutputPublicationStage.MATERIALIZE)
 
     def ack_materialized(self, acknowledgement: OutputPublicationAck, descriptor: ResultDescriptor) -> bool:
         return self._ack_forward(
             acknowledgement, OutputPublicationStage.MATERIALIZE, descriptor=descriptor
         )
 
-    def begin_promote(self, publication_id: OutputPublicationID, slot_index: int, transfer_index: int) -> OutputPublicationEffect:
-        return self._begin(publication_id, OutputPublicationStage.PROMOTE, slot_index, transfer_index)
+    def begin_promote(self, publication_id: OutputPublicationID, transfer_index: int) -> OutputPublicationEffect:
+        return self._begin(publication_id, OutputPublicationStage.PROMOTE, transfer_index)
 
     def ack_promoted(self, acknowledgement: OutputPublicationAck) -> bool:
         return self._ack_forward(acknowledgement, OutputPublicationStage.PROMOTE)
@@ -384,13 +374,13 @@ class OutputPublicationJournal:
                 return replace(record.rollback)
             self._require_active(record)
             effects = []
-            if self._intended(record, OutputPublicationStage.MATERIALIZE, 0):
-                effects.append(self._effect(record, OutputPublicationStage.SLOT_DROP, 0))
+            if self._intended(record, OutputPublicationStage.MATERIALIZE):
+                effects.append(self._effect(record, OutputPublicationStage.SLOT_DROP))
             for forward, inverse in ((OutputPublicationStage.PROMOTE, OutputPublicationStage.FINAL_RELEASE),
                                      (OutputPublicationStage.PREPARE, OutputPublicationStage.PROVISIONAL_RELEASE)):
-                for slot_index, transfer_index in reversed(self._transfer_indices(record)):
-                    if self._intended(record, forward, slot_index, transfer_index):
-                        effects.append(self._effect(record, inverse, slot_index, transfer_index))
+                for transfer_index in reversed(self._transfer_indices(record)):
+                    if self._intended(record, forward, transfer_index):
+                        effects.append(self._effect(record, inverse, transfer_index))
             plan = OutputPublicationRollbackPlan(
                 record.manifest.publication_id, record.manifest.manifest_digest, rollback_id, tuple(effects)
             )
@@ -454,11 +444,10 @@ class OutputPublicationJournal:
             record.result = None
             record.state = OutputPublicationJournalState.RETIRED
 
-    def materialized_result(self, publication_id: OutputPublicationID, slot_index: int) -> Optional[ResultDescriptor]:
+    def materialized_result(self, publication_id: OutputPublicationID) -> Optional[ResultDescriptor]:
         """Node data-plane cache lookup, never a GCS/history projection."""
         with self._lock:
             record = self._record(publication_id)
-            self._effect(record, OutputPublicationStage.MATERIALIZE, slot_index)
             result = record.result
             return None if result is None else _descriptor(result)
 
@@ -473,7 +462,7 @@ class OutputPublicationJournal:
                 replace(record.manifest), record.state,
                 tuple(replace(value) for value in intents),
                 tuple(replace(value) for value in acknowledgements),
-                (0,) if self._acked(record, OutputPublicationStage.MATERIALIZE, 0) else (),
+                (0,) if self._acked(record, OutputPublicationStage.MATERIALIZE) else (),
                 () if record.result is None else (0,),
                 None if record.complete is None else replace(record.complete),
                 None if record.rollback is None else replace(record.rollback),
@@ -486,11 +475,11 @@ class OutputPublicationJournal:
         with self._lock:
             return tuple(replace(value) for value in self._records)
 
-    def _begin(self, publication_id, stage, slot_index=None, transfer_index=None):
+    def _begin(self, publication_id, stage, transfer_index=None):
         with self._lock:
             record = self._record(publication_id)
             self._require_active(record)
-            effect = self._effect(record, stage, slot_index, transfer_index)
+            effect = self._effect(record, stage, transfer_index)
             self._require_stage_ready(record, stage)
             record.intents.add(effect)
             return replace(effect)
@@ -509,7 +498,7 @@ class OutputPublicationJournal:
                 raise OutputPublicationJournalStateError("ACK arrived before its intent")
             self._require_stage_ready(record, stage)
             if stage is OutputPublicationStage.MATERIALIZE:
-                descriptor = self._validate_descriptor(record, effect.slot_index, descriptor)
+                descriptor = self._validate_descriptor(record, descriptor)
             if effect in record.acknowledgements:
                 if stage is OutputPublicationStage.MATERIALIZE and record.result != descriptor:
                     raise OutputPublicationConflictError("materialized result changed on replay")
@@ -534,45 +523,41 @@ class OutputPublicationJournal:
 
     @staticmethod
     def _transfer_indices(record):
-        return tuple((0, transfer_index)
-                     for transfer_index in range(len(record.manifest.value.transfers)))
+        return range(len(record.manifest.value.transfers))
 
     @staticmethod
-    def _effect(record, stage, slot_index=None, transfer_index=None):
+    def _effect(record, stage, transfer_index=None):
         effect = OutputPublicationEffect(
             record.manifest.publication_id, record.manifest.manifest_digest,
-            stage, slot_index, transfer_index,
+            stage, transfer_index,
         )
-        if slot_index is not None:
-            if slot_index != 0:
-                raise OutputPublicationConflictError("slot_index is outside the selected manifest")
-            if transfer_index is not None and transfer_index >= len(record.manifest.value.transfers):
-                raise OutputPublicationConflictError("transfer_index is outside its slot")
+        if transfer_index is not None and transfer_index >= len(record.manifest.value.transfers):
+            raise OutputPublicationConflictError("transfer_index is outside the output")
         return effect
 
     def _require_effect(self, record, effect):
-        if effect != self._effect(record, effect.stage, effect.slot_index, effect.transfer_index):
+        if effect != self._effect(record, effect.stage, effect.transfer_index):
             raise OutputPublicationConflictError("effect changed the exact publication manifest")
 
-    def _acked(self, record, stage, slot_index=None, transfer_index=None):
-        return self._effect(record, stage, slot_index, transfer_index) in record.acknowledgements
+    def _acked(self, record, stage, transfer_index=None):
+        return self._effect(record, stage, transfer_index) in record.acknowledgements
 
-    def _intended(self, record, stage, slot_index=None, transfer_index=None):
-        return self._effect(record, stage, slot_index, transfer_index) in record.intents
+    def _intended(self, record, stage, transfer_index=None):
+        return self._effect(record, stage, transfer_index) in record.intents
 
     def _require_all_prepared(self, record):
         if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
             raise OutputPublicationJournalStateError("child/data effects require the exact owner registration ACK")
-        if not all(self._acked(record, OutputPublicationStage.PREPARE, *index) for index in self._transfer_indices(record)):
+        if not all(self._acked(record, OutputPublicationStage.PREPARE, index) for index in self._transfer_indices(record)):
             raise OutputPublicationJournalStateError("materialization requires every provisional prepare ACK")
 
     def _all_materialized(self, record):
-        return self._acked(record, OutputPublicationStage.MATERIALIZE, 0)
+        return self._acked(record, OutputPublicationStage.MATERIALIZE)
 
     def _ready_to_complete(self, record):
         return (self._acked(record, OutputPublicationStage.OWNER_REGISTER)
                 and self._all_materialized(record)
-                and all(self._acked(record, OutputPublicationStage.PROMOTE, *index)
+                and all(self._acked(record, OutputPublicationStage.PROMOTE, index)
                         for index in self._transfer_indices(record)))
 
     def _require_stage_ready(self, record, stage):
@@ -589,10 +574,7 @@ class OutputPublicationJournal:
             raise OutputPublicationJournalStateError("promotion requires every materialization ACK")
 
     @staticmethod
-    def _validate_descriptor(record, slot_index, descriptor):
-        _uint(slot_index, "slot_index")
-        if slot_index != 0:
-            raise OutputPublicationConflictError("materialized descriptor must name the sole output")
+    def _validate_descriptor(record, descriptor):
         descriptor = _descriptor(descriptor)
         slot = record.manifest.value
         if (descriptor.object_id != record.manifest.publication_id.object_id or descriptor.storage is not slot.tier
@@ -650,7 +632,6 @@ class OutputPublicationJournal:
 
 def _effect_order(effect):
     return (tuple(OutputPublicationStage).index(effect.stage),
-            -1 if effect.slot_index is None else effect.slot_index,
             -1 if effect.transfer_index is None else effect.transfer_index)
 
 

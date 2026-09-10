@@ -318,9 +318,9 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node(monkeypatc
         assert actual_rollback.manifest == manifest
         tombstone = actual_rollback.tombstone
         assert tombstone.plan.publication_id == publication and tombstone.plan.manifest_digest == arrival.manifest_digest
-        assert tuple((effect.stage, effect.slot_index, effect.transfer_index) for effect in tombstone.plan.effects) == (
-            (Stage.SLOT_DROP, 0, None),
-            (Stage.FINAL_RELEASE, 0, 0), (Stage.PROVISIONAL_RELEASE, 0, 0),
+        assert tuple((effect.stage, effect.transfer_index) for effect in tombstone.plan.effects) == (
+            (Stage.SLOT_DROP, None),
+            (Stage.FINAL_RELEASE, 0), (Stage.PROVISIONAL_RELEASE, 0),
         )
         assert tuple(ack.effect for ack in tombstone.acknowledgements) == tombstone.plan.effects
         with observations:

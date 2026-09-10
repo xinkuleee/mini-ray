@@ -275,7 +275,7 @@ def test_owner_wide_completion_supplies_generic_receipt_without_resealing_dead_o
 
 
 @pytest.mark.parametrize("fault", (
-    "active", "digest", "slot", "publication", "node_id", "node_pid", "registration_epoch",
+    "active", "digest", "stage-child", "publication", "node_id", "node_pid", "registration_epoch",
 ))
 def test_completed_receipt_cannot_bypass_journal_or_node_incarnation(monkeypatch, fault):
     fixture = _Fixture()
@@ -288,11 +288,11 @@ def test_completed_receipt_cannot_bypass_journal_or_node_incarnation(monkeypatch
         error = OutputPublicationJournalStateError
     if fault == "digest":
         effect = replace(effect, manifest_digest="0" * 64)
-    elif fault == "slot":
-        # Slot zero is the only output. Revalidate malformed wire input at
+    elif fault == "stage-child":
+        # A byte effect cannot name a child. Revalidate malformed wire at
         # the Node boundary instead of raising while constructing the fixture.
         effect = replace(effect)
-        object.__setattr__(effect, "slot_index", 1)
+        object.__setattr__(effect, "transfer_index", 0)
     elif fault == "publication":
         effect = replace(effect, publication_id=replace(effect.publication_id, lease_id=ids.LeaseID(b"x" * 16)))
     before, journal = _snapshot(fixture), fixture.journal.snapshot(fixture.id)

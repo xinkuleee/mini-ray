@@ -97,7 +97,7 @@ def _case(monkeypatch, phase):
         with monkeypatch.context() as fault:
             if phase == "intent-only":
                 def before_storage(effect, descriptor, payload):
-                    assert effect.slot_index == (0) and descriptor.object_id == (fixture.id).object_id
+                    assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
                     assert payload == (fixture.values.payload)
                     raise _InjectedLocalFailure("before replica create")
 
@@ -134,7 +134,7 @@ def _case(monkeypatch, phase):
         request = _owner_request(fixture, node)
 
     stored = (fixture.manifest.value)
-    expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE, (0))
+    expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
     snapshot = fixture.journal.snapshot(fixture.id)
     assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
     assert snapshot.retained_result_slots == (0,) and snapshot.complete is None
@@ -393,9 +393,9 @@ def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monke
     stored_id = (fixture.manifest.publication_id).object_id
     if corruption == "claim":
         original = node._local_replica_write_claims[stored_id]
-        node._local_replica_write_claims[stored_id] = replace(
-            original, effect=replace(original.effect, slot_index=0),
-        )
+        wrong_effect = replace(original.effect)
+        object.__setattr__(wrong_effect, "transfer_index", 0)
+        node._local_replica_write_claims[stored_id] = replace(original, effect=wrong_effect)
     before_claims = deepcopy(node._local_replica_write_claims)
     before_store = fixture.store.snapshot(stored_id)
     worker_calls = []

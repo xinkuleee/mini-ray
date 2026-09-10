@@ -1,0 +1,79 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 20.582,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p2effect-01/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_journal.py",
+    "exit_code": 0,
+    "seconds": 9.34,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p2effect-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_journal.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_replica_node.py",
+    "exit_code": 0,
+    "seconds": 13.4,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p2effect-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_replica_node.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_death_node.py",
+    "exit_code": 0,
+    "seconds": 16.684,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p2effect-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_death_node.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+    "exit_code": 0,
+    "seconds": 12.498,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p2effect-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_path.py::test_one_node_one_worker_task_path"
+    ],
+    "log": "004-smoke.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects",
+    "exit_code": 0,
+    "seconds": 23.181,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p2effect-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects"
+    ],
+    "log": "005-case.log"
+  }
+]

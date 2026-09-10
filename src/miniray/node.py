@@ -204,11 +204,10 @@ class _OutputReplicaWriteClaim:
 
     def matches_drop(self, request: protocol.DropObjectReplica) -> bool:
         """A physical completion may retire only its exact writer's claim."""
-        index = self.effect.slot_index
         metadata = self.expected_metadata
         return (
             self.effect.stage is OutputPublicationStage.MATERIALIZE
-            and type(index) is int and index == 0
+            and self.effect.transfer_index is None
             and self.effect.publication_id.object_id == request.object_id
             and self.effect.publication_id.attempt_id == request.producer_attempt_id
             and (metadata[0], metadata[1], metadata[3])
@@ -1503,8 +1502,7 @@ class NodeServer:
                 record.output_complete_inflight = None
         # No admitted publisher can create new bytes after its owner fence.
         # Clean exact partial writes with their recorded local claim.
-        # Physical custody retains its effect index at the sole output boundary.
-        for slot_index, slot in ((0, manifest.value),):
+        for slot in (manifest.value,):
             if slot.tier is not protocol.ResultStorage.OBJECT_STORE:
                 continue  # INLINE custody has no Node-local physical replica.
             drop = protocol.DropObjectReplica(
@@ -1514,7 +1512,6 @@ class NodeServer:
             )
             expected_effect = OutputPublicationEffect(
                 identity, manifest.manifest_digest, OutputPublicationStage.MATERIALIZE,
-                slot_index,
             )
             expected_claim = _OutputReplicaWriteClaim(expected_effect, (
                 identity.attempt_id, manifest.header.owner_worker_id,
@@ -1659,7 +1656,6 @@ class NodeServer:
             raise OutputPublicationConflictError("publication names another Node incarnation")
         canonical = OutputPublicationEffect(
             manifest.publication_id, manifest.manifest_digest, expected_stage,
-            effect.slot_index,
         )
         if effect != canonical:
             raise OutputPublicationConflictError("replica effect changed its manifest")
@@ -6382,7 +6378,7 @@ class NodeServer:
                     raise RuntimeError("output test gate lost its completed lease identity")
                 if envelope is not None:
                     if (envelope.manifest != manifest
-                            or journal.materialized_result(identity, 0) != envelope.result):
+                            or journal.materialized_result(identity) != envelope.result):
                         raise RuntimeError("output test-gated payload was retired before delivery")
 
         def ensure_terminal(deadline: float) -> None:

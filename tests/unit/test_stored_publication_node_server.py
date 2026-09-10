@@ -202,7 +202,7 @@ def test_one_prepare_orders_owner_child_materialize_and_promotion_effects(monkey
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.ready_to_complete and snapshot.complete is None
     assert (snapshot.manifest.value.edges) == (fixture.manifest.value).edges
-    assert (fixture.journal.materialized_result(fixture.id, 0)) == (fixture.values.result)
+    assert (fixture.journal.materialized_result(fixture.id)) == (fixture.values.result)
     assert fixture.store.get((fixture.id.object_id)) == (fixture.values.payload)
     assert record.completion is None
     before = tuple(fixture.events)

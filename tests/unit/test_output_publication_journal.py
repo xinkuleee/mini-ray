@@ -113,8 +113,8 @@ class _Fixture:
         self.journal = OutputPublicationJournal()
         assert self.journal.open(self.manifest)
 
-    def effect(self, stage, slot=None, transfer=None):
-        return OutputPublicationEffect(self.id, self.manifest.manifest_digest, stage, slot, transfer)
+    def effect(self, stage, transfer=None):
+        return OutputPublicationEffect(self.id, self.manifest.manifest_digest, stage, transfer)
 
     def register(self):
         self.journal.ack_owner_registered(OutputPublicationAck(self.journal.begin_owner_register(self.id)))
@@ -122,18 +122,18 @@ class _Fixture:
     def prepare(self):
         self.register()
         for index in range(len((self.manifest.value).transfers)):
-            self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, 0, index)))
+            self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
 
     def materialize(self):
         self.prepare()
         self.journal.ack_materialized(
-            OutputPublicationAck(self.journal.begin_materialize(self.id, 0)), self.result,
+            OutputPublicationAck(self.journal.begin_materialize(self.id)), self.result,
         )
 
     def promote(self):
         self.materialize()
         for index in range(len((self.manifest.value).transfers)):
-            self.journal.ack_promoted(OutputPublicationAck(self.journal.begin_promote(self.id, 0, index)))
+            self.journal.ack_promoted(OutputPublicationAck(self.journal.begin_promote(self.id, index)))
 
     def complete(self):
         self.promote()
@@ -167,7 +167,7 @@ def test_single_output_journal_replays_inline_and_stored_with_or_without_childre
     assert snapshot.complete == f.witness
     assert snapshot.materialized_slots == snapshot.retained_result_slots == (0,)
     assert not snapshot.ready_to_complete
-    assert journal.materialized_result(f.id, 0) == f.result
+    assert journal.materialized_result(f.id) == f.result
     with journal.linearize(f.id):
         replay = journal.complete(f.id, f.witness)
         assert replay == f.envelope
@@ -187,25 +187,25 @@ def test_owner_registration_prepare_materialize_and_promote_are_ordered_gates():
     f = _Fixture()
     journal = f.journal
     before = journal.snapshot(f.id)
-    for call in (lambda: journal.begin_prepare(f.id, 0, 0), lambda: journal.begin_materialize(f.id, 0)):
+    for call in (lambda: journal.begin_prepare(f.id, 0), lambda: journal.begin_materialize(f.id)):
         with pytest.raises(OutputPublicationJournalStateError, match="owner registration"):
             call()
     assert journal.snapshot(f.id) == before
     f.register()
-    first = journal.begin_prepare(f.id, 0, 0)
+    first = journal.begin_prepare(f.id, 0)
     journal.ack_prepared(OutputPublicationAck(first))
     with pytest.raises(OutputPublicationJournalStateError, match="every provisional"):
-        journal.begin_materialize(f.id, 0)
-    journal.ack_prepared(OutputPublicationAck(journal.begin_prepare(f.id, 0, 1)))
-    materialize = journal.begin_materialize(f.id, 0)
+        journal.begin_materialize(f.id)
+    journal.ack_prepared(OutputPublicationAck(journal.begin_prepare(f.id, 1)))
+    materialize = journal.begin_materialize(f.id)
     with pytest.raises(OutputPublicationJournalStateError, match="every materialization"):
-        journal.begin_promote(f.id, 0, 0)
+        journal.begin_promote(f.id, 0)
     journal.ack_materialized(OutputPublicationAck(materialize), f.result)
-    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0, 0)))
+    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0)))
     assert not journal.snapshot(f.id).ready_to_complete
     with pytest.raises(OutputPublicationJournalStateError, match="promotion ACKs"):
         journal.complete(f.id, f.witness)
-    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0, 1)))
+    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 1)))
     assert journal.snapshot(f.id).ready_to_complete
     assert journal.complete(f.id, f.witness) == f.envelope
 
@@ -214,9 +214,9 @@ def test_exact_forward_replay_acks_do_not_mutate_or_duplicate_intents():
     f = _Fixture()
     journal = f.journal
     steps = [(lambda: journal.begin_owner_register(f.id), journal.ack_owner_registered)]
-    steps += [(lambda index=index: journal.begin_prepare(f.id, 0, index), journal.ack_prepared) for index in range(2)]
-    steps += [(lambda: journal.begin_materialize(f.id, 0), lambda ack: journal.ack_materialized(ack, replace(f.result)))]
-    steps += [(lambda index=index: journal.begin_promote(f.id, 0, index), journal.ack_promoted) for index in range(2)]
+    steps += [(lambda index=index: journal.begin_prepare(f.id, index), journal.ack_prepared) for index in range(2)]
+    steps += [(lambda: journal.begin_materialize(f.id), lambda ack: journal.ack_materialized(ack, replace(f.result)))]
+    steps += [(lambda index=index: journal.begin_promote(f.id, index), journal.ack_promoted) for index in range(2)]
     for begin, acknowledge in steps:
         effect = begin()
         assert begin() == effect
@@ -232,9 +232,9 @@ def test_each_forward_ack_requires_its_own_recorded_intent():
     journal = f.journal
     stages = (
         (lambda: None, f.effect(Stage.OWNER_REGISTER), journal.ack_owner_registered),
-        (f.register, f.effect(Stage.PREPARE, 0, 0), journal.ack_prepared),
-        (f.prepare, f.effect(Stage.MATERIALIZE, 0), lambda ack: journal.ack_materialized(ack, f.result)),
-        (f.materialize, f.effect(Stage.PROMOTE, 0, 0), journal.ack_promoted),
+        (f.register, f.effect(Stage.PREPARE, 0), journal.ack_prepared),
+        (f.prepare, f.effect(Stage.MATERIALIZE), lambda ack: journal.ack_materialized(ack, f.result)),
+        (f.materialize, f.effect(Stage.PROMOTE, 0), journal.ack_promoted),
     )
     for prepare, effect, acknowledge in stages:
         prepare()
@@ -248,42 +248,43 @@ def test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation():
     f = _Fixture()
     journal = f.journal
     f.register()
-    effect = journal.begin_prepare(f.id, 0, 0)
+    effect = journal.begin_prepare(f.id, 0)
     before = journal.snapshot(f.id)
     with pytest.raises(OutputPublicationConflictError, match="exact publication"):
         journal.ack_prepared(OutputPublicationAck(replace(effect, manifest_digest="ab" * 32)))
     with pytest.raises(OutputPublicationConflictError, match="another stage"):
         journal.ack_promoted(OutputPublicationAck(effect))
-    for slot, child in ((1, 0), (0, 2), (True, 0), (-1, 0), (None, 0),
-                        (0, True), (0, -1), (0, None), (0, 1 << 64)):
-        with pytest.raises((OutputPublicationConflictError, ValueError)):
-            journal.begin_prepare(f.id, slot, child)
-    for slot in ((1, True, -1, None, 1 << 64)):
-        for call in (lambda: journal.begin_materialize(f.id, slot),
-                     lambda: journal.begin_promote(f.id, slot, 0),
-                     lambda: journal.materialized_result(f.id, slot)):
+    for child in (2, True, -1, None, 1 << 64):
+        for operation in (journal.begin_prepare, journal.begin_promote):
             with pytest.raises((OutputPublicationConflictError, ValueError)):
-                call()
+                operation(f.id, child)
+    for stage in (Stage.OWNER_REGISTER, Stage.MATERIALIZE, Stage.SLOT_DROP):
+        with pytest.raises(OutputPublicationConflictError, match="non-transfer"):
+            f.effect(stage, 0)
+    malformed = f.effect(Stage.MATERIALIZE)
+    object.__setattr__(malformed, "transfer_index", 0)
+    with pytest.raises(OutputPublicationConflictError, match="non-transfer"):
+        journal.ack_materialized(OutputPublicationAck(malformed), f.result)
     assert journal.snapshot(f.id) == before
     f.prepare()
-    materialize = journal.begin_materialize(f.id, 0)
+    materialize = journal.begin_materialize(f.id)
     before = journal.snapshot(f.id)
     wrong = replace(f.result, object_id=ObjectID.for_task(_id(TaskID, 50)))
     with pytest.raises(OutputPublicationConflictError, match="slot identity"):
         journal.ack_materialized(OutputPublicationAck(materialize), wrong)
     assert journal.snapshot(f.id) == before
-    assert journal.materialized_result(f.id, 0) is None
+    assert journal.materialized_result(f.id) is None
 
 
 def test_materialize_intent_without_ack_is_compensated_before_reverse_child_releases():
     f = _Fixture(stored=True)
     journal = f.journal
     f.prepare()
-    materialize = journal.begin_materialize(f.id, 0)
+    materialize = journal.begin_materialize(f.id)
     plan = journal.begin_rollback(f.id, "seal-ack-lost")
-    assert tuple((e.stage, e.slot_index, e.transfer_index) for e in plan.effects) == (
-        (Stage.SLOT_DROP, 0, None),
-        (Stage.PROVISIONAL_RELEASE, 0, 1), (Stage.PROVISIONAL_RELEASE, 0, 0),
+    assert tuple((e.stage, e.transfer_index) for e in plan.effects) == (
+        (Stage.SLOT_DROP, None),
+        (Stage.PROVISIONAL_RELEASE, 1), (Stage.PROVISIONAL_RELEASE, 0),
     )
     before = journal.snapshot(f.id)
     assert journal.begin_rollback(f.id, "seal-ack-lost") == plan
@@ -310,26 +311,26 @@ def test_partial_promotion_rollback_releases_possible_final_before_provisional()
     f = _Fixture()
     f.materialize()
     journal = f.journal
-    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0, 0)))
-    journal.begin_promote(f.id, 0, 1)  # Effect may have happened before its ACK was lost.
+    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0)))
+    journal.begin_promote(f.id, 1)  # Effect may have happened before its ACK was lost.
     plan = journal.begin_rollback(f.id, "promotion-ack-lost")
     assert tuple((e.stage, e.transfer_index) for e in plan.effects) == (
         (Stage.SLOT_DROP, None), (Stage.FINAL_RELEASE, 1), (Stage.FINAL_RELEASE, 0),
         (Stage.PROVISIONAL_RELEASE, 1), (Stage.PROVISIONAL_RELEASE, 0),
     )
-    assert journal.materialized_result(f.id, 0) == f.result
+    assert journal.materialized_result(f.id) == f.result
     assert f.rollback() == plan.effects
-    assert journal.materialized_result(f.id, 0) is None
+    assert journal.materialized_result(f.id) is None
     _metadata(journal._records)
 
 
 def test_prepare_effect_without_ack_still_requires_exact_compensation():
     f = _Fixture()
     f.register()
-    f.journal.begin_prepare(f.id, 0, 1)
+    f.journal.begin_prepare(f.id, 1)
     plan = f.journal.begin_rollback(f.id, "prepare-ack-lost")
-    assert tuple((e.stage, e.slot_index, e.transfer_index) for e in plan.effects) == (
-        (Stage.PROVISIONAL_RELEASE, 0, 1),
+    assert tuple((e.stage, e.transfer_index) for e in plan.effects) == (
+        (Stage.PROVISIONAL_RELEASE, 1),
     )
     assert f.rollback() == plan.effects
 
@@ -356,11 +357,11 @@ def test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete(stage)
     journal = f.journal
     if stage is Stage.MATERIALIZE:
         f.prepare()
-        effect = journal.begin_materialize(f.id, 0)
+        effect = journal.begin_materialize(f.id)
         acknowledge = lambda: journal.ack_materialized(OutputPublicationAck(effect), f.result)
     else:
         f.materialize()
-        effect = journal.begin_promote(f.id, 0, 0)
+        effect = journal.begin_promote(f.id, 0)
         acknowledge = lambda: journal.ack_promoted(OutputPublicationAck(effect))
     journal.begin_rollback(f.id, "late-forward-ack")
     before = journal.snapshot(f.id)
@@ -383,13 +384,13 @@ def test_complete_fences_rollback_and_every_forward_effect():
         journal.begin_rollback(f.id, "too-late")
     for call in (
         lambda: journal.begin_owner_register(f.id),
-        lambda: journal.begin_prepare(f.id, 0, 0),
-        lambda: journal.begin_materialize(f.id, 0),
-        lambda: journal.begin_promote(f.id, 0, 0),
+        lambda: journal.begin_prepare(f.id, 0),
+        lambda: journal.begin_materialize(f.id),
+        lambda: journal.begin_promote(f.id, 0),
         lambda: journal.ack_owner_registered(OutputPublicationAck(f.effect(Stage.OWNER_REGISTER))),
-        lambda: journal.ack_prepared(OutputPublicationAck(f.effect(Stage.PREPARE, 0, 0))),
-        lambda: journal.ack_materialized(OutputPublicationAck(f.effect(Stage.MATERIALIZE, 0)), f.result),
-        lambda: journal.ack_promoted(OutputPublicationAck(f.effect(Stage.PROMOTE, 0, 0))),
+        lambda: journal.ack_prepared(OutputPublicationAck(f.effect(Stage.PREPARE, 0))),
+        lambda: journal.ack_materialized(OutputPublicationAck(f.effect(Stage.MATERIALIZE)), f.result),
+        lambda: journal.ack_promoted(OutputPublicationAck(f.effect(Stage.PROMOTE, 0))),
     ):
         with pytest.raises(OutputPublicationJournalStateError):
             call()
@@ -410,7 +411,7 @@ def test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadat
     snapshot = journal.snapshot(f.id)
     assert snapshot.state is OutputPublicationJournalState.RETIRED
     assert snapshot.complete == f.witness and snapshot.retained_result_slots == ()
-    assert journal.materialized_result(f.id, 0) is None
+    assert journal.materialized_result(f.id) is None
     with pytest.raises(OutputPublicationPayloadRetired) as caught:
         journal.complete(f.id, f.witness)
     assert caught.value.tombstones == tombstones
@@ -431,7 +432,7 @@ def test_payload_retirement_does_not_invent_physical_drop_or_rollback_receipts()
     assert after.rollback is after.rollback_tombstone is None
     assert not any(e.stage is Stage.SLOT_DROP for e in after.intents)
     # This proves the journal's metadata boundary, not a physical ObjectStore GC.
-    assert f.journal.materialized_result(f.id, 0) is None
+    assert f.journal.materialized_result(f.id) is None
 
 
 def test_payload_tombstones_and_diagnostics_do_not_alias_terminal_authority():
@@ -462,7 +463,7 @@ def test_retirement_requires_local_complete_and_exact_owner_scope_without_mutati
     before = journal.snapshot(f.id)
     with pytest.raises(OutputPublicationJournalStateError, match="local Complete"):
         journal.retire_completed(proof)
-    assert journal.snapshot(f.id) == before and journal.materialized_result(f.id, 0) == f.result
+    assert journal.snapshot(f.id) == before and journal.materialized_result(f.id) == f.result
     f.complete()
     before = journal.snapshot(f.id)
     for wrong in (
@@ -472,7 +473,7 @@ def test_retirement_requires_local_complete_and_exact_owner_scope_without_mutati
         with pytest.raises(OutputPublicationConflictError, match="Complete or its owner"):
             journal.retire_completed(wrong)
         assert journal.snapshot(f.id) == before
-        assert journal.materialized_result(f.id, 0) == f.result
+        assert journal.materialized_result(f.id) == f.result
     with pytest.raises(TypeError, match="proof"):
         journal.retire_completed(f.id)
     assert journal.snapshot(f.id) == before
@@ -497,20 +498,20 @@ def test_open_conflict_unknown_identity_and_mutated_inputs_fail_closed():
         journal.ack_owner_registered(OutputPublicationAck(altered))
     assert not journal.acknowledged(effect)
     f.prepare()
-    materialize = journal.begin_materialize(f.id, 0)
+    materialize = journal.begin_materialize(f.id)
     before = journal.snapshot(f.id)
     descriptor = replace(f.result)
     object.__setattr__(descriptor, "inline_data", b"changed")
     with pytest.raises(ProtocolError):
         journal.ack_materialized(OutputPublicationAck(materialize), descriptor)
     assert journal.snapshot(f.id) == before
-    assert journal.materialized_result(f.id, 0) is None
+    assert journal.materialized_result(f.id) is None
 
 
 def test_forward_and_retirement_acks_revalidate_tampered_nested_ids():
     f = _Fixture()
     f.register()
-    effect = f.journal.begin_prepare(f.id, 0, 0)
+    effect = f.journal.begin_prepare(f.id, 0)
     ack = OutputPublicationAck(effect)
     object.__setattr__(ack.effect.publication_id.lease_id, "value", b"short")
     before = f.journal.snapshot(f.id)
@@ -534,7 +535,7 @@ def test_snapshots_and_data_plane_returns_do_not_alias_journal_authority():
     snapshot = journal.snapshot(f.id)
     object.__setattr__((snapshot.manifest.value), "checksum", "ab" * 32)
     object.__setattr__((envelope.result), "inline_data", b"changed")
-    cached = journal.materialized_result(f.id, 0)
+    cached = journal.materialized_result(f.id)
     object.__setattr__(cached, "inline_data", b"changed-again")
     assert journal.complete(f.id, f.witness) == f.envelope
     assert journal.snapshot(f.id).manifest == f.manifest

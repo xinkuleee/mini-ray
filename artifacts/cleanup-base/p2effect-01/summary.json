@@ -1,0 +1,812 @@
+{
+  "status": "FULL_EXISTING_CONSUMER_CANDIDATE_STATIC_ONLY",
+  "baseline": "p2-after-p1/journal-scalar",
+  "baseline_rawhash_manifest_sha256": "39eb49606e911cad1b7b1274b6a073b5eceab752a9d3ffc26f6dd6e40494238e",
+  "file_count": 419,
+  "python_files_compiled_not_executed": 393,
+  "patch_raw_sha256": "2331e5184ad22b79444e8313573cb4a26fdf6cda21064fbd88581c5c5937842c",
+  "source_changed": 4,
+  "test_changed": 16,
+  "changed_files": [
+    {
+      "path": "src/miniray/core.py",
+      "before_raw_sha256": "cf38a034f22fb79ff8e202b327f3d4d19a99c6afd344ce1c4045cee6475961ca",
+      "after_raw_sha256": "8a2139607414a4b29e8e015c175d47389069d873538e1df3644b57eb94b44e51",
+      "before": {
+        "lines": 12756,
+        "normalized_bytes": 597396,
+        "functions": 317,
+        "branches": 1771,
+        "slot_name_refs": 1
+      },
+      "after": {
+        "lines": 12754,
+        "normalized_bytes": 597276,
+        "functions": 317,
+        "branches": 1770,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "src/miniray/node.py",
+      "before_raw_sha256": "58e16482e51f907557096f2fd7765e9b0541c0893f2a6d11943a1c4587107b92",
+      "after_raw_sha256": "146ce67603a25b1aa7f9bf320ae4b9dd0eb941807cae339fd48cdd8a5da853c7",
+      "before": {
+        "lines": 7256,
+        "normalized_bytes": 347609,
+        "functions": 185,
+        "branches": 944,
+        "slot_name_refs": 9
+      },
+      "after": {
+        "lines": 7252,
+        "normalized_bytes": 347411,
+        "functions": 185,
+        "branches": 944,
+        "slot_name_refs": 5
+      }
+    },
+    {
+      "path": "src/miniray/output_publication_journal.py",
+      "before_raw_sha256": "466e0eb3f8fc6a0c268538c95d7ca887defe5328925cc616d033cfa1bd74e4fd",
+      "after_raw_sha256": "ffd14c324c3bd76ef524178ee61763f8c2da8978eb13ae332c9a417678367f84",
+      "before": {
+        "lines": 666,
+        "normalized_bytes": 32438,
+        "functions": 50,
+        "branches": 86,
+        "slot_name_refs": 29
+      },
+      "after": {
+        "lines": 647,
+        "normalized_bytes": 31073,
+        "functions": 50,
+        "branches": 78,
+        "slot_name_refs": 6
+      }
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "before_raw_sha256": "230034196b5300d8aed2ce6f69b16ecafcdd1473cf034b712efdd7bb05d0c97a",
+      "after_raw_sha256": "d4d4347ccaac010195bfea9fcdd8a0606fe854ad3e833857e32a5833a5e39ce0",
+      "before": {
+        "lines": 577,
+        "normalized_bytes": 31631,
+        "functions": 25,
+        "branches": 70,
+        "slot_name_refs": 15
+      },
+      "after": {
+        "lines": 569,
+        "normalized_bytes": 30895,
+        "functions": 24,
+        "branches": 69,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/integration/test_cross_cleanup_receipt_path.py",
+      "before_raw_sha256": "c4b65e083ad8143d12ff9a4507f4befb014ab66d3186b0b9b7683e332e33be45",
+      "after_raw_sha256": "f755add7c82d33a3990ad57518bc89ff5ff4380be8c0f5598fa0d01956639945",
+      "before": {
+        "lines": 430,
+        "normalized_bytes": 24175,
+        "functions": 22,
+        "branches": 38,
+        "slot_name_refs": 2
+      },
+      "after": {
+        "lines": 430,
+        "normalized_bytes": 24189,
+        "functions": 22,
+        "branches": 38,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/integration/test_output_child_owner_worker_loss_path.py",
+      "before_raw_sha256": "bf3a7c53f9d68c9c74abe61a5b79adeece89d3ed958ed2a51d9ee52a79665f2b",
+      "after_raw_sha256": "5e4c2428102d9be806236c2a14b0874b06a953a64e3f0691a9374cf849f57b9f",
+      "before": {
+        "lines": 401,
+        "normalized_bytes": 21423,
+        "functions": 14,
+        "branches": 36,
+        "slot_name_refs": 1
+      },
+      "after": {
+        "lines": 401,
+        "normalized_bytes": 21395,
+        "functions": 14,
+        "branches": 36,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/integration/test_unreported_complete_node_loss_path.py",
+      "before_raw_sha256": "617c1c9bbd2c10d38efb2b439e8b2aed1bbde4a439ae880a141258bb9ac86329",
+      "after_raw_sha256": "13ab34c5836f408f383dc1cf02fef1bef64c059607351ac26bf1d4253692adcc",
+      "before": {
+        "lines": 498,
+        "normalized_bytes": 29322,
+        "functions": 16,
+        "branches": 42,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 497,
+        "normalized_bytes": 29229,
+        "functions": 16,
+        "branches": 41,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_cross_cleanup_receipts.py",
+      "before_raw_sha256": "599367035f1490aa6b5a15694faf365d85e816867b1ad83fbd80677273b8f39c",
+      "after_raw_sha256": "2d18c0789297fdfe95ed643e35992a873ae0e0a400adcc0d190f6164ac953955",
+      "before": {
+        "lines": 605,
+        "normalized_bytes": 30363,
+        "functions": 33,
+        "branches": 32,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 605,
+        "normalized_bytes": 30380,
+        "functions": 33,
+        "branches": 32,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_inline_recovery.py",
+      "before_raw_sha256": "ef0626fe105685ba38ba31079660a627e0baaa418d48e3206473d53e1bf3b392",
+      "after_raw_sha256": "c3114d441d1d4d8095fccdc49f1a413e34e7225006873d940c4efc8389a45cd6",
+      "before": {
+        "lines": 344,
+        "normalized_bytes": 18917,
+        "functions": 16,
+        "branches": 34,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 344,
+        "normalized_bytes": 18905,
+        "functions": 16,
+        "branches": 34,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_node_lease_execution.py",
+      "before_raw_sha256": "d07cdc51e019fe134a15e540b94cc981c2bea155a61734a2137759ba2c5aea55",
+      "after_raw_sha256": "36cf06aa32e8bb07a788d4b0a8e99c6effb625b1c42af01f215d39c68242a176",
+      "before": {
+        "lines": 377,
+        "normalized_bytes": 17348,
+        "functions": 15,
+        "branches": 2,
+        "slot_name_refs": 1
+      },
+      "after": {
+        "lines": 377,
+        "normalized_bytes": 17355,
+        "functions": 15,
+        "branches": 2,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_output_handoff.py",
+      "before_raw_sha256": "c9425497ec41ad75a010f9168a5c1008bb2fc2e18966be3d1027860792c29bba",
+      "after_raw_sha256": "c74a4346bfebf92ee138e33cc9681772bebfcf16f49e14508f990a246319bcc8",
+      "before": {
+        "lines": 384,
+        "normalized_bytes": 18136,
+        "functions": 24,
+        "branches": 11,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 384,
+        "normalized_bytes": 18133,
+        "functions": 24,
+        "branches": 11,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_output_owner_death_node.py",
+      "before_raw_sha256": "8d027720db21cb3c752f0e84c874d7e27ede17c2de4c37f881bb84057600bd5e",
+      "after_raw_sha256": "fb8a6e8ea979b1ab61dc5277c697cbb08cb1cc6dca01e1459b17da10d7bacaed",
+      "before": {
+        "lines": 192,
+        "normalized_bytes": 9366,
+        "functions": 12,
+        "branches": 8,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 192,
+        "normalized_bytes": 9370,
+        "functions": 12,
+        "branches": 8,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "before_raw_sha256": "9eed0759b6e1cd73b3a2873f0c6fe725e8e47a9aa5861bbea15398df84a453fe",
+      "after_raw_sha256": "fd345bff42c12b4019cb2327520f6b38a8e0aa75c3c071b005ee6b95cd2a8389",
+      "before": {
+        "lines": 540,
+        "normalized_bytes": 24824,
+        "functions": 29,
+        "branches": 35,
+        "slot_name_refs": 3
+      },
+      "after": {
+        "lines": 541,
+        "normalized_bytes": 24692,
+        "functions": 29,
+        "branches": 35,
+        "slot_name_refs": 1
+      }
+    },
+    {
+      "path": "tests/unit/test_output_publication_node.py",
+      "before_raw_sha256": "b637814cc117507af76ddfe89513176e0cdd13c843f415d52ca0e002194ac767",
+      "after_raw_sha256": "5dfdac68f1dab4d7a5c2b429f74d578dee67475f49233938e03576bd974e0056",
+      "before": {
+        "lines": 566,
+        "normalized_bytes": 25151,
+        "functions": 42,
+        "branches": 17,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 566,
+        "normalized_bytes": 25148,
+        "functions": 42,
+        "branches": 17,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_output_replica_node.py",
+      "before_raw_sha256": "641f24b7e086e1181912329aeba2fea959a0c9dc9d1de9638df7c3aba3265251",
+      "after_raw_sha256": "78acffc8e3ae64de32f5790bba03926e7abbc56cbd4f8e72ca8bc72fb36c5df0",
+      "before": {
+        "lines": 328,
+        "normalized_bytes": 14626,
+        "functions": 24,
+        "branches": 13,
+        "slot_name_refs": 1
+      },
+      "after": {
+        "lines": 328,
+        "normalized_bytes": 14643,
+        "functions": 24,
+        "branches": 13,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_owner_finalize_replica_receipts.py",
+      "before_raw_sha256": "101f93b427a1b4cd4216a42dbe1d0acad7b89b781b18ae68dfa076908f98e2a6",
+      "after_raw_sha256": "9fc5adce9f72dda95bef7eb88b16ab70bc498ff398c6eeb4deb3f2d2995964e5",
+      "before": {
+        "lines": 408,
+        "normalized_bytes": 20251,
+        "functions": 29,
+        "branches": 18,
+        "slot_name_refs": 1
+      },
+      "after": {
+        "lines": 408,
+        "normalized_bytes": 20312,
+        "functions": 29,
+        "branches": 18,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_owner_led_publication.py",
+      "before_raw_sha256": "3cf820797530e231a37031f45b791f23352b655e1e6a0b3ea0a032fe7880755c",
+      "after_raw_sha256": "9def9b5f9443aca0fd8c063eb1b4ec7fcc3e5a4ae940a43a50c3242380a1da6c",
+      "before": {
+        "lines": 258,
+        "normalized_bytes": 12197,
+        "functions": 19,
+        "branches": 6,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 258,
+        "normalized_bytes": 12188,
+        "functions": 19,
+        "branches": 6,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_single_output_journal_retirement.py",
+      "before_raw_sha256": "0d55cfaaa0d7e2a1c77b8cc530bbc5589d19c8db3f4c709da79220d6d6f17fd5",
+      "after_raw_sha256": "c37f319071d4f21fbaf9c9cbb012699a4bee7af1d134db6e94ea9a93a1c9657e",
+      "before": {
+        "lines": 85,
+        "normalized_bytes": 4240,
+        "functions": 4,
+        "branches": 0,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 85,
+        "normalized_bytes": 4231,
+        "functions": 4,
+        "branches": 0,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_stored_publication_node_server.py",
+      "before_raw_sha256": "5341353294a94b0ac7e48f615da1271279dfcbeccd94039bfcb94a46d161ce71",
+      "after_raw_sha256": "96577b1868b41fdda2c7eae63eede7364664df2f63eb13028f0743f1e7e58830",
+      "before": {
+        "lines": 764,
+        "normalized_bytes": 36831,
+        "functions": 58,
+        "branches": 29,
+        "slot_name_refs": 0
+      },
+      "after": {
+        "lines": 764,
+        "normalized_bytes": 36828,
+        "functions": 58,
+        "branches": 29,
+        "slot_name_refs": 0
+      }
+    },
+    {
+      "path": "tests/unit/test_worker_stored_publication.py",
+      "before_raw_sha256": "7037059a866c53d1104d1bbc6f2cd60f0754253e46668183c584efeb1dfa50b0",
+      "after_raw_sha256": "7976259a229da7fb48e4c3a96c0ed39f9847a87b5c11d4f18c35f3d3e47c6ccb",
+      "before": {
+        "lines": 412,
+        "normalized_bytes": 19949,
+        "functions": 25,
+        "branches": 23,
+        "slot_name_refs": 1
+      },
+      "after": {
+        "lines": 414,
+        "normalized_bytes": 20084,
+        "functions": 25,
+        "branches": 23,
+        "slot_name_refs": 0
+      }
+    }
+  ],
+  "source_totals": {
+    "before": {
+      "lines": 21255,
+      "normalized_bytes": 1009074,
+      "functions": 577,
+      "branches": 2871,
+      "slot_name_refs": 54
+    },
+    "after": {
+      "lines": 21222,
+      "normalized_bytes": 1006655,
+      "functions": 576,
+      "branches": 2861,
+      "slot_name_refs": 11
+    }
+  },
+  "method_call_arity_audit": [
+    {
+      "path": "src/miniray/node.py",
+      "line": 6381,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "line": 180,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "line": 211,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "line": 196,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/integration/test_unreported_complete_node_loss_path.py",
+      "line": 158,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_inline_recovery.py",
+      "line": 211,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_inline_recovery.py",
+      "line": 260,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_inline_recovery.py",
+      "line": 342,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_inline_recovery.py",
+      "line": 276,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 195,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 200,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 251,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 270,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 283,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 315,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 330,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 501,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 514,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 538,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 170,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 198,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 202,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 276,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 321,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 323,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 360,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 364,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 414,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 435,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 508,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 190,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 190,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 199,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 204,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 208,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 314,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 387,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 388,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 389,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 466,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 476,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 130,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 217,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 218,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 219,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 125,
+      "method": "begin_prepare",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 136,
+      "method": "begin_promote",
+      "args": 2
+    },
+    {
+      "path": "tests/unit/test_output_publication_node.py",
+      "line": 221,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_replica_node.py",
+      "line": 303,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_output_replica_node.py",
+      "line": 74,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_owner_led_publication.py",
+      "line": 215,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_owner_led_publication.py",
+      "line": 242,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_owner_led_publication.py",
+      "line": 255,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_single_output_journal_retirement.py",
+      "line": 56,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_single_output_journal_retirement.py",
+      "line": 70,
+      "method": "materialized_result",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_single_output_journal_retirement.py",
+      "line": 43,
+      "method": "begin_materialize",
+      "args": 1
+    },
+    {
+      "path": "tests/unit/test_stored_publication_node_server.py",
+      "line": 205,
+      "method": "materialized_result",
+      "args": 1
+    }
+  ],
+  "effect_constructor_audit": [
+    {
+      "path": "src/miniray/node.py",
+      "line": 1657,
+      "args": 3
+    },
+    {
+      "path": "src/miniray/node.py",
+      "line": 1513,
+      "args": 3
+    },
+    {
+      "path": "src/miniray/node.py",
+      "line": 6329,
+      "args": 3
+    },
+    {
+      "path": "src/miniray/output_publication_journal.py",
+      "line": 530,
+      "args": 4
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "line": 410,
+      "args": 4
+    },
+    {
+      "path": "tests/unit/test_output_handoff.py",
+      "line": 350,
+      "args": 4
+    },
+    {
+      "path": "tests/unit/test_output_publication_journal.py",
+      "line": 117,
+      "args": 4
+    },
+    {
+      "path": "tests/unit/test_owner_finalize_replica_receipts.py",
+      "line": 137,
+      "args": 3
+    }
+  ],
+  "effect_slot_reads_remaining": [],
+  "effect_fields_before_after": [
+    5,
+    4
+  ],
+  "transitive_wire_change": "OutputPublicationEffect pickle/positional constructor inside ACK and rollback tombstones",
+  "preserved_indices": [
+    "transfer_index for ordered multi-child operations",
+    "OutputPublicationSlotTombstone.slot_index",
+    "owner membership/collection indices",
+    "Node Worker-pool positions"
+  ],
+  "independent_maps": "original stage-specific outboxes retained; no progress8-to1 or history scan introduced",
+  "negative_migration": "ordinal corruption becomes nontransfer stage with illegal transfer_index; exact binding/physical zero-mutation assertions retained; one former no-op claim corruption made effective",
+  "pytest_run": false,
+  "manifest_changed": false,
+  "base_changed": false,
+  "assessment": "Actual ordinary and contained callers are source-complete with all discovered preserved tests migrated. Runtime validation pending. Compare lower per-effect representation/call plumbing against 20-file transition cost; no waiver based only on scope."
+}

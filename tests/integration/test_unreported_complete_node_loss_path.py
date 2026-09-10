@@ -155,8 +155,7 @@ class _UnreportedCompleteGate:
                 assert node._ledger.available == node._ledger.total and node._ledger.cpu_debt == 0
                 assert node._workers[manifest.header.executor_worker_id].active_lease_id is None
                 assert envelope is not None and envelope.manifest == manifest
-                assert tuple(journal.materialized_result(witness.publication_id, index)
-                             for index in range(len(((manifest.value,))))) == ((envelope.result,))
+                assert journal.materialized_result(witness.publication_id) == envelope.result
                 return OutputPublicationGateArrival.from_manifest(
                     manifest, OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY,
                 )

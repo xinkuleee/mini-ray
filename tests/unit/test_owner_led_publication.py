@@ -212,7 +212,7 @@ def test_rollback_compensates_unknown_promotion_and_replays_exact_cleanup():
     assert p.adapter.rollback_reported(p.identity)
     assert p.adapter.pending_rollbacks() == ()
     assert p.journal.snapshot(p.identity).state is OutputPublicationJournalState.RETIRED
-    assert p.journal.materialized_result(p.identity, 0) is None
+    assert p.journal.materialized_result(p.identity) is None
     for hold in ((p.manifest.value).transfers[0].final_hold, (p.manifest.value).transfers[0].provisional_hold):
         assert p.child_table.contained_release_was_seen(p.child_id, hold)
     p.discovery.abort()
@@ -239,7 +239,7 @@ def test_owner_death_releases_both_holds_then_sources_without_reversing_complete
     with pytest.raises(OutputPublicationJournalStateError, match="owner death"):
         p.prepare()
     assert not p.adapter.finish_owner_death(p.manifest, p.death(), cleanup=cleanup)
-    assert p.journal.materialized_result(p.identity, 0) is not None
+    assert p.journal.materialized_result(p.identity) is not None
     releases = tuple(p.releases)
     assert releases[0] == releases[1]
     assert len(releases) == 3
@@ -252,7 +252,7 @@ def test_owner_death_releases_both_holds_then_sources_without_reversing_complete
     assert snapshot.rollback is None
     assert snapshot.state is OutputPublicationJournalState.RETIRED
     assert not p.discovery.source_references
-    assert p.journal.materialized_result(p.identity, 0) is None
+    assert p.journal.materialized_result(p.identity) is None
     assert p.adapter.pending_terminal_reports() == ()
     with pytest.raises(OutputPublicationJournalStateError, match="owner death"):
         p.complete()

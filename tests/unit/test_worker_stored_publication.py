@@ -25,6 +25,7 @@ from miniray.ids import LeaseID, ObjectID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationConflictError, OutputPublicationManifest,
 )
+from miniray.output_publication_journal import OutputPublicationStage as Stage
 from miniray.ownership import ConflictingBorrowerTokenError, DeadWorkerReferenceError
 from miniray.publication_sources import BorrowedContainedSource, OwnedContainedSource
 from miniray.transport import TransportError
@@ -200,12 +201,13 @@ def test_node_owns_owner_prepare_materialize_promote_order(monkeypatch, stored):
 
     def materialized(ack, descriptor):
         result = real_ack(ack, descriptor)
-        node.events.append("materialize:{}".format(ack.effect.slot_index))
+        assert ack.effect.stage is Stage.MATERIALIZE and ack.effect.transfer_index is None
+        node.events.append("materialize")
         return result
 
     monkeypatch.setattr(node.journal, "ack_materialized", materialized)
     node.prepare()
-    assert node.events == ["owner-register", "prepare", "prepare", "materialize:0", "promote", "promote"]
+    assert node.events == ["owner-register", "prepare", "prepare", "materialize", "promote", "promote"]
     snapshot = node.journal.snapshot(node.id)
     assert snapshot.ready_to_complete and snapshot.complete is None
     assert node.fixture.handoffs.query(node.id).manifest == node.manifest

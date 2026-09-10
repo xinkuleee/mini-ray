@@ -128,7 +128,7 @@ def _node_process_with_one_post_seal_failure(*args):
             old_effect, descriptor = facts["old_seal"]
             check(counts["generic"] == 0, "generic Drop preceded publication compensation")
             check(effect.publication_id == old_effect.publication_id
-                  and effect.stage is OutputPublicationStage.SLOT_DROP and effect.slot_index == 0,
+                  and effect.stage is OutputPublicationStage.SLOT_DROP and effect.transfer_index is None,
                   "publication Drop did not compensate the failed materialization")
             check(request == protocol.DropObjectReplica(
                 descriptor.object_id, old_effect.publication_id.attempt_id,
@@ -336,7 +336,7 @@ def test_publication_rollback_receipt_replays_after_same_object_retry_seals(monk
         assert rolled_back.complete is None and rolled_back.adoption is None
         assert rolled_back.phase is OutputHandoffPhase.ABORTED and tombstone.plan.publication_id == old_id
         assert tombstone.plan.manifest_digest == old_manifest.manifest_digest
-        assert tuple((effect.stage, effect.slot_index) for effect in tombstone.plan.effects) == ((OutputPublicationStage.SLOT_DROP, 0),)
+        assert tuple((effect.stage, effect.transfer_index) for effect in tombstone.plan.effects) == ((OutputPublicationStage.SLOT_DROP, None),)
         assert tuple(ack.effect for ack in tombstone.acknowledgements) == tombstone.plan.effects
         old_slot = (old_manifest.value)
         assert (old_manifest.publication_id).object_id == reference.object_id and old_slot.tier is protocol.ResultStorage.OBJECT_STORE

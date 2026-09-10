@@ -40,7 +40,7 @@ def _prepared():
     journal = OutputPublicationJournal()
     journal.open(manifest)
     journal.ack_owner_registered(OutputPublicationAck(journal.begin_owner_register(identity)))
-    journal.ack_materialized(OutputPublicationAck(journal.begin_materialize(identity, 0)), descriptor)
+    journal.ack_materialized(OutputPublicationAck(journal.begin_materialize(identity)), descriptor)
     witness = OutputPublicationCompleteWitness.for_manifest(manifest)
     proof = OutputPublicationAdoptionProof(witness, owner, "pure-owner-cas-input")
     discovery.release_sources_after_promotions()
@@ -53,7 +53,7 @@ def test_retirement_requires_complete_and_keeps_precomplete_payload_unchanged():
     with pytest.raises(OutputPublicationJournalStateError):
         journal.retire_completed(proof)
     assert journal.snapshot(identity) == before
-    assert journal.materialized_result(identity, 0) == descriptor
+    assert journal.materialized_result(identity) == descriptor
     journal.complete(identity, witness)
     assert journal.retire_completed(proof)
 
@@ -67,7 +67,7 @@ def test_exact_retirement_replays_without_recreating_payload_or_erasing_complete
     snapshot = journal.snapshot(identity)
     assert snapshot.state is OutputPublicationJournalState.RETIRED
     assert snapshot.complete == witness and snapshot.retained_result_slots == ()
-    assert journal.materialized_result(identity, 0) is None
+    assert journal.materialized_result(identity) is None
     with pytest.raises(OutputPublicationPayloadRetired) as caught:
         journal.complete(identity, witness)
     assert caught.value.tombstones == retired

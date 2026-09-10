@@ -71,7 +71,7 @@ class _Fixture:
         self.journal = node._output_publication_journal
         self.journal.open(self.manifest)
         self.journal.ack_owner_registered(OutputPublicationAck(self.journal.begin_owner_register(self.id)))
-        self.effect = self.journal.begin_materialize(self.id, 0)
+        self.effect = self.journal.begin_materialize(self.id)
         self.request = protocol.DropObjectReplica(
             self.object_id, self.id.attempt_id, self.descriptor.owner_worker_id,
             self.descriptor.node_id, self.descriptor.checksum,
@@ -100,7 +100,7 @@ class _Fixture:
 
 def test_single_output_seal_is_idempotent_and_uses_ordinary_metadata():
     fixture = _Fixture()
-    assert fixture.effect.slot_index == 0 and fixture.object_id.return_index == 0
+    assert fixture.effect.transfer_index is None and fixture.object_id.return_index == 0
     assert fixture.seal() == fixture.descriptor
     assert fixture.seal() == fixture.descriptor
     assert fixture.node._sealed_metadata == {fixture.object_id: fixture.metadata}
@@ -270,15 +270,15 @@ def test_wrong_node_incarnation_never_changes_local_storage(field):
     assert fixture.node._dropped_metadata == fixture.node._local_replica_write_claims == {}
 
 
-@pytest.mark.parametrize("changed", ("digest", "ordinal", "attempt", "owner", "bytes", "nested"))
+@pytest.mark.parametrize("changed", ("digest", "stage-child", "attempt", "owner", "bytes", "nested"))
 def test_malformed_materialization_identity_is_rejected_before_claim(changed):
     fixture = _Fixture()
     effect, descriptor, payload = fixture.effect, fixture.descriptor, fixture.payload
     if changed == "digest":
         effect = replace(effect, manifest_digest="0" * 64)
-    elif changed == "ordinal":
+    elif changed == "stage-child":
         effect = replace(effect)
-        object.__setattr__(effect, "slot_index", 1)
+        object.__setattr__(effect, "transfer_index", 0)
     elif changed == "attempt":
         effect = replace(effect, publication_id=replace(effect.publication_id, execution=replace(
             effect.publication_id.execution, attempt_id=ids.AttemptID(fixture.id.task_id, 77),
@@ -300,10 +300,10 @@ def test_drop_requires_exact_next_rollback_effect_and_deep_request_identity():
     drop = replace(fixture.effect, stage=Stage.SLOT_DROP)
     with pytest.raises(OutputPublicationJournalStateError):
         fixture.drop(drop)
-    fixture.journal.begin_materialize(fixture.id, 0)
+    fixture.journal.begin_materialize(fixture.id)
     fixture.journal.begin_rollback(fixture.id, "ordered-rollback")
     wrong = replace(drop)
-    object.__setattr__(wrong, "slot_index", 1)
+    object.__setattr__(wrong, "transfer_index", 0)
     with pytest.raises(OutputPublicationConflictError):
         fixture.node._drop_output_publication_replica(wrong, fixture.request)
     request = replace(fixture.request, producer_attempt_id=ids.AttemptID(fixture.id.task_id, 88))

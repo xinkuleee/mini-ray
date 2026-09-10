@@ -1,0 +1,8 @@
+{
+  "package": "P2.effect_identity",
+  "disposition": "implemented_and_validated",
+  "evidence": "343 passed/1 deselected, journal23, replica22, owner death10, actual ordinary and contained stored publication+GC",
+  "identity_mapping": "All twenty changed src/test files match frozen trial after CRLF-only normalization. No semantic normalization.",
+  "benefit": "Remove constant outer ordinal from effect and call parameters, preserve bounded child transfer ordinal and exact physical intent/claim/epoch checks. Four source files lose 33 physical lines, one helper and ten AST branches; no new authority or RPC.",
+  "remaining": "Retirement tombstone/public snapshot single-result projection still being assessed; P2 not fully closed."
+}
