@@ -1,11 +1,11 @@
 # 双分支整理执行记录
 
-本页记录[清理计划](project-cleanup-plan.md)的执行，不是另一份计划。
+本页记录[清理计划](project-cleanup-plan.md)的执行，不是另一份计划。顶部为当前摘要；下方按时间保留各检查点当时的待办和失败，不作为当前状态。
 
 - K0完成：teaching-base从固定6910677派生，审计输入提交1a38228。原tag不变。
 - K1完成：单schema2有界gate/迁移入口、CF-001至004公共修复；新入口验证后退休三个旧工具文件。详见[实际记录](../artifacts/cleanup-base/k1/summary.json)。首轮新fixture失败已保存，真实准入修正后12组合case通过。
-- K2/K3低风险检查点已完成；K4继续关闭遗漏夹具并验收正式构造，P1标量化尚在隔离候选。
-- K4至K7未完成；teaching-enhanced尚未创建，须从K7已验收B派生后执行K8至K9。
+- K2至K6已按实施或有据保留现状的处置完成，B的K7已独立验收。
+- E已从验收B交付HEAD f9a9b35015f114afda9c87e653b6fedcda2eb0b2派生并完成K8–K9；两条实际分支继续保留。
 - 未运行远端Actions或发布清理分支。
 
 K1复现修正：registry文本身份只归一CRLF到LF，其它字节变化仍拒绝。新增工具回归31 passed；独立LF副本的两迁移闭包静态验证通过。原始测试artifact不改写。
@@ -83,3 +83,5 @@ K7原17heavy函数迁移完成并实际通过：10个纯函数/7个有限loopbac
 K7追加公共正确性修复：独立E审查发现旧adoption成功尾会清除同attempt已移交Node-loss的marker，导致child清理前finish。真实已排队adoption重放、NodeACK、NodeDeath与childRelease丢ACK的两lane对照：原版2失败均提前terminal/finished，修后2通过；纯343/1deselected、Corepublication17和丢adoptionACK/contained重建真实smoke通过。修复仅成功尾锁内检查当前责任，已takeover保marker/custody，只有死亡先到则锁外接同loss；不删实际cleanup，不普遍忽略异常。B先落地，E候选按独立hunk继承，正式两提交映射仍待K8。
 
 K7基础版独立验收完成：clean源码0a340b792c89667e493f7e7313935e45e29071bf，纯343/1deselected，32/32smoke同源码首次通过含七main；新源码uv冻结安装/build isolation/pipcheck/installed import通过。完整环境、原日志与统计在artifacts/cleanup-base/final。之后只追加本证据/文档提交，源码实测身份仍为0a340b7，不追逐自引用SHA。K8现在允许从证据提交后的B实际HEAD创建E；两branch交付仍待E独立实现验收。
+
+K9双分支收尾完成：B实测0a340b792c89667e493f7e7313935e45e29071bf的343/1deselected、32/32smoke与冻结安装保持独立验收；E实测3f5b725fb26390b86c78f085486fb73d897d3e42的405/1deselected、37/37smoke同版首次全部通过，包含七main，冻结安装通过。原K3增强七组合同已逐项迁移或有据退休；GCS→Node坏Finalize ACK两例采用真实Node/Worker/child效果与精确重放。Core11、PG5、receipt6、trace58及实际owner死亡等补充证据各归准确候选，不称全部338注册项均已执行。trace旧57/1失败和K8夹具失败保留，运行时校验未弱化。各分支artifacts/cleanup-*/final/acceptance.json记录实测身份；随后仅文档/证据提交，实际交付HEAD由工作区audit/two-version-cleanup/delivery.json核对。main仅追加导航，不维护第三个整理运行时；本轮未推送或运行远端CI。

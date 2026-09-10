@@ -15,4 +15,4 @@ P1–P5所采纳的单结果、owner退休、typed待办和窄Complete ACK已实
 
 早期本机冷启动/运行曾发生5秒或30秒超时，全部失败保留；最终运行记录包含相同解释器checked-hash源码缓存策略，不放宽时限，不承诺冷启动性能等价。依赖离线缓存缺失的失败和随后联网冻结安装也分别保留。
 
-B保留成员、资源、Actor和PG的GCS职责，不含普通结果GCS发布事务或全局ObjectID防环。`teaching-enhanced`将从已验收B交付HEAD派生，分别验证这两项保证；尚未创建或验收增强分支，未发布远端或运行远端CI。原tag和历史artifact不变。
+B保留成员、资源、Actor和PG的GCS职责，不含普通结果GCS发布事务或全局ObjectID防环。`teaching-enhanced`已从验收B交付HEAD派生并独立验收这两项保证；其405/37结果与身份见增强分支自己的状态页，未发布远端或运行远端CI。原tag和历史artifact不变。
