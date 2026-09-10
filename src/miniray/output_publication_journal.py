@@ -1,7 +1,7 @@
 """One Node-local journal for a single-output publication.
 
 The control history is metadata-only.  INLINE payloads live exclusively in the
-active ``results`` cache and leave it after rollback or an exact retirement
+active ``result`` cache and leave it after rollback or an exact retirement
 proof.  Storage tier changes materialization, not the publication lifecycle.
 Retirement forgets this journal's reply cache, not physical STORED replicas.
 Physical replica GC has its own owner-authorized deletion path; it must not
@@ -252,11 +252,11 @@ class _Record:
     state: OutputPublicationJournalState = OutputPublicationJournalState.ACTIVE
     intents: set[OutputPublicationEffect] = field(default_factory=set)
     acknowledgements: dict[OutputPublicationEffect, OutputPublicationAck] = field(default_factory=dict)
-    results: dict[int, ResultDescriptor] = field(default_factory=dict)
+    result: Optional[ResultDescriptor] = None
     complete: Optional[OutputPublicationCompleteWitness] = None
     rollback: Optional[OutputPublicationRollbackPlan] = None
     rollback_tombstone: Optional[OutputPublicationRollbackTombstone] = None
-    retired_slots: dict[int, OutputPublicationSlotTombstone] = field(default_factory=dict)
+    retirement: Optional[OutputPublicationSlotTombstone] = None
     adoption_proof: Optional[OutputPublicationAdoptionProof] = None
     owner_death: object = None
 
@@ -352,15 +352,15 @@ class OutputPublicationJournal:
                     raise OutputPublicationJournalStateError(
                         "Complete requires owner registration, materialization, and child promotion ACKs"
                     )
-            if record.retired_slots:
+            if record.retirement is not None:
                 raise OutputPublicationPayloadRetired(
                     record.manifest.publication_id,
-                    tuple(record.retired_slots[index] for index in sorted(record.retired_slots)),
+                    (record.retirement,),
                 )
-            if set(record.results) != {0}:
+            if record.result is None:
                 raise OutputPublicationJournalStateError("Complete requires all local results")
             envelope = OutputPublicationEnvelope(
-                record.manifest, witness, record.results[0]
+                record.manifest, witness, record.result
             )
             record.complete = witness
             record.state = OutputPublicationJournalState.COMPLETED
@@ -422,25 +422,19 @@ class OutputPublicationJournal:
                 raise OutputPublicationJournalStateError("rollback ACK arrived out of order")
             record.acknowledgements[effect] = acknowledgement
             if effect.stage is OutputPublicationStage.SLOT_DROP:
-                record.results.pop(effect.slot_index, None)
+                record.result = None
             self._finish_rollback_if_ready(record)
             return True
 
     def retire_completed(self, proof: OutputPublicationAdoptionProof) -> Tuple[OutputPublicationSlotTombstone, ...]:
-        """Preflight all slots, then apply the same payload retirement.
-
-        A conflict on any sibling leaves every other slot unchanged; this does
-        not replace a previously recorded cleanup proof with an adoption proof.
-        """
+        """Retire the single payload after validating its exact adoption proof."""
         _require_type(proof, OutputPublicationAdoptionProof, "proof")
         proof = replace(proof)
         with self._lock:
             record = self._record(proof.complete.publication_id)
-            # Retain the retirement map boundary at its sole internal index.
-            terminals = (self._prepare_retirement(record, 0, proof),)
-            for terminal in terminals:
-                self._commit_retirement(record, terminal)
-            return tuple(replace(value) for value in terminals)
+            terminal = self._prepare_retirement(record, 0, proof)
+            self._commit_retirement(record, terminal)
+            return (replace(terminal),)
 
     def retire_owner_death(self, publication_id: OutputPublicationID, death: object) -> None:
         """Forget reply custody only after exact owner-death cleanup.
@@ -457,7 +451,7 @@ class OutputPublicationJournal:
             if record.owner_death is not None and record.owner_death != death:
                 raise OutputPublicationConflictError("owner-death cleanup was rebound")
             record.owner_death = death
-            record.results.clear()
+            record.result = None
             record.state = OutputPublicationJournalState.RETIRED
 
     def materialized_result(self, publication_id: OutputPublicationID, slot_index: int) -> Optional[ResultDescriptor]:
@@ -465,7 +459,7 @@ class OutputPublicationJournal:
         with self._lock:
             record = self._record(publication_id)
             self._effect(record, OutputPublicationStage.MATERIALIZE, slot_index)
-            result = record.results.get(slot_index)
+            result = record.result
             return None if result is None else _descriptor(result)
 
     def snapshot(self, publication_id: OutputPublicationID) -> OutputPublicationJournalSnapshot:
@@ -480,11 +474,11 @@ class OutputPublicationJournal:
                 tuple(replace(value) for value in intents),
                 tuple(replace(value) for value in acknowledgements),
                 (0,) if self._acked(record, OutputPublicationStage.MATERIALIZE, 0) else (),
-                tuple(sorted(record.results)),
+                () if record.result is None else (0,),
                 None if record.complete is None else replace(record.complete),
                 None if record.rollback is None else replace(record.rollback),
                 None if record.rollback_tombstone is None else replace(record.rollback_tombstone),
-                tuple(replace(record.retired_slots[index]) for index in sorted(record.retired_slots)),
+                () if record.retirement is None else (replace(record.retirement),),
                 active and self._ready_to_complete(record),
             )
 
@@ -517,11 +511,11 @@ class OutputPublicationJournal:
             if stage is OutputPublicationStage.MATERIALIZE:
                 descriptor = self._validate_descriptor(record, effect.slot_index, descriptor)
             if effect in record.acknowledgements:
-                if stage is OutputPublicationStage.MATERIALIZE and record.results[effect.slot_index] != descriptor:
+                if stage is OutputPublicationStage.MATERIALIZE and record.result != descriptor:
                     raise OutputPublicationConflictError("materialized result changed on replay")
                 return False
             if stage is OutputPublicationStage.MATERIALIZE:
-                record.results[effect.slot_index] = descriptor
+                record.result = descriptor
             record.acknowledgements[effect] = acknowledgement
             return True
 
@@ -616,7 +610,7 @@ class OutputPublicationJournal:
     def _finish_rollback_if_ready(self, record):
         if self._next_rollback(record) is not None:
             return
-        if record.results:
+        if record.result is not None:
             raise OutputPublicationJournalStateError("rollback left unretired materialized payloads")
         record.rollback_tombstone = OutputPublicationRollbackTombstone(
             record.rollback, tuple(record.acknowledgements[effect] for effect in record.rollback.effects)
@@ -640,19 +634,18 @@ class OutputPublicationJournal:
             record.manifest.publication_id, record.manifest.manifest_digest, slot_index,
             record.manifest.publication_id.object_id, proof,
         )
-        previous = record.retired_slots.get(slot_index)
+        previous = record.retirement
         if previous is not None and previous != terminal:
             raise OutputPublicationConflictError("slot retirement proof was rebound")
         return previous if previous is not None else terminal
 
     @staticmethod
     def _commit_retirement(record, terminal):
-        record.retired_slots[terminal.slot_index] = terminal
-        record.results.pop(terminal.slot_index, None)
+        record.retirement = terminal
+        record.result = None
         if type(terminal.proof) is OutputPublicationAdoptionProof:
             record.adoption_proof = terminal.proof
-        if set(record.retired_slots) == {0}:
-            record.state = OutputPublicationJournalState.RETIRED
+        record.state = OutputPublicationJournalState.RETIRED
 
 
 def _effect_order(effect):

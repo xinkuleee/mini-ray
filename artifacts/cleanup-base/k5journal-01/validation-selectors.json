@@ -1,0 +1,49 @@
+{
+  "status": "EXISTING_SELECTORS_ONLY_NOT_RUN",
+  "source": "frozen base-p1trial-02",
+  "candidate_paths": {
+    "journal_scalar": "audit/p2-after-p1/journal-scalar",
+    "progress": "audit/p2-after-p1/progress"
+  },
+  "manifest_rule": "Both copied manifests remain raw-identical to P1 trial02. Root freezer may refresh actual reviewed input hashes as its normal step; no new selectors, marker widening or budgets are requested here.",
+  "minimum_actual": [
+    {
+      "selector": "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+      "marker": "multiprocess_smoke",
+      "registration": "gate smoke"
+    },
+    {
+      "selector": "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects",
+      "marker": "multiprocess_smoke",
+      "registration": "reviewed migration K3-stored-outer"
+    }
+  ],
+  "journal_scalar_units": [
+    "tests/unit/test_output_publication_journal.py",
+    "tests/unit/test_single_output_journal_retirement.py",
+    "tests/unit/test_output_publication_node.py",
+    "tests/unit/test_output_publication_node_server.py",
+    "tests/unit/test_output_handoff.py"
+  ],
+  "progress_units": [
+    "tests/unit/test_owner_led_publication.py",
+    "tests/unit/test_output_publication_node.py",
+    "tests/unit/test_output_publication_node_server.py",
+    "tests/unit/test_publication_owner_death_control.py",
+    "tests/unit/test_inline_publication_node_server.py::test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_custody",
+    "tests/unit/test_inline_publication_node_server.py::test_background_terminal_failure_releases_interrupted_local_completion"
+  ],
+  "additional_existing_actual": [
+    "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+    "tests/integration/test_cross_cleanup_receipt_path.py::test_publication_rollback_receipt_replays_after_same_object_retry_seals",
+    "tests/integration/test_output_child_owner_worker_loss_path.py::test_dead_executor_child_cleanup_precedes_retry_on_same_live_node",
+    "tests/integration/test_unreported_complete_node_loss_path.py::test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before_retry"
+  ],
+  "fixture_delta": {
+    "journal_scalar": [],
+    "progress": [
+      "tests/unit/test_publication_owner_death_control.py: zero ACKs after first lost reply and four exact actual release identities; only map access changes plus explicit identity/accepted assertions. All P1 scalar value/payload test formatting retained."
+    ]
+  },
+  "cost": "Use current runner exact approved marker and unchanged 30 second tree bound; ordinary+contained run independently for each candidate; no pytest execution by this subtask."
+}

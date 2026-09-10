@@ -65,3 +65,5 @@ K4a/b/c：Core正式route/GC、Node唯一Worker池、Worker准入/当前shutdown
 K4正式构造切片：base-k4d-01同源码343passed/1deselected及32个smoke均取得通过记录，含7main。保留此前17次smoke失败；冷启动多次越过5s或30s预算，原K3控制也明显变慢，不能称性能无回归。相同Linux解释器预编译checked-hash源码缓存后最后startup/precomplete两个场景通过，源码和5s/30s未变；缓存身份与对照日志保留。K4e退出旧helper后pool2/foreignstored13/CoreNodeDeath16/Nodelease4/handshake6通过。28条当前测试说明改用现runner，未登记者明确须先评审注册；仅docstring变化，不改变测试业务。P1真实标量候选仍在隔离验收，K4全阶段、K7和双分支交付尚未完成。
 
 K4/P1完成：TaskExecution(attempt_id)、manifest.value、PreparedOutput.payload、Envelope.result已实际应用14个源码消费者和107个保留测试/helper；用户tuple/list仍一次序列化为一个结果，child/replica多值保留。隔离trial02同版343passed/1deselected、32/32smoke首次全部通过含7main；当前应用版再验同纯gate及ownerINLINE6/retirement26/pool2，通过。两份受测快照映射只差换行、模块说明和审查hash，未改标成同一HEAD实测。试验首轮漏迁两处payload调用的失败已保存并修复。14个受影响源码净减183物理行/141代码行；收益是去掉单输出外层维度，不是已达到20k预算。Node journal与owner退休index/map属于后续P2/P3，K5/K6、K7与E尚未完成。
+
+K5/P2部分完成：journal内部result/retirement各改一个可空值，纯gate343/1deselected、journal23/retirement3及普通/含Ref实际发布GC均通过。另实际试做adapter八表合一，Node35/ownerdeath2及同两真实场景通过，但pending查询从O(未决)退化到O(全部历史)，还增加record/getter与锁查询；据此不采纳该合并，保当前分阶段outbox。P2恒零effect与公开snapshot边界仍在独立试做，不能把部分决定写成全P2完成。

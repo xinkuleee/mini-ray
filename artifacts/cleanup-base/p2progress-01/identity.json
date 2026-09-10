@@ -1,0 +1,44 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "42ed62d7231d17d3b7f703670a357c509183e853",
+  "mode": "isolated post-P1 progress trial; exact hunks plus registry hash refresh; tests not run",
+  "evaluation_root": "C:/Users/t-hdong/Desktop/gao/audit/p2-after-p1/progress",
+  "previous_candidate": "base-p1trial-02",
+  "previous_archive_sha256": "332d78b7dcedc67da3c1db3b384f5ee915b69b4516c411e4ac25a196f2024f73",
+  "archive_sha256": "8af928dc36c65abe2408d94d3f244f0aa7a6dc4b371eb3bb98f98de194233464",
+  "file_count": 419,
+  "p2_patch_sha256": "66aeb163ac67f0017e8753820e9ed52f29f84a14e6c3b7b9cdf5c6e3584d0351",
+  "delta_from_previous": {
+    "scripts/baseline_manifest.json": {
+      "before_sha256": "d89c18f8c1694503951a5fdd07e7f11fa06f53238a235b1e8e27c3f98de0f58c",
+      "after_sha256": "c61281f41e00938d38081f7849e55d098ce4acf84e7895cfad9a29a875194a0e"
+    },
+    "src/miniray/output_publication_journal.py": {
+      "before_sha256": "6eaafb67207df2fda2de188572e0107d3cee979764e7647aa9b0fb447a3550a8",
+      "after_sha256": "5c55df6f14f34e3c0b41980dfec10628899125f2d400b1b884d018cdae422155"
+    },
+    "src/miniray/output_publication_node.py": {
+      "before_sha256": "230034196b5300d8aed2ce6f69b16ecafcdd1473cf034b712efdd7bb05d0c97a",
+      "after_sha256": "6104fe7d46415c0a7d729bb32a5b5f02130ce2dd591807f84860354fde62d4ad"
+    },
+    "tests/unit/test_publication_owner_death_control.py": {
+      "before_sha256": "6b37b4e84647fd2b29f47bfbf1e40b7a7a81d5345569efe2e9a69d9aaf39bdaf",
+      "after_sha256": "e1b8aab7f2ac4bfd6299dda7f33c0e2722b1e10a924cd0adf02b42c0f1ea9820"
+    }
+  },
+  "manifest_gate_and_selectors_unchanged": true,
+  "manifest_sha256": "c61281f41e00938d38081f7849e55d098ce4acf84e7895cfad9a29a875194a0e",
+  "reviewed_migrations": 311,
+  "delivery_gate": {
+    "pure_files": 26,
+    "smokes": 32
+  },
+  "pytest_run": false,
+  "base_or_P1_modified": false,
+  "prior_evidence_sha256": {
+    "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\two-version-cleanup\\execution\\base-p1trial-02\\identity.json": "368ea961d2cdb9352aa0346c048e2e225f228dc90d8a8e2779fc01a68ffd1701",
+    "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\two-version-cleanup\\execution\\base-p1trial-02\\snapshot.json": "081db0bbdd3796420e8b888714a4dc62dc688ce184326c6237ac8b298f5384d6",
+    "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\two-version-cleanup\\execution\\base-p1trial-02\\results.json": "181bc76040b193f237dd541afeef118ccf49b15e0afddef61854dfa22fe95519",
+    "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\two-version-cleanup\\execution\\base-p1trial-02\\project.tar": "332d78b7dcedc67da3c1db3b384f5ee915b69b4516c411e4ac25a196f2024f73"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "package": "P2",
+  "journal_internal": {
+    "disposition": "implemented_and_validated",
+    "benefit": "Two singleton per-record dictionaries become optional result and retirement fields; no new interface; seven fewer physical lines.",
+    "evidence": "base-k5journal-01 pure343/1deselected, journal23, retirement3, actual ordinary and contained stored publication+GC"
+  },
+  "adapter_progress": {
+    "disposition": "retain_current_design_with_recorded_evidence",
+    "trial_evidence": "base-p2progress-01 Node adapter35, owner death2, actual ordinary and contained stored publication+GC all passed",
+    "reason": "Single history map adds a record/helper/getter and changes pending scans from O(pending) to O(all history) with journal lock lookups. Restoring pending indexes restores membership bookkeeping. Keep independent current stage outboxes; local Complete and remote report remain separate facts."
+  },
+  "effect_index_and_public_snapshot": {
+    "disposition": "in_progress",
+    "reason": "Independent real constant-zero effect representation trial still preparing; current zero-index boundary guards remain until its disposition."
+  }
+}

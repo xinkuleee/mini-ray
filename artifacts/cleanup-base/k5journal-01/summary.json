@@ -1,0 +1,115 @@
+{
+  "status": "TWO_INDEPENDENT_P2_CANDIDATES_STATIC_ONLY",
+  "source_trial": "base-p1trial-02",
+  "source_archive_sha256": "332d78b7dcedc67da3c1db3b384f5ee915b69b4516c411e4ac25a196f2024f73",
+  "source_snapshot_sha256": "081db0bbdd3796420e8b888714a4dc62dc688ce184326c6237ac8b298f5384d6",
+  "verified_source_file_count": 419,
+  "source_root": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\p1-evaluation",
+  "base_or_P1_writes": false,
+  "manifest_changes": false,
+  "pytest_run": false,
+  "candidates": {
+    "journal-scalar": {
+      "root": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\p2-after-p1\\journal-scalar",
+      "patch_raw_sha256": "ea3d17622d311b1e40c3edfca3b08d227522fbd95b4aadd2f3890ba6495551a0",
+      "file_count": 419,
+      "exact_changed_paths": [
+        "src/miniray/output_publication_journal.py"
+      ],
+      "metrics": [
+        {
+          "path": "src/miniray/output_publication_journal.py",
+          "before_raw_sha256": "6eaafb67207df2fda2de188572e0107d3cee979764e7647aa9b0fb447a3550a8",
+          "after_raw_sha256": "466e0eb3f8fc6a0c268538c95d7ca887defe5328925cc616d033cfa1bd74e4fd",
+          "before": {
+            "lines": 673,
+            "normalized_bytes": 33055,
+            "functions": 50,
+            "branches": 89,
+            "replace_sites": 31
+          },
+          "after": {
+            "lines": 666,
+            "normalized_bytes": 32438,
+            "functions": 50,
+            "branches": 86,
+            "replace_sites": 31
+          }
+        }
+      ],
+      "unchanged_file_rawhashes_match_P1": true,
+      "manifest_rawhash_matches_P1": true
+    },
+    "progress": {
+      "root": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\p2-after-p1\\progress",
+      "patch_raw_sha256": "66aeb163ac67f0017e8753820e9ed52f29f84a14e6c3b7b9cdf5c6e3584d0351",
+      "file_count": 419,
+      "exact_changed_paths": [
+        "src/miniray/output_publication_journal.py",
+        "src/miniray/output_publication_node.py",
+        "tests/unit/test_publication_owner_death_control.py"
+      ],
+      "metrics": [
+        {
+          "path": "src/miniray/output_publication_node.py",
+          "before_raw_sha256": "230034196b5300d8aed2ce6f69b16ecafcdd1473cf034b712efdd7bb05d0c97a",
+          "after_raw_sha256": "6104fe7d46415c0a7d729bb32a5b5f02130ce2dd591807f84860354fde62d4ad",
+          "before": {
+            "lines": 577,
+            "normalized_bytes": 31631,
+            "functions": 25,
+            "branches": 70,
+            "replace_sites": 32
+          },
+          "after": {
+            "lines": 594,
+            "normalized_bytes": 32133,
+            "functions": 27,
+            "branches": 71,
+            "replace_sites": 21
+          }
+        },
+        {
+          "path": "src/miniray/output_publication_journal.py",
+          "before_raw_sha256": "6eaafb67207df2fda2de188572e0107d3cee979764e7647aa9b0fb447a3550a8",
+          "after_raw_sha256": "5c55df6f14f34e3c0b41980dfec10628899125f2d400b1b884d018cdae422155",
+          "before": {
+            "lines": 673,
+            "normalized_bytes": 33055,
+            "functions": 50,
+            "branches": 89,
+            "replace_sites": 31
+          },
+          "after": {
+            "lines": 679,
+            "normalized_bytes": 33405,
+            "functions": 51,
+            "branches": 90,
+            "replace_sites": 32
+          }
+        },
+        {
+          "path": "tests/unit/test_publication_owner_death_control.py",
+          "before_raw_sha256": "6b37b4e84647fd2b29f47bfbf1e40b7a7a81d5345569efe2e9a69d9aaf39bdaf",
+          "after_raw_sha256": "e1b8aab7f2ac4bfd6299dda7f33c0e2722b1e10a924cd0adf02b42c0f1ea9820",
+          "before": {
+            "lines": 214,
+            "normalized_bytes": 11460,
+            "functions": 5,
+            "branches": 11,
+            "replace_sites": 0
+          },
+          "after": {
+            "lines": 219,
+            "normalized_bytes": 11829,
+            "functions": 5,
+            "branches": 14,
+            "replace_sites": 0
+          }
+        }
+      ],
+      "unchanged_file_rawhashes_match_P1": true,
+      "manifest_rawhash_matches_P1": true
+    }
+  }
+}

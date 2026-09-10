@@ -1,0 +1,295 @@
+--- a/src/miniray/output_publication_node.py
++++ b/src/miniray/output_publication_node.py
+@@ -22,7 +22,7 @@
+ 
+ import hashlib
+ from contextlib import contextmanager
+-from dataclasses import replace
++from dataclasses import dataclass, field, replace
+ from threading import RLock
+ from typing import Callable, Optional, Tuple
+ 
+@@ -50,6 +50,23 @@
+ 
+ class OutputPublicationRemoteError(OutputPublicationError):
+     """An exact typed reply rejected an effect; no rollback is implied."""
++
++
++@dataclass(slots=True)
++class NodePublicationProgress:
++    """Local delivery/cleanup facts; Complete itself belongs to the journal.
++
++    Lease convergence and owner-report acceptance are independent. A death
++    fence neither acknowledges its child releases nor rewrites Complete.
++    """
++    completion_observed: bool = False
++    lease_converged: bool = False
++    terminal_reported: bool = False
++    rollback_report: OutputPublicationRollbackTombstone | None = None
++    owner_death: protocol.WorkerDeathRecord | None = None
++    owner_cleaned: bool = False
++    cleanup_replies: dict[OutputPublicationEffect,
++        protocol.ReleaseContainedReferenceReply | protocol.GetWorkerStateReply] = field(default_factory=dict)
+ 
+ 
+ class OutputPublicationNodeAdapter:
+@@ -101,20 +118,13 @@
+         self._test_checkpoint = test_checkpoint
+         self._lock = RLock()
+         self._tickets: set[OutputPublicationID] = set()
+-        self._terminal_pending: dict[OutputPublicationID, OutputPublicationCompleteWitness] = {}
+-        self._terminal_reported: dict[OutputPublicationID, OutputPublicationCompleteWitness] = {}
+-        self._lease_pending: dict[OutputPublicationID, OutputPublicationCompleteWitness] = {}
+-        self._lease_converged: dict[OutputPublicationID, OutputPublicationCompleteWitness] = {}
+-        self._rollback_reported: dict[OutputPublicationID, OutputPublicationRollbackTombstone] = {}
+-        self._owner_cleaned: dict[OutputPublicationID, object] = {}
+-        # Death cleanup can start after Complete and therefore is not rollback.
+-        # Its exact child receipts survive partial progress and fence all new
+-        # forward work until Node/Worker cleanup has also acknowledged.
+-        self._owner_cleanup_deaths: dict[OutputPublicationID, object] = {}
+-        self._owner_cleanup_acks: dict[
+-            OutputPublicationEffect,
+-            protocol.ReleaseContainedReferenceReply | protocol.GetWorkerStateReply,
+-        ] = {}
++        self._progress: dict[OutputPublicationID, NodePublicationProgress] = {}
++
++    def _progress_locked(self, publication_id):
++        progress = self._progress.get(publication_id)
++        if progress is None:
++            progress = self._progress[replace(publication_id)] = NodePublicationProgress()
++        return progress
+ 
+     @contextmanager
+     def _ticket(self, publication_id: OutputPublicationID, *, owner_cleanup: bool = False):
+@@ -123,7 +133,8 @@
+         with self._lock:
+             if publication_id in self._tickets:
+                 raise OutputPublicationBusy("publication progress is already in flight")
+-            if not owner_cleanup and publication_id in self._owner_cleanup_deaths:
++            progress = self._progress.get(publication_id)
++            if not owner_cleanup and progress is not None and progress.owner_death is not None:
+                 raise OutputPublicationJournalStateError("owner death permanently fenced publication progress")
+             self._tickets.add(publication_id)
+         try:
+@@ -249,20 +260,28 @@
+     def _converge_lease(self, witness, commit_lease):
+         publication_id = witness.publication_id
+         with self._lock:
+-            if publication_id not in self._terminal_reported:
+-                self._terminal_pending[replace(publication_id)] = replace(witness)
+-            if publication_id in self._lease_converged:
++            progress = self._progress_locked(publication_id)
++            progress.completion_observed = True
++            if progress.lease_converged:
+                 return
+-            self._lease_pending[replace(publication_id)] = replace(witness)
+         commit_lease(replace(witness))
+         with self._lock:
+-            self._lease_converged[replace(publication_id)] = replace(witness)
+-            self._lease_pending.pop(publication_id, None)
++            progress.lease_converged = True
+ 
+     def pending_lease_completions(self) -> Tuple[OutputPublicationCompleteWitness, ...]:
+         """Local cleanup obligations, independent of terminal-report delivery."""
+         with self._lock:
+-            return tuple(replace(value) for value in self._lease_pending.values())
++            pending = tuple(identity for identity, progress in self._progress.items()
++                            if progress.completion_observed and not progress.lease_converged and not progress.owner_cleaned)
++        return self._pending_witnesses(pending)
++
++    def _pending_witnesses(self, identities):
++        # Never acquire the journal lock while holding the adapter lock.
++        # A pending flag is only a reference to a previously observed fact.
++        witnesses = tuple(self.journal.completion_witness(identity) for identity in identities)
++        if any(witness is None for witness in witnesses):
++            raise OutputPublicationJournalStateError("pending progress lost its journal Complete")
++        return witnesses
+ 
+     def converge_completed(
+         self, publication_id: OutputPublicationID, *,
+@@ -277,14 +296,16 @@
+             raise TypeError("commit_lease must be callable")
+         with self._ticket(publication_id):
+             with self.journal.linearize(publication_id):
+-                witness = self.journal.snapshot(publication_id).complete
++                witness = self.journal.completion_witness(publication_id)
+                 if witness is None:
+                     raise OutputPublicationJournalStateError("cannot converge an absent Complete")
+                 self._converge_lease(witness, commit_lease)
+ 
+     def pending_terminal_reports(self) -> Tuple[OutputPublicationCompleteWitness, ...]:
+         with self._lock:
+-            return tuple(replace(value) for value in self._terminal_pending.values())
++            pending = tuple(identity for identity, progress in self._progress.items()
++                            if progress.completion_observed and not progress.terminal_reported and not progress.owner_cleaned)
++        return self._pending_witnesses(pending)
+ 
+     def report_terminal(self, publication_id: OutputPublicationID) -> bool:
+         """Report one exact Complete to its owner, retaining it until ACK.
+@@ -295,21 +316,16 @@
+         _require_type(publication_id, OutputPublicationID, "publication_id")
+         publication_id = replace(publication_id)
+         with self._lock:
+-            if publication_id in self._owner_cleanup_deaths:
++            progress = self._progress.get(publication_id)
++            if (progress is None or progress.owner_death is not None
++                    or not progress.completion_observed or progress.terminal_reported):
+                 return False
+-            witness = self._terminal_pending.get(publication_id)
+-            if witness is None:
++        (witness,) = self._pending_witnesses((publication_id,))
++        self._report_complete(replace(witness))
++        with self._lock:
++            if progress.terminal_reported or progress.owner_cleaned:
+                 return False
+-            witness = replace(witness)
+-        self._report_complete(replace(witness))
+-        with self._lock:
+-            pending = self._terminal_pending.get(publication_id)
+-            if pending is None:
+-                return False
+-            if pending != witness:
+-                raise OutputPublicationConflictError("terminal outbox identity was rebound")
+-            self._terminal_reported[publication_id] = witness
+-            del self._terminal_pending[publication_id]
++            progress.terminal_reported = True
+         return True
+ 
+     def rollback(
+@@ -334,7 +350,8 @@
+             if tombstone is None:
+                 return None
+             with self._lock:
+-                already_reported = self._rollback_reported.get(publication_id)
++                progress = self._progress_locked(publication_id)
++                already_reported = progress.rollback_report
+             if already_reported is not None:
+                 if already_reported != tombstone:
+                     raise OutputPublicationConflictError("rollback report identity was rebound")
+@@ -343,7 +360,7 @@
+             # acknowledgement before the publisher can forget this obligation.
+             self._report_rollback(replace(tombstone), manifest=replace(snapshot.manifest))
+             with self._lock:
+-                self._rollback_reported[replace(publication_id)] = replace(tombstone)
++                progress.rollback_report = replace(tombstone)
+             return replace(tombstone)
+ 
+     def pending_rollbacks(self):
+@@ -356,13 +373,15 @@
+         pending = []
+         for publication_id in self.journal.publication_ids():
+             with self._lock:
+-                if publication_id in self._owner_cleaned:
++                progress = self._progress.get(publication_id)
++                if progress is not None and progress.owner_cleaned:
+                     continue
+             snapshot = self.journal.snapshot(publication_id)
+             if snapshot.rollback is None:
+                 continue
+             with self._lock:
+-                reported = self._rollback_reported.get(publication_id)
++                progress = self._progress.get(publication_id)
++                reported = None if progress is None else progress.rollback_report
+             if reported is None:
+                 pending.append(snapshot.rollback)
+         return tuple(pending)
+@@ -371,7 +390,8 @@
+         """Whether the owner acknowledged the exact full compensation."""
+         _require_type(publication_id, OutputPublicationID, "publication_id")
+         with self._lock:
+-            return publication_id in self._rollback_reported
++            progress = self._progress.get(publication_id)
++            return progress is not None and progress.rollback_report is not None
+ 
+     def finish_owner_death(self, manifest, death, *, cleanup: Callable[[], bool]) -> bool:
+         """Serialize Node/Worker cleanup with every forward publication effect.
+@@ -394,15 +414,13 @@
+             if self._manifest(publication_id) != manifest or death.worker_id != manifest.header.owner_worker_id:
+                 raise OutputPublicationConflictError("owner cleanup changed publication identity")
+             with self._lock:
+-                recorded = self._owner_cleanup_deaths.get(publication_id)
++                progress = self._progress_locked(publication_id)
++                recorded = progress.owner_death
+                 if recorded is not None and recorded != death:
+                     raise OutputPublicationConflictError("owner-death cleanup was rebound")
+-                previous = self._owner_cleaned.get(publication_id)
+-                if previous is not None:
+-                    if previous != death:
+-                        raise OutputPublicationConflictError("owner-death cleanup was rebound")
++                if progress.owner_cleaned:
+                     return True
+-                self._owner_cleanup_deaths[replace(publication_id)] = death
++                progress.owner_death = death
+             # Complete forbids rollback, but owner death still removes every
+             # exact hold. Unknown effects require releases as well as ACKed ones.
+             for stage in (OutputPublicationStage.FINAL_RELEASE,
+@@ -413,24 +431,23 @@
+                         0, transfer_index,
+                     )
+                     with self._lock:
+-                        acknowledged = effect in self._owner_cleanup_acks
++                        acknowledged = effect in progress.cleanup_replies
+                     if acknowledged:
+                         continue
+                     reply = self._release_child_hold(effect)
+                     with self._lock:
+-                        self._owner_cleanup_acks[replace(effect)] = reply
++                        progress.cleanup_replies[replace(effect)] = reply
+             if cleanup() is not True:
+                 return False
+             self.journal.retire_owner_death(publication_id, death)
+             with self._lock:
+-                self._owner_cleaned[replace(publication_id)] = death
+-                self._terminal_pending.pop(publication_id, None)
+-                self._lease_pending.pop(publication_id, None)
++                progress.owner_cleaned = True
+             return True
+ 
+     def owner_death_finished(self, publication_id):
+         with self._lock:
+-            return publication_id in self._owner_cleaned
++            progress = self._progress.get(publication_id)
++            return progress is not None and progress.owner_cleaned
+ 
+     def _compensate(self, effect: OutputPublicationEffect) -> None:
+         publication_id = effect.publication_id
+--- a/src/miniray/output_publication_journal.py
++++ b/src/miniray/output_publication_journal.py
+@@ -468,6 +468,12 @@
+             result = record.results.get(slot_index)
+             return None if result is None else _descriptor(result)
+ 
++    def completion_witness(self, publication_id: OutputPublicationID) -> Optional[OutputPublicationCompleteWitness]:
++        """Read detached canonical Complete without copying manifests/effects."""
++        with self._lock:
++            witness = self._record(publication_id).complete
++            return None if witness is None else replace(witness)
++
+     def snapshot(self, publication_id: OutputPublicationID) -> OutputPublicationJournalSnapshot:
+         with self._lock:
+             record = self._record(publication_id)
+--- a/tests/unit/test_publication_owner_death_control.py
++++ b/tests/unit/test_publication_owner_death_control.py
+@@ -177,7 +177,7 @@
+         with pytest.raises(TimeoutError, match="exact ACK lost"):
+             node._handle_finalize_output_owner_death(request)
+         assert releases == [expected[0]] and not finalizations
+-        assert fixture.adapter._owner_cleanup_acks == {}
++        assert fixture.adapter._progress[fixture.id].cleanup_replies == {}
+         assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
+         assert not fixture.adapter.owner_death_finished(fixture.id)
+         assert not node._handle_prepare_output_publication(wire.PrepareOutputPublication(
+@@ -188,7 +188,12 @@
+             node._handle_finalize_output_owner_death(request)
+         assert tuple(releases) == (expected[0],) + expected
+         assert finalizations == [request]
+-        assert len(fixture.adapter._owner_cleanup_acks) == 4
++        cleanup_replies = fixture.adapter._progress[fixture.id].cleanup_replies
++        assert len(cleanup_replies) == 4
++        assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in cleanup_replies.values()} == {
++            (message.object_id, message.owner_worker_id, message.hold) for message in expected
++        }
++        assert all(reply.accepted for reply in cleanup_replies.values())
+         unresolved = fixture.journal.snapshot(fixture.id)
+         assert unresolved.complete == journal_before.complete and unresolved.retained_result_slots == (0,)
+         assert not fixture.adapter.owner_death_finished(fixture.id)
