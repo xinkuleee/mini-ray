@@ -1,0 +1,3 @@
+ACK_MEASUREMENT {"callbacks": 14, "capture": "/mnt/host/c/Users/t-hdong/Desktop/gao/audit/two-version-cleanup/execution/r23-ack-candidate-measure-01/captures/4/task0-r2.json", "events": 39, "outcome": "COMPLETED_ASSERTIONS", "repetition": 2, "slice": "task0"}
+.                                                                        [100%]
+1 passed in 1.47s

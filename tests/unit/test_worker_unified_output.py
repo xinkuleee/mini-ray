@@ -213,7 +213,7 @@ class _ActualNodePublication:
     def publication_rpc(self, request):
         assert len(self.publication_calls) < 24
         reply = self.authority.apply(request)
-        assert type(reply) is ep.PublicationReply and reply.request == request
+        assert type(reply) is (ep.PublicationReply if type(request) is ep.GetPublication or not reply.accepted else ep.PublicationStageAck) and reply.request == request
         self.publication_calls.append((request, reply))
         return reply
 

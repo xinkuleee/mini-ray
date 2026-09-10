@@ -250,7 +250,11 @@ def test_put_home_death_after_graph_commit_never_rebinds_materialization_before_
         if handler == ep.PUBLICATION_HANDLER and type(request) is ep.CommitGraph:
             assert not observed, "one logical put must never recommit on a survivor"
             assert reply.accepted and reply.receipt.stage is ep.PublicationStage.COMMITTED
-            publication = reply.snapshot.publication
+            assert type(reply) is ep.PublicationStageAck
+            assert reply.accepted_fact == request.put_prepared
+            publication = client.current(reply.reference.key.object_id)
+            assert publication.reference == reply.reference
+            assert publication.owner_worker_id == reply.owner_worker_id
             identity = publication.object_id
             work = core._put_handoffs[identity]
             # C5 is an actual authority fact while Core still owns the open
@@ -260,7 +264,9 @@ def test_put_home_death_after_graph_commit_never_rebinds_materialization_before_
             assert identity not in core._stored_descriptors
             assert work.materialization.route == original_route
             committed = client.query(publication)
-            assert committed == reply.snapshot and committed.graph_active
+            assert committed.reference == reply.reference and committed.graph_active
+            assert committed.receipt(ep.PublicationStage.COMMITTED) == reply.receipt
+            assert reply.forward_open == committed.forward_open
             assert committed.prepared == request.put_prepared
             assert committed.prepared.materialization.node_incarnation.node_id == old.node_id
             assert committed.prepared.seal_reply == work.materialization.seal_receipt

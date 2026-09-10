@@ -1,0 +1,561 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_task_finish_barrier.py",
+    "exit_code": 0,
+    "seconds": 5.375,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_task_finish_barrier.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_node_server.py",
+    "exit_code": 0,
+    "seconds": 4.196,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_node_server.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_journal.py",
+    "exit_code": 0,
+    "seconds": 4.527,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_journal.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_unified_output.py",
+    "exit_code": 0,
+    "seconds": 4.142,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_unified_output.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_lease_completion_handshake.py",
+    "exit_code": 0,
+    "seconds": 3.477,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_lease_completion_handshake.py"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_committed_participant_death_fences_complete_manifest_and_queued_task",
+    "exit_code": 0,
+    "seconds": 4.335,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_committed_participant_death_fences_complete_manifest_and_queued_task"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_unrelated_or_expected_node_death_does_not_mark_pg_lost",
+    "exit_code": 0,
+    "seconds": 5.442,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_unrelated_or_expected_node_death_does_not_mark_pg_lost"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_task_first_lease_hop_targets_plan_and_never_spills_back",
+    "exit_code": 0,
+    "seconds": 6.539,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_task_first_lease_hop_targets_plan_and_never_spills_back"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_lease_reply_must_echo_exact_scheduling_key",
+    "exit_code": 0,
+    "seconds": 5.365,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_lease_reply_must_echo_exact_scheduling_key"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_pending_capacity_retry_preserves_exact_targeted_lease",
+    "exit_code": 0,
+    "seconds": 4.41,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_pending_capacity_retry_preserves_exact_targeted_lease"
+    ],
+    "log": "009-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_key_survives_system_retry_and_reconstruction",
+    "exit_code": 0,
+    "seconds": 4.952,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_key_survives_system_retry_and_reconstruction"
+    ],
+    "log": "010-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_worker_start_and_complete_echo_task_scheduling_key",
+    "exit_code": 0,
+    "seconds": 4.279,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_worker_start_and_complete_echo_task_scheduling_key"
+    ],
+    "log": "011-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_pg_create_and_remove_are_typed_gcs_rpcs",
+    "exit_code": 0,
+    "seconds": 6.16,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_pg_create_and_remove_are_typed_gcs_rpcs"
+    ],
+    "log": "012-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_create_replays_one_pg_transaction_until_created",
+    "exit_code": 0,
+    "seconds": 4.582,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_create_replays_one_pg_transaction_until_created"
+    ],
+    "log": "013-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_create_waits_for_removed_before_raising_rejection",
+    "exit_code": 0,
+    "seconds": 4.566,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_create_waits_for_removed_before_raising_rejection"
+    ],
+    "log": "014-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_and_gcs_adapter_converge_ambiguous_prepare_with_one_pg_id",
+    "exit_code": 0,
+    "seconds": 5.229,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_and_gcs_adapter_converge_ambiguous_prepare_with_one_pg_id"
+    ],
+    "log": "015-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_and_gcs_adapter_raise_only_after_reject_abort_is_removed",
+    "exit_code": 0,
+    "seconds": 6.39,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_and_gcs_adapter_raise_only_after_reject_abort_is_removed"
+    ],
+    "log": "016-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_control_admission_rejects_after_shutdown_fence",
+    "exit_code": 0,
+    "seconds": 5.429,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_control_admission_rejects_after_shutdown_fence"
+    ],
+    "log": "017-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_remove_fences_tasks_and_replays_until_removed",
+    "exit_code": 0,
+    "seconds": 6.6,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_remove_fences_tasks_and_replays_until_removed"
+    ],
+    "log": "018-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_pg_task_admission_accepts_only_created_state",
+    "exit_code": 0,
+    "seconds": 5.917,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_pg_task_admission_accepts_only_created_state"
+    ],
+    "log": "019-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_rejected_removing_reply_is_terminal_not_an_in_progress_replay",
+    "exit_code": 0,
+    "seconds": 6.144,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_rejected_removing_reply_is_terminal_not_an_in_progress_replay"
+    ],
+    "log": "020-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_and_adapter_replay_pending_against_fresh_capacity",
+    "exit_code": 0,
+    "seconds": 7.086,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_and_adapter_replay_pending_against_fresh_capacity"
+    ],
+    "log": "021-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_core_replays_accepted_created_with_incomplete_manifest",
+    "exit_code": 0,
+    "seconds": 7.039,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_core_replays_accepted_created_with_incomplete_manifest"
+    ],
+    "log": "022-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_outcome_protocol_and_handler_require_full_identity",
+    "exit_code": 0,
+    "seconds": 6.073,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_outcome_protocol_and_handler_require_full_identity"
+    ],
+    "log": "023-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_completed_outcome_survives_death_and_returns_only_matching_descriptor",
+    "exit_code": 0,
+    "seconds": 5.493,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_completed_outcome_survives_death_and_returns_only_matching_descriptor"
+    ],
+    "log": "024-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_sealed_output_before_worker_loss_is_reported_only_as_orphan",
+    "exit_code": 0,
+    "seconds": 9.104,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_sealed_output_before_worker_loss_is_reported_only_as_orphan"
+    ],
+    "log": "025-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_outcome_reply_rejects_orphan_overlap_extra_and_reordering",
+    "exit_code": 0,
+    "seconds": 4.76,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_outcome_reply_rejects_orphan_overlap_extra_and_reordering"
+    ],
+    "log": "026-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_node_rejects_outcome_manifest_subset_extra_and_reordering",
+    "exit_code": 0,
+    "seconds": 6.564,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_node_rejects_outcome_manifest_subset_extra_and_reordering"
+    ],
+    "log": "027-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_death_and_complete_have_one_terminal_winner",
+    "exit_code": 0,
+    "seconds": 5.233,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_death_and_complete_have_one_terminal_winner"
+    ],
+    "log": "028-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_replacement_is_fresh_and_begin_drain_prevents_replacement",
+    "exit_code": 0,
+    "seconds": 4.657,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_replacement_is_fresh_and_begin_drain_prevents_replacement"
+    ],
+    "log": "029-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_begin_drain_fences_vacant_replacement_retry",
+    "exit_code": 0,
+    "seconds": 4.238,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_begin_drain_fences_vacant_replacement_retry"
+    ],
+    "log": "030-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_begin_drain_reaps_child_that_died_before_supervisor_observed_it",
+    "exit_code": 0,
+    "seconds": 4.459,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_begin_drain_reaps_child_that_died_before_supervisor_observed_it"
+    ],
+    "log": "031-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_granted_or_running_child_death_reclaims_once",
+    "exit_code": 0,
+    "seconds": 5.535,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_granted_or_running_child_death_reclaims_once"
+    ],
+    "log": "032-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_crash_failpoint_exits_after_complete_before_task_reply",
+    "exit_code": 0,
+    "seconds": 7.935,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_crash_failpoint_exits_after_complete_before_task_reply"
+    ],
+    "log": "033-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_publication_trace_observation.py",
+    "exit_code": 0,
+    "seconds": 8.146,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_publication_trace_observation.py"
+    ],
+    "log": "034-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_replacement_failures_balance_counter_and_supervisor_retries",
+    "exit_code": 0,
+    "seconds": 7.607,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_replacement_failures_balance_counter_and_supervisor_retries"
+    ],
+    "log": "035-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_crash_supervisor.py::test_concurrent_complete_and_detector_release_once",
+    "exit_code": 0,
+    "seconds": 8.907,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_crash_supervisor.py::test_concurrent_complete_and_detector_release_once"
+    ],
+    "log": "036-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_create_is_a_shutdown_visible_inflight_operation",
+    "exit_code": 0,
+    "seconds": 7.314,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_create_is_a_shutdown_visible_inflight_operation"
+    ],
+    "log": "037-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_control_timeout_hands_off_at_shutdown_fence",
+    "exit_code": 0,
+    "seconds": 5.549,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_control_timeout_hands_off_at_shutdown_fence"
+    ],
+    "log": "038-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_submission_final_publication_fences_removal_and_rolls_back_hold",
+    "exit_code": 0,
+    "seconds": 5.154,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_placement_group_scheduling.py::test_pg_submission_final_publication_fences_removal_and_rolls_back_hold"
+    ],
+    "log": "039-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_adoption_loss_lane_handoff.py::test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup",
+    "exit_code": 0,
+    "seconds": 5.136,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_adoption_loss_lane_handoff.py::test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup"
+    ],
+    "log": "040-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_owner_finalize_replica_receipts.py",
+    "exit_code": 0,
+    "seconds": 7.474,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_owner_finalize_replica_receipts.py"
+    ],
+    "log": "041-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_enhanced_stage_ack.py",
+    "exit_code": 0,
+    "seconds": 4.999,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-final-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_enhanced_stage_ack.py"
+    ],
+    "log": "042-case.log"
+  }
+]

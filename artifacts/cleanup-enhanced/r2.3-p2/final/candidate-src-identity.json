@@ -1,0 +1,43 @@
+{
+  "status": "SRC_FROZEN_AWAITING_ROOT_RUNTIME_VALIDATION",
+  "baseline_archive_sha256": "26a54d5549fd61ddbd0e4dc29816f38c18b8f17baf013335312262fcb42f2669",
+  "changed_files": [
+    {
+      "path": "src/miniray/control.py",
+      "baseline_sha256": "ed4d7258a11fb17a1a3b4cada4064c2189b925f584503b9e5ae06f2918c375e9",
+      "candidate_sha256": "3c17cbea5589e599a2cb8aa3241bff4757b0f58d327526d50d4f95b3abaf7608"
+    },
+    {
+      "path": "src/miniray/enhanced_publication.py",
+      "baseline_sha256": "a262879b65b7e54b4d6bcf280b32d7fce081d08351e017f1974870373f681d47",
+      "candidate_sha256": "96710d14163783b7657339d53cc4b9feaa7327cb3772ed167862be64515e8890"
+    },
+    {
+      "path": "src/miniray/enhanced_publication_client.py",
+      "baseline_sha256": "659c11e18a62c21bbaea58eaeb40305d14e87a9d4ebc29883042e7c46677d4f5",
+      "candidate_sha256": "6bd91e6e32636f0bae72de93e61da9777550087eb96afdfe51ddd6684563dbe0"
+    },
+    {
+      "path": "src/miniray/enhanced_publication_control.py",
+      "baseline_sha256": "28fc68d9865dc2701f3a214a0d63265095d81b71138f10740a7db199867136cc",
+      "candidate_sha256": "3b54a4508e9755c79246e9c359b76f850dd382387dbd4265973833760e636225"
+    },
+    {
+      "path": "src/miniray/node.py",
+      "baseline_sha256": "94db6273b6c779f6d827044b274dee83fc9bdbd71d679287528b207c131c4fa4",
+      "candidate_sha256": "b9a0f126ca4aae03e85dc53b3eb5061fc2bcd575a5c433e8c75d8249b2f8ef02"
+    },
+    {
+      "path": "src/miniray/output_publication_journal.py",
+      "baseline_sha256": "6c27c7b28ce5ca33beffbe6d61d3f7fd31682fba17186e07622b31c1baae6312",
+      "candidate_sha256": "8002512eabdff824b526f2f51c6d3f809818c33d80336a85ff1914c94e939897"
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "baseline_sha256": "71c1a69f6e0a7179625fef21aaa5a8c72e1a4424be18965c4adabc8feb7b112f",
+      "candidate_sha256": "dc8531c17768552d839c5b32577e00e4fba5ab72a1d4d6fd0c24962dd48e6c19"
+    }
+  ],
+  "patch_sha256": "1da561e41b36764f29bb6de23794f4525f199665bfa35c0c56f4ed29664c8574",
+  "validation": "7 AST parses; no tests/runtime imports by source implementer"
+}

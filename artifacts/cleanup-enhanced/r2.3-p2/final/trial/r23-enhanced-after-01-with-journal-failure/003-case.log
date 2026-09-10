@@ -1,0 +1,924 @@
+FFFFFFFFFFFFFFFFFFFFFFF                                                  [100%]
+=================================== FAILURES ===================================
+_ test_single_output_journal_replays_inline_and_stored_with_or_without_children[plain-inline] _
+
+refs = False, stored = False
+
+    @pytest.mark.parametrize("refs,stored", ((False, False), (False, True), (True, False), (True, True)), ids=("plain-inline", "plain-stored", "children-inline", "children-stored"))
+    def test_single_output_journal_replays_inline_and_stored_with_or_without_children(refs, stored):
+        f = _Fixture(refs=refs, stored=stored)
+        journal = f.journal
+        assert not journal.open(f.manifest)
+        assert not journal.snapshot(f.id).ready_to_complete
+>       assert f.complete() == f.envelope
+               ^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:164: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:130: in materialize
+    OutputPublicationAck(self.journal.begin_materialize(self.id)), self.result,
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:303: in begin_materialize
+    return self._begin(publication_id, OutputPublicationStage.MATERIALIZE)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c037d0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.MATERIALIZE: 'MATERIALIZE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_single_output_journal_replays_inline_and_stored_with_or_without_children[plain-stored] _
+
+refs = False, stored = True
+
+    @pytest.mark.parametrize("refs,stored", ((False, False), (False, True), (True, False), (True, True)), ids=("plain-inline", "plain-stored", "children-inline", "children-stored"))
+    def test_single_output_journal_replays_inline_and_stored_with_or_without_children(refs, stored):
+        f = _Fixture(refs=refs, stored=stored)
+        journal = f.journal
+        assert not journal.open(f.manifest)
+        assert not journal.snapshot(f.id).ready_to_complete
+>       assert f.complete() == f.envelope
+               ^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:164: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:130: in materialize
+    OutputPublicationAck(self.journal.begin_materialize(self.id)), self.result,
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:303: in begin_materialize
+    return self._begin(publication_id, OutputPublicationStage.MATERIALIZE)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c3d3d0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.MATERIALIZE: 'MATERIALIZE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_single_output_journal_replays_inline_and_stored_with_or_without_children[children-inline] _
+
+refs = True, stored = False
+
+    @pytest.mark.parametrize("refs,stored", ((False, False), (False, True), (True, False), (True, True)), ids=("plain-inline", "plain-stored", "children-inline", "children-stored"))
+    def test_single_output_journal_replays_inline_and_stored_with_or_without_children(refs, stored):
+        f = _Fixture(refs=refs, stored=stored)
+        journal = f.journal
+        assert not journal.open(f.manifest)
+        assert not journal.snapshot(f.id).ready_to_complete
+>       assert f.complete() == f.envelope
+               ^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:164: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9ca0740>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_single_output_journal_replays_inline_and_stored_with_or_without_children[children-stored] _
+
+refs = True, stored = True
+
+    @pytest.mark.parametrize("refs,stored", ((False, False), (False, True), (True, False), (True, True)), ids=("plain-inline", "plain-stored", "children-inline", "children-stored"))
+    def test_single_output_journal_replays_inline_and_stored_with_or_without_children(refs, stored):
+        f = _Fixture(refs=refs, stored=stored)
+        journal = f.journal
+        assert not journal.open(f.manifest)
+        assert not journal.snapshot(f.id).ready_to_complete
+>       assert f.complete() == f.envelope
+               ^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:164: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9ca3bc0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+__ test_owner_registration_prepare_materialize_and_promote_are_ordered_gates ___
+
+    def test_owner_registration_prepare_materialize_and_promote_are_ordered_gates():
+        f = _Fixture()
+        journal = f.journal
+        before = journal.snapshot(f.id)
+        for call in (lambda: journal.begin_prepare(f.id, 0), lambda: journal.begin_materialize(f.id)):
+            with pytest.raises(OutputPublicationJournalStateError, match="owner registration"):
+                call()
+        assert journal.snapshot(f.id) == before
+        f.register()
+>       first = journal.begin_prepare(f.id, 0)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:195: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c3dc70>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+______ test_exact_forward_replay_acks_do_not_mutate_or_duplicate_intents _______
+
+    def test_exact_forward_replay_acks_do_not_mutate_or_duplicate_intents():
+        f = _Fixture()
+        journal = f.journal
+        steps = [(lambda: journal.begin_owner_register(f.id), journal.ack_owner_registered)]
+        steps += [(lambda index=index: journal.begin_prepare(f.id, index), journal.ack_prepared) for index in range(2)]
+        steps += [(lambda: journal.begin_materialize(f.id), lambda ack: journal.ack_materialized(ack, replace(f.result)))]
+        steps += [(lambda index=index: journal.begin_promote(f.id, index), journal.ack_promoted) for index in range(2)]
+        for begin, acknowledge in steps:
+>           effect = begin()
+                     ^^^^^^^
+
+tests/unit/test_output_publication_journal.py:221: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:217: in <lambda>
+    steps += [(lambda index=index: journal.begin_prepare(f.id, index), journal.ack_prepared) for index in range(2)]
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c81460>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+____________ test_each_forward_ack_requires_its_own_recorded_intent ____________
+
+    def test_each_forward_ack_requires_its_own_recorded_intent():
+        f = _Fixture()
+        journal = f.journal
+        stages = (
+            (lambda: None, f.effect(Stage.OWNER_REGISTER), journal.ack_owner_registered),
+            (f.register, f.effect(Stage.PREPARE, 0), journal.ack_prepared),
+            (f.prepare, f.effect(Stage.MATERIALIZE), lambda ack: journal.ack_materialized(ack, f.result)),
+            (f.materialize, f.effect(Stage.PROMOTE, 0), journal.ack_promoted),
+        )
+        for prepare, effect, acknowledge in stages:
+            prepare()
+            before = journal.snapshot(f.id)
+            with pytest.raises(OutputPublicationJournalStateError, match="before its intent"):
+>               acknowledge(OutputPublicationAck(effect))
+E               TypeError: OutputPublicationJournal.ack_prepared() missing 1 required positional argument: 'reply'
+
+tests/unit/test_output_publication_journal.py:243: TypeError
+_____ test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation ______
+
+    def test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation():
+        f = _Fixture()
+        journal = f.journal
+        f.register()
+>       effect = journal.begin_prepare(f.id, 0)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:251: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c6ddc0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_materialize_intent_without_ack_is_compensated_before_reverse_child_releases _
+
+    def test_materialize_intent_without_ack_is_compensated_before_reverse_child_releases():
+        f = _Fixture(stored=True)
+        journal = f.journal
+>       f.prepare()
+
+tests/unit/test_output_publication_journal.py:282: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c91130>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+__ test_partial_promotion_rollback_releases_possible_final_before_provisional __
+
+    def test_partial_promotion_rollback_releases_possible_final_before_provisional():
+        f = _Fixture()
+>       f.materialize()
+
+tests/unit/test_output_publication_journal.py:312: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c74590>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+______ test_prepare_effect_without_ack_still_requires_exact_compensation _______
+
+    def test_prepare_effect_without_ack_still_requires_exact_compensation():
+        f = _Fixture()
+        f.register()
+>       f.journal.begin_prepare(f.id, 1)
+
+tests/unit/test_output_publication_journal.py:330: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c6da00>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_no_effect_rollback_is_local_but_fully_prepared_output_still_can_rollback _
+
+    def test_no_effect_rollback_is_local_but_fully_prepared_output_still_can_rollback():
+        unopened = _Fixture()
+        plan = unopened.journal.begin_rollback(unopened.id, "before-first-effect")
+        assert plan.effects == ()
+        snapshot = unopened.journal.snapshot(unopened.id)
+        assert snapshot.state is OutputPublicationJournalState.RETIRED
+        assert snapshot.rollback_tombstone.acknowledgements == ()
+        f = _Fixture(refs=False)
+>       f.promote()
+
+tests/unit/test_output_publication_journal.py:346: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:130: in materialize
+    OutputPublicationAck(self.journal.begin_materialize(self.id)), self.result,
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:303: in begin_materialize
+    return self._begin(publication_id, OutputPublicationStage.MATERIALIZE)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9ca00e0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.MATERIALIZE: 'MATERIALIZE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete[materialize] _
+
+stage = <OutputPublicationStage.MATERIALIZE: 'MATERIALIZE'>
+
+    @pytest.mark.parametrize("stage", (Stage.MATERIALIZE, Stage.PROMOTE), ids=("materialize", "promote"))
+    def test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete(stage):
+        f = _Fixture()
+        journal = f.journal
+        if stage is Stage.MATERIALIZE:
+>           f.prepare()
+
+tests/unit/test_output_publication_journal.py:359: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c82360>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete[promote] _
+
+stage = <OutputPublicationStage.PROMOTE: 'PROMOTE'>
+
+    @pytest.mark.parametrize("stage", (Stage.MATERIALIZE, Stage.PROMOTE), ids=("materialize", "promote"))
+    def test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete(stage):
+        f = _Fixture()
+        journal = f.journal
+        if stage is Stage.MATERIALIZE:
+            f.prepare()
+            effect = journal.begin_materialize(f.id)
+            acknowledge = lambda: journal.ack_materialized(OutputPublicationAck(effect), f.result)
+        else:
+>           f.materialize()
+
+tests/unit/test_output_publication_journal.py:363: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c3d340>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+____________ test_complete_fences_rollback_and_every_forward_effect ____________
+
+    def test_complete_fences_rollback_and_every_forward_effect():
+        f = _Fixture()
+        journal = f.journal
+>       f.complete()
+
+tests/unit/test_output_publication_journal.py:381: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c761b0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadata[inline] _
+
+stored = False
+
+    @pytest.mark.parametrize("stored", (False, True), ids=("inline", "stored"))
+    def test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadata(stored):
+        f = _Fixture(stored=stored)
+        journal = f.journal
+>       f.complete()
+
+tests/unit/test_output_publication_journal.py:406: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c8cad0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadata[stored] _
+
+stored = True
+
+    @pytest.mark.parametrize("stored", (False, True), ids=("inline", "stored"))
+    def test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadata(stored):
+        f = _Fixture(stored=stored)
+        journal = f.journal
+>       f.complete()
+
+tests/unit/test_output_publication_journal.py:406: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c91e50>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+__ test_payload_retirement_does_not_invent_physical_drop_or_rollback_receipts __
+
+    def test_payload_retirement_does_not_invent_physical_drop_or_rollback_receipts():
+        f = _Fixture(stored=True)
+>       f.complete()
+
+tests/unit/test_output_publication_journal.py:427: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c038c0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+___ test_payload_tombstones_and_diagnostics_do_not_alias_terminal_authority ____
+
+    def test_payload_tombstones_and_diagnostics_do_not_alias_terminal_authority():
+        f = _Fixture()
+        journal = f.journal
+>       f.complete()
+
+tests/unit/test_output_publication_journal.py:442: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9ca0650>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_ test_retirement_requires_local_complete_and_exact_owner_scope_without_mutation _
+
+    def test_retirement_requires_local_complete_and_exact_owner_scope_without_mutation():
+        f = _Fixture()
+        journal = f.journal
+        proof = f.adoption()
+>       f.materialize()
+
+tests/unit/test_output_publication_journal.py:465: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9ca59d0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+______ test_open_conflict_unknown_identity_and_mutated_inputs_fail_closed ______
+
+    def test_open_conflict_unknown_identity_and_mutated_inputs_fail_closed():
+        f = _Fixture()
+        journal = f.journal
+        before = journal.snapshot(f.id)
+        changed = OutputPublicationManifest.create(
+            f.manifest.header, (replace(f.manifest.value, checksum='ab' * 32)),
+        )
+        with pytest.raises(OutputPublicationConflictError, match="manifest was rebound"):
+            journal.open(changed)
+        with pytest.raises(UnknownOutputPublicationError):
+            journal.snapshot(replace(f.id, lease_id=_id(LeaseID, 40)))
+        assert journal.snapshot(f.id) == before
+        effect = journal.begin_owner_register(f.id)
+        altered = replace(effect)
+        object.__setattr__(altered, "stage", "OWNER_REGISTER")
+        with pytest.raises(TypeError):
+            journal.ack_owner_registered(OutputPublicationAck(altered))
+        assert not journal.acknowledged(effect)
+>       f.prepare()
+
+tests/unit/test_output_publication_journal.py:503: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c6c920>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_______ test_forward_and_retirement_acks_revalidate_tampered_nested_ids ________
+
+    def test_forward_and_retirement_acks_revalidate_tampered_nested_ids():
+        f = _Fixture()
+        f.register()
+>       effect = f.journal.begin_prepare(f.id, 0)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:517: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9c89700>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+_____ test_snapshots_and_data_plane_returns_do_not_alias_journal_authority _____
+
+    def test_snapshots_and_data_plane_returns_do_not_alias_journal_authority():
+        f = _Fixture()
+        journal = f.journal
+>       envelope = f.complete()
+                   ^^^^^^^^^^^^
+
+tests/unit/test_output_publication_journal.py:537: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_journal.py:139: in complete
+    self.promote()
+tests/unit/test_output_publication_journal.py:134: in promote
+    self.materialize()
+tests/unit/test_output_publication_journal.py:128: in materialize
+    self.prepare()
+tests/unit/test_output_publication_journal.py:125: in prepare
+    self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:297: in begin_prepare
+    return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:574: in _begin
+    self._require_stage_ready(record, stage)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <miniray.output_publication_journal.OutputPublicationJournal object at 0x791ce9ca79e0>
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=... retirement=None, adoption_proof=None, owner_death=None, child_replies={}, cleanup_replies={}, publication_receipts={})
+stage = <OutputPublicationStage.PREPARE: 'PREPARE'>
+
+    def _require_stage_ready(self, record, stage):
+        if stage is OutputPublicationStage.OWNER_REGISTER:
+            return
+        if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+            raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+>           raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: child/data effects require the GCS graph reservation
+
+src/miniray/output_publication_journal.py:671: OutputPublicationJournalStateError
+=========================== short test summary info ============================
+FAILED tests/unit/test_output_publication_journal.py::test_single_output_journal_replays_inline_and_stored_with_or_without_children[plain-inline]
+FAILED tests/unit/test_output_publication_journal.py::test_single_output_journal_replays_inline_and_stored_with_or_without_children[plain-stored]
+FAILED tests/unit/test_output_publication_journal.py::test_single_output_journal_replays_inline_and_stored_with_or_without_children[children-inline]
+FAILED tests/unit/test_output_publication_journal.py::test_single_output_journal_replays_inline_and_stored_with_or_without_children[children-stored]
+FAILED tests/unit/test_output_publication_journal.py::test_owner_registration_prepare_materialize_and_promote_are_ordered_gates
+FAILED tests/unit/test_output_publication_journal.py::test_exact_forward_replay_acks_do_not_mutate_or_duplicate_intents
+FAILED tests/unit/test_output_publication_journal.py::test_each_forward_ack_requires_its_own_recorded_intent
+FAILED tests/unit/test_output_publication_journal.py::test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation
+FAILED tests/unit/test_output_publication_journal.py::test_materialize_intent_without_ack_is_compensated_before_reverse_child_releases
+FAILED tests/unit/test_output_publication_journal.py::test_partial_promotion_rollback_releases_possible_final_before_provisional
+FAILED tests/unit/test_output_publication_journal.py::test_prepare_effect_without_ack_still_requires_exact_compensation
+FAILED tests/unit/test_output_publication_journal.py::test_no_effect_rollback_is_local_but_fully_prepared_output_still_can_rollback
+FAILED tests/unit/test_output_publication_journal.py::test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete[materialize]
+FAILED tests/unit/test_output_publication_journal.py::test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete[promote]
+FAILED tests/unit/test_output_publication_journal.py::test_complete_fences_rollback_and_every_forward_effect
+FAILED tests/unit/test_output_publication_journal.py::test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadata[inline]
+FAILED tests/unit/test_output_publication_journal.py::test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadata[stored]
+FAILED tests/unit/test_output_publication_journal.py::test_payload_retirement_does_not_invent_physical_drop_or_rollback_receipts
+FAILED tests/unit/test_output_publication_journal.py::test_payload_tombstones_and_diagnostics_do_not_alias_terminal_authority
+FAILED tests/unit/test_output_publication_journal.py::test_retirement_requires_local_complete_and_exact_owner_scope_without_mutation
+FAILED tests/unit/test_output_publication_journal.py::test_open_conflict_unknown_identity_and_mutated_inputs_fail_closed
+FAILED tests/unit/test_output_publication_journal.py::test_forward_and_retirement_acks_revalidate_tampered_nested_ids
+FAILED tests/unit/test_output_publication_journal.py::test_snapshots_and_data_plane_returns_do_not_alias_journal_authority
+23 failed in 2.69s

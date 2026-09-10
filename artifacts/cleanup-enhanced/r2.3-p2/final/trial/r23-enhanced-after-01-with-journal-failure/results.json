@@ -1,0 +1,54 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_owner_finalize_replica_receipts.py",
+    "exit_code": 0,
+    "seconds": 5.001,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-after-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_owner_finalize_replica_receipts.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_death_node.py",
+    "exit_code": 0,
+    "seconds": 5.255,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-after-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_death_node.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_output_owner_death_path.py::test_adopted_output_owner_death_cleans_live_executor_and_source_holds",
+    "exit_code": 0,
+    "seconds": 14.879,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-after-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_output_owner_death_path.py::test_adopted_output_owner_death_cleans_live_executor_and_source_holds"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_journal.py",
+    "exit_code": 1,
+    "seconds": 6.5,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-after-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_journal.py"
+    ],
+    "log": "003-case.log"
+  }
+]

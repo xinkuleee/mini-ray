@@ -208,7 +208,7 @@ def test_accurate_terminal_and_commit_survive_executor_death(monkeypatch):
     first = f.call(ep.RecordTerminal(complete))
     f.node_death()
     assert f.call(ep.RecordTerminal(complete)).receipt == first.receipt
-    assert f.call(ep.CommitGraph(publication.reference)).snapshot.complete == complete
+    assert f.call(ep.CommitGraph(publication.reference)).accepted_fact == complete
 
 
 def test_prior_abort_fence_is_not_rebound_by_later_owner_death(monkeypatch):
@@ -219,7 +219,8 @@ def test_prior_abort_fence_is_not_rebound_by_later_owner_death(monkeypatch):
     first = f.call(ep.FencePublication(publication, proof))
     death = f.worker_death(f.owner)
     reply = f.call(ep.FencePublication(publication, death))
-    assert reply.receipt == first.receipt and reply.snapshot.fence == proof
+    assert reply.receipt == first.receipt and reply.accepted_fact == proof and reply.fence == proof
+    assert not reply.forward_open and reply.request.proof == death
     f.drain()
     assert f.call(ep.GetPublication(publication.reference)).snapshot.fence == proof
 
@@ -232,7 +233,8 @@ def test_live_publication_does_not_block_pre_core_drain_but_blocks_final_shutdow
     assert not f.gcs.shutdown(protocol.Shutdown('shutdown', 'test')).clean
     # Exact accepted history remains available while unfinished work blocks
     # final exit; a different publication cannot add work behind shutdown.
-    assert f.call(ep.BeginPublication(publication)).snapshot.graph_active
+    assert f.call(ep.BeginPublication(publication)).receipt.stage is ep.PublicationStage.INTENT
+    assert f.call(ep.GetPublication(publication.reference)).snapshot.graph_active
     assert not f.gcs.enhanced_publication(ep.BeginPublication(f.put())).accepted
     f.call(ep.FencePublication(publication, ep.OwnerAbortReceipt(publication.reference, publication.owner_worker_id, 'abort')))
     f.call(ep.RetireGraph(ep.ClosedContainedHolds(publication.reference)))
@@ -295,7 +297,8 @@ def test_closed_shutdown_accepts_exact_node_death_and_late_terminal_until_cleanu
     complete = OutputPublicationCompleteWitness.for_manifest(publication.manifest)
     shutdown = protocol.Shutdown('shutdown', 'test')
     assert not f.gcs.shutdown(shutdown).clean
-    assert f.call(ep.BeginPublication(publication)).snapshot.graph_active
+    assert f.call(ep.BeginPublication(publication)).receipt.stage is ep.PublicationStage.INTENT
+    assert f.call(ep.GetPublication(publication.reference)).snapshot.graph_active
     assert f.call(arm).receipt.stage is ep.PublicationStage.ARMED
     assert not f.gcs.enhanced_publication(ep.BeginPublication(f.put())).accepted
 
@@ -310,7 +313,7 @@ def test_closed_shutdown_accepts_exact_node_death_and_late_terminal_until_cleanu
     assert replay.death == first.death
     assert f.call(ep.GetPublication(publication.reference)).snapshot == fenced
     terminal = f.call(ep.RecordTerminal(complete))
-    assert terminal.snapshot.complete == complete and not terminal.snapshot.forward_open
+    assert terminal.accepted_fact == complete and not terminal.forward_open
     assert not f.gcs.enhanced_publication(ep.CommitGraph(publication.reference)).accepted
     assert not f.gcs.shutdown(shutdown).clean
 
@@ -325,7 +328,8 @@ def test_closed_shutdown_accepts_exact_node_death_and_late_terminal_until_cleanu
     assert not f.table.snapshot(f.child).contained_holds
     calls = tuple(f.calls)
     assert f.call(ep.RecordTerminal(complete)).receipt == terminal.receipt
-    assert f.call(ep.RetireGraph(retired.closed_holds)).snapshot == retired
+    assert f.call(ep.RetireGraph(retired.closed_holds)).accepted_fact == retired.closed_holds
+    assert f.call(ep.GetPublication(publication.reference)).snapshot == retired
     assert f.node_death().death == first.death
     assert f.gcs.drain_owner_death_fences(protocol.DrainOwnerDeathFences('drain')).clean
     assert tuple(f.calls) == calls and f.gcs.shutdown(shutdown).clean
@@ -425,7 +429,8 @@ def test_reentrant_cleanup_suppresses_inflight_release_and_lost_ack_releases_tic
     assert not f.gcs.publication_control.pending_deaths()
     calls = tuple(f.calls)
     assert not f.gcs.publication_control.drive_one()
-    assert f.call(ep.RetireGraph(retired.closed_holds)).snapshot == retired
+    assert f.call(ep.RetireGraph(retired.closed_holds)).accepted_fact == retired.closed_holds
+    assert f.call(ep.GetPublication(publication.reference)).snapshot == retired
     assert tuple(f.calls) == calls and len(reentered) == 3
 
 
@@ -443,7 +448,9 @@ def test_first_begin_rejects_wrong_registered_publisher_incarnation_without_hist
         assert not f.gcs.publication_control.authority.snapshots()
         assert not f.gcs.publication_control.has_active_operations() and not f.calls
     accepted = f.call(ep.BeginPublication(publication))
-    assert accepted.snapshot.publication == publication
+    assert accepted.request.publication == publication
+    assert accepted.owner_worker_id == publication.owner_worker_id
+    assert f.call(ep.GetPublication(publication.reference)).snapshot.publication == publication
     assert accepted.receipt.stage is ep.PublicationStage.INTENT
     assert f.call(ep.BeginPublication(publication)).receipt == accepted.receipt
 

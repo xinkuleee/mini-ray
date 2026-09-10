@@ -1,0 +1,45 @@
+{
+  "revision": "R2.3",
+  "edition": "enhanced",
+  "status": "implemented_and_validated",
+  "branch_ref": "refs/heads/teaching-enhanced",
+  "head": "fd40a407a46ada3d4941c034a73355f45355b270",
+  "input_kind": "uncommitted working-tree implementation, exact frozen hashes; HEAD itself is not the tested changed source",
+  "source_archive_sha256": "e9b33771f1e0721d404f1a135a22fac1ac7958e0cd537d30110dc1439f96c17e",
+  "gate_archive_sha256": "a3bfb6588e639dd2655ed2b8a23c736f3fb4730dfbf0cec51af14f6ae0f3b1fb",
+  "results": {
+    "gate": "405 passed/1 deselected and37/37 smoke first attempt including seven original mains",
+    "affected_exact_selections": 43,
+    "affected": "All current reviewed changed-consumer selections passed; case totals reside in raw logs, not added to gate count",
+    "installation": "7 frozen lock/install/pipcheck/freeze/outside import commands passed on final02"
+  },
+  "late_non_gate_change": "Final02 adds validated E journal-test migration plus documentation/registry hashes. Explicit AST import/config closure mapping proves final01 gate inputs unchanged; final02 separately executes affected migrations.",
+  "ack_disposition": "Adopted one concrete success mutation StageAck; complete GetPublication/ABSENT and typed failures remain PublicationReply; same history/graph/participants/commit points, no addedRPC",
+  "measured_benefit": "Four controlled local lifecycle slices show18.9-36.3percent fewer serialized GCS business-frame bytes and15.6-28.3percent fewer selected local copy/validation calls; query counts unchanged. Not network/time/receive-decode performance.",
+  "structure_cost": {
+    "physical_lines_added": 204,
+    "code_lines_added": 181,
+    "types_added": 1,
+    "wire_fields_added": 8,
+    "if_statements_added": 62,
+    "new_authorities": 0,
+    "new_rpc_call_sites": 0
+  },
+  "statistics": {
+    "source_python_files": 59,
+    "source_physical_lines": 60223,
+    "source_code_lines": 49319
+  },
+  "preserved_differences": "Initial mixed-r2 request and first retirement proof tuple order differed; raw false comparison retained. Existing unchanged Core set traversal and unrecorded hash seed identified; six seed0 repeats preserve exact original-order equality without sorting proofs or changing source.",
+  "preserved_failures": "Original owner-finalize14 failures each edition; B first-repair14pass/1 pre-Node deepcopy failure; E old journal23 failures both original fullReply and StageAck, repaired same file23pass both; no skip/xfail or relaxed runtime checks.",
+  "remaining_scope": "Only excluded P3 cleanup remains; R23-01 through04 addressed. No claim every historical/registered test ran.",
+  "git": "No commit/push/remote CI; both branch refs retained and main pre-existing work untouched",
+  "evidence_paths": {
+    "formal gate": "gate/",
+    "formal affected": "affected/",
+    "frozen installation": "install/",
+    "actual trial and measurements": "trial/",
+    "field/structure/disposition": "top-level reports; source patches retained",
+    "original local paths": "Raw logs retain exact historical command paths; logical copies are listed here"
+  }
+}

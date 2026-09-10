@@ -1,0 +1,307 @@
+diff --git a/tests/unit/test_output_publication_journal.py b/tests/unit/test_output_publication_journal.py
+index fc1d1ca..7e0afc8 100644
+--- a/tests/unit/test_output_publication_journal.py
++++ b/tests/unit/test_output_publication_journal.py
+@@ -1,9 +1,11 @@
+ """Pure contracts for the current owner-led, single-output Node journal.
+ 
+ Each case uses at most two journal records, one <= 32-byte output per record,
+-and at most two explicit child-transfer identities. ACKs and owner adoption
+-are validated pure inputs, not real RPC, child holds, lease release or owner
+-CAS evidence. Rollback consumes at most five effects in a bounded loop. No
++and at most two explicit child-transfer identities. Child ACKs use real
++child-owner reducers and GCS stages use actual authority receipts. Local
++owner registration/materialization/Complete/adoption remain explicit model
++inputs, not real RPC, physical bytes, lease release or owner CAS evidence.
++Rollback consumes at most five effects in a bounded loop. No
+ Core/Node/Worker constructor, thread, socket, process, timer or wait is used.
+ """
+ 
+@@ -15,7 +17,7 @@ from enum import Enum
+ 
+ import pytest
+ 
+-from miniray import protocol
++from miniray import protocol, enhanced_publication as ep
+ from miniray.contained_edges import ContainedReferenceHold
+ from miniray.errors import ProtocolError
+ from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
+@@ -35,6 +37,7 @@ from miniray.publication_sources import (
+     BorrowedContainedSource, OwnedContainedSource, PreparedContainedTransfer,
+ )
+ from miniray.task_outputs import TaskExecution
++from miniray.ownership import ObjectOwnerTable
+ 
+ pytestmark = pytest.mark.unit
+ 
+@@ -65,7 +68,7 @@ def _metadata(value):
+ 
+ 
+ class _Fixture:
+-    """An independent single-output fixture; no legacy graph/target adapter."""
++    """Single-result journal with actual GCS and child-owner reducers."""
+ 
+     def __init__(self, *, refs=True, stored=False):
+         self.owner, executor = _id(WorkerID, 6), _id(WorkerID, 5)
+@@ -112,17 +115,65 @@ class _Fixture:
+         self.envelope = OutputPublicationEnvelope(self.manifest, self.witness, (self.result))
+         self.journal = OutputPublicationJournal()
+         assert self.journal.open(self.manifest)
++        self.authority = ep.PublicationAuthority()
++        self.publication = ep.TaskPublication(self.manifest, ("owner.invalid", 30100))
++        self.children, self.child_replies = {}, {}
++        for transfer in self.manifest.value.transfers:
++            table = self.children.setdefault(transfer.contained_owner_worker_id, ObjectOwnerTable())
++            table.register(transfer.contained_object_id, local_token="journal-test-live")
++            if isinstance(transfer.source, BorrowedContainedSource):
++                source = transfer.source.original_source
++                root = (executor, "journal-upstream-root")
++                table.add_borrowed_reference(transfer.contained_object_id, root)
++                table.retain_borrowed_reference_for_task(transfer.contained_object_id, root, source.hold)
++                table.acquire_exported_reference(transfer.contained_object_id, source, transfer.source.owner_table_token)
+ 
+     def effect(self, stage, transfer=None):
+         return OutputPublicationEffect(self.id, self.manifest.manifest_digest, stage, transfer)
+ 
++    def gcs(self, request, stage, *, forward=False):
++        reply = self.authority.apply(request)
++        assert reply.accepted and reply.request == request
++        assert reply.receipt.reference == self.publication.reference and reply.receipt.stage is stage
++        return self.journal.record_publication_reply(self.id, request, reply, stage, forward=forward)
++
++    def reserve_graph(self):
++        for request, stage in ((ep.BeginPublication(self.publication), ep.PublicationStage.INTENT),
++                (ep.PrepareGraph(self.publication.reference), ep.PublicationStage.PREPARED)):
++            if self.journal.publication_receipt(self.id, stage) is None:
++                self.gcs(request, stage, forward=True)
++
+     def register(self):
+         self.journal.ack_owner_registered(OutputPublicationAck(self.journal.begin_owner_register(self.id)))
++        self.reserve_graph()
++
++    def child_reply(self, stage, index):
++        key = (stage, index)
++        if key not in self.child_replies:
++            transfer = self.manifest.value.transfers[index]
++            table = self.children[transfer.contained_owner_worker_id]
++            if stage is Stage.PREPARE:
++                request = protocol.PrepareStoredContainedPin(transfer, transfer.contained_owner_worker_id)
++                disposition = table.prepare_stored_contained_reference(transfer, authority_worker_id=request.authority_worker_id)
++            else:
++                assert stage is Stage.PROMOTE
++                request = protocol.PromoteStoredContainedPin(transfer, transfer.contained_owner_worker_id)
++                disposition = table.promote_stored_contained_reference(transfer, authority_worker_id=request.authority_worker_id)
++            self.child_replies[key] = protocol.StoredContainedPinReply(request, disposition)
++        return self.child_replies[key]
++
++    def ack_prepared(self, ack):
++        # The real child effect precedes receipt delivery. Negative tests below
++        # assert no journal mutation, not absence of that external child effect.
++        return self.journal.ack_prepared(ack, self.child_reply(Stage.PREPARE, ack.effect.transfer_index))
++
++    def ack_promoted(self, ack):
++        return self.journal.ack_promoted(ack, self.child_reply(Stage.PROMOTE, ack.effect.transfer_index))
+ 
+     def prepare(self):
+         self.register()
+         for index in range(len((self.manifest.value).transfers)):
+-            self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
++            self.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, index)))
+ 
+     def materialize(self):
+         self.prepare()
+@@ -133,25 +184,52 @@ class _Fixture:
+     def promote(self):
+         self.materialize()
+         for index in range(len((self.manifest.value).transfers)):
+-            self.journal.ack_promoted(OutputPublicationAck(self.journal.begin_promote(self.id, index)))
++            self.ack_promoted(OutputPublicationAck(self.journal.begin_promote(self.id, index)))
++        self.arm()
++
++    def arm(self):
++        self.gcs(ep.ArmTask(self.journal.preparation_receipt(self.id)), ep.PublicationStage.ARMED, forward=True)
+ 
+     def complete(self):
+         self.promote()
+-        return self.journal.complete(self.id, self.witness)
++        envelope = self.journal.complete(self.id, self.witness)
++        self.gcs(ep.RecordTerminal(self.witness), ep.PublicationStage.TERMINAL)
++        self.gcs(ep.CommitGraph(self.publication.reference), ep.PublicationStage.COMMITTED)
++        return envelope
+ 
+     def adoption(self, commit="owner-cas"):
+         return OutputPublicationAdoptionProof(self.witness, self.owner, commit)
+ 
++    def record_adoption(self, proof):
++        self.gcs(ep.RecordAdoption(proof), ep.PublicationStage.ADOPTED)
++
++    def fence_rollback(self):
++        scope = self.journal.rollback_scope(self.id)
++        proof = ep.OwnerAbortReceipt(self.publication.reference, self.owner, scope.rollback_id)
++        self.gcs(ep.FencePublication(self.publication, proof), ep.PublicationStage.FENCED)
++
++    def cleanup_reply(self, effect):
++        if effect.stage is Stage.SLOT_DROP:
++            return None  # Explicit journal model ACK, no physical deletion claim.
++        transfer = self.manifest.value.transfers[effect.transfer_index]
++        hold = transfer.final_hold if effect.stage is Stage.FINAL_RELEASE else transfer.provisional_hold
++        table = self.children[transfer.contained_owner_worker_id]
++        released = table.release_contained_reference(transfer.contained_object_id, hold)
++        return protocol.ReleaseContainedReferenceReply(transfer.contained_object_id, transfer.contained_owner_worker_id, hold, True, released)
++
+     def rollback(self):
++        self.fence_rollback()
+         effects = []
+         limit = len(self.journal.snapshot(self.id).rollback.effects)
+         assert limit <= 5
+         for _ in range(limit + 1):
+             effect = self.journal.next_rollback_effect(self.id)
+             if effect is None:
++                closed = self.journal.closed_rollback_holds(self.id)
++                self.gcs(ep.RetireGraph(closed), ep.PublicationStage.RETIRED)
+                 return tuple(effects)
+             effects.append(effect)
+-            self.journal.ack_rollback(OutputPublicationAck(effect))
++            self.journal.ack_rollback(OutputPublicationAck(effect), self.cleanup_reply(effect))
+         pytest.fail("rollback did not consume its bounded effect list")
+ 
+ 
+@@ -193,19 +271,23 @@ def test_owner_registration_prepare_materialize_and_promote_are_ordered_gates():
+     assert journal.snapshot(f.id) == before
+     f.register()
+     first = journal.begin_prepare(f.id, 0)
+-    journal.ack_prepared(OutputPublicationAck(first))
++    f.ack_prepared(OutputPublicationAck(first))
+     with pytest.raises(OutputPublicationJournalStateError, match="every provisional"):
+         journal.begin_materialize(f.id)
+-    journal.ack_prepared(OutputPublicationAck(journal.begin_prepare(f.id, 1)))
++    f.ack_prepared(OutputPublicationAck(journal.begin_prepare(f.id, 1)))
+     materialize = journal.begin_materialize(f.id)
+     with pytest.raises(OutputPublicationJournalStateError, match="every materialization"):
+         journal.begin_promote(f.id, 0)
+     journal.ack_materialized(OutputPublicationAck(materialize), f.result)
+-    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0)))
++    f.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0)))
+     assert not journal.snapshot(f.id).ready_to_complete
+     with pytest.raises(OutputPublicationJournalStateError, match="promotion ACKs"):
+         journal.complete(f.id, f.witness)
+-    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 1)))
++    f.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 1)))
++    assert not journal.snapshot(f.id).ready_to_complete
++    with pytest.raises(OutputPublicationJournalStateError, match="promotion ACKs"):
++        journal.complete(f.id, f.witness)
++    f.arm()
+     assert journal.snapshot(f.id).ready_to_complete
+     assert journal.complete(f.id, f.witness) == f.envelope
+ 
+@@ -214,9 +296,9 @@ def test_exact_forward_replay_acks_do_not_mutate_or_duplicate_intents():
+     f = _Fixture()
+     journal = f.journal
+     steps = [(lambda: journal.begin_owner_register(f.id), journal.ack_owner_registered)]
+-    steps += [(lambda index=index: journal.begin_prepare(f.id, index), journal.ack_prepared) for index in range(2)]
++    steps += [(lambda index=index: journal.begin_prepare(f.id, index), f.ack_prepared) for index in range(2)]
+     steps += [(lambda: journal.begin_materialize(f.id), lambda ack: journal.ack_materialized(ack, replace(f.result)))]
+-    steps += [(lambda index=index: journal.begin_promote(f.id, index), journal.ack_promoted) for index in range(2)]
++    steps += [(lambda index=index: journal.begin_promote(f.id, index), f.ack_promoted) for index in range(2)]
+     for begin, acknowledge in steps:
+         effect = begin()
+         assert begin() == effect
+@@ -224,6 +306,8 @@ def test_exact_forward_replay_acks_do_not_mutate_or_duplicate_intents():
+         before = journal.snapshot(f.id)
+         assert not acknowledge(OutputPublicationAck(effect, OutputPublicationAckDisposition.ALREADY_APPLIED))
+         assert journal.snapshot(f.id) == before
++        if effect.stage is Stage.OWNER_REGISTER:
++            f.reserve_graph()
+     assert len(journal.snapshot(f.id).intents) == 6
+ 
+ 
+@@ -232,9 +316,9 @@ def test_each_forward_ack_requires_its_own_recorded_intent():
+     journal = f.journal
+     stages = (
+         (lambda: None, f.effect(Stage.OWNER_REGISTER), journal.ack_owner_registered),
+-        (f.register, f.effect(Stage.PREPARE, 0), journal.ack_prepared),
++        (f.register, f.effect(Stage.PREPARE, 0), f.ack_prepared),
+         (f.prepare, f.effect(Stage.MATERIALIZE), lambda ack: journal.ack_materialized(ack, f.result)),
+-        (f.materialize, f.effect(Stage.PROMOTE, 0), journal.ack_promoted),
++        (f.materialize, f.effect(Stage.PROMOTE, 0), f.ack_promoted),
+     )
+     for prepare, effect, acknowledge in stages:
+         prepare()
+@@ -251,9 +335,9 @@ def test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation():
+     effect = journal.begin_prepare(f.id, 0)
+     before = journal.snapshot(f.id)
+     with pytest.raises(OutputPublicationConflictError, match="exact publication"):
+-        journal.ack_prepared(OutputPublicationAck(replace(effect, manifest_digest="ab" * 32)))
++        f.ack_prepared(OutputPublicationAck(replace(effect, manifest_digest="ab" * 32)))
+     with pytest.raises(OutputPublicationConflictError, match="another stage"):
+-        journal.ack_promoted(OutputPublicationAck(effect))
++        f.ack_promoted(OutputPublicationAck(effect))
+     for child in (2, True, -1, None, 1 << 64):
+         for operation in (journal.begin_prepare, journal.begin_promote):
+             with pytest.raises((OutputPublicationConflictError, ValueError)):
+@@ -311,7 +395,7 @@ def test_partial_promotion_rollback_releases_possible_final_before_provisional()
+     f = _Fixture()
+     f.materialize()
+     journal = f.journal
+-    journal.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0)))
++    f.ack_promoted(OutputPublicationAck(journal.begin_promote(f.id, 0)))
+     journal.begin_promote(f.id, 1)  # Effect may have happened before its ACK was lost.
+     plan = journal.begin_rollback(f.id, "promotion-ack-lost")
+     assert tuple((e.stage, e.transfer_index) for e in plan.effects) == (
+@@ -362,7 +446,7 @@ def test_late_forward_ack_cannot_resurrect_rollback_or_authorize_complete(stage)
+     else:
+         f.materialize()
+         effect = journal.begin_promote(f.id, 0)
+-        acknowledge = lambda: journal.ack_promoted(OutputPublicationAck(effect))
++        acknowledge = lambda: f.ack_promoted(OutputPublicationAck(effect))
+     journal.begin_rollback(f.id, "late-forward-ack")
+     before = journal.snapshot(f.id)
+     with pytest.raises(OutputPublicationJournalStateError):
+@@ -388,9 +472,9 @@ def test_complete_fences_rollback_and_every_forward_effect():
+         lambda: journal.begin_materialize(f.id),
+         lambda: journal.begin_promote(f.id, 0),
+         lambda: journal.ack_owner_registered(OutputPublicationAck(f.effect(Stage.OWNER_REGISTER))),
+-        lambda: journal.ack_prepared(OutputPublicationAck(f.effect(Stage.PREPARE, 0))),
++        lambda: f.ack_prepared(OutputPublicationAck(f.effect(Stage.PREPARE, 0))),
+         lambda: journal.ack_materialized(OutputPublicationAck(f.effect(Stage.MATERIALIZE)), f.result),
+-        lambda: journal.ack_promoted(OutputPublicationAck(f.effect(Stage.PROMOTE, 0))),
++        lambda: f.ack_promoted(OutputPublicationAck(f.effect(Stage.PROMOTE, 0))),
+     ):
+         with pytest.raises(OutputPublicationJournalStateError):
+             call()
+@@ -405,6 +489,7 @@ def test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadat
+     journal = f.journal
+     f.complete()
+     proof = f.adoption()
++    f.record_adoption(proof)
+     tombstone = journal.retire_completed(proof)
+     assert tombstone.object_id == f.object_id and tombstone.publication_id == f.id
+     assert journal.retire_completed(proof) == tombstone
+@@ -426,7 +511,9 @@ def test_payload_retirement_does_not_invent_physical_drop_or_rollback_receipts()
+     f = _Fixture(stored=True)
+     f.complete()
+     before = f.journal.snapshot(f.id)
+-    f.journal.retire_completed(f.adoption())
++    proof = f.adoption()
++    f.record_adoption(proof)
++    f.journal.retire_completed(proof)
+     after = f.journal.snapshot(f.id)
+     assert after.intents == before.intents
+     assert after.acknowledgements == before.acknowledgements
+@@ -441,6 +528,7 @@ def test_payload_tombstones_and_diagnostics_do_not_alias_terminal_authority():
+     journal = f.journal
+     f.complete()
+     proof = f.adoption("frozen-owner-cas")
++    f.record_adoption(proof)
+     returned = journal.retire_completed(proof)
+     before = journal.snapshot(f.id)
+     object.__setattr__(returned.proof, "owner_commit_id", "tampered-return")
+@@ -519,7 +607,7 @@ def test_forward_and_retirement_acks_revalidate_tampered_nested_ids():
+     object.__setattr__(ack.effect.publication_id.lease_id, "value", b"short")
+     before = f.journal.snapshot(f.id)
+     with pytest.raises(ValueError):
+-        f.journal.ack_prepared(ack)
++        f.ack_prepared(ack)
+     assert f.journal.snapshot(f.id) == before
+     assert not f.journal.acknowledged(effect)
+     f.complete()

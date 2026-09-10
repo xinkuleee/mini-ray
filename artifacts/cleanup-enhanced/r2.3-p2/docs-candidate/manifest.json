@@ -1,0 +1,61 @@
+{
+  "status": "ISOLATED_DOCUMENTATION_CANDIDATE_NOT_APPLIED",
+  "work_packages": [
+    "R23-03",
+    "R23-04"
+  ],
+  "edition": "enhanced",
+  "formal_head": "fd40a407a46ada3d4941c034a73355f45355b270",
+  "formal_worktree_status_at_check": " M docs/cleanup-progress.md\n M docs/current-status.md\n M docs/project-cleanup-plan.json\n M docs/project-cleanup-plan.md\n",
+  "files": [
+    {
+      "path": "docs/production-ray-mapping.md",
+      "input_sha256": "a10b1b70933630c9c61c8f948659b5040def14d1cd8c7bd6531ee841b4591651",
+      "candidate_sha256": "c79aa81fb08168bab0c392e2717d58f2ab2a26c482d24df94e444ebe8f04c27d",
+      "candidate_lf_sha256": "37e7b8fccf02d39241aa80644c7d7842cff69146e39bff71779c2a7c23d1ab5e",
+      "input_bytes": 11715,
+      "candidate_bytes": 14784,
+      "formal_target_unchanged": true,
+      "newline": "CRLF"
+    },
+    {
+      "path": "docs/testing.md",
+      "input_sha256": "2e831a9fd99f6b4c59b55624577010eb7c70737960188fcd1a0eeaa970fd53ee",
+      "candidate_sha256": "599c896d7725f0141adbdde72a0eef42c28362e09e280775930cbdd8e3ba73ed",
+      "candidate_lf_sha256": "43926a935fbb8b2509d9ba6b48c4f6ac5c1bfc8b58895d474444f7a6fdab8b3f",
+      "input_bytes": 5793,
+      "candidate_bytes": 6255,
+      "formal_target_unchanged": true,
+      "newline": "CRLF"
+    },
+    {
+      "path": "docs/design.md",
+      "input_sha256": "be5976eaf92787e3f0da4a91e61b5ca55474f732537712151e5f055f2f09f736",
+      "candidate_sha256": "d57f31511042cb6eb109a5c6581778cda3118293cf7a7fc16527021504bfae03",
+      "candidate_lf_sha256": "d57f31511042cb6eb109a5c6581778cda3118293cf7a7fc16527021504bfae03",
+      "input_bytes": 21900,
+      "candidate_bytes": 22012,
+      "formal_target_unchanged": true,
+      "newline": "LF"
+    }
+  ],
+  "patch": {
+    "path": "changes.patch",
+    "sha256": "25dc89e25990860c7f3d08587821238329eae6ca27b4248376830911cfdda3df",
+    "bytes": 18033
+  },
+  "validation_path": "static-check.json",
+  "validation_sha256": "5fa361f78177befe704abd0cdce94c0cbb2c0c5d0bf2467c5508b7c3b977e8d7",
+  "not_changed": [
+    "formal repository files",
+    "source",
+    "tests",
+    "P3",
+    "README",
+    "current-status",
+    "cleanup-progress",
+    "plan",
+    "historical evidence"
+  ],
+  "runtime_tests_executed": false
+}

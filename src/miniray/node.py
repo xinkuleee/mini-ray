@@ -1104,7 +1104,8 @@ class NodeServer:
             return TaskPublication(manifest, address)
 
         def publication_rpc(request):
-            from .enhanced_publication import PUBLICATION_HANDLER, RecordTerminal, PublicationReply, PublicationStage
+            from .enhanced_publication import (PUBLICATION_HANDLER, RecordTerminal,
+                                               PublicationRef, PublicationStageAck, PublicationStage)
             with self._state_lock:
                 address = self._gcs_address
             if address is None:
@@ -1121,10 +1122,13 @@ class NodeServer:
                     gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
             reply = self._background_rpc(address, PUBLICATION_HANDLER, request)
             if terminal_gate and phase is OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK:
-                if type(reply) is not PublicationReply:
+                if type(reply) is not PublicationStageAck:
                     raise OutputPublicationConflictError('terminal gate requires the actual GCS reply')
                 reply = replace(reply)
-                if (reply.request != request or not reply.accepted or reply.snapshot.complete != request.complete
+                reference = PublicationRef(manifest.publication_id, manifest.manifest_digest)
+                if (reply.request != request or reply.accepted_fact != request.complete
+                        or reply.reference != reference or reply.receipt.reference != reference
+                        or reply.owner_worker_id != manifest.header.owner_worker_id
                         or reply.receipt.stage is not PublicationStage.TERMINAL):
                     raise OutputPublicationConflictError('terminal gate requires actual GCS acceptance')
                 # Intercept the real reply before the adapter records its ACK.

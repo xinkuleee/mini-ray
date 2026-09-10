@@ -504,7 +504,15 @@ class GetPublication(_Wire):
 PublicationRequest: TypeAlias = (BeginPublication | PrepareGraph | ArmTask | RecordTerminal
                                | CommitGraph | RecordAdoption | FencePublication | RetireGraph | GetPublication)
 _REQUEST_TYPES = (BeginPublication, PrepareGraph, ArmTask, RecordTerminal, CommitGraph,
-                  RecordAdoption, FencePublication, RetireGraph, GetPublication)
+                   RecordAdoption, FencePublication, RetireGraph, GetPublication)
+_MUTATION_TYPES = _REQUEST_TYPES[:-1]
+
+
+def _request_stage(request):
+    return {BeginPublication: PublicationStage.INTENT, PrepareGraph: PublicationStage.PREPARED,
+            ArmTask: PublicationStage.ARMED, RecordTerminal: PublicationStage.TERMINAL,
+            CommitGraph: PublicationStage.COMMITTED, RecordAdoption: PublicationStage.ADOPTED,
+            FencePublication: PublicationStage.FENCED, RetireGraph: PublicationStage.RETIRED}[type(request)]
 
 
 def request_reference(request):
@@ -595,10 +603,175 @@ class PublicationReply(_Wire):
         if self.accepted:
             if self.error_kind is not None or self.error is not None:
                 raise ValueError("accepted publication reply cannot carry an error")
-            if type(self.request) is not GetPublication and (self.snapshot is None or self.receipt is None):
-                raise ValueError("accepted mutation requires its snapshot and receipt")
+            if type(self.request) is not GetPublication:
+                raise ValueError("accepted mutation requires PublicationStageAck")
         elif type(self.error_kind) is not PublicationErrorKind or not self.error or self.receipt is not None:
             raise ValueError("rejected publication reply requires typed error without success receipt")
+
+
+@dataclass(frozen=True)
+class PublicationStageAck(_Wire):
+    """One accepted mutation, with exact facts and current closing evidence.
+
+    This projection owns no authority. An old receipt is history, and even
+    an open reply cannot replace the caller local epoch/abort check after RPC.
+    """
+    request: BeginPublication | PrepareGraph | ArmTask | RecordTerminal | CommitGraph | RecordAdoption | FencePublication | RetireGraph
+    reference: PublicationRef
+    owner_worker_id: WorkerID
+    receipt: PublicationReceipt
+    accepted_fact: PublicationRef | PreparedReceipt | OutputPublicationCompleteWitness | OutputPublicationAdoptionProof | FenceProof | ClosedContainedHolds
+    fence: FenceProof | None = None
+    fence_receipt: PublicationReceipt | None = None
+    retired_receipt: PublicationReceipt | None = None
+
+    def __post_init__(self):
+        from .output_publication_journal import OutputPublicationAdoptionProof
+        _set(self, "request", _MUTATION_TYPES)
+        _set(self, "reference", PublicationRef)
+        _set(self, "owner_worker_id", WorkerID)
+        _set(self, "receipt", PublicationReceipt)
+        request, reference, stage = self.request, self.reference, _request_stage(self.request)
+        if (reference != request_reference(request) or self.receipt.reference != reference
+                or self.receipt.stage is not stage):
+            raise ValueError("stage ACK changed request reference or stage")
+        if type(request) in (BeginPublication, FencePublication):
+            if self.owner_worker_id != request.publication.owner_worker_id:
+                raise ValueError("stage ACK changed publication owner")
+        if type(reference.key) is PutPublicationID and self.owner_worker_id != reference.key.owner_worker_id:
+            raise ValueError("stage ACK changed put owner")
+        if type(request) in (BeginPublication, PrepareGraph):
+            expected = PublicationRef
+            actual = reference
+        elif type(request) is ArmTask:
+            expected, actual = TaskPreparedReceipt, request.prepared
+        elif type(request) is RecordTerminal:
+            expected, actual = OutputPublicationCompleteWitness, request.complete
+        elif type(request) is CommitGraph:
+            if type(reference.key) is PutPublicationID:
+                if request.put_prepared is None:
+                    raise ValueError("put commit ACK requires its actual preparation")
+                expected, actual = PutPreparedReceipt, request.put_prepared
+            else:
+                if request.put_prepared is not None:
+                    raise ValueError("Task commit ACK cannot contain put preparation")
+                expected, actual = OutputPublicationCompleteWitness, None
+        elif type(request) is RecordAdoption:
+            expected, actual = OutputPublicationAdoptionProof, request.proof
+            if request.proof.owner_worker_id != self.owner_worker_id:
+                raise ValueError("stage ACK changed adoption owner")
+        elif type(request) is FencePublication:
+            expected, actual = (OwnerAbortReceipt, OwnerRetirementReceipt, protocol.WorkerDeathRecord), None
+        else:
+            expected, actual = ClosedContainedHolds, request.closed_holds
+        _set(self, "accepted_fact", expected)
+        fact = self.accepted_fact
+        if actual is not None and fact != actual:
+            raise ValueError("stage ACK changed its accepted fact")
+        if type(fact) is OutputPublicationCompleteWitness:
+            if PublicationRef(fact.publication_id, fact.manifest_digest) != reference:
+                raise ValueError("stage ACK Complete changed reference")
+        if type(fact) in (TaskPreparedReceipt, PutPreparedReceipt):
+            for reply in fact.prepare_replies + fact.promote_replies:
+                hold = reply.request.transfer.final_hold
+                if (hold.container_object_id != reference.key.object_id
+                        or hold.container_owner_worker_id != self.owner_worker_id):
+                    raise ValueError("stage ACK preparation changed its container owner")
+        if (self.fence is None) != (self.fence_receipt is None):
+            raise ValueError("stage ACK fence and receipt must agree")
+        if self.fence is not None:
+            _set(self, "fence", (OwnerAbortReceipt, OwnerRetirementReceipt, protocol.WorkerDeathRecord))
+            _set(self, "fence_receipt", PublicationReceipt)
+            if (self.fence_receipt.reference != reference
+                    or self.fence_receipt.stage is not PublicationStage.FENCED):
+                raise ValueError("stage ACK changed fence receipt")
+            if type(self.fence) is protocol.WorkerDeathRecord:
+                if _death(self.fence).worker_id != self.owner_worker_id:
+                    raise ValueError("stage ACK death changed owner")
+            elif self.fence.reference != reference or self.fence.owner_worker_id != self.owner_worker_id:
+                raise ValueError("stage ACK fence changed owner or reference")
+        if self.retired_receipt is not None:
+            _set(self, "retired_receipt", PublicationReceipt)
+            if (self.retired_receipt.reference != reference
+                    or self.retired_receipt.stage is not PublicationStage.RETIRED
+                    or self.fence_receipt is None
+                    or self.retired_receipt.sequence <= self.fence_receipt.sequence):
+                raise ValueError("stage ACK retirement changed closing history")
+        sequences = {}
+        for receipt in (self.receipt, self.fence_receipt, self.retired_receipt):
+            if receipt is not None and sequences.setdefault(receipt.sequence, receipt.stage) is not receipt.stage:
+                raise ValueError("stage ACK distinct stages reused an acceptance sequence")
+        if stage in (PublicationStage.INTENT, PublicationStage.PREPARED, PublicationStage.ARMED):
+            if not self.forward_open:
+                raise ValueError("forward mutation ACK cannot be closed historical replay")
+        if stage is PublicationStage.COMMITTED and self.fence_receipt is not None:
+            if self.receipt.sequence >= self.fence_receipt.sequence:
+                raise ValueError("first graph commit must precede its forward fence")
+        if stage is PublicationStage.FENCED:
+            if self.receipt != self.fence_receipt or fact != self.fence:
+                raise ValueError("fence ACK must name the actual first fence")
+            if fact != request.proof:
+                # Only the controller accepts a later committed owner death
+                # while retaining a different, already accepted first fence.
+                if (type(request.proof) is not protocol.WorkerDeathRecord
+                        or _death(request.proof).worker_id != self.owner_worker_id):
+                    raise ValueError("fence ACK rebound a requested owner decision")
+        if stage is PublicationStage.RETIRED and self.receipt != self.retired_receipt:
+            raise ValueError("retirement ACK must name its exact first receipt")
+
+    @property
+    def accepted(self):
+        return True
+
+    @property
+    def error(self):
+        return None
+
+    @property
+    def error_kind(self):
+        return None
+
+    @property
+    def forward_open(self):
+        return self.fence is None and self.retired_receipt is None
+
+
+def stage_ack_from_snapshot(request, snapshot, receipt, *, accepted_existing_fence=False):
+    """Project already validated authority state while its owning lock is held.
+
+    The controller alone selects the later-owner-death exception after exact
+    registry validation. No projected value can commit or replace that state.
+    """
+    if type(request) not in _MUTATION_TYPES or type(snapshot) is not PublicationSnapshot:
+        raise TypeError("stage ACK requires a mutation and canonical snapshot")
+    if type(receipt) is not PublicationReceipt or receipt != snapshot.receipt(_request_stage(request)):
+        raise ValueError("stage ACK receipt is not the accepted authority stage")
+    if request_reference(request) != snapshot.reference:
+        raise ValueError("stage ACK request changed authority reference")
+    if type(request) in (BeginPublication, FencePublication) and request.publication != snapshot.publication:
+        raise ValueError("stage ACK request changed complete publication or owner route")
+    if accepted_existing_fence:
+        if (type(request) is not FencePublication or type(request.proof) is not protocol.WorkerDeathRecord
+                or snapshot.fence is None or _death(request.proof).worker_id != snapshot.publication.owner_worker_id):
+            raise ValueError("existing-fence ACK requires a validated later owner death")
+    if type(request) in (BeginPublication, PrepareGraph):
+        fact = snapshot.reference
+    elif type(request) is ArmTask:
+        fact = snapshot.prepared
+    elif type(request) is RecordTerminal:
+        fact = snapshot.complete
+    elif type(request) is CommitGraph:
+        fact = snapshot.prepared if type(snapshot.publication) is PutPublication else snapshot.complete
+    elif type(request) is RecordAdoption:
+        fact = snapshot.adoption
+    elif type(request) is FencePublication:
+        fact = snapshot.fence
+        if fact != request.proof and not accepted_existing_fence:
+            raise ValueError("stage ACK cannot replace the requested first fence")
+    else:
+        fact = snapshot.closed_holds
+    return PublicationStageAck(request, snapshot.reference, snapshot.publication.owner_worker_id, receipt, fact,
+        snapshot.fence, snapshot.receipt(PublicationStage.FENCED), snapshot.receipt(PublicationStage.RETIRED))
 
 
 PUBLICATION_HANDLER = "enhanced_publication"
@@ -822,9 +995,7 @@ class PublicationAuthority:
         if previous is None:
             _state("publication has not been registered")
         S = PublicationStage
-        stage = {BeginPublication: S.INTENT, PrepareGraph: S.PREPARED, ArmTask: S.ARMED,
-                 RecordTerminal: S.TERMINAL, CommitGraph: S.COMMITTED, RecordAdoption: S.ADOPTED,
-                 FencePublication: S.FENCED, RetireGraph: S.RETIRED}[type(request)]
+        stage = _request_stage(request)
         changes = {}
         receipt = previous.receipt(stage)
         if type(request) is BeginPublication:
@@ -892,12 +1063,12 @@ class PublicationAuthority:
                 _conflict("retirement cleanup receipt was rebound")
             changes["closed_holds"] = request.closed_holds
         if receipt is not None:
-            return PublicationReply(request, True, previous, receipt)
+            return stage_ack_from_snapshot(request, previous, receipt)
         next_sequence = self._sequence + 1
         receipt = PublicationReceipt(reference, stage, next_sequence)
         updated = replace(previous, receipts=previous.receipts + (receipt,), **changes)
         # Reply validation/copy is fallible; prepare it before authority commit.
-        reply = PublicationReply(request, True, updated, receipt)
+        reply = stage_ack_from_snapshot(request, updated, receipt)
         self._records[reference.key] = updated
         self._sequence = next_sequence
         return reply
@@ -993,4 +1164,5 @@ __all__ = [value.__name__ for value in _WIRE_TYPES] + [
     "PublicationKey", "Publication", "PreparedReceipt", "FenceProof", "PublicationRequest",
     "PublicationStage", "RetirementReason", "PublicationErrorKind", "PublicationError",
     "PublicationAuthority", "PUBLICATION_HANDLER", "ABORT_OWNER_PUBLICATION_HANDLER", "request_reference",
+    "stage_ack_from_snapshot",
 ]

@@ -95,7 +95,7 @@ class _Fixture:
 
     def publication_rpc(self, request):
         reply = self.authority.apply(request) if self.gcs is None else self.gcs.enhanced_publication(request)
-        assert type(reply) is ep.PublicationReply and reply.request == request
+        assert type(reply) is (ep.PublicationReply if type(request) is ep.GetPublication or not reply.accepted else ep.PublicationStageAck) and reply.request == request
         self.gcs_calls.append((request, reply))
         return reply
 

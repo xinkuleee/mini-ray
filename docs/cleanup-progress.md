@@ -89,3 +89,11 @@ K8正式分支已创建：refs/heads/teaching-enhanced从B交付HEAD f9a9b35015f
 K8增强增量接入并完成有限实际回归：正式E继承B全部清理/公共修复，启用真实C0–C7/graph和闭包收据；新增post-C5/pre-owner put死亡例验证不重绑已提交物化，pure393/1deselected通过。共同two-lane2、Node35/Worker75/sameowner12/finish11/lease6/trace6/foreignwait5及PG、supervisor注册场景通过；保两次ACTIVE-only preparation测试观察错误失败和修正。原E61份artifact已原字节保留。下一步固定正式E源码提交，运行本分支最终30pure/37smoke与安装校验；候选通过不冒充最终HEAD。
 
 K9双分支收尾完成：B实测0a340b792c89667e493f7e7313935e45e29071bf的343/1deselected、32/32smoke与冻结安装保持独立验收；E实测3f5b725fb26390b86c78f085486fb73d897d3e42的405/1deselected、37/37smoke同版首次全部通过，包含七main，冻结安装通过。原K3增强七组合同已逐项迁移或有据退休；GCS→Node坏Finalize ACK两例采用真实Node/Worker/child效果与精确重放。Core11、PG5、receipt6、trace58及实际owner死亡等补充证据各归准确候选，不称全部338注册项均已执行。trace旧57/1失败和K8夹具失败保留，运行时校验未弱化。各分支artifacts/cleanup-*/final/acceptance.json记录实测身份；随后仅文档/证据提交，实际交付HEAD由工作区audit/two-version-cleanup/delivery.json核对。main仅追加导航，不维护第三个整理运行时；本轮未推送或运行远端CI。
+
+R2.3启动：四项审查P2按§11实施，原R2.2结果保留。B预修候选仅在原测试/源码上新登记单文件迁移，14例均在旧result_retained=True断言失败；原日志保留于audit/two-version-cleanup/execution/r23-base-before-01。B测试修复、E文档候选准备中，E ACK仅只读准备，待共同修复后固定实际输入；本轮尚未完成，未提交或推送。
+
+R23-01基础版已完成：r23-base-after-02冻结候选的15项目标测试、10项邻接Node测试、1项实际owner死亡进程测试通过；原14失败与首修14过/1夹具观察失败均保留。运行时及共享helper未改。 E原测试14项失败已复现，适配待验；Ray对应页与测试指南已修正，ACK试验尚未开始。
+
+R2.3四项P2完成：两版共同测试15/10/live1各自通过，E已采纳StageAck并通过同源码有限405/37门禁、全部受影响登记选择及新源码安装；详细结果/失败/成本/身份在本版r2.3-p2证据。原journal23旧E夹具失败已精确适配，未降协议校验。当前仍为未提交工作树，两个refs和旧tag不变；P3不纳入完成声明。
+
+R2.3阶段性提交：按用户最新要求，分别固定teaching-base与teaching-enhanced的已验收修复、计划/教材及原始证据。前述未提交状态是当时快照事实；本次不修改执行输入，不重跑或改标旧结果。当前提交用git rev-parse HEAD解析，提交后映射另存工作区audit/r23-execution/checkpoint-commits.json，避免自身SHA循环。未推送，main原有未提交文档未动。

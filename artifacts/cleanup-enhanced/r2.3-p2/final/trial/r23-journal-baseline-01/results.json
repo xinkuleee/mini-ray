@@ -1,0 +1,15 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_journal.py",
+    "exit_code": 0,
+    "seconds": 5.973,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-journal-baseline-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_journal.py"
+    ],
+    "log": "000-case.log"
+  }
+]

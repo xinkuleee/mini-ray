@@ -1,0 +1,1012 @@
+FFFFFFFFFFFFFF                                                           [100%]
+=================================== FAILURES ===================================
+_ test_finalize_of_interrupted_physical_write_supplies_generic_drop_receipt[created] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac63e630>
+phase = 'created'
+
+    @pytest.mark.parametrize("phase", ("created", "seal-before-metadata"))
+    def test_finalize_of_interrupted_physical_write_supplies_generic_drop_receipt(monkeypatch, phase):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:248: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac63e630>
+phase = 'created'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_finalize_of_interrupted_physical_write_supplies_generic_drop_receipt[seal-before-metadata] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6c1310>
+phase = 'seal-before-metadata'
+
+    @pytest.mark.parametrize("phase", ("created", "seal-before-metadata"))
+    def test_finalize_of_interrupted_physical_write_supplies_generic_drop_receipt(monkeypatch, phase):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:248: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6c1310>
+phase = 'seal-before-metadata'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_uncreated_stored_intent_is_fenced_but_inline_has_no_physical_drop_receipt _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac607e00>
+
+    def test_uncreated_stored_intent_is_fenced_but_inline_has_no_physical_drop_receipt(monkeypatch):
+>       fixture, node, record, request = _case(monkeypatch, "intent-only")
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:259: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac607e00>
+phase = 'intent-only'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_unfinished_physical_removal_keeps_claim_and_never_finalizes[false-partial-abort] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac63efc0>
+phase = 'partial', method = 'abort', fault = 'false'
+
+    @pytest.mark.parametrize("phase,method", (("partial", "abort"), ("seal-before-metadata", "delete")))
+    @pytest.mark.parametrize("fault", ("false", "exception"))
+    def test_unfinished_physical_removal_keeps_claim_and_never_finalizes(monkeypatch, phase, method, fault):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:277: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac63efc0>
+phase = 'partial'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_unfinished_physical_removal_keeps_claim_and_never_finalizes[false-seal-before-metadata-delete] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac643cb0>
+phase = 'seal-before-metadata', method = 'delete', fault = 'false'
+
+    @pytest.mark.parametrize("phase,method", (("partial", "abort"), ("seal-before-metadata", "delete")))
+    @pytest.mark.parametrize("fault", ("false", "exception"))
+    def test_unfinished_physical_removal_keeps_claim_and_never_finalizes(monkeypatch, phase, method, fault):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:277: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac643cb0>
+phase = 'seal-before-metadata'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_unfinished_physical_removal_keeps_claim_and_never_finalizes[exception-partial-abort] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ad2b4cb0>
+phase = 'partial', method = 'abort', fault = 'exception'
+
+    @pytest.mark.parametrize("phase,method", (("partial", "abort"), ("seal-before-metadata", "delete")))
+    @pytest.mark.parametrize("fault", ("false", "exception"))
+    def test_unfinished_physical_removal_keeps_claim_and_never_finalizes(monkeypatch, phase, method, fault):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:277: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ad2b4cb0>
+phase = 'partial'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_unfinished_physical_removal_keeps_claim_and_never_finalizes[exception-seal-before-metadata-delete] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac64ee10>
+phase = 'seal-before-metadata', method = 'delete', fault = 'exception'
+
+    @pytest.mark.parametrize("phase,method", (("partial", "abort"), ("seal-before-metadata", "delete")))
+    @pytest.mark.parametrize("fault", ("false", "exception"))
+    def test_unfinished_physical_removal_keeps_claim_and_never_finalizes(monkeypatch, phase, method, fault):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:277: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac64ee10>
+phase = 'seal-before-metadata'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_manager_failure_retains_claim_until_same_finalize_completes_cleanup[before-forget] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ad1ee150>
+after_effect = False
+
+    @pytest.mark.parametrize("after_effect", (False, True), ids=("before-forget", "after-forget"))
+    def test_manager_failure_retains_claim_until_same_finalize_completes_cleanup(monkeypatch, after_effect):
+>       fixture, node, record, request = _case(monkeypatch, "seal-before-metadata")
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:305: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ad1ee150>
+phase = 'seal-before-metadata'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_manager_failure_retains_claim_until_same_finalize_completes_cleanup[after-forget] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6721b0>
+after_effect = True
+
+    @pytest.mark.parametrize("after_effect", (False, True), ids=("before-forget", "after-forget"))
+    def test_manager_failure_retains_claim_until_same_finalize_completes_cleanup(monkeypatch, after_effect):
+>       fixture, node, record, request = _case(monkeypatch, "seal-before-metadata")
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:305: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6721b0>
+phase = 'seal-before-metadata'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_worker_ack_loss_preserves_physical_receipt_and_finalize_replay_skips_storage _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac683740>
+
+    def test_worker_ack_loss_preserves_physical_receipt_and_finalize_replay_skips_storage(monkeypatch):
+>       fixture, node, record, request = _case(monkeypatch, "partial")
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:344: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac683740>
+phase = 'partial'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_removal_effect_then_exception_replays_from_retained_claim[partial-abort] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac695850>
+phase = 'partial', method = 'abort'
+
+    @pytest.mark.parametrize("phase,method", (("partial", "abort"), ("seal-before-metadata", "delete")))
+    def test_removal_effect_then_exception_replays_from_retained_claim(monkeypatch, phase, method):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:369: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac695850>
+phase = 'partial'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_removal_effect_then_exception_replays_from_retained_claim[seal-before-metadata-delete] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac645820>
+phase = 'seal-before-metadata', method = 'delete'
+
+    @pytest.mark.parametrize("phase,method", (("partial", "abort"), ("seal-before-metadata", "delete")))
+    def test_removal_effect_then_exception_replays_from_retained_claim(monkeypatch, phase, method):
+>       fixture, node, record, request = _case(monkeypatch, phase)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:369: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac645820>
+phase = 'seal-before-metadata'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_corrupt_bytes_or_another_write_claim_never_authorize_finalization[bytes] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6c2ae0>
+corruption = 'bytes'
+
+    @pytest.mark.parametrize("corruption", ("bytes", "claim"))
+    def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monkeypatch, corruption):
+>       fixture, node, record, request = _case(monkeypatch, "corrupt-sealed" if corruption == "bytes" else "partial")
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:392: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6c2ae0>
+phase = 'corrupt-sealed'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+_ test_corrupt_bytes_or_another_write_claim_never_authorize_finalization[claim] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6a67e0>
+corruption = 'claim'
+
+    @pytest.mark.parametrize("corruption", ("bytes", "claim"))
+    def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monkeypatch, corruption):
+>       fixture, node, record, request = _case(monkeypatch, "corrupt-sealed" if corruption == "bytes" else "partial")
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:392: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73d3ac6a67e0>
+phase = 'partial'
+
+    def _case(monkeypatch, phase):
+        if phase == "partial":
+            fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
+        else:
+            fixture, node, record, _complete = _node(refs=False)
+            prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+            stored = (fixture.manifest.value)
+            with monkeypatch.context() as fault:
+                if phase == "intent-only":
+                    def before_storage(effect, descriptor, payload):
+                        assert effect.transfer_index is None and descriptor.object_id == (fixture.id).object_id
+                        assert payload == (fixture.values.payload)
+                        raise _InjectedLocalFailure("before replica create")
+    
+                    fault.setattr(fixture.adapter, "_seal_replica", before_storage)
+                elif phase == "created":
+                    original = fixture.store.create
+    
+                    def created_then_error(object_id, size_bytes):
+                        assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
+                        original(object_id, size_bytes)
+                        raise _InjectedLocalFailure("after replica create")
+    
+                    fault.setattr(fixture.store, "create", created_then_error)
+                else:
+                    assert phase in ("seal-before-metadata", "corrupt-sealed")
+                    original_seal = fixture.store.seal
+    
+                    def sealed_then_error(object_id):
+                        assert object_id == (fixture.id).object_id
+                        original_seal(object_id)
+                        raise _InjectedLocalFailure("after replica seal")
+    
+                    fault.setattr(fixture.store, "seal", sealed_then_error)
+                    if phase == "corrupt-sealed":
+                        original_write = fixture.store.write
+    
+                        def corrupt_write(object_id, payload):
+                            assert object_id == (fixture.id).object_id
+                            original_write(object_id, b"X" * len(payload))
+    
+                        fault.setattr(fixture.store, "write", corrupt_write)
+                with pytest.raises(_InjectedLocalFailure):
+                    node._handle_prepare_output_publication(prepare)
+            request = _owner_request(fixture, node)
+    
+        stored = (fixture.manifest.value)
+        expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+        snapshot = fixture.journal.snapshot(fixture.id)
+        assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+>       assert snapshot.result_retained is True and snapshot.complete is None
+E       assert (False is True)
+E        +  where False = OutputPublicationJournalSnapshot(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=Outp...result_retained=False, complete=None, rollback=None, rollback_tombstone=None, retirement=None, ready_to_complete=False).result_retained
+
+tests/unit/test_owner_finalize_replica_receipts.py:140: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_finalize_of_interrupted_physical_write_supplies_generic_drop_receipt[created]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_finalize_of_interrupted_physical_write_supplies_generic_drop_receipt[seal-before-metadata]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_uncreated_stored_intent_is_fenced_but_inline_has_no_physical_drop_receipt
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_unfinished_physical_removal_keeps_claim_and_never_finalizes[false-partial-abort]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_unfinished_physical_removal_keeps_claim_and_never_finalizes[false-seal-before-metadata-delete]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_unfinished_physical_removal_keeps_claim_and_never_finalizes[exception-partial-abort]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_unfinished_physical_removal_keeps_claim_and_never_finalizes[exception-seal-before-metadata-delete]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_manager_failure_retains_claim_until_same_finalize_completes_cleanup[before-forget]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_manager_failure_retains_claim_until_same_finalize_completes_cleanup[after-forget]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_worker_ack_loss_preserves_physical_receipt_and_finalize_replay_skips_storage
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_removal_effect_then_exception_replays_from_retained_claim[partial-abort]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_removal_effect_then_exception_replays_from_retained_claim[seal-before-metadata-delete]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_corrupt_bytes_or_another_write_claim_never_authorize_finalization[bytes]
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_corrupt_bytes_or_another_write_claim_never_authorize_finalization[claim]
+14 failed in 1.32s

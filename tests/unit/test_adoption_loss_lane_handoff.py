@@ -38,7 +38,7 @@ def test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup(monkeyp
     def lose_initial_adoption_ack(address, handler, request):
         actual = original_rpc(address, handler, request)
         if handler == ep.PUBLICATION_HANDLER:
-            assert type(actual) is ep.PublicationReply and actual.request == request
+            assert type(actual) is (ep.PublicationReply if type(request) is ep.GetPublication or not actual.accepted else ep.PublicationStageAck) and actual.request == request
             return actual
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
         assert actual.request == request and actual.accepted
@@ -80,7 +80,7 @@ def test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup(monkeyp
     def adoption_rpc(address, handler, request):
         result = original_rpc(address, handler, request)
         if handler == ep.PUBLICATION_HANDLER:
-            assert type(result) is ep.PublicationReply and result.request == request
+            assert type(result) is (ep.PublicationReply if type(request) is ep.GetPublication or not result.accepted else ep.PublicationStageAck) and result.request == request
             return result
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
         assert result.request == request and result.accepted

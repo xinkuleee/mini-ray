@@ -66,8 +66,8 @@ class EnhancedPublicationControl:
                     if (snapshot is not None and snapshot.publication == publication
                             and snapshot.fence is not None and snapshot.fence != death):
                         self.commit_owner_death(death)
-                        return ep.PublicationReply(request, True, snapshot,
-                            snapshot.receipt(ep.PublicationStage.FENCED))
+                        return ep.stage_ack_from_snapshot(request, snapshot,
+                            snapshot.receipt(ep.PublicationStage.FENCED), accepted_existing_fence=True)
                 if type(request) is ep.RetireGraph:
                     self._validate_closed_deaths(request.closed_holds)
                 stage = {ep.BeginPublication: ep.PublicationStage.INTENT,
@@ -89,8 +89,8 @@ class EnhancedPublicationControl:
                 return ep.PublicationReply(request, False, error_kind=ep.PublicationErrorKind.UNAVAILABLE,
                                            error=str(exc) or type(exc).__name__)
             reply = self.authority.apply(request)
-            if reply.accepted and reply.snapshot is not None and type(request) is not ep.GetPublication:
-                death = self._owner_death(reply.snapshot.publication.owner_worker_id)
+            if type(reply) is ep.PublicationStageAck:
+                death = self._owner_death(reply.owner_worker_id)
                 if death is not None:
                     self.commit_owner_death(death)
             return reply

@@ -1,10 +1,10 @@
 # mini-ray 两条教学分支的完整整理计划
 
-日期：2026-09-10。状态：**B分支K7已独立验收，E从验收B派生并完成K8–K9有限验收；两条本地教学分支均保留，未发布远端**。实际进度见[执行记录](cleanup-progress.md)。下文保留R2.2制定时输入和执行合同；“本次未创建/未实施”描述原计划修订轮。
-修订：R2.2。在R2.1的清理范围和修复依据上，补齐两条实际Git分支的定位、存续、同步、CI与交付检查；结构重构仍逐包验证收益。
+日期：2026-09-10。状态：**R2.2两版有限验收已保存；独立复审发现的四项P2已在R2.3按计划修复并完成有限验收；本次阶段性提交固定R2.3成果，未推送，P3仍明确保留**。实际进度见[执行记录](cleanup-progress.md)，本轮目标/边界/验收见§11；两条本地分支保留，未发布远端。§1–10保留R2.2原输入及执行合同，旧完成概括以§11审查纠正为准；本次未创建/未实施描述相应历史修订轮。
+修订：R2.3追加§11，限定修复全部审查P2；原R2.2在R2.1的清理范围和修复依据上，补齐两条实际Git分支的定位、存续、同步、CI与交付检查；结构重构仍逐包验证收益。
 
 本计划覆盖代码、测试、工具、配置、示例、文档、历史资料和验收产物。
-完整逐项证据见[机器清单](project-cleanup-plan.json)，逐文件导航见[整理范围索引](project-cleanup-index.md)。
+原R2.2逐项输入及本轮p2_remediation见[机器清单](project-cleanup-plan.json)，逐文件导航见[整理范围索引](project-cleanup-index.md)。
 此前[价值审计](code-value-audit.md)与[退休清单](retirement-inventory.md)是输入证据，不是另一套执行计划。
 
 ## 1. 两条实际分支分别整理，原版本保持不变
@@ -393,3 +393,167 @@ Core提取、typed义务、窄ACK可能短期增加类型行数，净收益须�
 有用内容保留是正确结果；没有证据的内容不能为了“全部整理”全部删除。
 
 本次实际仅固定版本提取、静态/原Git字节检查与计划生成；没有删除代码/测试、创建清理分支、运行pytest、提交或推送本轮计划。
+
+## 11. R2.3：独立复审后全部 P2 问题的修复计划
+
+### 11.1 本次目标、输入和完成口径
+
+本节是现有清理计划的后续修正，优先于前文历史检查点中的完成表述；不是另一个实现计划。这里的 **P2 是审查严重级别**，与前文名为“P2：Node journal/进度记录”的结构工作包不同。本节编号统一为 `R23-01` 至 `R23-04`。
+
+本节保留R2.3实施合同；当前R23-01至04已完成，准确快照/原日志/处置见本版r2.3-p2证据与当前进度。下文试验/验收要求不改写成旧R2.2已完成的事实。原R2.2有限通过记录继续属于各自固定输入；不再将它解释为全部保留测试已迁移、所有结构子项均已处置或文档完全一致。
+
+| 版别 | 本轮审查/修复输入HEAD | 已保存的R2.2实测提交 | 已有有限结果 |
+|---|---|---|---|
+| B / teaching-base | `ab4cfb317fd786a286359d8f4e971ff195739375` | `0a340b792c89667e493f7e7313935e45e29071bf` | 343 passed / 1 deselected；32/32 smoke及七main、冻结安装 |
+| E / teaching-enhanced | `fd40a407a46ada3d4941c034a73355f45355b270` | `3f5b725fb26390b86c78f085486fb73d897d3e42` | 405 passed / 1 deselected；37/37 smoke及七main、冻结安装 |
+
+E准确历史派生点仍为B已验收交付HEAD `f9a9b35015f114afda9c87e653b6fedcda2eb0b2`。本轮共同测试修复先B再E，记录来源/目标提交或候选hash；不重新派生E、不用旧E整文件覆盖B。
+
+| 编号 / 审查P2 | 适用分支 | 必须达到的目标状态 | 为什么这样修 |
+|---|---|---|---|
+| R23-01：owner-finalize有效测试残留旧槽假设 | B、E分别修复验证 | 单输出STORED与INLINE各自可达；payload持有、清理义务、实体删除和Worker ACK独立断言；全部原有效反例有去向 | 原测试并非无价值，而是夹具变为单结果后还按两槽理解；删除测试会丢失真实收据合同，恢复双槽违反定位 |
+| R23-02：增强P5 GCS ACK/copy未明确处置 | 只E | 一次有限实际候选试验、字段/成本/正确性对照、明确“实施并验证”或“有据保留当前设计” | 此P2是设计评估缺口，不是已证明的协议错误；只有试做/测量才能支持原计划允许的保留，不能补一句理由就销项 |
+| R23-03：Ray对应页把B语义挂到E源码 | 只E | 当前E链接解释当前E；B对照固定版本；清楚区分Ray对应机制与mini新增两项保证 | 学习者须能从文字追到真实代码；只替换一句“本版”仍留下错误流程和链接 |
+| R23-04：E测试指南仍称未验收候选 | 只E，B仅同步本轮进度 | 已保存R2.2结果、当前改动状态、R2.3新证据分别标识；不把405/37自动移贴给新HEAD | 结果具有版本边界；稳定描述历史验收可避免后续代码前移时再次误导 |
+
+审查来源为工作区 `audit/review-after-cleanup/{review-summary,base-source,enhanced-source,dual-docs}.md`；具体问题和下述目标已完整写入本节，实施不依赖只能在该工作区访问的外部链接。
+
+**范围边界：**本轮不处理其余P3的无caller三输出helper、full_output_ids、surviving_output_locations恒零参数、通用fixture补造、Actor旧别名或raw-string过期注释；保留为明确未完成清单，不称全部历史负担清零。R23-01文件内无效slot参数及“两槽”说明因直接造成P2测试错误，随该项退出。R23-04顺带改 `design.md` 首段“候选”，因为它属于同一当前身份描述。
+
+不增加新API、新故障模型、GCS HA/持久恢复/owner接管，不恢复多返回、targeted等退出能力；不改调度/Actor/PG算法、依赖版本、原tag或旧artifact。main不实施运行时修复；原计划轮未授权提交、推送或CI发布；当前用户已明确要求阶段性提交，本次分别固定B/E本地成果，不推送或触发远端CI。
+
+### 11.2 R23-01：修复两版保留的物理回收测试
+
+**精确范围：**两版 `tests/unit/test_owner_finalize_replica_receipts.py`、各自 `scripts/baseline_manifest.json` 的迁移登记与受影响闭包hash，以及当前进度/新证据。优先只改该测试文件；已有 `test_output_publication_node_server._node` 支持 `stored=False`，无需先改共享工厂、运行时或owner/Node/Worker接口。共享helper只有出现真实签名/缺字段障碍且不能在本文件明确构造时才最小适配，必须列出受影响消费者。
+
+**根因链：**`_case(..., "intent-only")` 调 `_node(refs=False)`，其默认 `stored=True`；`_drop(..., slot_index=0)` 已不读取index，始终指向唯一ObjectID。第265行却断言该值是INLINE。另所有原STORED中断均发生在MATERIALIZE ACK之前；当前journal只有在真实物化ACK后才设置 `record.result`，因此这些窗口的 `result_retained=True` 也不成立。
+
+`result_retained` 只表示journal持有的结果描述/INLINE数据，不是“所有清理已完成”，也不是物理bytes是否存在。STORED可有partial/sealed bytes却没有该结果；INLINE可持有结果而没有Node实体副本。应修正观察点并增强责任断言，不能将所有True机械替换为False。
+
+#### 11.2.1 目标状态与责任表
+
+以下是测试应到达并验证的状态，不通过直接赋值伪造journal事实。所有phase都从实际Node Prepare和现有故障切入建立。
+
+| 场景 / 精确中断点 | 中断后的权威事实 | 正确结果持有/物理状态 | Finalize责任及允许完成点 |
+|---|---|---|---|
+| STORED intent-only，Seal callback入口前异常 | journal ACTIVE，有MATERIALIZE intent、无ACK、无Complete | result_retained=False；无write claim、无bytes、无sealed metadata | 已安装准确owner死亡fence后，Node以原intent封住未来写入并完成本地清理收据；仍须完整匹配的typed Worker ACK才退休journal（本纯测试为受控外部边界） |
+| STORED created / partial | 同上 | result_retained=False；准确write claim，未seal的完整分配/partial bytes | Node按同claim执行abort；失败/未知保claim和待办，不准越过Worker门槛 |
+| STORED seal-before-metadata | 同上 | result_retained=False；准确claim和sealed bytes，但未发布sealed metadata | 校验size/hash/pin/claim后delete，再完成manager清理；两部分完成前不能发成功最终收据 |
+| STORED corrupt-sealed或错误claim | intent存在，但清理证据不匹配 | result_retained=False；错误bytes/claim仍在 | 拒绝删除和最终确认，不调用Worker、不制造Drop收据；保留当前负例，不放宽校验 |
+| 本地删除已发生，manager ACK未知 | 无Complete，lease已ABANDONED并归还资源 | bytes可已无；claim仍保留；dropped metadata不等完整Drop receipt | 精确重放manager步骤，保before/after-effect两种原断言；完整物理收据后才进入Worker确认 |
+| 物理清理已完成，Worker ACK丢失 | journal仍ACTIVE；owner-cleanup未finished，ticket已释放 | 对这些STORED中断仍result_retained=False；已存在准确Drop receipt | 原请求重放Worker ACK，禁止再次触碰已完成storage工作；ACK确认后journal RETIRED，不能造Complete或rollback |
+| 独立INLINE，Prepare成功但尚未Complete | 实际owner登记与MATERIALIZE ACK；journal ACTIVE，Complete=None | result_retained=True，持有准确INLINE payload；无Node bytes/claim/sealed metadata/Drop receipt | Node按owner fence终止lease；首Worker ACK未知时结果必须仍True且未finished；精确ACK后变False/RETIRED，无实体删除收据 |
+
+这些case中Node未Complete，因此最终lease应为ABANDONED，不伪造执行成功；现有“Complete后死亡仍保Complete”的case在 `test_output_owner_death_node.py` 保留，不能把本表推广到那种窗口。资源释放、物理清理、Worker ACK、journal退休、GCS图退休是不同提交点。
+
+#### 11.2.2 具体改法与保留合同
+
+1. `_drop` 删除无用slot参数，始终从唯一manifest和准确attempt/owner/Node/checksum构造请求；更新本文件全部调用及“两槽”说明。
+2. `_case`/`_assert_not_finalized` 对STORED中断明确断言MATERIALIZE intent存在、对应ACK不存在、materialized/result_retained=False、Complete=None；同时按phase检查claim、bytes、metadata、ticket、Worker调用次序。上述物理存在性不可用单个False替代。
+3. 将旧复合case拆成独立STORED intent-only和INLINE no-physical-receipt case。INLINE用 `_node(refs=False, stored=False)` 实际完成Prepare，不调用Complete；同case有界丢一次Worker ACK，核真实journal结果True→True→False、lease只释放一次，随后Generic Drop拒绝且仍无该ObjectID的物理收据。完成断言分为公共journal/lease/Worker事实与STORED专属物理收据；INLINE不能调用要求Drop receipt的旧 `_assert_finalized` 分支。未完成断言按场景显式给结果持有预期，不统一True或False。INLINE guard只禁止storage写入/删除、物化callback和manager删除，允许Generic Drop做 `contains` 只读检查；不复用禁止所有读写的STORED重放guard。
+4. 保留原created/seal中断、abort/delete返回False/抛异常、manager before/after-effect、Worker ACK未知、removal-effect-then-error、bytes/claim篡改各参数分支。预计从7个函数/14个参数case变为8个函数/15个case，实际数量由精确有界运行日志确认，不为凑数量删分支。
+5. 继续复用真实Node/journal/store/ledger方法；Worker回调是现有纯组合的显式测试边界，要校验完整request、endpoint、次数及锁外调用，不能把手工typed ACK称为真实Worker进程清理。另以已登记的真实owner-death进程case验证接线，不另造通用Worker框架或更多故障组合。
+
+**B/E差异：**B没有普通GCS发布/图，测试不能补空端点。E调用现有增强 `_node` 真实authority fixture：STORED各中断已经INTENT/PREPARED，尚无ARMED/Complete；INLINE成功Prepare后有ARMED但仍无Complete。现有Finalize路径会以真实FencePublication取得FENCED；Worker首ACK未知不退休Node，精确ACK后Node RETIRED并返回 `ClosedContainedHolds(exact_reference, (), ())`。authority仍FENCED、graph_active=True、closed_holds=None且无RETIRED receipt；Node返回的闭包不自动写入authority。不能把Node级cleaned写成GCS RETIRED，也不代调用者额外执行RetireGraph来隐藏职责。zero-child闭包只证明空集合，成员死亡/control/全局退休由已有增强controller和实际进程case证明，不为本节点纯case伪造全局成功或新建一套GCS fixture。
+
+**运行范围：**先审本文件导入闭包和资源成本，以迁移项登记 `tests/unit/test_owner_finalize_replica_receipts.py`，`marker=unit`，工作包R23-01；不自动晋升CI gate。原HEAD尚未登记该文件，因此先固定“原测试/源码字节＋新受审registry”的预修候选，准确记录dirty状态和hash；通过现有 `run_baseline.py --case` 执行一次保存首个真实失败，不能将它改标为原clean HEAD实测。再执行修复快照整个文件。预修失败可能早于第265行，按真实日志记原因。两版分别执行，不合并计数。
+
+每版另执行已登记 `tests/unit/test_output_owner_death_node.py`（邻接payload/Complete/Worker语义）和 `tests/integration/test_output_owner_death_path.py::test_adopted_output_owner_death_cleans_live_executor_and_source_holds`（真实进程）。若共享helper或runtime未改，其余原gate继续归旧实测SHA，以输入相同证明保留结果，不要求为此重跑全树；若共享helper改变，按实际消费者再选有限登记项，不盲目刷新hash。
+
+**退出条件：**15个目标case的实际数量、全部原不变量去向、每版失败/通过、准确输入hash与邻接证据齐全；AST/导入成功不代替行为。若修正夹具后暴露真实runtime错误，本项状态保持未完成，先形成最小真实反例和责任分析；不以弱化断言“修绿”，不扩大成无界运行时改造。
+
+### 11.3 R23-02：完成增强 GCS ACK/copy 的有限评估与处置
+
+**建议路线：保留当前完整Reply作为对照，在隔离候选中只试缩“成功mutation回包”；用完整生命周期证据决定是否采纳。** 本轮目标是补齐原P5承诺的实际评估，尚不能预先承诺窄ACK更好，也不能仅凭“防御copy必要”就免做试验。
+
+当前九类请求是八种mutation：BeginPublication、PrepareGraph、ArmTask、RecordTerminal、CommitGraph、RecordAdoption、FencePublication、RetireGraph，加一种GetPublication查询。put复用图子协议，不新增Task ARM/Complete。
+
+#### 11.3.1 候选边界和不可改变的状态
+
+- 对照版本保留现有PublicationReply；候选仅为成功mutation定义具体类型的StageAck（名称可随实现定，但只能这一种候选）。保留完整原request echo、PublicationRef、准确stage receipt、由权威已接受值生成的必要fact及当前forward信息。先去完整snapshot冗余，不同时压缩request echo或改历史绑定规则。
+- GetPublication保持可表达ABSENT的完整detached snapshot；失败reply暂保原request、typed error和已有可选snapshot。查询仍承担unknown恢复、Node-loss成功知识、GC/death闭包历史，不能把恢复所需内容偷移到另一个Core缓存。
+- 候选只改变传输/校验表示：现有单GCS记录和graph判环算法、锁顺序、receipt sequence、提交先后、fence/retirement语义不变。StageAck是从当前权威状态派生的返回值，不加第二份可变phase/forward表。
+- 首次transition仍先构造并校验可返回的值，再提交 `_records` 和sequence；不能把原先提交前的fallible构造挪到提交后，造成报错却已提交的新窗口。输入边界和外部返回仍有深校验/隔离，禁止把frozen dataclass当不可篡改证明。
+- 不改B、不合并C0+C1/C4+C5、不引入通用schema/插件/后端、不长期保留两种运行模式。对照和候选只存在于独立固定快照，最终正式E选一种。
+
+#### 11.3.2 必要信息与消费者表
+
+下表为候选必须保留的语义，不将尚未验证的字段布局冒充正确实现。`accepted_fact` 必须按具体请求/阶段有明确类型和exact校验，不能使用任意dict。身份、request与receipt引用/阶段一致是每一行的共同要求。
+
+| 请求 | 成功ACK必须表达的事实 | 当前主要消费者 / 不能省掉的区别 |
+|---|---|---|
+| BeginPublication | 准确INTENT及对应publication/route绑定；当前是否仍可前进 | Node `_record_gcs`、owner client begin；有INTENT不等成功执行，不准据旧ACK重新准入 |
+| PrepareGraph | 准确PREPARED及本次引用/阶段；当前forward信息 | Node graph gate、client begin；CYCLE走失败reply，不能伪造PREPARED或释放已有child |
+| ArmTask | ARMED以及权威接受的完整TaskPreparedReceipt | journal必须比较真实child/materialization preparation，不能只看stage或拿期望manifest合成证明 |
+| RecordTerminal | TERMINAL及准确Complete witness | Node terminal gate直接消费complete；允许有合法晚成功历史而forward已关闭，不能把accepted与forward绑成一个bool |
+| CommitGraph | COMMITTED与当前forward信息；put须绑定真实PutPreparedReceipt | owner Task/put准入；已经commit的精确重放可无forward，RPC后还需本地epoch/abort检查 |
+| RecordAdoption | ADOPTED及准确owner adoption proof | owner/client、Node退休；C7未知不能回滚C6 READY，不能把该收据解释为bytes仍在 |
+| FencePublication | 已安装的准确fence与FENCED receipt，而非请求必然成为新决策 | controller有“后到owner death排清理但返回已有fence”的真实分支；ACK必须区分请求echo与实际accepted fence，不能把旧fence说成本次death首次提交 |
+| RetireGraph | RETIRED及实际接受的ClosedContainedHolds/首次历史绑定 | client/death driver；图退休不代替实体bytes/child效果；精确重放不接受换proof顺序的新请求 |
+| GetPublication（不窄化） | ABSENT或完整准确detached history | Core Node-loss读取complete、controller读取publication/closed_holds/receipts；INTENT/ARM不证明成功，metadata不能恢复bytes |
+
+同时适配 `control.py` trace取publication、`enhanced_publication_control.py` mutation后owner死亡检查、Node result gate读取Complete、journal ARM核prepared，以及实际测试桥。PrepareGraph和Task CommitGraph请求只有reference，不能从中推导owner；由ACK携带已验证owner identity，或在原锁内取detached标量trace上下文。不得为trace新增网络query或另造成功表；其它消费者若必须追加查询，该成本和新的未知回复责任必须完整纳入比较。
+
+**封闭修改范围：**E的 `enhanced_publication.py`、`enhanced_publication_client.py`、`enhanced_publication_control.py`、`output_publication_node.py`、`output_publication_journal.py`、`control.py`、`node.py`，及实际直接消费者中 `core.py`、`publication_gate.py` 的必要适配。现有精确测试/helper随调用变动适配；`output_protocol.py` 的B公共窄Complete ACK不因本试验重写。开始前列明全部成功/失败/query消费者，新增路径必须给出调用证据，不能全Core重构。
+
+#### 11.3.3 试验、计量与采纳判据
+
+1. **固定对照。**以已完成R23-01的E候选为基线，固定源码、测试、manifest、Python/uv/lock和换行口径；原完整Reply就是对照，不拿更早多槽原型的pickle结果作收益。
+2. **只搭一个可运行候选。**覆盖普通Task零child和含现有owned/borrowed child的Task完整发布/owner接管/退休，再覆盖现有含Ref put与whole替换入口。不为每个child/storage/fault排列制造case；必须通过真实authority/Node/client消费，不能只对独立DTO做pickle长度实验便称端到端改善。
+3. **按同样轨迹测成本。**分别列request与reply的实际序列化bytes、完整publication/prepared/Complete/closed-hold的重复携带和重建次数、正常与未知ACK恢复的RPC/query数量、所加/所删类型/字段/独立状态/校验分支、源码diff/阅读路径。使用同一序列化方式、相同输入和固定重复次数；先记录测量口径，保raw数据。若测耗时，固定预热/重复次数并报告分布及环境，仅作辅助；不设置拍脑袋加速百分比或LOC硬上限。
+4. **比较语义而非假等价。**必须逐项比较exact接受/拒绝、receipt/历史、当前forward、owner READY、bytes、child hold、资源、finish/GC屏障；成功reply形状/bytes改变是预期差异，B UNKNOWN与E存活TERMINAL知识差异也继续保留。不得归一成一个success结果。
+5. **采纳必须同时成立：**全部受影响合同通过；权威/同步点不增加；测得完整history在普通成功回包中减少，且未被额外query、同等大的fact重装、反复copy或明显更复杂的消费/错误分支抵消。不能只凭回包变小或拆出类型数量评价。
+6. **否则有据保留当前设计。**保留实际候选diff、运行结果、成本对照和逐项理由；明确哪种必要fact/隔离/恢复消费抵消收益。普通实现错误/坏fixture应先修到可比较，未跑通纵向路径的半成品不能凭“复杂”销项。若有限真实试做已经以可复现反例证明本候选破坏必要隔离/历史语义，可作为失败试验证据撤回并保留原设计，无需为了完成而采用不安全实现；必须明确未完成的候选验证，不称候选通过或获得净收益。归档试验但正式E不保开关或死接口；只有静态猜测、没有有效对照/实际反例时保持未完成。一次候选完成后择一，不连续扩展通用框架寻找更好数字。
+
+#### 11.3.4 有限验证范围及证据边界
+
+首先执行现有四个增强纯文件：`test_enhanced_publication.py`、`test_enhanced_node_publication.py`、`test_enhanced_publication_control.py`、`test_enhanced_owner_client.py`，并按实际签名变化执行已登记的Node/journal/trace接线集合。若需要针对新ACK字段增加负例，只覆盖新边界的deep-tamper、request/stage/fact错绑、mutation回复篡改不反向污染权威、旧receipt不授权新forward、fence特例；每个新case必须对应上述新增风险。
+
+已有实际组合继续承担W1–W4：图预留后child失败/补偿，C3完成而C4未知及publisher死亡，C5与C6间隙，READY后C7/重建/GC/晚消息；已有公共二对象环与并发联合四对象预留、Task/put/whole边入口必须按E实际路径验证。测试桥若以前从mutation snapshot读取一般历史，可用实际query观察并注明test-only查询；依赖本次mutation接收时点的ARM、terminal gate、fence等断言必须核新typed accepted_fact，不能以事后query替代时点或在测试里伪造snapshot让协议“通过”。
+
+候选若进入正式E，固定同一新执行输入，运行当前有限pure gate与37个smoke（包含七main、三个真实图场景和两个terminal-loss场景），再执行受影响但不在gate的登记case，包括R23-01。计数以实际日志为准；不承诺仍为405。依赖pin不变，不重解锁；采纳StageAck会改变包内源码/导入，需在新固定输入做一次锁定安装、依赖一致性和项目外导入核查，旧安装不冒充新SHA。若只有测试/文档变化，则记录包源码、构建配置、lock和依赖未变，旧安装仍只认证其旧输入，不为无变化重复安装。若最终保留原运行时，试验结果归候选，不给正式E贴候选的通过标签，也不因试验要求B重验。
+
+**仍待实施证明：**ARM/晚terminal/fence特例在窄ACK下的fact校验是否足够、全部直接消费者是否无需新增同步query、返回值构造失败是否仍在提交前、深层别名隔离是否保持、收益是否抵消类型/分支成本。它们正是本项试验要解决的问题；此计划不冒充已经证明。
+
+### 11.4 R23-03/R23-04：E教材、测试指南与身份说明修复
+
+**精确范围：**E `docs/production-ray-mapping.md`、`docs/testing.md`、`docs/design.md` 首段；按实际实施状态更新两版 `docs/current-status.md`、`docs/cleanup-progress.md` 和本计划状态。README只有相关链接/身份不一致时最小同步，不扩大为文案重写。B Ray映射的基础机制正确，不机械复制E内容覆盖它。
+
+#### 11.4.1 Ray对应页目标
+
+整页定位改为“当前E的共同Ray Core机制，以及两项mini自定义增量”。保留固定Ray对照commit `c3162dce8d064824293875c5d0bbfd76a54e04ce`，并明确职责类似不等于协议一致。
+
+- 共同API/调度/bytes/owner/Actor/PG映射可继续链接当前E源码；涉及普通发布必须写当前E的GCS事实与图门禁，不能再称“本版去掉门禁”。
+- 普通结果段说明C0/C1/ARM、Node Complete、GCS terminal、graph commit、owner READY、adopted/退休分别由谁提交；不把此顺序说成Ray原样实现。
+- 更新Node-loss/成功知识/图边段：存活GCS准确TERMINAL可保成功知识；仅INTENT/ARM仍不够；bytes全失仍LOST。Task/put/whole入口与已保存真实拒环证据一致；不再把已验收场景写成尚未证明，也不把所有Python容器环都称ObjectID环。
+- 保留B对照时，源码链接固定B实测 `0a340b7`；B教材和已归档验收可链接文档交付 `ab4cfb3`，注明该HEAD的源码与实测相同且后续只加文档/证据。不能用E相对链接伪装B代码。当前E状态与验收入口指向E自己的页面/记录。
+- 收益写为额外存活发布事实来源与全局拒环，成本写为同步GCS、补偿/fencing/闭包收据/死亡清理；不得写“更接近生产Ray”。
+
+#### 11.4.2 测试指南目标与版本前移规则
+
+`testing.md:5` 改为“R2.2已保存验收”：正式E实测 `3f5b725` 的405 passed/1 deselected、37/37及安装来自 `artifacts/cleanup-enhanced/final/acceptance.json`。`enhanced-trial-01` 的392/37只作为明确历史候选或通过进度页链接，不占“当前待完成”位置。第42行用“本分支有限gate：30个pure文件/37个smoke，执行条目以当前manifest为准”，区分文件/selector数与pytest case数。
+
+R23-01新增文件先作为迁移项，不静默扩大gate。R23-02若使测试数量变化，按实际日志更新新验收而不是沿用405；指南无需重复一个会随源码变化的“当前已全部通过”断言。`design.md:3` 改“本页描述teaching-enhanced运行时”，删除候选身份。
+
+实施期间状态页固定区分：上一次已验收源码、当前R2.3待办/候选、已实际完成的新检查。旧 `final/acceptance.json`、runtime/install/log与阶段产物全部保持原字节；新结果进入各分支新的 `artifacts/cleanup-{base|enhanced}/r2.3-p2/`。若R23-02仅有据保留，记录正式运行时未变和候选试验身份，不虚构一份新运行时实测。
+
+文档验收是逐段对照当前源码/固定B链接、当前manifest与准确acceptance，并检查相对链接和必要锚点。只修文档不新增runtime测试；本机未推送时如实标注固定远端链接尚未在线核验，不能为文档检查擅自发布。
+
+### 11.5 实施顺序、证据与退出条件
+
+| 顺序 | 工作 | 进入下一步的具体证据 |
+|---|---|---|
+| 0 | 核输入/范围、准备本轮处置表 | 两条HEAD、工作树、原tag/artifact身份；四项P2逐一登记，P3单独未处理 |
+| 1 | R23-01先B修复，之后E适配 | 本文件原失败→修后完整参数集合、邻接pure与真实owner-death通过；B→E映射和分支差异明确 |
+| 2 | 并行修R23-03/04文档 | E真实机制/B固定对照不混用，旧验收与当前候选分开；不依赖ACK优化是否采纳 |
+| 3 | R23-02在步骤1的E上做单候选试验 | 九类消费者表、实际纵向路径、字段/bytes/copy/RPC/结构对照、准确故障合同证据 |
+| 4 | 选择采纳或有据保留，完成所需受影响验收 | 采纳则正式E新输入有限gate/迁移通过；保留则正式运行时未变、试验成本及退出理由可查；B不等待此选择才记录自身修复结果 |
+| 5 | 独立复审四P2与交付映射 | 四项逐项closed，后续HEAD只加文档/证据时有diff证明；剩余P3明确，不宣称“所有代码都必要” |
+
+每项新记录共同包含问题、目标状态/不变量、改动路径/候选hash、B/E适用性、证据层级、未覆盖边界、最终处置。R23-01另列原/新selector、exact命令/marker/界限、环境及实际预修失败/修后日志；R23-02另列九类消费者、候选diff、成本原始数据、合同运行及实际失败（若有），不要求完整Reply基线必须失败；文档项列错误段落、前后差异、语义/链接静态核对，不制造pytest或失败日志。审查报告是依据，不作为第二套backlog；机器附录 `p2_remediation` 与本节使用相同四项编号。
+
+继续只用既有有界runner及经审查登记的精确选择；不裸跑目录pytest/collection、不提高5秒启动/30秒测试界限、不用skip/xfail、不刷掉失败、也不为“全P2”把所有338项都设成新门槛。仅当新变化、真实失败或具体未决责任影响范围扩大时，才追加相应有限验证并说明原因。
+
+最终目标是**四项审查P2全部有实际修复或符合原P5规则的实验证据处置**，两版职责/历史仍清楚。该目标不包含本轮未处理P3，不保证达到旧20k预算，不以代码行减少代替合同正确性或教学清晰度。
+
+R2.3执行结果：B修复目标15＋邻接10＋实际owner死亡1通过；E共同修复同样15/10/1通过。增强StageAck单候选经真实四轨迹×3对照及mixed固定seed校准、源码/净收益独审后采纳，正式有限gate405/1deselected＋37/37smoke全部首次通过，受影响登记项全部通过并完成新源码锁定安装。另修E journal旧B夹具，原23失败在完整Reply与StageAck两边复现，同一修复23例分别通过，纳入最后迁移证据。测量、失败、不同快照及gate闭包映射完整保留；没有提交或推送，本轮不处理P3。详见本版artifacts/cleanup-*/r2.3-p2和当前状态页。

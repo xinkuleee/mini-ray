@@ -44,43 +44,70 @@ class PublicationClient:
             publication = self._publications.get(reference)
             return None if publication is None else replace(publication)
 
-    def call(self, request, stage=None):
+    def call(self, request, stage=None, *, publication=None):
         request = replace(request)
+        reference = wire.request_reference(request)
+        if publication is None:
+            if type(request) in (wire.BeginPublication, wire.FencePublication):
+                publication = request.publication
+            else:
+                with self._lock:
+                    publication = self._publications.get(reference)
+        if publication is not None:
+            publication = replace(publication)
+            if publication.reference != reference:
+                raise SystemTaskError('publication request changed known owner metadata')
         reply = self._rpc(wire.PUBLICATION_HANDLER, request)
-        if type(reply) is not wire.PublicationReply:
+        if type(reply) not in (wire.PublicationReply, wire.PublicationStageAck):
             raise SystemTaskError('invalid GCS publication reply')
         reply = replace(reply)
         if reply.request != request:
             raise SystemTaskError('GCS publication reply changed its request')
         if not reply.accepted:
             raise PublicationRejected(reply)
-        if stage is not None and (reply.receipt is None or reply.receipt.stage is not stage):
+        if type(request) is wire.GetPublication:
+            if type(reply) is not wire.PublicationReply:
+                raise SystemTaskError('GCS publication query requires its snapshot reply')
+            if (reply.snapshot is not None and publication is not None
+                    and reply.snapshot.publication != publication):
+                raise SystemTaskError('GCS publication query changed known owner metadata')
+            return reply
+        if type(reply) is not wire.PublicationStageAck:
+            raise SystemTaskError('GCS mutation requires its exact stage acknowledgement')
+        if (reply.reference != reference or reply.receipt.reference != reference
+                or (publication is not None and reply.owner_worker_id != publication.owner_worker_id)):
+            raise SystemTaskError('GCS stage acknowledgement changed publication identity')
+        if stage is not None and reply.receipt.stage is not stage:
             raise SystemTaskError('GCS reply lacks its exact stage receipt')
         return reply
 
     def query(self, publication):
-        return self.call(wire.GetPublication(publication.reference)).snapshot
+        return self.call(wire.GetPublication(publication.reference), publication=publication).snapshot
 
     def begin(self, publication):
         self.remember(publication)
-        self.call(wire.BeginPublication(publication), wire.PublicationStage.INTENT)
-        reply = self.call(wire.PrepareGraph(publication.reference), wire.PublicationStage.PREPARED)
-        if not reply.snapshot.forward_open:
+        self.call(wire.BeginPublication(publication), wire.PublicationStage.INTENT, publication=publication)
+        reply = self.call(wire.PrepareGraph(publication.reference), wire.PublicationStage.PREPARED, publication=publication)
+        if not reply.forward_open:
             raise SystemTaskError('historical graph reservation is not forward permission')
         return reply
 
     def commit_task(self, publication, complete):
         if wire.PublicationRef(complete.publication_id, complete.manifest_digest) != publication.reference:
             raise SystemTaskError('Task Complete changed the publication being committed')
-        self.call(wire.RecordTerminal(complete), wire.PublicationStage.TERMINAL)
-        reply = self.call(wire.CommitGraph(publication.reference), wire.PublicationStage.COMMITTED)
-        if not reply.snapshot.forward_open:
+        self.call(wire.RecordTerminal(complete), wire.PublicationStage.TERMINAL, publication=publication)
+        reply = self.call(wire.CommitGraph(publication.reference), wire.PublicationStage.COMMITTED, publication=publication)
+        if reply.accepted_fact != complete:
+            raise SystemTaskError('GCS graph commit changed the actual Task Complete')
+        if not reply.forward_open:
             raise SystemTaskError('fenced graph commit cannot authorize owner publication')
         return reply.receipt
 
     def commit_put(self, publication, prepared):
-        reply = self.call(wire.CommitGraph(publication.reference, prepared), wire.PublicationStage.COMMITTED)
-        if not reply.snapshot.forward_open:
+        reply = self.call(wire.CommitGraph(publication.reference, prepared), wire.PublicationStage.COMMITTED, publication=publication)
+        if reply.accepted_fact != prepared:
+            raise SystemTaskError('GCS put commit changed the actual preparation')
+        if not reply.forward_open:
             raise SystemTaskError('fenced put graph cannot authorize owner installation')
         return reply.receipt
 
@@ -98,7 +125,7 @@ is a barrier only, never a receipt asserting this later decision committed.
             return snapshot.receipt(wire.PublicationStage.RETIRED)
         if snapshot is not None and snapshot.fence is not None:
             return snapshot.receipt(wire.PublicationStage.FENCED)
-        return self.call(wire.FencePublication(publication, decision), wire.PublicationStage.FENCED).receipt
+        return self.call(wire.FencePublication(publication, decision), wire.PublicationStage.FENCED, publication=publication).receipt
 
     def retire(self, publication, releases, deaths=()):
         """Ensure this membership is retired, preserving its first proof."""
@@ -106,4 +133,4 @@ is a barrier only, never a receipt asserting this later decision committed.
         if snapshot is not None and snapshot.receipt(wire.PublicationStage.RETIRED) is not None:
             return snapshot.receipt(wire.PublicationStage.RETIRED)
         closed = wire.ClosedContainedHolds(publication.reference, tuple(releases), tuple(deaths))
-        return self.call(wire.RetireGraph(closed), wire.PublicationStage.RETIRED).receipt
+        return self.call(wire.RetireGraph(closed), wire.PublicationStage.RETIRED, publication=publication).receipt

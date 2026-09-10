@@ -1,0 +1,15 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_owner_finalize_replica_receipts.py",
+    "exit_code": 1,
+    "seconds": 5.195,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-enhanced-before-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_owner_finalize_replica_receipts.py"
+    ],
+    "log": "000-case.log"
+  }
+]

@@ -165,7 +165,7 @@ class _CorePublication:
         assert len(self.metadata_calls) < 48, "common cleanup exceeded finite metadata budget"
         self.metadata_calls.append(request)
         reply = self.authority.apply(request)
-        assert type(reply) is ep.PublicationReply and reply.request == request
+        assert type(reply) is (ep.PublicationReply if type(request) is ep.GetPublication or not reply.accepted else ep.PublicationStageAck) and reply.request == request
         assert reply.accepted, reply.error
         return reply
 

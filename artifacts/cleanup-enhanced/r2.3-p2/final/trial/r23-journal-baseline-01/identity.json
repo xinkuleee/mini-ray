@@ -1,0 +1,16 @@
+{
+  "branch": null,
+  "head": null,
+  "variant": "baseline",
+  "mode": "isolated ACK comparison; not formal branch acceptance",
+  "parent_source": {
+    "branch": "refs/heads/teaching-enhanced",
+    "head": "fd40a407a46ada3d4941c034a73355f45355b270",
+    "working_tree_status": " M README.md\n M docs/cleanup-progress.md\n M docs/current-status.md\n M docs/design.md\n M docs/learning-path.md\n M docs/production-ray-mapping.md\n M docs/project-cleanup-plan.json\n M docs/project-cleanup-plan.md\n M docs/testing.md\n M scripts/baseline_manifest.json\n M tests/unit/test_owner_finalize_replica_receipts.py\n",
+    "archive_sha256": "26a54d5549fd61ddbd0e4dc29816f38c18b8f17baf013335312262fcb42f2669",
+    "file_count": 433,
+    "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+  },
+  "archive_sha256": "e03470cf556fdb8745c1ccb69acfa8255d32fd7817d505f616eff07643908e76",
+  "file_count": 435
+}

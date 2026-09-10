@@ -1,0 +1,11 @@
+{
+  "edition": "enhanced",
+  "branch_ref": "refs/heads/teaching-enhanced",
+  "parent_commit": "fd40a407a46ada3d4941c034a73355f45355b270",
+  "tested_snapshot": "r23-enhanced-final-02",
+  "input_identity": "Previously tested uncommitted snapshot; staged source/test/tools/config inputs verified unchanged. Git text EOL normalization is checked separately from raw hashes.",
+  "verification": "final-state-verification.json retained in the R2.3 evidence directory",
+  "prior_artifacts_unchanged": true,
+  "operation": "User-requested local checkpoint; no remote push or CI",
+  "commit_identity_rule": "The containing commit provides checkpoint identity; resolved SHA saved by parent after commit, without changing historical acceptance.json."
+}

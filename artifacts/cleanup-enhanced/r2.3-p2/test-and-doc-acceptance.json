@@ -1,0 +1,18 @@
+{
+  "status": "R23-01_03_04_COMPLETE_ACK_EVALUATION_IN_PROGRESS",
+  "edition": "enhanced",
+  "branch_ref": "refs/heads/teaching-enhanced",
+  "head": "fd40a407a46ada3d4941c034a73355f45355b270",
+  "input_kind": "uncommitted working-tree candidate",
+  "test_candidate": "r23-enhanced-after-01",
+  "archive_sha256": "26a54d5549fd61ddbd0e4dc29816f38c18b8f17baf013335312262fcb42f2669",
+  "target_sha256": "ace08a31f85d5d5a33708e32142de9c106fb1daebab57d077f58b318d3332114",
+  "base_validated_test_sha256": "d3051956feb52ea44d954cafc4f8e80560eb57b4d5b5d90237abf134917d948b",
+  "results": "15 target cases +10 adjacent Node cases +1 actual owner-death process case passed",
+  "runtime_source_unchanged": true,
+  "shared_helpers_unchanged": true,
+  "gcs_boundary": "Node retires local custody and returns exact empty closure; pure authority remains FENCED with graph_active and no RETIRED. Live case proves global closure indirectly via constrained GCS shutdown, not a direct RETIRED query.",
+  "docs": "Three actual files match frozen candidate hashes and semantic/link review; oldR2.2 evidence remains historical",
+  "remaining": "R23-02 actual single ACK candidate/measurement/disposition and final review",
+  "git": "No commit or push"
+}

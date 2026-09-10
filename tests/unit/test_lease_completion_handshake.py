@@ -368,7 +368,7 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     def publication_rpc(message):
         assert len(publication_calls) < 16
         reply = authority.apply(message)
-        assert type(reply) is ep.PublicationReply and reply.request == message
+        assert type(reply) is (ep.PublicationReply if type(message) is ep.GetPublication or not reply.accepted else ep.PublicationStageAck) and reply.request == message
         publication_calls.append((message, reply))
         return reply
 

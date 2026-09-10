@@ -1,0 +1,141 @@
+diff --git a/docs/production-ray-mapping.md b/docs/production-ray-mapping.md
+index c7ea3aa..1a05b95 100644
+--- a/docs/production-ray-mapping.md
++++ b/docs/production-ray-mapping.md
+@@ -1,15 +1,18 @@
+-# mini-ray 与 Ray Core 的职责映射
++# 协议增强版与 Ray Core 的职责映射
+ 
+-日期：2026-09-09。本页解释基础版所选机制；旧验收固定于teaching-base-v0.1，新B整理状态见[当前状态](current-status.md)。
+-同版318项纯合同、32个真实smoke及七个main产物的结果和范围统一查 [验收账本](acceptance-baseline.md)。
++本页解释当前 `teaching-enhanced`：Task、lease、owner、对象和资源机制继承基础版，GCS 普通结果发布事务与全局 ObjectID 引用图防环是本版额外的两项 mini 自定义保证。相对源码链接均指本分支；R2.2 已保存验收与 R2.3 修复进度见[状态页](current-status.md)。
++
++首次学习仍推荐[固定基础版教材](https://github.com/xinkuleee/mini-ray/blob/ab4cfb317fd786a286359d8f4e971ff195739375/docs/learning-path.md)。B 的 R2.2 实测源码为 `0a340b792c89667e493f7e7313935e45e29071bf`；教材与[基础版验收包](https://github.com/xinkuleee/mini-ray/blob/ab4cfb317fd786a286359d8f4e971ff195739375/artifacts/cleanup-base/final/acceptance.json)固定于后续仅加文档/证据的 `ab4cfb317fd786a286359d8f4e971ff195739375`，后者不冒充直接实测提交。
++
++E 的[R2.2 验收](../artifacts/cleanup-enhanced/final/acceptance.json)独立绑定 `3f5b725fb26390b86c78f085486fb73d897d3e42`；[B 历史账本](acceptance-baseline.md)与[E 历史账本](acceptance-enhanced.md)分别保留原 318/32、377/37。R2.3 修复正在推进，旧结果不改标为后继 HEAD 已通过。
+ 
+ Ray 源码对照固定为 **c3162dce8d064824293875c5d0bbfd76a54e04ce**；对照原始审计固定版本。
+ 下表链接到该固定版本的上游文件；[固定版本上游树](https://github.com/ray-project/ray/tree/c3162dce8d064824293875c5d0bbfd76a54e04ce) 用于以后检出相同布局。
+ “对应”指职责和问题相近，不表示类、线程、消息或错误语义逐行一致；mini-ray 不承诺替代 Ray API。
+ 
+-## 从 mini 带回 Ray 的机制
++## 从共同机制带回 Ray
+ 
+-| 领域 | mini-ray 阅读入口 | 固定 Ray 源码入口 | 保留的因果关系与简化 |
++| 领域 | 当前 E 的共同机制入口 | 固定 Ray 源码入口 | 保留的因果关系与简化 |
+ |---|---|---|---|
+ | Python API 与身份 | [api.py](../src/miniray/api.py)、[task_outputs.py](../src/miniray/task_outputs.py)、[ids.py](../src/miniray/ids.py) | [remote_function.py](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/python/ray/remote_function.py)、[task_spec.h](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/common/task/task_spec.h) | remote 提交异步执行；Task/Object 的逻辑身份与 attempt 分离。mini 每 Task 仅一个输出 |
+ | 提交与依赖 | [core.py](../src/miniray/core.py)、[dependency.py](../src/miniray/dependency.py) | [normal_task_submitter.cc](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/task_submission/normal_task_submitter.cc)、[dependency_resolver.cc](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/task_submission/dependency_resolver.cc) | 顶层 Ref 是执行依赖；取得 lease 后由提交者直接向 Worker PushTask，不经中央任务转发队列 |
+@@ -22,36 +25,43 @@ Ray 源码对照固定为 **c3162dce8d064824293875c5d0bbfd76a54e04ce**；对照
+ | Placement Group | [placement.py](../src/miniray/placement.py)、[placement_group_runtime.py](../src/miniray/placement_group_runtime.py)、[control.py](../src/miniray/control.py) | [gcs_placement_group_scheduler.cc](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/gcs/gcs_placement_group_scheduler.cc)、[placement_group_resource_manager.cc](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/raylet/placement_group_resource_manager.cc) | bundle 全 commit 前不可见；Node reservation 才是物理资源。mini 至多两个 bundle、两种 STRICT 策略、Node loss→LOST |
+ 
+ [固定版本 Task lifecycle 文档](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/doc/source/ray-core/internals/task-lifecycle.rst) 可与七个 [教学示例](learning-path.md) 对照。
+-GCS 不逐个调度普通 Task，不等于 Ray 普通 Task 永不访问 GCS；本版去掉的是 mini 自创的逐结果发布门禁。
++GCS 不逐个调度普通 Task，不等于 Ray 普通 Task 永不访问 GCS。B 没有 mini 逐结果发布门禁；本增强版加入这一自定义门禁，同时保留 Core→Worker direct push。上表中的成员、死亡、Actor/PG 协调是两版共同职责，E 的 GCS 发布与图职责见下节。
++
++## 本版普通结果：共同职责与增强步骤
++
++Worker 执行并序列化一次，保留结果 bytes 和源引用；Node 核对 manifest/payload 并取得 outer owner 登记收据。C0 向 GCS 登记 INTENT，C1 预留图边；真实 child prepare、物化与 promotion 完成后，C2 以准确准备收据取得 ARM。
+ 
+-## 基础版普通结果怎样发布
++C3 由 Node 提交 Complete 并收口本地 lease/资源，C4 由 GCS 保存准确 terminal。C5 提交图边后，C6 仍由 owner/Core 原子提交 READY、outgoing 与 recovery，C7 再由 GCS 记录实际 adopted 收据。GCS 不替 owner 提交 READY，不替 Node 释放资源，也不保存结果 bytes。C7 ACK 未知只继续精确查询/重放与托管退休，不回滚已提交的 C6。详细边界见[当前设计](design.md)。
+ 
+-Worker 执行并序列化一次，保留结果 bytes 和源引用；owner 登记待交接清单；child owner 确认引用保活，Node 物化并记录准确 Complete。
+-owner 随后原子安装结果和 outgoing edges，真实接管 ACK 后 Node/Worker 才能退休托管；GC 另按引用存活理由回收。
+-[output_handoff.py](../src/miniray/output_handoff.py)、[output_publication_node.py](../src/miniray/output_publication_node.py) 与 Core 的组合代码展示这些责任。
+-这些具体 DTO、journal/收据及步骤是 mini 的显式组织，不是对 Ray 消息顺序的逐条复刻。
++当前 E 的入口为[Node 发布](../src/miniray/output_publication_node.py)、[owner 交接](../src/miniray/output_handoff.py)、[发布与图状态](../src/miniray/enhanced_publication.py)、[控制推进](../src/miniray/enhanced_publication_control.py)及[owner 客户端](../src/miniray/enhanced_publication_client.py)。这些 DTO、journal、阶段和收据是 mini 的组织方式，不是 Ray 消息顺序的逐条复刻。
+ 
+ | 事实 | 不能据此推导的另一事实 |
+ |---|---|
+ | 用户函数已返回 | Node 已 Complete、owner 已接受 |
+-| Node Complete | owner READY 或所有 cleanup 已结束 |
++| GCS INTENT / ARM | 函数已成功或 owner 已 READY |
++| Node Complete / GCS terminal | 当前 bytes 可用、owner READY 或所有 cleanup 已结束 |
++| graph COMMITTED | owner 已接管结果 |
+ | owner 已提交成功 | 当前所有 bytes 仍可读取 |
+ | 回复/source 托管已退休 | 逻辑对象、contained hold 或实体副本已经 GC |
+ | RPC timeout | 对端死亡、操作没发生或清理成功 |
+ 
+-基础版 GCS 不保存普通 publication manifest、INTENT/ARM/terminal/adopted 历史或 contained graph。
+-它仍提交成员/死亡事实并驱动 owner-wide Node fence；fence 未获真实完成 ACK 时节点安全可见性和 shutdown 仍受约束。
+-owner-led 并不意味着无握手、无清单、无收据；必要的未知效果补偿与 fencing 不能随中央协议一起删除。
++对照固定 B 的[Node 发布](https://github.com/xinkuleee/mini-ray/blob/0a340b792c89667e493f7e7313935e45e29071bf/src/miniray/output_publication_node.py)、[owner 交接](https://github.com/xinkuleee/mini-ray/blob/0a340b792c89667e493f7e7313935e45e29071bf/src/miniray/output_handoff.py)与[Core](https://github.com/xinkuleee/mini-ray/blob/0a340b792c89667e493f7e7313935e45e29071bf/src/miniray/core.py)：B 同样保留清单、child holds、Complete/adoption、未知效果补偿与退休，但没有普通结果 GCS 事务或全局图。两版 GCS 都保留成员/死亡事实、owner-wide Node fence、Actor 和 PG 职责；fence 不是实际清理完成收据。
++
++以上固定 B 对象已可由本地 Git 取回；教学分支尚未发布，远端固定链接未在线核验。在同一仓库可直接查看：
++
++```bash
++git show 0a340b792c89667e493f7e7313935e45e29071bf:src/miniray/output_publication_node.py
++```
+ 
+ ## 对象和恢复语义的明确边界
+ 
+ - Task 每次只产一个 ObjectRef；tuple/list 可以是一个完整返回值。无独立多返回槽、targeted reconstruction、健康 sibling 隔离。
+ - Task 顶层 Ref 参数自动参与依赖；nested Ref 保持句柄；直接返回 child Ref 是引用数据，不自动 get。
+-- 显式 put 支持普通值和有效含 Ref 的值，借用/交接仍有完整身份；put 没有 Worker lease 或 producer lineage。
+-- 存活 Node 的准确 Complete 可支持原结果继续交付；已知成功且 bytes 全失仍为 LOST。
+-- Node 死而 owner 未提交、无存活准确成功收据时为 UNKNOWN；清理后按有限系统重试，不能说从未执行。
++- 显式 put 支持普通值和有效含 Ref 的值。含 Ref put 进入同一图准入/提交/释放子协议，绑定独立 put operation 与 owner 安装事实，没有 Task lease、ARM、Complete 或 producer lineage。
++- 存活 Node/owner 的准确 Complete，以及 E 的准确 GCS terminal，可提供已发生成功的知识；仅 INTENT/ARM 不足以证明成功。已知成功而所有可用 bytes 确实丢失时仍为 LOST，不生成 READY。
++- Node 死亡且 owner 尚未接管时，按完整身份查询适用的准确历史；没有存活准确成功事实才按 UNKNOWN、原清理与有限系统重试边界推进，不能说从未执行。旧成功记录也不能推翻已经锁定的撤销选择或授权新 attempt。
+ - owner 死亡明确失败，副本存在不授权 owner 接管；[Ray 对象故障语义](https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/doc/source/ray-core/fault_tolerance/objects.rst) 是对照，不是兼容性认证。
+-- 普通 Python 容器环属于序列化；ObjectID 之间的强引用环不保证自动回收。基础版没有全局图防环或 tracing GC。
++- 普通 Python 容器环是序列化问题。E 对受支持 contained-edge 入口联合检查已提交边与并发预留，拒绝成环候选；这不是 tracing GC，不承诺回收任意手造引用图，也不增加不支持的 Ref 入口。B 没有这项全局门禁。
+ 
+ ## 工程简化不是生产能力
+ 
+@@ -64,13 +74,12 @@ owner-led 并不意味着无握手、无清单、无收据；必要的未知效
+ | 串行 Actor，同 Node restart；引用参数/结果内 Ref 不支持 | 并发组、named/detached、跨 Node migration、状态恢复或透明方法重放 |
+ | 单 GCS、内存收据、owner 不接管 | GCS HA、持久化共识、跨 incarnation 恢复 |
+ 
+-## 第二阶段：明确的 mini 协议研究
++## 本版两项自定义保证的收益与代价
++
++普通发布事务增加一个存活的准确发布事实来源；全局图对受支持引用边提供联合 PREPARED/COMMITTED 判环。代价是普通发布新增同步 GCS 依赖，以及预留、补偿、死亡清扫、fencing 和收据退休责任。单 GCS 内存权威不提供 HA、持久恢复或 owner 接管。Ray 的 ReferenceCounter 不等于这个 mini 自定义全局图，增强版也不表示更接近生产 Ray。
++
++R2.2 保存了公共二对象 whole 重建成环候选的拒绝、真实并发四对象联合预留判环，以及 Task/含 Ref put/whole 引用生命周期的有限证据；具体选择器、快照和旧形状处置见[增强验收包](../artifacts/cleanup-enhanced/final/acceptance.json)及[七组合同映射](../artifacts/cleanup-enhanced/final/k9-enhanced-contract-map.md)。真实 GCS handler、纯 reducer、synthetic trace matcher 和有界进程各证明自己的范围，不互相冒充。后继修改的验证进度见[状态页](current-status.md)。
+ 
+-第二阶段在固定基础版之后增加 GCS 普通结果发布事务和全局 ObjectID 图防环，两项都属于已确定交付范围。
+-前者为特定故障窗口增加存活的发布事实副本，后者对受支持引用边增加全局 PREPARED/COMMITTED 准入和成环拒绝；二者也增加同步依赖、补偿与退休责任。
+-Ray 的 ReferenceCounter 不等于 mini 自创全局图；增强版的价值是比较协议保证和代价，不是“更接近生产 Ray”。
++这些有限证据不外推所有引用图或故障组合；可达性仍以受支持公共操作为准，不通过修改已经 put 的 immutable bytes、手造 ObjectRef 或伪 borrower 补造。
+ 
+-图证据必须分层：公共无环结果/GC 可证明接线；旧 metadata 请求经过真实 GCS handler 的环拒绝只证明控制协议；公共 API 合法完整成环与真实并发请求仍须按增强版计划证明。
+-不能用可变 Python list 修改已 put 的 immutable 值、手造 ObjectRef 或伪 borrower 来补可达性。
+-固定基础版持续作为首次学习入口；增强版沿同一实现主线演进，不在产品中长期保留双后端。
+-具体窗口、未决项和两版交界见 [两阶段计划 §10](redesign-plan.md)，当前通过范围仍以 [验收账本](acceptance-baseline.md) 为准。
++[两阶段合同 §10](redesign-plan.md)保留能力与故障边界；R2.3 修复以[唯一主计划 §11](project-cleanup-plan.md)为准。每条分支只有本版运行时，B 持续作为首次学习入口。
+diff --git a/docs/testing.md b/docs/testing.md
+index 21483c9..14fbcdd 100644
+--- a/docs/testing.md
++++ b/docs/testing.md
+@@ -2,7 +2,7 @@
+ 
+ 运行入口是[scripts/run_baseline.py](../scripts/run_baseline.py)，选择权威是本分支[scripts/baseline_manifest.json](../scripts/baseline_manifest.json)。测试结果必须绑定实际源码、测试、工具、manifest和依赖身份；当前完成状态见[current-status](current-status.md)，历史B318/32与E377/37分别见[基础账本](acceptance-baseline.md)、[增强账本](acceptance-enhanced.md)，不认证本次后继源码。
+ 
+-当前E隔离候选清单为30个pure文件和37个smoke，enhanced-trial-01取得392 passed / 1 deselected及37smoke通过；这只属于候选archive，不是已创建正式E分支的最终HEAD验收。正式E已从验收B派生，仍须在增量应用后冻结自身manifest、源码和依赖重新建立映射，见[状态页](current-status.md)。
++R2.2 已保存的正式 E 验收绑定 `3f5b725fb26390b86c78f085486fb73d897d3e42`：30 个纯文件为 405 passed / 1 deselected，37/37 精确 smoke 通过，并有同版冻结安装证据，见[验收包](../artifacts/cleanup-enhanced/final/acceptance.json)。早期 enhanced-trial-01 的 392 passed / 1 deselected 与 37 smoke 是历史候选结果，过程和原证据保留在[执行记录](cleanup-progress.md)及对应目录。R2.3 修复正在推进，当前改动与已完成的新检查见[状态页](current-status.md)；上述旧结果不改标为后来 HEAD 的实测结果。
+ 
+ ## 安装与列出范围
+ 
+@@ -39,7 +39,7 @@ reviewed_migrations与gate分开：一项记录selector、marker、工作包、
+ 
+ 整文件只用于明确受审的unit文件；含进程/并发场景按精确case与marker登记。不能为了消除拒绝而盲目刷新hash，也不能把全部旧108/455项注册成新gate。确需提升为gate时，记录原因、旧新选择差额与成本，移出migration登记，保持单一选择权威。
+ 
+-本版额外覆盖发布事实、联合预留判环和有限C0–C7故障窗口；保持原30/37候选范围，不扩成任意storage×owner×fault矩阵。B结果不替代E自己的trace和实际GCS阶段。
++本分支有限 gate 为 30 个 pure 文件、37 个 smoke，执行条目以当前 manifest 为准；文件/selector 数不等于参数化 case 数。R2.3 的受审迁移验证与固定 gate 分开记录，不因登记修复 case 自动扩大 gate。E 额外覆盖发布事实、联合预留判环和有限 C0–C7 窗口，不扩成任意 storage×owner×fault 矩阵；B 的结果不替代 E 自己的 trace 和实际 GCS 阶段。
+ 
+ 项目的历史测试树包含旧协议与失效夹具。未进入gate不代表测试无价值；已退出multi-return、targeted或旧runtime facade也不应为旧测试恢复。保留反例迁到真实权威后，以“旧断言→现行合同→新selector→本版证据”记账。
+ 
+diff --git a/docs/design.md b/docs/design.md
+index 172111e..aa8f884 100644
+--- a/docs/design.md
++++ b/docs/design.md
+@@ -1,6 +1,6 @@
+ # 协议增强版架构：共同机制与两项自定义保证
+ 
+-本页描述teaching-enhanced候选：继承基础版单输出运行时，并同时加入普通发布事务与全局ObjectID图防环。正式分支与验收身份见[状态页](current-status.md)。
++本页描述 `teaching-enhanced` 运行时：继承基础版单输出机制，并同时加入普通结果 GCS 发布事务与全局 ObjectID 图防环。R2.2 已保存验收与正在推进的 R2.3 修复、验证进度分别见[状态页](current-status.md)；架构描述不替代版本绑定的实测证据。
+ 它是缩小规模与范围的教学实现，不承诺生产 Ray 的完整功能、接口兼容或相同内部协议。
+ 运行命令见[学习路径](learning-path.md)和[测试指南](testing.md)，当前整理版身份与实测边界见[状态页](current-status.md)；[基础验收账本](acceptance-baseline.md)保留固定历史版本的证据。
+ 

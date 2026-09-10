@@ -4,7 +4,7 @@ mini-ray 是参照 Ray Core 关键机制的 Python 教学实现。它与 Ray 的
 
 本页面向从验收基础版派生的 **teaching-enhanced**。E在共同的Task、owner、Node和child owner机制上，仅增加两项mini自定义保证：GCS普通结果发布事务、全局ObjectID引用图防环。两项在本版同时启用，不是可关闭的替代后端；它不比B更接近生产Ray。首次学习仍推荐独立的teaching-base，理解基本路径后再读E的额外同步阶段与责任。
 
-正式teaching-enhanced已从验收B创建并独立验收：405项纯合同通过、1项按原标记排除，37个精确smoke首次全部通过，七main与冻结安装证据已保存；准确派生点、候选与最终验收身份见[状态页](docs/current-status.md)。固定历史E teaching-enhanced-v0.2的[377/37账本](docs/acceptance-enhanced.md)与历史B的[318/32账本](docs/acceptance-baseline.md)分别保留，不能认证本次后继HEAD。
+正式teaching-enhanced从验收B创建，R2.2固定源码3f5b725已独立验收：405项纯合同通过、1项按原标记排除，37个精确smoke首次全部通过，七main与冻结安装证据已保存；R2.3后继修复与新验收已完成，本次以阶段性本地提交固定；旧结果不认证本轮修改；准确派生点、候选与最终验收身份见[状态页](docs/current-status.md)。固定历史E teaching-enhanced-v0.2的[377/37账本](docs/acceptance-enhanced.md)与历史B的[318/32账本](docs/acceptance-baseline.md)分别保留，不能认证本次后继HEAD。
 
 ## 安装与第一次运行
 
@@ -16,7 +16,7 @@ uv sync --frozen --extra test --python 3.12
 uv run --frozen python scripts/run_baseline.py --list
 ```
 
-正式E分支已创建并验收，可按上述命令检出；精确实测提交及其后文档/证据提交的区别见状态页。首次阅读可先切换teaching-base走同一示例入口。
+正式E分支已创建，可按上述命令检出；R2.2已保存验收与R2.3当前修复分开记录；精确实测提交及其后文档/证据提交的区别见状态页。首次阅读可先切换teaching-base走同一示例入口。
 
 在 Linux/WSL 运行第一条完整主线；该精确smoke会调用原始示例并检查退出：
 

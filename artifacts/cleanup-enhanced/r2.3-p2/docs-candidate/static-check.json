@@ -1,0 +1,753 @@
+{
+  "scope": "Static only; no pytest, collection, test import or network",
+  "relative_links": [
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 3,
+      "target": "current-status.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 7,
+      "target": "../artifacts/cleanup-enhanced/final/acceptance.json",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 7,
+      "target": "acceptance-baseline.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 7,
+      "target": "acceptance-enhanced.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 17,
+      "target": "../src/miniray/api.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 17,
+      "target": "../src/miniray/task_outputs.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 17,
+      "target": "../src/miniray/ids.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 18,
+      "target": "../src/miniray/core.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 18,
+      "target": "../src/miniray/dependency.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 19,
+      "target": "../src/miniray/node.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 19,
+      "target": "../src/miniray/resources.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 19,
+      "target": "../src/miniray/lease_policy.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 20,
+      "target": "../src/miniray/control.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 20,
+      "target": "../src/miniray/owner_death_fence_registry.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 20,
+      "target": "../src/miniray/node_death_view.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 21,
+      "target": "../src/miniray/object_store.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 21,
+      "target": "../src/miniray/object_manager.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 21,
+      "target": "../src/miniray/transfer_pins.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 22,
+      "target": "../src/miniray/ownership.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 22,
+      "target": "../src/miniray/ref_transfer.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 22,
+      "target": "../src/miniray/owner_service.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 23,
+      "target": "../src/miniray/recovery.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 23,
+      "target": "../src/miniray/reconstruction_runtime.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 23,
+      "target": "../src/miniray/owner_reconstruction.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 24,
+      "target": "../src/miniray/actor_client.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 24,
+      "target": "../src/miniray/actor_state.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 24,
+      "target": "../src/miniray/actor_worker.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 25,
+      "target": "../src/miniray/placement.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 25,
+      "target": "../src/miniray/placement_group_runtime.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 25,
+      "target": "../src/miniray/control.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 27,
+      "target": "learning-path.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 34,
+      "target": "design.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 36,
+      "target": "../src/miniray/output_publication_node.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 36,
+      "target": "../src/miniray/output_handoff.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 36,
+      "target": "../src/miniray/enhanced_publication.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 36,
+      "target": "../src/miniray/enhanced_publication_control.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 36,
+      "target": "../src/miniray/enhanced_publication_client.py",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 81,
+      "target": "../artifacts/cleanup-enhanced/final/acceptance.json",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 81,
+      "target": "../artifacts/cleanup-enhanced/final/k9-enhanced-contract-map.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 81,
+      "target": "current-status.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 85,
+      "target": "redesign-plan.md",
+      "exists": true
+    },
+    {
+      "document": "docs/production-ray-mapping.md",
+      "line": 85,
+      "target": "project-cleanup-plan.md",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 3,
+      "target": "../scripts/run_baseline.py",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 3,
+      "target": "../scripts/baseline_manifest.json",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 3,
+      "target": "current-status.md",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 3,
+      "target": "acceptance-baseline.md",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 3,
+      "target": "acceptance-enhanced.md",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 5,
+      "target": "../artifacts/cleanup-enhanced/final/acceptance.json",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 5,
+      "target": "cleanup-progress.md",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 5,
+      "target": "current-status.md",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 48,
+      "target": "../scripts/_test_process.py",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 64,
+      "target": "../.github/workflows/baseline.yml",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 64,
+      "target": "../scripts/_ci_baseline.py",
+      "exists": true
+    },
+    {
+      "document": "docs/testing.md",
+      "line": 68,
+      "target": "history-index.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 3,
+      "target": "current-status.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 5,
+      "target": "learning-path.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 5,
+      "target": "testing.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 5,
+      "target": "current-status.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 5,
+      "target": "acceptance-baseline.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 28,
+      "target": "../src/miniray/api.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 28,
+      "target": "../src/miniray/core.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 28,
+      "target": "../src/miniray/control.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 29,
+      "target": "../src/miniray/node.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 29,
+      "target": "../src/miniray/ids.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 29,
+      "target": "../src/miniray/task_outputs.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 52,
+      "target": "../src/miniray/dependency.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 52,
+      "target": "../src/miniray/lease_policy.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 53,
+      "target": "../src/miniray/resources.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 75,
+      "target": "../src/miniray/enhanced_publication.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 75,
+      "target": "../src/miniray/enhanced_publication_control.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 75,
+      "target": "../src/miniray/enhanced_publication_client.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 77,
+      "target": "../src/miniray/output_handoff.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 77,
+      "target": "../src/miniray/output_publication_journal.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 78,
+      "target": "../src/miniray/output_publication_node.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 94,
+      "target": "../src/miniray/object_store.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 94,
+      "target": "../src/miniray/object_manager.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 95,
+      "target": "../src/miniray/transfer_pins.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 110,
+      "target": "../src/miniray/lease_dependencies.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 137,
+      "target": "../src/miniray/ownership.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 137,
+      "target": "../src/miniray/put_handoff.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 138,
+      "target": "../src/miniray/ref_transfer.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 138,
+      "target": "../src/miniray/replica_cleanup.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 162,
+      "target": "../src/miniray/recovery.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 162,
+      "target": "../src/miniray/reconstruction_runtime.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 163,
+      "target": "../src/miniray/owner_reconstruction.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 163,
+      "target": "../src/miniray/foreign_lineage_runtime.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 182,
+      "target": "../src/miniray/blocking.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 195,
+      "target": "../src/miniray/actor_state.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 195,
+      "target": "../src/miniray/actor_client.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 196,
+      "target": "../src/miniray/actor_worker.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 214,
+      "target": "../src/miniray/placement.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 214,
+      "target": "../src/miniray/placement_group_runtime.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 215,
+      "target": "../src/miniray/control.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 227,
+      "target": "../src/miniray/api.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 227,
+      "target": "../src/miniray/node_monitor.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 228,
+      "target": "../src/miniray/node_death_view.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 228,
+      "target": "../src/miniray/owner_death_fence_registry.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 240,
+      "target": "learning-path.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 240,
+      "target": "acceptance-enhanced.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 240,
+      "target": "current-status.md",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 243,
+      "target": "../src/miniray/trace.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 243,
+      "target": "../src/miniray/trace_contract.py",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 244,
+      "target": "../src/miniray/golden_traces/",
+      "exists": true
+    },
+    {
+      "document": "docs/design.md",
+      "line": 244,
+      "target": "history-index.md",
+      "exists": true
+    }
+  ],
+  "fixed_git_objects": {
+    "https://github.com/xinkuleee/mini-ray/blob/ab4cfb317fd786a286359d8f4e971ff195739375/docs/learning-path.md": {
+      "git_spec": "ab4cfb317fd786a286359d8f4e971ff195739375:docs/learning-path.md",
+      "exists_in_local_git": true
+    },
+    "https://github.com/xinkuleee/mini-ray/blob/ab4cfb317fd786a286359d8f4e971ff195739375/artifacts/cleanup-base/final/acceptance.json": {
+      "git_spec": "ab4cfb317fd786a286359d8f4e971ff195739375:artifacts/cleanup-base/final/acceptance.json",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/tree/c3162dce8d064824293875c5d0bbfd76a54e04ce": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce^{tree}",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/python/ray/remote_function.py": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:python/ray/remote_function.py",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/common/task/task_spec.h": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/common/task/task_spec.h",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/task_submission/normal_task_submitter.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/core_worker/task_submission/normal_task_submitter.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/task_submission/dependency_resolver.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/core_worker/task_submission/dependency_resolver.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/raylet/node_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/raylet/node_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/raylet/scheduling/cluster_lease_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/raylet/scheduling/cluster_lease_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/raylet/scheduling/local_lease_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/raylet/scheduling/local_lease_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/raylet/scheduling/policy/hybrid_scheduling_policy.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/raylet/scheduling/policy/hybrid_scheduling_policy.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/gcs/gcs_node_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/gcs/gcs_node_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/object_manager/object_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/object_manager/object_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/object_manager/pull_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/object_manager/pull_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/reference_counter.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/core_worker/reference_counter.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/core_worker.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/core_worker/core_worker.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/task_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/core_worker/task_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/object_recovery_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/core_worker/object_recovery_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/gcs/actor/gcs_actor_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/gcs/actor/gcs_actor_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/core_worker/task_submission/actor_task_submitter.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/core_worker/task_submission/actor_task_submitter.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/gcs/gcs_placement_group_scheduler.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/gcs/gcs_placement_group_scheduler.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/src/ray/raylet/placement_group_resource_manager.cc": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:src/ray/raylet/placement_group_resource_manager.cc",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/doc/source/ray-core/internals/task-lifecycle.rst": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:doc/source/ray-core/internals/task-lifecycle.rst",
+      "exists_in_local_git": true
+    },
+    "https://github.com/xinkuleee/mini-ray/blob/0a340b792c89667e493f7e7313935e45e29071bf/src/miniray/output_publication_node.py": {
+      "git_spec": "0a340b792c89667e493f7e7313935e45e29071bf:src/miniray/output_publication_node.py",
+      "exists_in_local_git": true
+    },
+    "https://github.com/xinkuleee/mini-ray/blob/0a340b792c89667e493f7e7313935e45e29071bf/src/miniray/output_handoff.py": {
+      "git_spec": "0a340b792c89667e493f7e7313935e45e29071bf:src/miniray/output_handoff.py",
+      "exists_in_local_git": true
+    },
+    "https://github.com/xinkuleee/mini-ray/blob/0a340b792c89667e493f7e7313935e45e29071bf/src/miniray/core.py": {
+      "git_spec": "0a340b792c89667e493f7e7313935e45e29071bf:src/miniray/core.py",
+      "exists_in_local_git": true
+    },
+    "https://github.com/ray-project/ray/blob/c3162dce8d064824293875c5d0bbfd76a54e04ce/doc/source/ray-core/fault_tolerance/objects.rst": {
+      "git_spec": "c3162dce8d064824293875c5d0bbfd76a54e04ce:doc/source/ray-core/fault_tolerance/objects.rst",
+      "exists_in_local_git": true
+    }
+  },
+  "design_only_first_paragraph_changed": true,
+  "gate": {
+    "pure_files": 30,
+    "smokes": 37
+  },
+  "saved_acceptance": {
+    "tested_source_commit": "3f5b725fb26390b86c78f085486fb73d897d3e42",
+    "runtime_result": "405 passed, 1 deselected; 37 of 37 exact smokes passed first attempt, including seven original mains"
+  },
+  "git_apply_check": 0,
+  "whitespace_check_exit_code": 1,
+  "whitespace_check_passed": true,
+  "remote_urls_online_verified": false,
+  "issues": []
+}

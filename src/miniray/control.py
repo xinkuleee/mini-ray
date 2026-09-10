@@ -2801,19 +2801,18 @@ class GCSLite:
     def enhanced_publication(self, request):
         reply = self.publication_control.handle(request)
         try:
-            if reply.accepted and reply.receipt is not None and reply.snapshot is not None:
-                publication = reply.snapshot.publication
+            if type(reply) is ep.PublicationStageAck:
+                identity = reply.reference.key
                 attributes = {
                     "stage": reply.receipt.stage.value,
                     "request_type": type(reply.request).__name__,
                     "sequence": reply.receipt.sequence,
                     "manifest_digest": reply.receipt.reference.digest,
-                    "object_id": str(publication.object_id),
-                    "owner_worker_id": str(publication.owner_worker_id),
+                    "object_id": str(identity.object_id),
+                    "owner_worker_id": str(reply.owner_worker_id),
                     "accepted": True,
                 }
-                if type(publication) is ep.TaskPublication:
-                    identity = publication.manifest.publication_id
+                if type(identity) is ep.OutputPublicationID:
                     attributes.update(
                         task_id=str(identity.task_id), attempt_id=str(identity.attempt_id),
                         lease_id=str(identity.lease_id),

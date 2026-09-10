@@ -71,7 +71,7 @@ class PureOutputRuntime:
     def _publication_rpc(self, request):
         _metadata(request)
         reply = self.authority.apply(request)
-        assert type(reply) is ep.PublicationReply and reply.request == request
+        assert type(reply) is (ep.PublicationReply if type(request) is ep.GetPublication or not reply.accepted else ep.PublicationStageAck) and reply.request == request
         _metadata(reply)
         return reply
 

@@ -1,0 +1,2091 @@
+{
+  "status": "STATIC_STRUCTURE_CALIBRATION_NOT_A_DISPOSITION",
+  "baseline_archive_sha256": "26a54d5549fd61ddbd0e4dc29816f38c18b8f17baf013335312262fcb42f2669",
+  "candidate_patch_sha256": "1da561e41b36764f29bb6de23794f4525f199665bfa35c0c56f4ed29664c8574",
+  "method": {
+    "physical_lines": "len(raw_bytes.splitlines()); same checkout input as candidate-src-identity",
+    "code_lines": "unique physical lines occupied by non-comment Python tokens, excluding module/class/function docstring lines; multiline code tokens count each occupied line",
+    "statements": "ast.stmt nodes across exactly the seven files; includes class/function definitions and docstring expression statements",
+    "branches": "syntactic node counts, separately If/IfExp/loops/handlers/comprehensions; bool continuations are len(values)-1; not runtime branch visits, coverage, or cyclomatic complexity",
+    "fields": "class-scope annotated fields only; actual storage/state ownership reviewed manually",
+    "symbol_counts": "changed function own_counts exclude nested function/class bodies; outer and nested symbols must not be summed as physical diff",
+    "execution": "standard-library AST/tokenize/hash and git read-only comparison; no compared source/tests imported and no benchmark/test run"
+  },
+  "totals": {
+    "baseline": {
+      "statements": 7171,
+      "if_statements": 1275,
+      "conditional_expressions": 122,
+      "for_loops": 82,
+      "while_loops": 6,
+      "except_handlers": 141,
+      "comprehensions": 171,
+      "match_statements": 0,
+      "bool_operator_continuations": 766,
+      "raise_statements": 466,
+      "calls": 4210,
+      "physical_lines": 13972,
+      "nonblank_lines": 12839,
+      "code_physical_lines_excluding_docstrings_comments": 11751,
+      "class_definitions": 96,
+      "function_definitions": 537,
+      "annotated_class_fields": 235
+    },
+    "candidate": {
+      "statements": 7329,
+      "if_statements": 1337,
+      "conditional_expressions": 123,
+      "for_loops": 84,
+      "while_loops": 6,
+      "except_handlers": 141,
+      "comprehensions": 171,
+      "match_statements": 0,
+      "bool_operator_continuations": 788,
+      "raise_statements": 500,
+      "calls": 4303,
+      "physical_lines": 14176,
+      "nonblank_lines": 13030,
+      "code_physical_lines_excluding_docstrings_comments": 11932,
+      "class_definitions": 97,
+      "function_definitions": 544,
+      "annotated_class_fields": 243
+    },
+    "delta": {
+      "statements": 158,
+      "if_statements": 62,
+      "conditional_expressions": 1,
+      "for_loops": 2,
+      "while_loops": 0,
+      "except_handlers": 0,
+      "comprehensions": 0,
+      "match_statements": 0,
+      "bool_operator_continuations": 22,
+      "raise_statements": 34,
+      "calls": 93,
+      "physical_lines": 204,
+      "nonblank_lines": 191,
+      "code_physical_lines_excluding_docstrings_comments": 181,
+      "class_definitions": 1,
+      "function_definitions": 7,
+      "annotated_class_fields": 8
+    }
+  },
+  "git_numstat": [
+    "5\t6\t{baseline => candidate}/src/miniray/control.py",
+    "188\t16\t{baseline => candidate}/src/miniray/enhanced_publication.py",
+    "53\t26\t{baseline => candidate}/src/miniray/enhanced_publication_client.py",
+    "4\t4\t{baseline => candidate}/src/miniray/enhanced_publication_control.py",
+    "8\t4\t{baseline => candidate}/src/miniray/node.py",
+    "7\t7\t{baseline => candidate}/src/miniray/output_publication_journal.py",
+    "6\t4\t{baseline => candidate}/src/miniray/output_publication_node.py"
+  ],
+  "files": [
+    {
+      "path": "src/miniray/control.py",
+      "baseline": {
+        "raw_sha256": "ed4d7258a11fb17a1a3b4cada4064c2189b925f584503b9e5ae06f2918c375e9",
+        "lf_sha256": "aa20fb84eab5c7c409e91c8c70476a2631ec8b80e194747e4f2ac6bcc11b192c",
+        "counts": {
+          "statements": 1642,
+          "if_statements": 272,
+          "conditional_expressions": 32,
+          "for_loops": 11,
+          "while_loops": 2,
+          "except_handlers": 36,
+          "comprehensions": 17,
+          "match_statements": 0,
+          "bool_operator_continuations": 142,
+          "raise_statements": 112,
+          "calls": 889,
+          "physical_lines": 3781,
+          "nonblank_lines": 3429,
+          "code_physical_lines_excluding_docstrings_comments": 3149,
+          "class_definitions": 26,
+          "function_definitions": 158,
+          "annotated_class_fields": 40
+        },
+        "self_attribute_store_names": [
+          "self._accepting_new",
+          "self._actor_drain_request_id",
+          "self._actor_locks",
+          "self._actors",
+          "self._admission_lock",
+          "self._admission_open",
+          "self._attempt",
+          "self._config",
+          "self._coordinator",
+          "self._coordinator_lock",
+          "self._death_detections",
+          "self._death_epoch",
+          "self._death_journal",
+          "self._event_sink",
+          "self._exit_detections",
+          "self._install_actor_state",
+          "self._known_requests",
+          "self._lock",
+          "self._locks",
+          "self._locks_lock",
+          "self._membership_epoch",
+          "self._node_death_worksets",
+          "self._node_failure_publications",
+          "self._nodes",
+          "self._on_node_dead",
+          "self._owner_death_control_lock",
+          "self._owner_death_progress_cursor",
+          "self._owner_death_progress_stop",
+          "self._owner_death_progress_thread",
+          "self._owner_death_progress_wakeup",
+          "self._owner_fence_progress_cursor",
+          "self._owner_fence_rpc",
+          "self._participant_rpc",
+          "self._participants",
+          "self._placement_group_drain_request_id",
+          "self._policy",
+          "self._prepared",
+          "self._registration_epoch",
+          "self._rejected_reply",
+          "self._rejected_request",
+          "self._rejection_observed",
+          "self._reserve_actor_worker",
+          "self._scheduling_visible",
+          "self._server",
+          "self._shutdown_exit_scheduled",
+          "self._shutdown_request_id",
+          "self._snapshot_lock",
+          "self._stop_event",
+          "self._workers",
+          "self.actor_coordinator",
+          "self.actors",
+          "self.event_sink",
+          "self.functions",
+          "self.nodes",
+          "self.owner_death_fences",
+          "self.placement_groups",
+          "self.publication_control",
+          "self.workers"
+        ]
+      },
+      "candidate": {
+        "raw_sha256": "3c17cbea5589e599a2cb8aa3241bff4757b0f58d327526d50d4f95b3abaf7608",
+        "lf_sha256": "6437a430d4fb4b1b9ed76084ae173793f3a6a9e9f518d4e5408033c1778d808a",
+        "counts": {
+          "statements": 1641,
+          "if_statements": 272,
+          "conditional_expressions": 32,
+          "for_loops": 11,
+          "while_loops": 2,
+          "except_handlers": 36,
+          "comprehensions": 17,
+          "match_statements": 0,
+          "bool_operator_continuations": 140,
+          "raise_statements": 112,
+          "calls": 890,
+          "physical_lines": 3780,
+          "nonblank_lines": 3428,
+          "code_physical_lines_excluding_docstrings_comments": 3148,
+          "class_definitions": 26,
+          "function_definitions": 158,
+          "annotated_class_fields": 40
+        },
+        "self_attribute_store_names": [
+          "self._accepting_new",
+          "self._actor_drain_request_id",
+          "self._actor_locks",
+          "self._actors",
+          "self._admission_lock",
+          "self._admission_open",
+          "self._attempt",
+          "self._config",
+          "self._coordinator",
+          "self._coordinator_lock",
+          "self._death_detections",
+          "self._death_epoch",
+          "self._death_journal",
+          "self._event_sink",
+          "self._exit_detections",
+          "self._install_actor_state",
+          "self._known_requests",
+          "self._lock",
+          "self._locks",
+          "self._locks_lock",
+          "self._membership_epoch",
+          "self._node_death_worksets",
+          "self._node_failure_publications",
+          "self._nodes",
+          "self._on_node_dead",
+          "self._owner_death_control_lock",
+          "self._owner_death_progress_cursor",
+          "self._owner_death_progress_stop",
+          "self._owner_death_progress_thread",
+          "self._owner_death_progress_wakeup",
+          "self._owner_fence_progress_cursor",
+          "self._owner_fence_rpc",
+          "self._participant_rpc",
+          "self._participants",
+          "self._placement_group_drain_request_id",
+          "self._policy",
+          "self._prepared",
+          "self._registration_epoch",
+          "self._rejected_reply",
+          "self._rejected_request",
+          "self._rejection_observed",
+          "self._reserve_actor_worker",
+          "self._scheduling_visible",
+          "self._server",
+          "self._shutdown_exit_scheduled",
+          "self._shutdown_request_id",
+          "self._snapshot_lock",
+          "self._stop_event",
+          "self._workers",
+          "self.actor_coordinator",
+          "self.actors",
+          "self.event_sink",
+          "self.functions",
+          "self.nodes",
+          "self.owner_death_fences",
+          "self.placement_groups",
+          "self.publication_control",
+          "self.workers"
+        ]
+      },
+      "delta": {
+        "statements": -1,
+        "if_statements": 0,
+        "conditional_expressions": 0,
+        "for_loops": 0,
+        "while_loops": 0,
+        "except_handlers": 0,
+        "comprehensions": 0,
+        "match_statements": 0,
+        "bool_operator_continuations": -2,
+        "raise_statements": 0,
+        "calls": 1,
+        "physical_lines": -1,
+        "nonblank_lines": -1,
+        "code_physical_lines_excluding_docstrings_comments": -1,
+        "class_definitions": 0,
+        "function_definitions": 0,
+        "annotated_class_fields": 0
+      },
+      "new_self_attribute_store_names": [],
+      "removed_self_attribute_store_names": [],
+      "changed_symbols": [
+        {
+          "symbol": "GCSLite",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 2553,
+            "end_line": 3573,
+            "fields": []
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 2553,
+            "end_line": 3572,
+            "fields": []
+          }
+        },
+        {
+          "symbol": "GCSLite.enhanced_publication",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 2801,
+            "end_line": 2829,
+            "own_counts": {
+              "statements": 14,
+              "if_statements": 3,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 1,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 2,
+              "raise_statements": 0,
+              "calls": 12
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 2801,
+            "end_line": 2828,
+            "own_counts": {
+              "statements": 13,
+              "if_statements": 3,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 1,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 13
+            },
+            "decorators": []
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/miniray/enhanced_publication.py",
+      "baseline": {
+        "raw_sha256": "a262879b65b7e54b4d6bcf280b32d7fce081d08351e017f1974870373f681d47",
+        "lf_sha256": "2baed7b90771d4051250118ca1e6d9de6e4c5f36448e789e656e202d2c26dc80",
+        "counts": {
+          "statements": 707,
+          "if_statements": 148,
+          "conditional_expressions": 4,
+          "for_loops": 14,
+          "while_loops": 1,
+          "except_handlers": 1,
+          "comprehensions": 30,
+          "match_statements": 0,
+          "bool_operator_continuations": 79,
+          "raise_statements": 58,
+          "calls": 446,
+          "physical_lines": 996,
+          "nonblank_lines": 825,
+          "code_physical_lines_excluding_docstrings_comments": 795,
+          "class_definitions": 31,
+          "function_definitions": 77,
+          "annotated_class_fields": 71
+        },
+        "self_attribute_store_names": [
+          "self._lock",
+          "self._records",
+          "self._sequence",
+          "self.kind"
+        ]
+      },
+      "candidate": {
+        "raw_sha256": "96710d14163783b7657339d53cc4b9feaa7327cb3772ed167862be64515e8890",
+        "lf_sha256": "c126b91d9fdc73cec98e3f6d8dbec1d4a02a9f87df89dd48ed2874d5a72ef7b2",
+        "counts": {
+          "statements": 839,
+          "if_statements": 198,
+          "conditional_expressions": 5,
+          "for_loops": 16,
+          "while_loops": 1,
+          "except_handlers": 1,
+          "comprehensions": 30,
+          "match_statements": 0,
+          "bool_operator_continuations": 100,
+          "raise_statements": 84,
+          "calls": 521,
+          "physical_lines": 1168,
+          "nonblank_lines": 984,
+          "code_physical_lines_excluding_docstrings_comments": 944,
+          "class_definitions": 32,
+          "function_definitions": 84,
+          "annotated_class_fields": 79
+        },
+        "self_attribute_store_names": [
+          "self._lock",
+          "self._records",
+          "self._sequence",
+          "self.kind"
+        ]
+      },
+      "delta": {
+        "statements": 132,
+        "if_statements": 50,
+        "conditional_expressions": 1,
+        "for_loops": 2,
+        "while_loops": 0,
+        "except_handlers": 0,
+        "comprehensions": 0,
+        "match_statements": 0,
+        "bool_operator_continuations": 21,
+        "raise_statements": 26,
+        "calls": 75,
+        "physical_lines": 172,
+        "nonblank_lines": 159,
+        "code_physical_lines_excluding_docstrings_comments": 149,
+        "class_definitions": 1,
+        "function_definitions": 7,
+        "annotated_class_fields": 8
+      },
+      "new_self_attribute_store_names": [],
+      "removed_self_attribute_store_names": [],
+      "changed_symbols": [
+        {
+          "symbol": "PublicationAuthority",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 783,
+            "end_line": 987,
+            "fields": []
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 956,
+            "end_line": 1158,
+            "fields": []
+          }
+        },
+        {
+          "symbol": "PublicationAuthority._apply_locked",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 808,
+            "end_line": 903,
+            "own_counts": {
+              "statements": 87,
+              "if_statements": 31,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 13,
+              "raise_statements": 1,
+              "calls": 57
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 981,
+            "end_line": 1074,
+            "own_counts": {
+              "statements": 87,
+              "if_statements": 31,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 13,
+              "raise_statements": 1,
+              "calls": 57
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationReply",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 575,
+            "end_line": 601,
+            "fields": [
+              {
+                "name": "request",
+                "annotation": "PublicationRequest",
+                "has_default": false
+              },
+              {
+                "name": "accepted",
+                "annotation": "bool",
+                "has_default": false
+              },
+              {
+                "name": "snapshot",
+                "annotation": "PublicationSnapshot | None",
+                "has_default": true
+              },
+              {
+                "name": "receipt",
+                "annotation": "PublicationReceipt | None",
+                "has_default": true
+              },
+              {
+                "name": "error_kind",
+                "annotation": "PublicationErrorKind | None",
+                "has_default": true
+              },
+              {
+                "name": "error",
+                "annotation": "str | None",
+                "has_default": true
+              }
+            ]
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 583,
+            "end_line": 609,
+            "fields": [
+              {
+                "name": "request",
+                "annotation": "PublicationRequest",
+                "has_default": false
+              },
+              {
+                "name": "accepted",
+                "annotation": "bool",
+                "has_default": false
+              },
+              {
+                "name": "snapshot",
+                "annotation": "PublicationSnapshot | None",
+                "has_default": true
+              },
+              {
+                "name": "receipt",
+                "annotation": "PublicationReceipt | None",
+                "has_default": true
+              },
+              {
+                "name": "error_kind",
+                "annotation": "PublicationErrorKind | None",
+                "has_default": true
+              },
+              {
+                "name": "error",
+                "annotation": "str | None",
+                "has_default": true
+              }
+            ]
+          }
+        },
+        {
+          "symbol": "PublicationReply.__post_init__",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 583,
+            "end_line": 601,
+            "own_counts": {
+              "statements": 19,
+              "if_statements": 9,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 6,
+              "raise_statements": 6,
+              "calls": 13
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 591,
+            "end_line": 609,
+            "own_counts": {
+              "statements": 19,
+              "if_statements": 9,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 4,
+              "raise_statements": 6,
+              "calls": 13
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationStageAck",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 613,
+            "end_line": 736,
+            "fields": [
+              {
+                "name": "request",
+                "annotation": "BeginPublication | PrepareGraph | ArmTask | RecordTerminal | CommitGraph | RecordAdoption | FencePublication | RetireGraph",
+                "has_default": false
+              },
+              {
+                "name": "reference",
+                "annotation": "PublicationRef",
+                "has_default": false
+              },
+              {
+                "name": "owner_worker_id",
+                "annotation": "WorkerID",
+                "has_default": false
+              },
+              {
+                "name": "receipt",
+                "annotation": "PublicationReceipt",
+                "has_default": false
+              },
+              {
+                "name": "accepted_fact",
+                "annotation": "PublicationRef | PreparedReceipt | OutputPublicationCompleteWitness | OutputPublicationAdoptionProof | FenceProof | ClosedContainedHolds",
+                "has_default": false
+              },
+              {
+                "name": "fence",
+                "annotation": "FenceProof | None",
+                "has_default": true
+              },
+              {
+                "name": "fence_receipt",
+                "annotation": "PublicationReceipt | None",
+                "has_default": true
+              },
+              {
+                "name": "retired_receipt",
+                "annotation": "PublicationReceipt | None",
+                "has_default": true
+              }
+            ]
+          }
+        },
+        {
+          "symbol": "PublicationStageAck.__post_init__",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 628,
+            "end_line": 720,
+            "own_counts": {
+              "statements": 82,
+              "if_statements": 37,
+              "conditional_expressions": 0,
+              "for_loops": 2,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 15,
+              "raise_statements": 20,
+              "calls": 47
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationStageAck.accepted",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 723,
+            "end_line": 724,
+            "own_counts": {
+              "statements": 2,
+              "if_statements": 0,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 0
+            },
+            "decorators": [
+              "property"
+            ]
+          }
+        },
+        {
+          "symbol": "PublicationStageAck.error",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 727,
+            "end_line": 728,
+            "own_counts": {
+              "statements": 2,
+              "if_statements": 0,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 0
+            },
+            "decorators": [
+              "property"
+            ]
+          }
+        },
+        {
+          "symbol": "PublicationStageAck.error_kind",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 731,
+            "end_line": 732,
+            "own_counts": {
+              "statements": 2,
+              "if_statements": 0,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 0
+            },
+            "decorators": [
+              "property"
+            ]
+          }
+        },
+        {
+          "symbol": "PublicationStageAck.forward_open",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 735,
+            "end_line": 736,
+            "own_counts": {
+              "statements": 2,
+              "if_statements": 0,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 1,
+              "raise_statements": 0,
+              "calls": 0
+            },
+            "decorators": [
+              "property"
+            ]
+          }
+        },
+        {
+          "symbol": "_request_stage",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 511,
+            "end_line": 515,
+            "own_counts": {
+              "statements": 2,
+              "if_statements": 0,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 1
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "stage_ack_from_snapshot",
+          "disposition": "added",
+          "baseline": null,
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 739,
+            "end_line": 774,
+            "own_counts": {
+              "statements": 29,
+              "if_statements": 13,
+              "conditional_expressions": 1,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 7,
+              "raise_statements": 6,
+              "calls": 26
+            },
+            "decorators": []
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/miniray/enhanced_publication_client.py",
+      "baseline": {
+        "raw_sha256": "659c11e18a62c21bbaea58eaeb40305d14e87a9d4ebc29883042e7c46677d4f5",
+        "lf_sha256": "ab7aa081ccd08fab2b86e33fb6c8d20825b11de7aed6110b73c9b835bc2184b0",
+        "counts": {
+          "statements": 84,
+          "if_statements": 13,
+          "conditional_expressions": 1,
+          "for_loops": 0,
+          "while_loops": 0,
+          "except_handlers": 0,
+          "comprehensions": 0,
+          "match_statements": 0,
+          "bool_operator_continuations": 7,
+          "raise_statements": 9,
+          "calls": 53,
+          "physical_lines": 109,
+          "nonblank_lines": 91,
+          "code_physical_lines_excluding_docstrings_comments": 81,
+          "class_definitions": 2,
+          "function_definitions": 12,
+          "annotated_class_fields": 0
+        },
+        "self_attribute_store_names": [
+          "self._current",
+          "self._lock",
+          "self._publications",
+          "self._rpc",
+          "self.reply"
+        ]
+      },
+      "candidate": {
+        "raw_sha256": "6bd91e6e32636f0bae72de93e61da9777550087eb96afdfe51ddd6684563dbe0",
+        "lf_sha256": "e9f991fa94ad504a3fc2726711f04a11842d70202e0f7a6804d712c558d03451",
+        "counts": {
+          "statements": 108,
+          "if_statements": 24,
+          "conditional_expressions": 1,
+          "for_loops": 0,
+          "while_loops": 0,
+          "except_handlers": 0,
+          "comprehensions": 0,
+          "match_statements": 0,
+          "bool_operator_continuations": 11,
+          "raise_statements": 16,
+          "calls": 67,
+          "physical_lines": 136,
+          "nonblank_lines": 118,
+          "code_physical_lines_excluding_docstrings_comments": 108,
+          "class_definitions": 2,
+          "function_definitions": 12,
+          "annotated_class_fields": 0
+        },
+        "self_attribute_store_names": [
+          "self._current",
+          "self._lock",
+          "self._publications",
+          "self._rpc",
+          "self.reply"
+        ]
+      },
+      "delta": {
+        "statements": 24,
+        "if_statements": 11,
+        "conditional_expressions": 0,
+        "for_loops": 0,
+        "while_loops": 0,
+        "except_handlers": 0,
+        "comprehensions": 0,
+        "match_statements": 0,
+        "bool_operator_continuations": 4,
+        "raise_statements": 7,
+        "calls": 14,
+        "physical_lines": 27,
+        "nonblank_lines": 27,
+        "code_physical_lines_excluding_docstrings_comments": 27,
+        "class_definitions": 0,
+        "function_definitions": 0,
+        "annotated_class_fields": 0
+      },
+      "new_self_attribute_store_names": [],
+      "removed_self_attribute_store_names": [],
+      "changed_symbols": [
+        {
+          "symbol": "PublicationClient",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 22,
+            "end_line": 109,
+            "fields": []
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 22,
+            "end_line": 136,
+            "fields": []
+          }
+        },
+        {
+          "symbol": "PublicationClient.begin",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 64,
+            "end_line": 70,
+            "own_counts": {
+              "statements": 7,
+              "if_statements": 1,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 1,
+              "calls": 6
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 87,
+            "end_line": 93,
+            "own_counts": {
+              "statements": 7,
+              "if_statements": 1,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 1,
+              "calls": 6
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationClient.call",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 47,
+            "end_line": 59,
+            "own_counts": {
+              "statements": 13,
+              "if_statements": 4,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 2,
+              "raise_statements": 4,
+              "calls": 8
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 47,
+            "end_line": 82,
+            "own_counts": {
+              "statements": 33,
+              "if_statements": 13,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 6,
+              "raise_statements": 9,
+              "calls": 20
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationClient.commit_put",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 81,
+            "end_line": 85,
+            "own_counts": {
+              "statements": 5,
+              "if_statements": 1,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 1,
+              "calls": 3
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 106,
+            "end_line": 112,
+            "own_counts": {
+              "statements": 7,
+              "if_statements": 2,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 2,
+              "calls": 4
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationClient.commit_task",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 72,
+            "end_line": 79,
+            "own_counts": {
+              "statements": 8,
+              "if_statements": 2,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 2,
+              "calls": 7
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 95,
+            "end_line": 104,
+            "own_counts": {
+              "statements": 10,
+              "if_statements": 3,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 3,
+              "calls": 8
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationClient.fence",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 90,
+            "end_line": 101,
+            "own_counts": {
+              "statements": 8,
+              "if_statements": 2,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 2,
+              "raise_statements": 0,
+              "calls": 6
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 117,
+            "end_line": 128,
+            "own_counts": {
+              "statements": 8,
+              "if_statements": 2,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 2,
+              "raise_statements": 0,
+              "calls": 6
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationClient.query",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 61,
+            "end_line": 62,
+            "own_counts": {
+              "statements": 2,
+              "if_statements": 0,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 2
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 84,
+            "end_line": 85,
+            "own_counts": {
+              "statements": 2,
+              "if_statements": 0,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 2
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "PublicationClient.retire",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 103,
+            "end_line": 109,
+            "own_counts": {
+              "statements": 7,
+              "if_statements": 1,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 1,
+              "raise_statements": 0,
+              "calls": 8
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 130,
+            "end_line": 136,
+            "own_counts": {
+              "statements": 7,
+              "if_statements": 1,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 1,
+              "raise_statements": 0,
+              "calls": 8
+            },
+            "decorators": []
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/miniray/enhanced_publication_control.py",
+      "baseline": {
+        "raw_sha256": "28fc68d9865dc2701f3a214a0d63265095d81b71138f10740a7db199867136cc",
+        "lf_sha256": "8dff9a83393410d690c8cfd7a0ef7e50e2c7a7f3b5afd5fecc45177a642de0a4",
+        "counts": {
+          "statements": 233,
+          "if_statements": 50,
+          "conditional_expressions": 3,
+          "for_loops": 3,
+          "while_loops": 0,
+          "except_handlers": 5,
+          "comprehensions": 8,
+          "match_statements": 0,
+          "bool_operator_continuations": 34,
+          "raise_statements": 14,
+          "calls": 115,
+          "physical_lines": 324,
+          "nonblank_lines": 299,
+          "code_physical_lines_excluding_docstrings_comments": 274,
+          "class_definitions": 2,
+          "function_definitions": 17,
+          "annotated_class_fields": 9
+        },
+        "self_attribute_store_names": [
+          "self._admission_closed",
+          "self._cursor",
+          "self._deaths",
+          "self.authority",
+          "self.lock",
+          "self.nodes",
+          "self.owner_fences",
+          "self.rpc",
+          "self.workers"
+        ]
+      },
+      "candidate": {
+        "raw_sha256": "3b54a4508e9755c79246e9c359b76f850dd382387dbd4265973833760e636225",
+        "lf_sha256": "e88000aa7f695327c054955cbad8dafaa33896ffd632684ae04428d06717b98f",
+        "counts": {
+          "statements": 233,
+          "if_statements": 50,
+          "conditional_expressions": 3,
+          "for_loops": 3,
+          "while_loops": 0,
+          "except_handlers": 5,
+          "comprehensions": 8,
+          "match_statements": 0,
+          "bool_operator_continuations": 32,
+          "raise_statements": 14,
+          "calls": 115,
+          "physical_lines": 324,
+          "nonblank_lines": 299,
+          "code_physical_lines_excluding_docstrings_comments": 274,
+          "class_definitions": 2,
+          "function_definitions": 17,
+          "annotated_class_fields": 9
+        },
+        "self_attribute_store_names": [
+          "self._admission_closed",
+          "self._cursor",
+          "self._deaths",
+          "self.authority",
+          "self.lock",
+          "self.nodes",
+          "self.owner_fences",
+          "self.rpc",
+          "self.workers"
+        ]
+      },
+      "delta": {
+        "statements": 0,
+        "if_statements": 0,
+        "conditional_expressions": 0,
+        "for_loops": 0,
+        "while_loops": 0,
+        "except_handlers": 0,
+        "comprehensions": 0,
+        "match_statements": 0,
+        "bool_operator_continuations": -2,
+        "raise_statements": 0,
+        "calls": 0,
+        "physical_lines": 0,
+        "nonblank_lines": 0,
+        "code_physical_lines_excluding_docstrings_comments": 0,
+        "class_definitions": 0,
+        "function_definitions": 0,
+        "annotated_class_fields": 0
+      },
+      "new_self_attribute_store_names": [],
+      "removed_self_attribute_store_names": [],
+      "changed_symbols": [
+        {
+          "symbol": "EnhancedPublicationControl",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 28,
+            "end_line": 324,
+            "fields": []
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 28,
+            "end_line": 324,
+            "fields": []
+          }
+        },
+        {
+          "symbol": "EnhancedPublicationControl.handle",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 39,
+            "end_line": 96,
+            "own_counts": {
+              "statements": 42,
+              "if_statements": 16,
+              "conditional_expressions": 2,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 1,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 14,
+              "raise_statements": 2,
+              "calls": 37
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 39,
+            "end_line": 96,
+            "own_counts": {
+              "statements": 42,
+              "if_statements": 16,
+              "conditional_expressions": 2,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 1,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 12,
+              "raise_statements": 2,
+              "calls": 37
+            },
+            "decorators": []
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/miniray/node.py",
+      "baseline": {
+        "raw_sha256": "94db6273b6c779f6d827044b274dee83fc9bdbd71d679287528b207c131c4fa4",
+        "lf_sha256": "1b9c79c40d2b5dac5bb95ac7c0217d4987b50b8783e87b77d52662bd015c1698",
+        "counts": {
+          "statements": 3570,
+          "if_statements": 655,
+          "conditional_expressions": 65,
+          "for_loops": 41,
+          "while_loops": 3,
+          "except_handlers": 98,
+          "comprehensions": 95,
+          "match_statements": 0,
+          "bool_operator_continuations": 446,
+          "raise_statements": 191,
+          "calls": 2141,
+          "physical_lines": 7340,
+          "nonblank_lines": 6942,
+          "code_physical_lines_excluding_docstrings_comments": 6345,
+          "class_definitions": 16,
+          "function_definitions": 189,
+          "annotated_class_fields": 71
+        },
+        "self_attribute_store_names": [
+          "self._actor_creation_locks",
+          "self._actor_finalize_request_id",
+          "self._actor_finalize_results",
+          "self._actor_generation_outcomes",
+          "self._actor_lifecycle_lock",
+          "self._actor_supervisor_stop",
+          "self._actor_supervisor_thread",
+          "self._actor_supervisor_wait",
+          "self._actor_worker_ids_seen",
+          "self._actor_worker_pids_seen",
+          "self._actor_workers",
+          "self._bundle_reservations",
+          "self._certified_node_deaths",
+          "self._closed_transfer_pins",
+          "self._cluster_addresses",
+          "self._cluster_nodes",
+          "self._cluster_snapshot_id",
+          "self._context",
+          "self._dead_dependency_submitters",
+          "self._dead_worker_exitcodes",
+          "self._dependency_handoff_cursor",
+          "self._dependency_handoff_drivers",
+          "self._dependency_handoff_probe_after",
+          "self._dependency_pin_cleanups",
+          "self._dropped_metadata",
+          "self._finalize_exit_scheduled",
+          "self._gcs_address",
+          "self._gcs_lifecycle_lock",
+          "self._host",
+          "self._inflight_lease_requests",
+          "self._inline_threshold",
+          "self._installed_membership_epoch",
+          "self._installed_snapshot_nodes",
+          "self._lease_cancellations",
+          "self._lease_dependency_custody",
+          "self._lease_outcomes",
+          "self._lease_request_locks",
+          "self._leases",
+          "self._ledger",
+          "self._local_replica_write_claims",
+          "self._localization_seal_witnesses",
+          "self._membership_epoch",
+          "self._node_pid",
+          "self._object_localization_locks",
+          "self._object_manager",
+          "self._object_store",
+          "self._output_publication_gate",
+          "self._output_publication_journal",
+          "self._output_publications",
+          "self._owner_death_fence_outcomes",
+          "self._owner_death_fences",
+          "self._pinned_transfers",
+          "self._placement_group_digests",
+          "self._registered_with_gcs",
+          "self._registration_epoch",
+          "self._replica_drop_receipts",
+          "self._resource_report_version",
+          "self._resource_reported_version",
+          "self._scheduling_lock",
+          "self._scheduling_policy",
+          "self._sealed_metadata",
+          "self._server",
+          "self._shutdown_phase_lock",
+          "self._shutdown_request_id",
+          "self._source_pin_releases",
+          "self._state_lock",
+          "self._stop_event",
+          "self._trace_config",
+          "self._transfer_death_probe_after",
+          "self._transfer_node_deaths",
+          "self._worker_death_reports",
+          "self._worker_drain_statuses",
+          "self._worker_failpoint",
+          "self._worker_finalize_results",
+          "self._worker_lifecycle_lock",
+          "self._worker_order",
+          "self._worker_replacements_inflight",
+          "self._worker_supervisor_stop",
+          "self._worker_supervisor_thread",
+          "self._workers",
+          "self.event_sink",
+          "self.failure",
+          "self.node_id",
+          "self.num_workers_per_node"
+        ]
+      },
+      "candidate": {
+        "raw_sha256": "b9a0f126ca4aae03e85dc53b3eb5061fc2bcd575a5c433e8c75d8249b2f8ef02",
+        "lf_sha256": "f3db128e51510ed22d3c1ee64f5e22a7363f5718a1f3a20f3b6ba2aaf644c574",
+        "counts": {
+          "statements": 3571,
+          "if_statements": 655,
+          "conditional_expressions": 65,
+          "for_loops": 41,
+          "while_loops": 3,
+          "except_handlers": 98,
+          "comprehensions": 95,
+          "match_statements": 0,
+          "bool_operator_continuations": 448,
+          "raise_statements": 191,
+          "calls": 2142,
+          "physical_lines": 7344,
+          "nonblank_lines": 6946,
+          "code_physical_lines_excluding_docstrings_comments": 6349,
+          "class_definitions": 16,
+          "function_definitions": 189,
+          "annotated_class_fields": 71
+        },
+        "self_attribute_store_names": [
+          "self._actor_creation_locks",
+          "self._actor_finalize_request_id",
+          "self._actor_finalize_results",
+          "self._actor_generation_outcomes",
+          "self._actor_lifecycle_lock",
+          "self._actor_supervisor_stop",
+          "self._actor_supervisor_thread",
+          "self._actor_supervisor_wait",
+          "self._actor_worker_ids_seen",
+          "self._actor_worker_pids_seen",
+          "self._actor_workers",
+          "self._bundle_reservations",
+          "self._certified_node_deaths",
+          "self._closed_transfer_pins",
+          "self._cluster_addresses",
+          "self._cluster_nodes",
+          "self._cluster_snapshot_id",
+          "self._context",
+          "self._dead_dependency_submitters",
+          "self._dead_worker_exitcodes",
+          "self._dependency_handoff_cursor",
+          "self._dependency_handoff_drivers",
+          "self._dependency_handoff_probe_after",
+          "self._dependency_pin_cleanups",
+          "self._dropped_metadata",
+          "self._finalize_exit_scheduled",
+          "self._gcs_address",
+          "self._gcs_lifecycle_lock",
+          "self._host",
+          "self._inflight_lease_requests",
+          "self._inline_threshold",
+          "self._installed_membership_epoch",
+          "self._installed_snapshot_nodes",
+          "self._lease_cancellations",
+          "self._lease_dependency_custody",
+          "self._lease_outcomes",
+          "self._lease_request_locks",
+          "self._leases",
+          "self._ledger",
+          "self._local_replica_write_claims",
+          "self._localization_seal_witnesses",
+          "self._membership_epoch",
+          "self._node_pid",
+          "self._object_localization_locks",
+          "self._object_manager",
+          "self._object_store",
+          "self._output_publication_gate",
+          "self._output_publication_journal",
+          "self._output_publications",
+          "self._owner_death_fence_outcomes",
+          "self._owner_death_fences",
+          "self._pinned_transfers",
+          "self._placement_group_digests",
+          "self._registered_with_gcs",
+          "self._registration_epoch",
+          "self._replica_drop_receipts",
+          "self._resource_report_version",
+          "self._resource_reported_version",
+          "self._scheduling_lock",
+          "self._scheduling_policy",
+          "self._sealed_metadata",
+          "self._server",
+          "self._shutdown_phase_lock",
+          "self._shutdown_request_id",
+          "self._source_pin_releases",
+          "self._state_lock",
+          "self._stop_event",
+          "self._trace_config",
+          "self._transfer_death_probe_after",
+          "self._transfer_node_deaths",
+          "self._worker_death_reports",
+          "self._worker_drain_statuses",
+          "self._worker_failpoint",
+          "self._worker_finalize_results",
+          "self._worker_lifecycle_lock",
+          "self._worker_order",
+          "self._worker_replacements_inflight",
+          "self._worker_supervisor_stop",
+          "self._worker_supervisor_thread",
+          "self._workers",
+          "self.event_sink",
+          "self.failure",
+          "self.node_id",
+          "self.num_workers_per_node"
+        ]
+      },
+      "delta": {
+        "statements": 1,
+        "if_statements": 0,
+        "conditional_expressions": 0,
+        "for_loops": 0,
+        "while_loops": 0,
+        "except_handlers": 0,
+        "comprehensions": 0,
+        "match_statements": 0,
+        "bool_operator_continuations": 2,
+        "raise_statements": 0,
+        "calls": 1,
+        "physical_lines": 4,
+        "nonblank_lines": 4,
+        "code_physical_lines_excluding_docstrings_comments": 4,
+        "class_definitions": 0,
+        "function_definitions": 0,
+        "annotated_class_fields": 0
+      },
+      "new_self_attribute_store_names": [],
+      "removed_self_attribute_store_names": [],
+      "changed_symbols": [
+        {
+          "symbol": "NodeServer",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 329,
+            "end_line": 7249,
+            "fields": []
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 329,
+            "end_line": 7253,
+            "fields": []
+          }
+        },
+        {
+          "symbol": "NodeServer._make_output_publication_adapter",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 1057,
+            "end_line": 1160,
+            "own_counts": {
+              "statements": 3,
+              "if_statements": 0,
+              "conditional_expressions": 1,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 4
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 1057,
+            "end_line": 1164,
+            "own_counts": {
+              "statements": 3,
+              "if_statements": 0,
+              "conditional_expressions": 1,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 0,
+              "raise_statements": 0,
+              "calls": 4
+            },
+            "decorators": []
+          }
+        },
+        {
+          "symbol": "NodeServer._make_output_publication_adapter.publication_rpc",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 1106,
+            "end_line": 1135,
+            "own_counts": {
+              "statements": 24,
+              "if_statements": 6,
+              "conditional_expressions": 1,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 5,
+              "raise_statements": 4,
+              "calls": 15
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 1106,
+            "end_line": 1139,
+            "own_counts": {
+              "statements": 25,
+              "if_statements": 6,
+              "conditional_expressions": 1,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 7,
+              "raise_statements": 4,
+              "calls": 16
+            },
+            "decorators": []
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/miniray/output_publication_journal.py",
+      "baseline": {
+        "raw_sha256": "6c27c7b28ce5ca33beffbe6d61d3f7fd31682fba17186e07622b31c1baae6312",
+        "lf_sha256": "1d779393f18266c7b2c7581361ba0ae1f78c5b6851acb55da644a35e33f171e6",
+        "counts": {
+          "statements": 529,
+          "if_statements": 74,
+          "conditional_expressions": 11,
+          "for_loops": 4,
+          "while_loops": 0,
+          "except_handlers": 1,
+          "comprehensions": 15,
+          "match_statements": 0,
+          "bool_operator_continuations": 36,
+          "raise_statements": 53,
+          "calls": 307,
+          "physical_lines": 783,
+          "nonblank_lines": 667,
+          "code_physical_lines_excluding_docstrings_comments": 615,
+          "class_definitions": 16,
+          "function_definitions": 58,
+          "annotated_class_fields": 44
+        },
+        "self_attribute_store_names": [
+          "self._lock",
+          "self._records",
+          "self.publication_id",
+          "self.tombstone"
+        ]
+      },
+      "candidate": {
+        "raw_sha256": "8002512eabdff824b526f2f51c6d3f809818c33d80336a85ff1914c94e939897",
+        "lf_sha256": "cf4b38070f0f1b23f70f0c2d7c974a4e25d585bb2de8df978e61d4fcdf4bf748",
+        "counts": {
+          "statements": 529,
+          "if_statements": 74,
+          "conditional_expressions": 11,
+          "for_loops": 4,
+          "while_loops": 0,
+          "except_handlers": 1,
+          "comprehensions": 15,
+          "match_statements": 0,
+          "bool_operator_continuations": 34,
+          "raise_statements": 53,
+          "calls": 307,
+          "physical_lines": 783,
+          "nonblank_lines": 667,
+          "code_physical_lines_excluding_docstrings_comments": 615,
+          "class_definitions": 16,
+          "function_definitions": 58,
+          "annotated_class_fields": 44
+        },
+        "self_attribute_store_names": [
+          "self._lock",
+          "self._records",
+          "self.publication_id",
+          "self.tombstone"
+        ]
+      },
+      "delta": {
+        "statements": 0,
+        "if_statements": 0,
+        "conditional_expressions": 0,
+        "for_loops": 0,
+        "while_loops": 0,
+        "except_handlers": 0,
+        "comprehensions": 0,
+        "match_statements": 0,
+        "bool_operator_continuations": -2,
+        "raise_statements": 0,
+        "calls": 0,
+        "physical_lines": 0,
+        "nonblank_lines": 0,
+        "code_physical_lines_excluding_docstrings_comments": 0,
+        "class_definitions": 0,
+        "function_definitions": 0,
+        "annotated_class_fields": 0
+      },
+      "new_self_attribute_store_names": [],
+      "removed_self_attribute_store_names": [],
+      "changed_symbols": [
+        {
+          "symbol": "OutputPublicationJournal",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 254,
+            "end_line": 766,
+            "fields": []
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 254,
+            "end_line": 766,
+            "fields": []
+          }
+        },
+        {
+          "symbol": "OutputPublicationJournal.record_publication_reply",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 322,
+            "end_line": 349,
+            "own_counts": {
+              "statements": 26,
+              "if_statements": 8,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 10,
+              "raise_statements": 7,
+              "calls": 17
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 322,
+            "end_line": 349,
+            "own_counts": {
+              "statements": 26,
+              "if_statements": 8,
+              "conditional_expressions": 0,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 8,
+              "raise_statements": 7,
+              "calls": 17
+            },
+            "decorators": []
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "baseline": {
+        "raw_sha256": "71c1a69f6e0a7179625fef21aaa5a8c72e1a4424be18965c4adabc8feb7b112f",
+        "lf_sha256": "8a16c9ae81be8e47a0e50a6bdd2211ad801df5675ec4af60ec0534ace0ba79f2",
+        "counts": {
+          "statements": 406,
+          "if_statements": 63,
+          "conditional_expressions": 6,
+          "for_loops": 9,
+          "while_loops": 0,
+          "except_handlers": 0,
+          "comprehensions": 6,
+          "match_statements": 0,
+          "bool_operator_continuations": 22,
+          "raise_statements": 29,
+          "calls": 259,
+          "physical_lines": 639,
+          "nonblank_lines": 586,
+          "code_physical_lines_excluding_docstrings_comments": 492,
+          "class_definitions": 3,
+          "function_definitions": 26,
+          "annotated_class_fields": 0
+        },
+        "self_attribute_store_names": [
+          "self._abort_owner",
+          "self._drop_replica",
+          "self._lease_converged",
+          "self._lease_pending",
+          "self._lock",
+          "self._owner_cleaned",
+          "self._owner_cleanup_acks",
+          "self._owner_cleanup_deaths",
+          "self._prepare_child",
+          "self._promote_child",
+          "self._publication_rpc",
+          "self._publication_value",
+          "self._register_owner",
+          "self._release_child",
+          "self._report_complete",
+          "self._report_rollback",
+          "self._rollback_reported",
+          "self._seal_replica",
+          "self._terminal_pending",
+          "self._terminal_reported",
+          "self._test_checkpoint",
+          "self._tickets",
+          "self.journal"
+        ]
+      },
+      "candidate": {
+        "raw_sha256": "dc8531c17768552d839c5b32577e00e4fba5ab72a1d4d6fd0c24962dd48e6c19",
+        "lf_sha256": "5e219143886042c8f630781086665d74f4e138ef5cbc793a065a64510ecea879",
+        "counts": {
+          "statements": 408,
+          "if_statements": 64,
+          "conditional_expressions": 6,
+          "for_loops": 9,
+          "while_loops": 0,
+          "except_handlers": 0,
+          "comprehensions": 6,
+          "match_statements": 0,
+          "bool_operator_continuations": 23,
+          "raise_statements": 30,
+          "calls": 261,
+          "physical_lines": 641,
+          "nonblank_lines": 588,
+          "code_physical_lines_excluding_docstrings_comments": 494,
+          "class_definitions": 3,
+          "function_definitions": 26,
+          "annotated_class_fields": 0
+        },
+        "self_attribute_store_names": [
+          "self._abort_owner",
+          "self._drop_replica",
+          "self._lease_converged",
+          "self._lease_pending",
+          "self._lock",
+          "self._owner_cleaned",
+          "self._owner_cleanup_acks",
+          "self._owner_cleanup_deaths",
+          "self._prepare_child",
+          "self._promote_child",
+          "self._publication_rpc",
+          "self._publication_value",
+          "self._register_owner",
+          "self._release_child",
+          "self._report_complete",
+          "self._report_rollback",
+          "self._rollback_reported",
+          "self._seal_replica",
+          "self._terminal_pending",
+          "self._terminal_reported",
+          "self._test_checkpoint",
+          "self._tickets",
+          "self.journal"
+        ]
+      },
+      "delta": {
+        "statements": 2,
+        "if_statements": 1,
+        "conditional_expressions": 0,
+        "for_loops": 0,
+        "while_loops": 0,
+        "except_handlers": 0,
+        "comprehensions": 0,
+        "match_statements": 0,
+        "bool_operator_continuations": 1,
+        "raise_statements": 1,
+        "calls": 2,
+        "physical_lines": 2,
+        "nonblank_lines": 2,
+        "code_physical_lines_excluding_docstrings_comments": 2,
+        "class_definitions": 0,
+        "function_definitions": 0,
+        "annotated_class_fields": 0
+      },
+      "new_self_attribute_store_names": [],
+      "removed_self_attribute_store_names": [],
+      "changed_symbols": [
+        {
+          "symbol": "OutputPublicationNodeAdapter",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "ClassDef",
+            "line": 55,
+            "end_line": 633,
+            "fields": []
+          },
+          "candidate": {
+            "kind": "ClassDef",
+            "line": 55,
+            "end_line": 635,
+            "fields": []
+          }
+        },
+        {
+          "symbol": "OutputPublicationNodeAdapter._record_gcs",
+          "disposition": "changed",
+          "baseline": {
+            "kind": "FunctionDef",
+            "line": 196,
+            "end_line": 215,
+            "own_counts": {
+              "statements": 17,
+              "if_statements": 5,
+              "conditional_expressions": 2,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 3,
+              "raise_statements": 3,
+              "calls": 12
+            },
+            "decorators": []
+          },
+          "candidate": {
+            "kind": "FunctionDef",
+            "line": 196,
+            "end_line": 217,
+            "own_counts": {
+              "statements": 19,
+              "if_statements": 6,
+              "conditional_expressions": 2,
+              "for_loops": 0,
+              "while_loops": 0,
+              "except_handlers": 0,
+              "comprehensions": 0,
+              "match_statements": 0,
+              "bool_operator_continuations": 4,
+              "raise_statements": 4,
+              "calls": 14
+            },
+            "decorators": []
+          }
+        }
+      ]
+    }
+  ],
+  "authority_state_review": {
+    "new_independent_authorities": 0,
+    "new_mutable_runtime_phase_or_forward_fields": 0,
+    "new_network_rpc_or_query_call_sites": 0,
+    "unchanged": [
+      "PublicationAuthority._records/_sequence/_lock",
+      "PublicationSnapshot full causal history",
+      "journal publication_receipts",
+      "controller _deaths outbox",
+      "PublicationClient _publications/_current route metadata"
+    ],
+    "new_validation_local": "sequences is an ephemeral constructor dictionary, not retained progress state",
+    "new_wire_type": "PublicationStageAck",
+    "new_wire_fields": [
+      "request",
+      "reference",
+      "owner_worker_id",
+      "receipt",
+      "accepted_fact",
+      "fence",
+      "fence_receipt",
+      "retired_receipt"
+    ],
+    "derived_properties_not_fields": [
+      "accepted",
+      "error",
+      "error_kind",
+      "forward_open"
+    ]
+  },
+  "copy_path_review": {
+    "unchanged": [
+      "request constructors/deepcopy boundaries",
+      "authority input _copy",
+      "full updated PublicationSnapshot rebuild and validation",
+      "controller pre-mutation full query",
+      "full failure/query reply construction",
+      "caller replace validation"
+    ],
+    "removed_from_success_reply": [
+      "full PublicationSnapshot field/rebuild",
+      "unrelated receipt history and unrelated accepted facts at receiving revalidation"
+    ],
+    "added_or_retained_cost": [
+      "new success discriminator and strict cross-field validator",
+      "full original request echo",
+      "typed fact duplicate for ARM/put/adoption/terminal/retirement",
+      "owner context validation",
+      "complete canonical first fence and closing receipts on historical replies",
+      "extra known-publication replace/check in owner client"
+    ],
+    "measurement_boundary": "These are structural call paths, not dynamic copy counts; root actual same-input lifecycle capture determines frequency and net cost."
+  }
+}

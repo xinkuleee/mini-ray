@@ -246,7 +246,7 @@ def _attach_output_publication(node):
     def publication_rpc(request):
         assert len(publication_calls) < 24
         reply = authority.apply(request)
-        assert type(reply) is ep.PublicationReply and reply.request == request
+        assert type(reply) is (ep.PublicationReply if type(request) is ep.GetPublication or not reply.accepted else ep.PublicationStageAck) and reply.request == request
         publication_calls.append((request, reply))
         return reply
 

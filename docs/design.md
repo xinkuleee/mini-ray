@@ -1,6 +1,6 @@
 # 协议增强版架构：共同机制与两项自定义保证
 
-本页描述teaching-enhanced候选：继承基础版单输出运行时，并同时加入普通发布事务与全局ObjectID图防环。正式分支与验收身份见[状态页](current-status.md)。
+本页描述 `teaching-enhanced` 运行时：继承基础版单输出机制，并同时加入普通结果 GCS 发布事务与全局 ObjectID 图防环。R2.2 已保存验收与 R2.3 修复及验证结果分别见[状态页](current-status.md)；架构描述不替代版本绑定的实测证据。
 它是缩小规模与范围的教学实现，不承诺生产 Ray 的完整功能、接口兼容或相同内部协议。
 运行命令见[学习路径](learning-path.md)和[测试指南](testing.md)，当前整理版身份与实测边界见[状态页](current-status.md)；[基础验收账本](acceptance-baseline.md)保留固定历史版本的证据。
 
@@ -66,6 +66,8 @@ lease 通过后，提交者 Core 直接向指定 Worker 发送 PushTask；GCS �
 这些步骤不能压成一个“成功”：函数返回、Node Complete、owner READY、bytes 可用、回复退休、对象 GC 各有观察点。
 owner 已 READY 后丢失退休 ACK，只继续精确重放和 finish/GC 屏障，不回滚 READY 或再次执行函数。
 Node向owner报告Complete使用OutputHandoffCompleteAck，只确认准确witness；GetOutputHandoff仍返回完整历史。窄ACK不改变Complete、本地资源清账和owner READY之间的边界。
+
+GCS 的成功 mutation 使用 `PublicationStageAck`：完整回显原请求，并携带准确阶段收据、该阶段实际接受的 `accepted_fact`、owner 身份及关闭事实；`forward_open` 从 fence/retired 收据派生，调用方仍须在 RPC 后检查自己的 epoch/撤销状态。`GetPublication` 保留完整 detached 历史或 ABSENT，失败回复保留 typed error 与可选 snapshot；两者继续使用 `PublicationReply`。这与上面的 Node→owner Complete ACK 是不同边界。ARM 对比真实 journal preparation，terminal 对比准确 Complete，旧收据不授予新前进权限；单一 GCS 历史权威、图算法和同步阶段不变。该表示减少成功回包重复携带的完整历史，但增加一个 wire 类型和相应校验代码，未测量网络加速；本轮采纳与最终验证进度见[状态页](current-status.md)。
 abort 关闭旧身份的前进权限；已经存在的 holds、partial write 或副本仍要准确释放，不能把 fence 当清理完成。
 
 跨模块必要原子性由 Core 的现有组合锁维护；外部调用后重查当前身份/撤销状态，旧 ACK 不是永久前进许可。

@@ -321,26 +321,26 @@ class OutputPublicationJournal:
 
     def record_publication_reply(self, publication_id, request, reply, stage, *, forward=False):
         """Retain an exact server receipt, without another phase authority."""
-        from .enhanced_publication import PublicationRef, PublicationReply, PublicationStage
-        if type(reply) is not PublicationReply:
+        from .enhanced_publication import PublicationRef, PublicationStageAck, PublicationStage
+        if type(reply) is not PublicationStageAck:
             raise OutputPublicationConflictError("GCS returned an invalid publication reply")
         reply = replace(reply)
         with self._lock:
             record = self._record(publication_id)
             reference = PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest)
-            if (reply.request != request or not reply.accepted or reply.receipt is None
-                    or reply.snapshot is None or reply.receipt.reference != reference
-                    or reply.receipt.stage is not stage or reply.snapshot.reference != reference):
+            if (reply.request != request or reply.reference != reference
+                    or reply.owner_worker_id != record.manifest.header.owner_worker_id
+                    or reply.receipt.reference != reference or reply.receipt.stage is not stage):
                 raise OutputPublicationConflictError("GCS did not acknowledge the exact publication stage")
             if forward:
                 self._require_active(record)
-                if not reply.snapshot.forward_open:
+                if not reply.forward_open:
                     raise OutputPublicationJournalStateError("historical GCS receipt is not forward permission")
                 if stage is PublicationStage.INTENT and not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
                     raise OutputPublicationJournalStateError("GCS INTENT follows actual owner registration")
                 if stage is PublicationStage.PREPARED and PublicationStage.INTENT not in record.publication_receipts:
                     raise OutputPublicationJournalStateError("graph reservation follows exact INTENT receipt")
-                if stage is PublicationStage.ARMED and reply.snapshot.prepared != self.preparation_receipt(publication_id):
+                if stage is PublicationStage.ARMED and reply.accepted_fact != self.preparation_receipt(publication_id):
                     raise OutputPublicationConflictError("ARM changed the actual journal preparation")
             previous = record.publication_receipts.get(stage)
             if previous is not None and previous != reply.receipt:

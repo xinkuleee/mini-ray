@@ -1,0 +1,150 @@
+diff --git a/tests/unit/test_owner_finalize_replica_receipts.py b/tests/unit/test_owner_finalize_replica_receipts.py
+index 233a8a3..9fac41f 100644
+--- a/tests/unit/test_owner_finalize_replica_receipts.py
++++ b/tests/unit/test_owner_finalize_replica_receipts.py
+@@ -10,6 +10,8 @@ threads, sockets and waits. Faults are synchronous local exceptions/False
+ returns, corrupted bytes/claim metadata, or one fake Worker's lost reply.
+ Every fault/replay sequence has at most two Worker calls and fixed Finalize
+ replays; there is no progress loop.
++The enhanced fixture uses its actual publication authority. Node cleanup may
++return an empty child closure while the fenced GCS graph remains unretired.
+ """
+ 
+ from __future__ import annotations
+@@ -22,7 +24,7 @@ import threading
+ 
+ import pytest
+ 
+-from miniray import output_protocol as wire, protocol
++from miniray import output_protocol as wire, protocol, enhanced_publication as ep
+ from miniray.node import NodeServer
+ from miniray.object_manager import PullAction, PullState, UnknownPullError
+ from miniray.output_publication_journal import (
+@@ -57,6 +59,43 @@ def _receipts(node):
+     return set(getattr(node, "_replica_drop_receipts", ()))
+ 
+ 
++def _assert_authority_progress(fixture, *, owner_death=None):
++    query = ep.GetPublication(fixture.publication.reference)
++    reply = fixture.authority.query(query)
++    assert type(reply) is ep.PublicationReply and reply.request == query and reply.accepted
++    central = reply.snapshot
++    assert type(central) is ep.PublicationSnapshot
++    assert central.publication == fixture.publication
++    assert central.reference == ep.PublicationRef(fixture.id, fixture.manifest.manifest_digest)
++    stages = [ep.PublicationStage.INTENT, ep.PublicationStage.PREPARED]
++    if fixture.manifest.value.tier is protocol.ResultStorage.INLINE:
++        stages.append(ep.PublicationStage.ARMED)
++        assert type(central.prepared) is ep.TaskPreparedReceipt
++        assert central.prepared.reference == central.reference
++        if fixture.journal.snapshot(fixture.id).state is OutputPublicationJournalState.ACTIVE:
++            assert central.prepared == fixture.journal.preparation_receipt(fixture.id)
++    else:
++        assert central.prepared is None
++    if owner_death is not None:
++        stages.append(ep.PublicationStage.FENCED)
++    assert [receipt.stage for receipt in central.receipts] == stages
++    for receipt in central.receipts:
++        assert receipt.reference == central.reference
++        assert fixture.journal.publication_receipt(fixture.id, receipt.stage) == receipt
++    assert central.fence == owner_death
++    assert central.forward_open is (owner_death is None)
++    assert central.graph_active is True and central.closed_holds is None
++    assert central.complete is None and central.adoption is None
++    assert central.receipt(ep.PublicationStage.RETIRED) is None
++    if owner_death is not None:
++        fences = [(request, response) for request, response in fixture.gcs_calls
++                  if type(request) is ep.FencePublication]
++        assert len(fences) == 1
++        request, response = fences[0]
++        assert request == ep.FencePublication(fixture.publication, owner_death)
++        assert response.accepted and response.receipt == central.receipt(ep.PublicationStage.FENCED)
++
++
+ def _drop(fixture, node):
+     value = fixture.manifest.value
+     return protocol.DropObjectReplica(
+@@ -178,6 +217,7 @@ def _case(monkeypatch, phase):
+         elif phase == "corrupt-sealed":
+             assert fixture.store.get((fixture.id).object_id) != (fixture.values.payload)
+     _install_owner_wide_fence(fixture, node, request)
++    _assert_authority_progress(fixture)
+     return fixture, node, record, request
+ 
+ 
+@@ -193,6 +233,8 @@ def _ack_worker(fixture, node, record, request, calls, *, lose_first=False):
+         assert not fixture.adapter.owner_death_finished(fixture.id)
+         snapshot = fixture.journal.snapshot(fixture.id)
+         assert snapshot.state is OutputPublicationJournalState.ACTIVE
++        _assert_authority_progress(fixture, owner_death=request.owner_death)
++        assert fixture.adapter.owner_death_closed_holds(fixture.id) is None
+         assert snapshot.complete is None and snapshot.rollback is None and snapshot.rollback_tombstone is None
+         if fixture.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE:
+             assert not snapshot.materialized and not snapshot.result_retained
+@@ -236,6 +278,8 @@ def _assert_pending_custody(fixture, node, record, *, result_retained):
+         assert result is None
+     assert record.state is protocol.LeaseExecutionState.ABANDONED
+     assert fixture.ledger.available == ResourceVector({"CPU": 1})
++    _assert_authority_progress(fixture, owner_death=node._owner_death_fences[fixture.values.owner])
++    assert fixture.adapter.owner_death_closed_holds(fixture.id) is None
+ 
+ 
+ def _assert_not_finalized(fixture, node, record, request, *, result_retained):
+@@ -246,6 +290,7 @@ def _assert_not_finalized(fixture, node, record, request, *, result_retained):
+     else:
+         assert type(reply) is wire.FinalizeOutputOwnerDeathReply
+         assert reply.request == request and not reply.cleaned
++        assert reply.closed_holds is None
+     _assert_pending_custody(fixture, node, record, result_retained=result_retained)
+ 
+ 
+@@ -311,6 +356,10 @@ def _assert_retired_custody(fixture, node, record, request, reply):
+     assert fixture.journal.materialized_result(fixture.id) is None
+     assert record.state is protocol.LeaseExecutionState.ABANDONED
+     assert fixture.ledger.available == ResourceVector({"CPU": 1})
++    closed = ep.ClosedContainedHolds(fixture.publication.reference, (), ())
++    assert reply.closed_holds == closed
++    assert fixture.adapter.owner_death_closed_holds(fixture.id) == closed
++    _assert_authority_progress(fixture, owner_death=request.owner_death)
+ 
+ 
+ def _assert_finalized(fixture, node, record, request, monkeypatch):
+@@ -372,6 +421,7 @@ def test_prepared_inline_retains_payload_until_worker_ack_without_physical_drop_
+         assert fixture.ledger.available == ResourceVector() and not release_calls
+         assert not fixture.adapter._tickets
+         _assert_no_physical_receipt(fixture, node)
++        _assert_authority_progress(fixture)
+ 
+         request = _owner_request(fixture, node)
+         _install_owner_wide_fence(fixture, node, request)
+@@ -520,18 +570,18 @@ def test_removal_effect_then_exception_replays_from_retained_claim(monkeypatch,
+ 
+ 
+ @pytest.mark.parametrize("corruption", ("bytes", "claim"))
+-def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monkeypatch, corruption):
+-    fixture, node, record, request = _case(monkeypatch, "corrupt-sealed" if corruption == "bytes" else "partial")
+-    stored_id = (fixture.manifest.publication_id).object_id
+-    # Clone the valid observation first: deepcopy revalidates wire values and
+-    # must not reject our intentionally malformed effect before Node sees it.
+-    before_claims = deepcopy(node._local_replica_write_claims)
+-    if corruption == "claim":
+-        original = node._local_replica_write_claims[stored_id]
+-        wrong_effect = replace(original.effect)
+-        object.__setattr__(wrong_effect, "transfer_index", 0)
+-        node._local_replica_write_claims[stored_id] = replace(original, effect=wrong_effect)
+-        object.__setattr__(before_claims[stored_id].effect, "transfer_index", 0)
++def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monkeypatch, corruption):
++    fixture, node, record, request = _case(monkeypatch, "corrupt-sealed" if corruption == "bytes" else "partial")
++    stored_id = (fixture.manifest.publication_id).object_id
++    # Clone the valid observation first: deepcopy revalidates wire values and
++    # must not reject our intentionally malformed effect before Node sees it.
++    before_claims = deepcopy(node._local_replica_write_claims)
++    if corruption == "claim":
++        original = node._local_replica_write_claims[stored_id]
++        wrong_effect = replace(original.effect)
++        object.__setattr__(wrong_effect, "transfer_index", 0)
++        node._local_replica_write_claims[stored_id] = replace(original, effect=wrong_effect)
++        object.__setattr__(before_claims[stored_id].effect, "transfer_index", 0)
+     before_store = fixture.store.snapshot(stored_id)
+     worker_calls = []
+     _ack_worker(fixture, node, record, request, worker_calls)

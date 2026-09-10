@@ -194,16 +194,18 @@ class OutputPublicationNodeAdapter:
                                  PublicationStage.ARMED, forward=True)
 
     def _record_gcs(self, publication_id, request, stage, *, forward=False):
-        from .enhanced_publication import PublicationReply, PrepareGraph, PublicationErrorKind
+        from .enhanced_publication import PublicationReply, PublicationStageAck, PrepareGraph, PublicationErrorKind
         is_graph = type(request) is PrepareGraph
         if is_graph and self._test_checkpoint is not None:
             self._test_checkpoint(self._manifest(publication_id), OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE)
         reply = self._publication_rpc(request)
-        if type(reply) is not PublicationReply:
+        if type(reply) not in (PublicationReply, PublicationStageAck):
             raise OutputPublicationConflictError("GCS returned an invalid publication reply")
         reply = replace(reply)
         if reply.request != request:
             raise OutputPublicationConflictError("GCS publication reply changed request")
+        if reply.accepted and type(reply) is not PublicationStageAck:
+            raise OutputPublicationConflictError("GCS mutation requires its exact stage acknowledgement")
         if is_graph and self._test_checkpoint is not None:
             outcome = (GraphReservationOutcome.ACCEPTED if reply.accepted
                        else GraphReservationOutcome.CYCLE if reply.error_kind is PublicationErrorKind.CYCLE

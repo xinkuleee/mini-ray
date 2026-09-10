@@ -227,7 +227,7 @@ class _OutputBackend:
             assert len(self.gcs_calls) < 128
             _assert_metadata(request)
             reply = self.authority.apply(request)
-            assert type(reply) is ep.PublicationReply and reply.request == request
+            assert type(reply) is (ep.PublicationReply if type(request) is ep.GetPublication or not reply.accepted else ep.PublicationStageAck) and reply.request == request
             _assert_metadata(reply)
             self.gcs_calls.append((request, reply))
             return reply

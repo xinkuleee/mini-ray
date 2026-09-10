@@ -1,0 +1,215 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task0-r1]",
+    "exit_code": 0,
+    "seconds": 6.175,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task0-r1]"
+    ],
+    "log": "000-case.log",
+    "capture_directory": "captures/0"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r1]",
+    "exit_code": 0,
+    "seconds": 9.72,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r1]"
+    ],
+    "log": "001-case.log",
+    "capture_directory": "captures/1"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[put_contained-r1]",
+    "exit_code": 0,
+    "seconds": 10.733,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[put_contained-r1]"
+    ],
+    "log": "002-case.log",
+    "capture_directory": "captures/2"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[whole-r1]",
+    "exit_code": 0,
+    "seconds": 13.238,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[whole-r1]"
+    ],
+    "log": "003-case.log",
+    "capture_directory": "captures/3"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task0-r2]",
+    "exit_code": 0,
+    "seconds": 5.917,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task0-r2]"
+    ],
+    "log": "004-case.log",
+    "capture_directory": "captures/4"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r2]",
+    "exit_code": 0,
+    "seconds": 8.33,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r2]"
+    ],
+    "log": "005-case.log",
+    "capture_directory": "captures/5"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[put_contained-r2]",
+    "exit_code": 0,
+    "seconds": 4.958,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[put_contained-r2]"
+    ],
+    "log": "006-case.log",
+    "capture_directory": "captures/6"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[whole-r2]",
+    "exit_code": 0,
+    "seconds": 6.739,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[whole-r2]"
+    ],
+    "log": "007-case.log",
+    "capture_directory": "captures/7"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task0-r3]",
+    "exit_code": 0,
+    "seconds": 7.412,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task0-r3]"
+    ],
+    "log": "008-case.log",
+    "capture_directory": "captures/8"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r3]",
+    "exit_code": 0,
+    "seconds": 7.718,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r3]"
+    ],
+    "log": "009-case.log",
+    "capture_directory": "captures/9"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[put_contained-r3]",
+    "exit_code": 0,
+    "seconds": 7.661,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[put_contained-r3]"
+    ],
+    "log": "010-case.log",
+    "capture_directory": "captures/10"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[whole-r3]",
+    "exit_code": 0,
+    "seconds": 7.848,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[whole-r3]"
+    ],
+    "log": "011-case.log",
+    "capture_directory": "captures/11"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r1]",
+    "exit_code": 0,
+    "seconds": 10.27,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r1]"
+    ],
+    "log": "012-case.log",
+    "capture_directory": "captures/12",
+    "hash_seed": "0"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r2]",
+    "exit_code": 0,
+    "seconds": 7.957,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r2]"
+    ],
+    "log": "013-case.log",
+    "capture_directory": "captures/13",
+    "hash_seed": "0"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r3]",
+    "exit_code": 0,
+    "seconds": 7.657,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/r23-ack-candidate-measure-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_ack_lifecycle_measurement.py::test_actual_lifecycle_cost[task_mixed-r3]"
+    ],
+    "log": "014-case.log",
+    "capture_directory": "captures/14",
+    "hash_seed": "0"
+  }
+]

@@ -1,0 +1,511 @@
+diff --git a/baseline/src/miniray/control.py b/candidate/src/miniray/control.py
+index 5655f6c..a1f7807 100644
+--- a/baseline/src/miniray/control.py
++++ b/candidate/src/miniray/control.py
+@@ -2801,19 +2801,18 @@ class GCSLite:
+     def enhanced_publication(self, request):
+         reply = self.publication_control.handle(request)
+         try:
+-            if reply.accepted and reply.receipt is not None and reply.snapshot is not None:
+-                publication = reply.snapshot.publication
++            if type(reply) is ep.PublicationStageAck:
++                identity = reply.reference.key
+                 attributes = {
+                     "stage": reply.receipt.stage.value,
+                     "request_type": type(reply.request).__name__,
+                     "sequence": reply.receipt.sequence,
+                     "manifest_digest": reply.receipt.reference.digest,
+-                    "object_id": str(publication.object_id),
+-                    "owner_worker_id": str(publication.owner_worker_id),
++                    "object_id": str(identity.object_id),
++                    "owner_worker_id": str(reply.owner_worker_id),
+                     "accepted": True,
+                 }
+-                if type(publication) is ep.TaskPublication:
+-                    identity = publication.manifest.publication_id
++                if type(identity) is ep.OutputPublicationID:
+                     attributes.update(
+                         task_id=str(identity.task_id), attempt_id=str(identity.attempt_id),
+                         lease_id=str(identity.lease_id),
+diff --git a/baseline/src/miniray/enhanced_publication.py b/candidate/src/miniray/enhanced_publication.py
+index 2a500a8..27046fb 100644
+--- a/baseline/src/miniray/enhanced_publication.py
++++ b/candidate/src/miniray/enhanced_publication.py
+@@ -503,8 +503,16 @@ class GetPublication(_Wire):
+ 
+ PublicationRequest: TypeAlias = (BeginPublication | PrepareGraph | ArmTask | RecordTerminal
+                                | CommitGraph | RecordAdoption | FencePublication | RetireGraph | GetPublication)
+-_REQUEST_TYPES = (BeginPublication, PrepareGraph, ArmTask, RecordTerminal, CommitGraph,
+-                  RecordAdoption, FencePublication, RetireGraph, GetPublication)
++_REQUEST_TYPES = (BeginPublication, PrepareGraph, ArmTask, RecordTerminal, CommitGraph,
++                   RecordAdoption, FencePublication, RetireGraph, GetPublication)
++_MUTATION_TYPES = _REQUEST_TYPES[:-1]
++
++
++def _request_stage(request):
++    return {BeginPublication: PublicationStage.INTENT, PrepareGraph: PublicationStage.PREPARED,
++            ArmTask: PublicationStage.ARMED, RecordTerminal: PublicationStage.TERMINAL,
++            CommitGraph: PublicationStage.COMMITTED, RecordAdoption: PublicationStage.ADOPTED,
++            FencePublication: PublicationStage.FENCED, RetireGraph: PublicationStage.RETIRED}[type(request)]
+ 
+ 
+ def request_reference(request):
+@@ -595,13 +603,178 @@ class PublicationReply(_Wire):
+         if self.accepted:
+             if self.error_kind is not None or self.error is not None:
+                 raise ValueError("accepted publication reply cannot carry an error")
+-            if type(self.request) is not GetPublication and (self.snapshot is None or self.receipt is None):
+-                raise ValueError("accepted mutation requires its snapshot and receipt")
+-        elif type(self.error_kind) is not PublicationErrorKind or not self.error or self.receipt is not None:
+-            raise ValueError("rejected publication reply requires typed error without success receipt")
+-
+-
+-PUBLICATION_HANDLER = "enhanced_publication"
++            if type(self.request) is not GetPublication:
++                raise ValueError("accepted mutation requires PublicationStageAck")
++        elif type(self.error_kind) is not PublicationErrorKind or not self.error or self.receipt is not None:
++            raise ValueError("rejected publication reply requires typed error without success receipt")
++
++
++@dataclass(frozen=True)
++class PublicationStageAck(_Wire):
++    """One accepted mutation, with exact facts and current closing evidence.
++
++    This projection owns no authority. An old receipt is history, and even
++    an open reply cannot replace the caller local epoch/abort check after RPC.
++    """
++    request: BeginPublication | PrepareGraph | ArmTask | RecordTerminal | CommitGraph | RecordAdoption | FencePublication | RetireGraph
++    reference: PublicationRef
++    owner_worker_id: WorkerID
++    receipt: PublicationReceipt
++    accepted_fact: PublicationRef | PreparedReceipt | OutputPublicationCompleteWitness | OutputPublicationAdoptionProof | FenceProof | ClosedContainedHolds
++    fence: FenceProof | None = None
++    fence_receipt: PublicationReceipt | None = None
++    retired_receipt: PublicationReceipt | None = None
++
++    def __post_init__(self):
++        from .output_publication_journal import OutputPublicationAdoptionProof
++        _set(self, "request", _MUTATION_TYPES)
++        _set(self, "reference", PublicationRef)
++        _set(self, "owner_worker_id", WorkerID)
++        _set(self, "receipt", PublicationReceipt)
++        request, reference, stage = self.request, self.reference, _request_stage(self.request)
++        if (reference != request_reference(request) or self.receipt.reference != reference
++                or self.receipt.stage is not stage):
++            raise ValueError("stage ACK changed request reference or stage")
++        if type(request) in (BeginPublication, FencePublication):
++            if self.owner_worker_id != request.publication.owner_worker_id:
++                raise ValueError("stage ACK changed publication owner")
++        if type(reference.key) is PutPublicationID and self.owner_worker_id != reference.key.owner_worker_id:
++            raise ValueError("stage ACK changed put owner")
++        if type(request) in (BeginPublication, PrepareGraph):
++            expected = PublicationRef
++            actual = reference
++        elif type(request) is ArmTask:
++            expected, actual = TaskPreparedReceipt, request.prepared
++        elif type(request) is RecordTerminal:
++            expected, actual = OutputPublicationCompleteWitness, request.complete
++        elif type(request) is CommitGraph:
++            if type(reference.key) is PutPublicationID:
++                if request.put_prepared is None:
++                    raise ValueError("put commit ACK requires its actual preparation")
++                expected, actual = PutPreparedReceipt, request.put_prepared
++            else:
++                if request.put_prepared is not None:
++                    raise ValueError("Task commit ACK cannot contain put preparation")
++                expected, actual = OutputPublicationCompleteWitness, None
++        elif type(request) is RecordAdoption:
++            expected, actual = OutputPublicationAdoptionProof, request.proof
++            if request.proof.owner_worker_id != self.owner_worker_id:
++                raise ValueError("stage ACK changed adoption owner")
++        elif type(request) is FencePublication:
++            expected, actual = (OwnerAbortReceipt, OwnerRetirementReceipt, protocol.WorkerDeathRecord), None
++        else:
++            expected, actual = ClosedContainedHolds, request.closed_holds
++        _set(self, "accepted_fact", expected)
++        fact = self.accepted_fact
++        if actual is not None and fact != actual:
++            raise ValueError("stage ACK changed its accepted fact")
++        if type(fact) is OutputPublicationCompleteWitness:
++            if PublicationRef(fact.publication_id, fact.manifest_digest) != reference:
++                raise ValueError("stage ACK Complete changed reference")
++        if type(fact) in (TaskPreparedReceipt, PutPreparedReceipt):
++            for reply in fact.prepare_replies + fact.promote_replies:
++                hold = reply.request.transfer.final_hold
++                if (hold.container_object_id != reference.key.object_id
++                        or hold.container_owner_worker_id != self.owner_worker_id):
++                    raise ValueError("stage ACK preparation changed its container owner")
++        if (self.fence is None) != (self.fence_receipt is None):
++            raise ValueError("stage ACK fence and receipt must agree")
++        if self.fence is not None:
++            _set(self, "fence", (OwnerAbortReceipt, OwnerRetirementReceipt, protocol.WorkerDeathRecord))
++            _set(self, "fence_receipt", PublicationReceipt)
++            if (self.fence_receipt.reference != reference
++                    or self.fence_receipt.stage is not PublicationStage.FENCED):
++                raise ValueError("stage ACK changed fence receipt")
++            if type(self.fence) is protocol.WorkerDeathRecord:
++                if _death(self.fence).worker_id != self.owner_worker_id:
++                    raise ValueError("stage ACK death changed owner")
++            elif self.fence.reference != reference or self.fence.owner_worker_id != self.owner_worker_id:
++                raise ValueError("stage ACK fence changed owner or reference")
++        if self.retired_receipt is not None:
++            _set(self, "retired_receipt", PublicationReceipt)
++            if (self.retired_receipt.reference != reference
++                    or self.retired_receipt.stage is not PublicationStage.RETIRED
++                    or self.fence_receipt is None
++                    or self.retired_receipt.sequence <= self.fence_receipt.sequence):
++                raise ValueError("stage ACK retirement changed closing history")
++        sequences = {}
++        for receipt in (self.receipt, self.fence_receipt, self.retired_receipt):
++            if receipt is not None and sequences.setdefault(receipt.sequence, receipt.stage) is not receipt.stage:
++                raise ValueError("stage ACK distinct stages reused an acceptance sequence")
++        if stage in (PublicationStage.INTENT, PublicationStage.PREPARED, PublicationStage.ARMED):
++            if not self.forward_open:
++                raise ValueError("forward mutation ACK cannot be closed historical replay")
++        if stage is PublicationStage.COMMITTED and self.fence_receipt is not None:
++            if self.receipt.sequence >= self.fence_receipt.sequence:
++                raise ValueError("first graph commit must precede its forward fence")
++        if stage is PublicationStage.FENCED:
++            if self.receipt != self.fence_receipt or fact != self.fence:
++                raise ValueError("fence ACK must name the actual first fence")
++            if fact != request.proof:
++                # Only the controller accepts a later committed owner death
++                # while retaining a different, already accepted first fence.
++                if (type(request.proof) is not protocol.WorkerDeathRecord
++                        or _death(request.proof).worker_id != self.owner_worker_id):
++                    raise ValueError("fence ACK rebound a requested owner decision")
++        if stage is PublicationStage.RETIRED and self.receipt != self.retired_receipt:
++            raise ValueError("retirement ACK must name its exact first receipt")
++
++    @property
++    def accepted(self):
++        return True
++
++    @property
++    def error(self):
++        return None
++
++    @property
++    def error_kind(self):
++        return None
++
++    @property
++    def forward_open(self):
++        return self.fence is None and self.retired_receipt is None
++
++
++def stage_ack_from_snapshot(request, snapshot, receipt, *, accepted_existing_fence=False):
++    """Project already validated authority state while its owning lock is held.
++
++    The controller alone selects the later-owner-death exception after exact
++    registry validation. No projected value can commit or replace that state.
++    """
++    if type(request) not in _MUTATION_TYPES or type(snapshot) is not PublicationSnapshot:
++        raise TypeError("stage ACK requires a mutation and canonical snapshot")
++    if type(receipt) is not PublicationReceipt or receipt != snapshot.receipt(_request_stage(request)):
++        raise ValueError("stage ACK receipt is not the accepted authority stage")
++    if request_reference(request) != snapshot.reference:
++        raise ValueError("stage ACK request changed authority reference")
++    if type(request) in (BeginPublication, FencePublication) and request.publication != snapshot.publication:
++        raise ValueError("stage ACK request changed complete publication or owner route")
++    if accepted_existing_fence:
++        if (type(request) is not FencePublication or type(request.proof) is not protocol.WorkerDeathRecord
++                or snapshot.fence is None or _death(request.proof).worker_id != snapshot.publication.owner_worker_id):
++            raise ValueError("existing-fence ACK requires a validated later owner death")
++    if type(request) in (BeginPublication, PrepareGraph):
++        fact = snapshot.reference
++    elif type(request) is ArmTask:
++        fact = snapshot.prepared
++    elif type(request) is RecordTerminal:
++        fact = snapshot.complete
++    elif type(request) is CommitGraph:
++        fact = snapshot.prepared if type(snapshot.publication) is PutPublication else snapshot.complete
++    elif type(request) is RecordAdoption:
++        fact = snapshot.adoption
++    elif type(request) is FencePublication:
++        fact = snapshot.fence
++        if fact != request.proof and not accepted_existing_fence:
++            raise ValueError("stage ACK cannot replace the requested first fence")
++    else:
++        fact = snapshot.closed_holds
++    return PublicationStageAck(request, snapshot.reference, snapshot.publication.owner_worker_id, receipt, fact,
++        snapshot.fence, snapshot.receipt(PublicationStage.FENCED), snapshot.receipt(PublicationStage.RETIRED))
++
++
++PUBLICATION_HANDLER = "enhanced_publication"
+ 
+ 
+ @dataclass(frozen=True)
+@@ -822,9 +995,7 @@ class PublicationAuthority:
+         if previous is None:
+             _state("publication has not been registered")
+         S = PublicationStage
+-        stage = {BeginPublication: S.INTENT, PrepareGraph: S.PREPARED, ArmTask: S.ARMED,
+-                 RecordTerminal: S.TERMINAL, CommitGraph: S.COMMITTED, RecordAdoption: S.ADOPTED,
+-                 FencePublication: S.FENCED, RetireGraph: S.RETIRED}[type(request)]
++        stage = _request_stage(request)
+         changes = {}
+         receipt = previous.receipt(stage)
+         if type(request) is BeginPublication:
+@@ -891,13 +1062,13 @@ class PublicationAuthority:
+             if previous.closed_holds is not None and previous.closed_holds != request.closed_holds:
+                 _conflict("retirement cleanup receipt was rebound")
+             changes["closed_holds"] = request.closed_holds
+-        if receipt is not None:
+-            return PublicationReply(request, True, previous, receipt)
++        if receipt is not None:
++            return stage_ack_from_snapshot(request, previous, receipt)
+         next_sequence = self._sequence + 1
+         receipt = PublicationReceipt(reference, stage, next_sequence)
+         updated = replace(previous, receipts=previous.receipts + (receipt,), **changes)
+         # Reply validation/copy is fallible; prepare it before authority commit.
+-        reply = PublicationReply(request, True, updated, receipt)
++        reply = stage_ack_from_snapshot(request, updated, receipt)
+         self._records[reference.key] = updated
+         self._sequence = next_sequence
+         return reply
+@@ -992,5 +1163,6 @@ _WIRE_TYPES = tuple(value for value in tuple(globals().values())
+ __all__ = [value.__name__ for value in _WIRE_TYPES] + [
+     "PublicationKey", "Publication", "PreparedReceipt", "FenceProof", "PublicationRequest",
+     "PublicationStage", "RetirementReason", "PublicationErrorKind", "PublicationError",
+-    "PublicationAuthority", "PUBLICATION_HANDLER", "ABORT_OWNER_PUBLICATION_HANDLER", "request_reference",
++    "PublicationAuthority", "PUBLICATION_HANDLER", "ABORT_OWNER_PUBLICATION_HANDLER", "request_reference",
++    "stage_ack_from_snapshot",
+ ]
+diff --git a/baseline/src/miniray/enhanced_publication_client.py b/candidate/src/miniray/enhanced_publication_client.py
+index 2fe25cf..f987338 100644
+--- a/baseline/src/miniray/enhanced_publication_client.py
++++ b/candidate/src/miniray/enhanced_publication_client.py
+@@ -44,43 +44,70 @@ class PublicationClient:
+             publication = self._publications.get(reference)
+             return None if publication is None else replace(publication)
+ 
+-    def call(self, request, stage=None):
+-        request = replace(request)
+-        reply = self._rpc(wire.PUBLICATION_HANDLER, request)
+-        if type(reply) is not wire.PublicationReply:
+-            raise SystemTaskError('invalid GCS publication reply')
+-        reply = replace(reply)
+-        if reply.request != request:
+-            raise SystemTaskError('GCS publication reply changed its request')
+-        if not reply.accepted:
+-            raise PublicationRejected(reply)
+-        if stage is not None and (reply.receipt is None or reply.receipt.stage is not stage):
+-            raise SystemTaskError('GCS reply lacks its exact stage receipt')
+-        return reply
+-
+-    def query(self, publication):
+-        return self.call(wire.GetPublication(publication.reference)).snapshot
++    def call(self, request, stage=None, *, publication=None):
++        request = replace(request)
++        reference = wire.request_reference(request)
++        if publication is None:
++            if type(request) in (wire.BeginPublication, wire.FencePublication):
++                publication = request.publication
++            else:
++                with self._lock:
++                    publication = self._publications.get(reference)
++        if publication is not None:
++            publication = replace(publication)
++            if publication.reference != reference:
++                raise SystemTaskError('publication request changed known owner metadata')
++        reply = self._rpc(wire.PUBLICATION_HANDLER, request)
++        if type(reply) not in (wire.PublicationReply, wire.PublicationStageAck):
++            raise SystemTaskError('invalid GCS publication reply')
++        reply = replace(reply)
++        if reply.request != request:
++            raise SystemTaskError('GCS publication reply changed its request')
++        if not reply.accepted:
++            raise PublicationRejected(reply)
++        if type(request) is wire.GetPublication:
++            if type(reply) is not wire.PublicationReply:
++                raise SystemTaskError('GCS publication query requires its snapshot reply')
++            if (reply.snapshot is not None and publication is not None
++                    and reply.snapshot.publication != publication):
++                raise SystemTaskError('GCS publication query changed known owner metadata')
++            return reply
++        if type(reply) is not wire.PublicationStageAck:
++            raise SystemTaskError('GCS mutation requires its exact stage acknowledgement')
++        if (reply.reference != reference or reply.receipt.reference != reference
++                or (publication is not None and reply.owner_worker_id != publication.owner_worker_id)):
++            raise SystemTaskError('GCS stage acknowledgement changed publication identity')
++        if stage is not None and reply.receipt.stage is not stage:
++            raise SystemTaskError('GCS reply lacks its exact stage receipt')
++        return reply
++
++    def query(self, publication):
++        return self.call(wire.GetPublication(publication.reference), publication=publication).snapshot
+ 
+     def begin(self, publication):
+         self.remember(publication)
+-        self.call(wire.BeginPublication(publication), wire.PublicationStage.INTENT)
+-        reply = self.call(wire.PrepareGraph(publication.reference), wire.PublicationStage.PREPARED)
+-        if not reply.snapshot.forward_open:
++        self.call(wire.BeginPublication(publication), wire.PublicationStage.INTENT, publication=publication)
++        reply = self.call(wire.PrepareGraph(publication.reference), wire.PublicationStage.PREPARED, publication=publication)
++        if not reply.forward_open:
+             raise SystemTaskError('historical graph reservation is not forward permission')
+         return reply
+ 
+     def commit_task(self, publication, complete):
+         if wire.PublicationRef(complete.publication_id, complete.manifest_digest) != publication.reference:
+             raise SystemTaskError('Task Complete changed the publication being committed')
+-        self.call(wire.RecordTerminal(complete), wire.PublicationStage.TERMINAL)
+-        reply = self.call(wire.CommitGraph(publication.reference), wire.PublicationStage.COMMITTED)
+-        if not reply.snapshot.forward_open:
++        self.call(wire.RecordTerminal(complete), wire.PublicationStage.TERMINAL, publication=publication)
++        reply = self.call(wire.CommitGraph(publication.reference), wire.PublicationStage.COMMITTED, publication=publication)
++        if reply.accepted_fact != complete:
++            raise SystemTaskError('GCS graph commit changed the actual Task Complete')
++        if not reply.forward_open:
+             raise SystemTaskError('fenced graph commit cannot authorize owner publication')
+         return reply.receipt
+ 
+     def commit_put(self, publication, prepared):
+-        reply = self.call(wire.CommitGraph(publication.reference, prepared), wire.PublicationStage.COMMITTED)
+-        if not reply.snapshot.forward_open:
++        reply = self.call(wire.CommitGraph(publication.reference, prepared), wire.PublicationStage.COMMITTED, publication=publication)
++        if reply.accepted_fact != prepared:
++            raise SystemTaskError('GCS put commit changed the actual preparation')
++        if not reply.forward_open:
+             raise SystemTaskError('fenced put graph cannot authorize owner installation')
+         return reply.receipt
+ 
+@@ -98,7 +125,7 @@ is a barrier only, never a receipt asserting this later decision committed.
+             return snapshot.receipt(wire.PublicationStage.RETIRED)
+         if snapshot is not None and snapshot.fence is not None:
+             return snapshot.receipt(wire.PublicationStage.FENCED)
+-        return self.call(wire.FencePublication(publication, decision), wire.PublicationStage.FENCED).receipt
++        return self.call(wire.FencePublication(publication, decision), wire.PublicationStage.FENCED, publication=publication).receipt
+ 
+     def retire(self, publication, releases, deaths=()):
+         """Ensure this membership is retired, preserving its first proof."""
+@@ -106,4 +133,4 @@ is a barrier only, never a receipt asserting this later decision committed.
+         if snapshot is not None and snapshot.receipt(wire.PublicationStage.RETIRED) is not None:
+             return snapshot.receipt(wire.PublicationStage.RETIRED)
+         closed = wire.ClosedContainedHolds(publication.reference, tuple(releases), tuple(deaths))
+-        return self.call(wire.RetireGraph(closed), wire.PublicationStage.RETIRED).receipt
++        return self.call(wire.RetireGraph(closed), wire.PublicationStage.RETIRED, publication=publication).receipt
+diff --git a/baseline/src/miniray/enhanced_publication_control.py b/candidate/src/miniray/enhanced_publication_control.py
+index a4ee02c..4723e12 100644
+--- a/baseline/src/miniray/enhanced_publication_control.py
++++ b/candidate/src/miniray/enhanced_publication_control.py
+@@ -66,8 +66,8 @@ class EnhancedPublicationControl:
+                     if (snapshot is not None and snapshot.publication == publication
+                             and snapshot.fence is not None and snapshot.fence != death):
+                         self.commit_owner_death(death)
+-                        return ep.PublicationReply(request, True, snapshot,
+-                            snapshot.receipt(ep.PublicationStage.FENCED))
++                        return ep.stage_ack_from_snapshot(request, snapshot,
++                            snapshot.receipt(ep.PublicationStage.FENCED), accepted_existing_fence=True)
+                 if type(request) is ep.RetireGraph:
+                     self._validate_closed_deaths(request.closed_holds)
+                 stage = {ep.BeginPublication: ep.PublicationStage.INTENT,
+@@ -89,8 +89,8 @@ class EnhancedPublicationControl:
+                 return ep.PublicationReply(request, False, error_kind=ep.PublicationErrorKind.UNAVAILABLE,
+                                            error=str(exc) or type(exc).__name__)
+             reply = self.authority.apply(request)
+-            if reply.accepted and reply.snapshot is not None and type(request) is not ep.GetPublication:
+-                death = self._owner_death(reply.snapshot.publication.owner_worker_id)
++            if type(reply) is ep.PublicationStageAck:
++                death = self._owner_death(reply.owner_worker_id)
+                 if death is not None:
+                     self.commit_owner_death(death)
+             return reply
+diff --git a/baseline/src/miniray/node.py b/candidate/src/miniray/node.py
+index b4871ed..9855c60 100644
+--- a/baseline/src/miniray/node.py
++++ b/candidate/src/miniray/node.py
+@@ -1104,7 +1104,8 @@ class NodeServer:
+             return TaskPublication(manifest, address)
+ 
+         def publication_rpc(request):
+-            from .enhanced_publication import PUBLICATION_HANDLER, RecordTerminal, PublicationReply, PublicationStage
++            from .enhanced_publication import (PUBLICATION_HANDLER, RecordTerminal,
++                                               PublicationRef, PublicationStageAck, PublicationStage)
+             with self._state_lock:
+                 address = self._gcs_address
+             if address is None:
+@@ -1121,11 +1122,14 @@ class NodeServer:
+                     gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
+             reply = self._background_rpc(address, PUBLICATION_HANDLER, request)
+             if terminal_gate and phase is OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK:
+-                if type(reply) is not PublicationReply:
++                if type(reply) is not PublicationStageAck:
+                     raise OutputPublicationConflictError('terminal gate requires the actual GCS reply')
+                 reply = replace(reply)
+-                if (reply.request != request or not reply.accepted or reply.snapshot.complete != request.complete
+-                        or reply.receipt.stage is not PublicationStage.TERMINAL):
++                reference = PublicationRef(manifest.publication_id, manifest.manifest_digest)
++                if (reply.request != request or reply.accepted_fact != request.complete
++                        or reply.reference != reference or reply.receipt.reference != reference
++                        or reply.owner_worker_id != manifest.header.owner_worker_id
++                        or reply.receipt.stage is not PublicationStage.TERMINAL):
+                     raise OutputPublicationConflictError('terminal gate requires actual GCS acceptance')
+                 # Intercept the real reply before the adapter records its ACK.
+                 # Both direct-result and supervisor paths share this gate; a
+diff --git a/baseline/src/miniray/output_publication_journal.py b/candidate/src/miniray/output_publication_journal.py
+index 8caec30..c432289 100644
+--- a/baseline/src/miniray/output_publication_journal.py
++++ b/candidate/src/miniray/output_publication_journal.py
+@@ -321,26 +321,26 @@ class OutputPublicationJournal:
+ 
+     def record_publication_reply(self, publication_id, request, reply, stage, *, forward=False):
+         """Retain an exact server receipt, without another phase authority."""
+-        from .enhanced_publication import PublicationRef, PublicationReply, PublicationStage
+-        if type(reply) is not PublicationReply:
++        from .enhanced_publication import PublicationRef, PublicationStageAck, PublicationStage
++        if type(reply) is not PublicationStageAck:
+             raise OutputPublicationConflictError("GCS returned an invalid publication reply")
+         reply = replace(reply)
+         with self._lock:
+             record = self._record(publication_id)
+             reference = PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest)
+-            if (reply.request != request or not reply.accepted or reply.receipt is None
+-                    or reply.snapshot is None or reply.receipt.reference != reference
+-                    or reply.receipt.stage is not stage or reply.snapshot.reference != reference):
++            if (reply.request != request or reply.reference != reference
++                    or reply.owner_worker_id != record.manifest.header.owner_worker_id
++                    or reply.receipt.reference != reference or reply.receipt.stage is not stage):
+                 raise OutputPublicationConflictError("GCS did not acknowledge the exact publication stage")
+             if forward:
+                 self._require_active(record)
+-                if not reply.snapshot.forward_open:
++                if not reply.forward_open:
+                     raise OutputPublicationJournalStateError("historical GCS receipt is not forward permission")
+                 if stage is PublicationStage.INTENT and not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+                     raise OutputPublicationJournalStateError("GCS INTENT follows actual owner registration")
+                 if stage is PublicationStage.PREPARED and PublicationStage.INTENT not in record.publication_receipts:
+                     raise OutputPublicationJournalStateError("graph reservation follows exact INTENT receipt")
+-                if stage is PublicationStage.ARMED and reply.snapshot.prepared != self.preparation_receipt(publication_id):
++                if stage is PublicationStage.ARMED and reply.accepted_fact != self.preparation_receipt(publication_id):
+                     raise OutputPublicationConflictError("ARM changed the actual journal preparation")
+             previous = record.publication_receipts.get(stage)
+             if previous is not None and previous != reply.receipt:
+diff --git a/baseline/src/miniray/output_publication_node.py b/candidate/src/miniray/output_publication_node.py
+index 41bb62b..d1032be 100644
+--- a/baseline/src/miniray/output_publication_node.py
++++ b/candidate/src/miniray/output_publication_node.py
+@@ -194,16 +194,18 @@ class OutputPublicationNodeAdapter:
+                                  PublicationStage.ARMED, forward=True)
+ 
+     def _record_gcs(self, publication_id, request, stage, *, forward=False):
+-        from .enhanced_publication import PublicationReply, PrepareGraph, PublicationErrorKind
++        from .enhanced_publication import PublicationReply, PublicationStageAck, PrepareGraph, PublicationErrorKind
+         is_graph = type(request) is PrepareGraph
+         if is_graph and self._test_checkpoint is not None:
+             self._test_checkpoint(self._manifest(publication_id), OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE)
+         reply = self._publication_rpc(request)
+-        if type(reply) is not PublicationReply:
++        if type(reply) not in (PublicationReply, PublicationStageAck):
+             raise OutputPublicationConflictError("GCS returned an invalid publication reply")
+         reply = replace(reply)
+-        if reply.request != request:
+-            raise OutputPublicationConflictError("GCS publication reply changed request")
++        if reply.request != request:
++            raise OutputPublicationConflictError("GCS publication reply changed request")
++        if reply.accepted and type(reply) is not PublicationStageAck:
++            raise OutputPublicationConflictError("GCS mutation requires its exact stage acknowledgement")
+         if is_graph and self._test_checkpoint is not None:
+             outcome = (GraphReservationOutcome.ACCEPTED if reply.accepted
+                        else GraphReservationOutcome.CYCLE if reply.error_kind is PublicationErrorKind.CYCLE

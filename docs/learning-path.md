@@ -1,6 +1,6 @@
 # 协议增强版学习路径
 
-首次学习仍推荐teaching-base：先理解Task、lease、owner与引用回收，再在E比较两项mini自定义保证。本文面向已独立验收的teaching-enhanced，实测提交与后续文档/证据HEAD的区别见[状态页](current-status.md)。[增强合同](redesign-plan.md)§10描述保证边界，不是新实现计划。
+首次学习仍推荐teaching-base：先理解Task、lease、owner与引用回收，再在E比较两项mini自定义保证。本文面向teaching-enhanced，R2.2固定验收与R2.3后继修改的实际证据区别见[状态页](current-status.md)。[增强合同](redesign-plan.md)§10描述保证边界，不是新实现计划。
 
 ## 第一遍：提交、执行、交接
 
@@ -44,6 +44,6 @@ B仍有GCS：[control.py](../src/miniray/control.py)的GCSLite、NodeRegistry、
 
 先用[基础账本B04–B07](acceptance-baseline.md)理解共同事实，再从[增强账本的G/D/W与R场景](acceptance-enhanced.md)选择一个已有有限窗口，先写出owner、Node、child各自掌握什么事实，再读CoreWorker._drive_output_node_loss_once与owner reconstruction handle。
 
-对照[output_protocol.py](../src/miniray/output_protocol.py)中的窄Complete ACK与完整history query，再看Core的Node-loss/retirement work记录。重点区分准确Complete、UNKNOWN、已知成功但bytes丢失的LOST；第一次准入与旧收据重放；未知RPC与未发生效果；已安装死亡事实与单纯timeout。旧epoch不能覆盖新执行，完整死亡proof只能解除对应死亡参与方的责任。
+先对照[output_protocol.py](../src/miniray/output_protocol.py)的 Node→owner Complete ACK 与完整 handoff query，再读[enhanced_publication.py](../src/miniray/enhanced_publication.py)的 `PublicationStageAck`/`GetPublication`。沿[Node journal](../src/miniray/output_publication_journal.py)的 ARM preparation 比较与[owner client](../src/miniray/enhanced_publication_client.py)的 Task/put commit 跟踪：一次成功 mutation 接受了哪个准确事实，未知回复时又要查询哪些完整历史？随后查看 Core 的 Node-loss/retirement work，区分 Complete、UNKNOWN、已知成功但无 bytes 的 LOST；旧 stage receipt 与当前 `forward_open` 分开，RPC 后仍查本地 epoch/abort。迟到 terminal/adoption 可保存合法历史，后到 owner 死亡不能改写已接受的 first fence；死亡 proof 只解除对应参与方的责任。
 
 需要实际测试时只用[测试指南](testing.md)中的有限入口。旧tests目录、[历史索引](history-index.md)和原计划里的旧函数名都不是当前整树执行许可；当前API不因旧夹具失败而恢复。
