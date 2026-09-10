@@ -1,0 +1,13 @@
+{
+  "head": "54d1bca489b999d57e71fcc293973f3324b204a3",
+  "branch": "refs/heads/teaching-base",
+  "archive_sha256": "116d945070afee5b7c88fc104f6669aae4bd2be34bd413b6ac4ec4a6e379546f",
+  "file_count": 422,
+  "mode": "adoption-race before with identical two-lane regression; not executed",
+  "input_candidate": "base-k7final-01",
+  "input_archive_sha256": "802783a7b926b014d7b7818cc7b1e870c54614be23e7c9316ce659663698b689",
+  "test_sha256": "41586a39709fcfc4c146e058a217c8ec282a67b352b8c32bc20f274295fe013a",
+  "core_sha256": "0720f615a9cd250a46dfda95addbfcfcee165f5f0c8cd6351cd8ad84b03a27ae",
+  "patch_sha256": "6c4ac73084d2652a8fefc5c871f3c22a5b7a820d3f6c40a880f2abe0c1e47342",
+  "pytest_run": false
+}

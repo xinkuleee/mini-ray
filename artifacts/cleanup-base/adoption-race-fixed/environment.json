@@ -1,0 +1,26 @@
+{
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-libc",
+  "packages": {
+    "pytest": "8.4.2",
+    "cloudpickle": "3.1.2",
+    "packaging": "26.3",
+    "pluggy": "1.6.0",
+    "iniconfig": "2.3.0",
+    "pygments": "2.21.0"
+  },
+  "source": {
+    "head": "54d1bca489b999d57e71fcc293973f3324b204a3",
+    "branch": "refs/heads/teaching-base",
+    "archive_sha256": "536434ddd52e0c178c36ad20d28179cb9696743f65d6c7d10dd32a715d879554",
+    "file_count": 422,
+    "mode": "adoption-race fixed with identical two-lane regression; not executed",
+    "input_candidate": "base-k7final-01",
+    "input_archive_sha256": "802783a7b926b014d7b7818cc7b1e870c54614be23e7c9316ce659663698b689",
+    "test_sha256": "41586a39709fcfc4c146e058a217c8ec282a67b352b8c32bc20f274295fe013a",
+    "core_sha256": "3e7ab478b525f1746ed062d930ff120b5a54176a96db48b4d4510cc1029c31ab",
+    "patch_sha256": "6c4ac73084d2652a8fefc5c871f3c22a5b7a820d3f6c40a880f2abe0c1e47342",
+    "pytest_run": false
+  },
+  "selection_mode": "smoke"
+}

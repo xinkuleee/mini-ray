@@ -1,0 +1,15 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_adoption_loss_lane_handoff.py::test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup",
+    "exit_code": 1,
+    "seconds": 4.385,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-adoption-race-before/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_adoption_loss_lane_handoff.py::test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup"
+    ],
+    "log": "000-case.log"
+  }
+]

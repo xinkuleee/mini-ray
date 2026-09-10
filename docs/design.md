@@ -2,7 +2,7 @@
 
 本页描述 teaching-base 的实际单输出运行时：用真实进程、消息和资源账本解释所选 Ray Core 机制。
 它是缩小规模与范围的教学实现，不承诺生产 Ray 的完整功能、接口兼容或相同内部协议。
-运行命令见[学习路径](learning-path.md)和[测试指南](testing.md)，具体版本与实测边界见[基础验收账本](acceptance-baseline.md)。
+运行命令见[学习路径](learning-path.md)和[测试指南](testing.md)，当前整理版身份与实测边界见[状态页](current-status.md)；[基础验收账本](acceptance-baseline.md)保留固定历史版本的证据。
 
 ## 1. 进程、身份与权威
 
@@ -23,7 +23,7 @@ TaskID/ObjectID 表示稳定逻辑身份；AttemptID、Worker/Node incarnation �
 TaskExecution只保存AttemptID，TaskID与唯一ObjectID由它派生。发布清单保存一个value，
 PreparedOutput保存一份payload，成功Envelope保存一个result；用户tuple/list不会被拆成多个返回槽。
 Node journal内部也只保存一个可空result和一个retirement。lease/TaskReply边界仍有明确的单元素适配，
-child、replica和borrower保持多值；effect和owner退休的恒零索引正在后续独立评估。
+child、replica和borrower保持多值；effect只在child操作携带transfer_index，owner membership/retirement和journal公开snapshot不再套恒零输出索引。
 
 入口：[api.py](../src/miniray/api.py)、[core.py](../src/miniray/core.py)、[control.py](../src/miniray/control.py)、
 [node.py](../src/miniray/node.py)、[ids.py](../src/miniray/ids.py)、[task_outputs.py](../src/miniray/task_outputs.py)。
@@ -67,6 +67,7 @@ lease 通过后，提交者 Core 直接向指定 Worker 发送 PushTask；GCS �
 
 这些步骤不能压成一个“成功”：函数返回、Node Complete、owner READY、bytes 可用、回复退休、对象 GC 各有观察点。
 owner 已 READY 后丢失退休 ACK，只继续精确重放和 finish/GC 屏障，不回滚 READY 或再次执行函数。
+Node向owner报告Complete使用OutputHandoffCompleteAck，只确认准确witness；GetOutputHandoff仍返回完整历史。窄ACK不改变Complete、本地资源清账和owner READY之间的边界。
 abort 关闭旧身份的前进权限；已经存在的 holds、partial write 或副本仍要准确释放，不能把 fence 当清理完成。
 
 跨模块必要原子性由 Core 的现有组合锁维护；外部调用后重查当前身份/撤销状态，旧 ACK 不是永久前进许可。
@@ -121,6 +122,7 @@ Task 首次发布和 whole replay 的新结果仍使用实际 owner/child 交接
 
 最后真实存活理由消失后，owner 冻结 collection/retirement 计划，收齐 child Release、物理 Drop 与相应 lineage 释放。
 准确已安装的 child-owner 死亡证明只解除该 child 的责任，不能替活 child 或别的 owner 清账。
+put、Node-loss和owner退休待办保存为具体work记录，字段区分真实sent intent、待收ACK与已取得收据；Core组合锁仍维护owner/recovery提交，普通GC保留各自明确的typed字段。
 close ACK、空队列、回复缓存退休或进程停止都不独立证明 metadata、bytes 和 lineage 已全部 GC。
 
 ReplicaCleanupQueue 保留按 object/attempt/owner/Node/checksum 绑定的 Drop；PINNED 或 ACK 未知不能提前完成。

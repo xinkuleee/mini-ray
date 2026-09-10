@@ -11553,9 +11553,27 @@ class CoreWorker:
                     time.monotonic() + delay,
                 ))
             return False
-        self._clear_protocol_unresolved(pending)
+        takeover = None
         with self._state_lock:
-            getattr(self, "_output_result_custody", {}).pop(identity, None)
+            if self._output_replay_is_obsolete_locked(pending, identity):
+                return True
+            current = self._protocol_unresolved.get(pending.task_key)
+            if current is not None and isinstance(current.obligation, _OutputNodeLossObligation):
+                # The same attempt may have transferred cleanup to a Node-loss
+                # lane while this exact adoption ACK was in flight. Its child
+                # release/byte decision still owns the finish barrier.
+                return False
+            death = getattr(self, "_dead_nodes", {}).get(obligation.node_id)
+            if death is not None:
+                # Death may be installed before the coordinator transfers
+                # this marker. Converge the same exact output, outside the
+                # lock, instead of finalizing through the old adoption tail.
+                takeover = _OutputNodeLossObligation(identity, death, envelope)
+            else:
+                self._clear_protocol_unresolved(pending)
+                getattr(self, "_output_result_custody", {}).pop(identity, None)
+        if takeover is not None:
+            return self._drive_output_node_loss(pending, takeover)
         for output_id in pending.output_ids:
             self._enqueue_inline_gc_check(output_id)
         return True

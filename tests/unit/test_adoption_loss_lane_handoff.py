@@ -1,0 +1,174 @@
+"""One bounded two-lane adoption ACK / Node-loss cleanup interleaving.
+
+One actual owner/Core submission, Node journal/lease/1 KiB store and two
+existing child transfers. Only the adoption lane is a real test thread. The
+main lane drives Node-loss and loses the first actual child Release reply.
+No user function, runtime constructor, process, socket or timer is started.
+"""
+from dataclasses import replace
+import multiprocessing.process
+import queue
+import socket
+import subprocess
+import threading
+import time
+
+import pytest
+
+from miniray import core as core_module, protocol, output_protocol as wire
+from miniray.core import CoreWorker, _DelayedReadyTask, _OutputAdoptionObligation, _OutputNodeLossObligation, _WAKE_COORDINATOR
+from miniray.node import NodeServer
+from miniray.ownership import ObjectCollectionState, ObjectState
+from tests.unit.test_core_output_publication import _fixture, _close
+
+
+@pytest.mark.loopback_smoke
+@pytest.mark.parametrize("classified", (True, False), ids=("existing-takeover", "death-before-takeover"))
+def test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup(monkeypatch, classified):
+    fixture, node, core, pending, reply, calls, original_rpc = _fixture(refs=True, stored=True)
+    core._ready_tasks = queue.Queue()
+    ack_applied, allow_ack_return, lane_done = threading.Event(), threading.Event(), threading.Event()
+    lane_results, lane_errors, release_requests = [], [], []
+    original_borrow = core._borrow_rpc
+    envelope = reply.output_publication
+    identity = fixture.id
+    adoption = _OutputAdoptionObligation(envelope, node.node_id)
+    first_ack = []
+
+    def lose_initial_adoption_ack(address, handler, request):
+        actual = original_rpc(address, handler, request)
+        assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
+        assert actual.request == request and actual.accepted
+        first_ack.append(actual)
+        raise TimeoutError("initial actual Node adoption acknowledgement lost")
+
+    # This real failure produces the retained delayed-adoption item. Runtime
+    # _execute's original lane then checks death after _publish_reply returns;
+    # the coordinator may dispatch this delayed item in between those points.
+    core._rpc = lose_initial_adoption_ack
+    assert not core._publish_reply(pending, reply, expected_node_id=node.node_id, expected_lease_id=identity.lease_id)
+    delayed = []
+    queued_count = core._submissions.qsize()
+    assert queued_count <= 8
+    for _ in range(queued_count):
+        queued = core._submissions.get_nowait(); core._submissions.task_done()
+        if isinstance(queued, _DelayedReadyTask):
+            delayed.append(queued)
+        else:
+            assert queued is _WAKE_COORDINATOR
+    queued, = delayed
+    assert queued.ready.pending == pending and queued.ready.output_adoption is not None
+    adoption = queued.ready.output_adoption
+    assert len(first_ack) == 1 and not core._finish_pending_task(pending)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("two-lane test attempted unowned runtime work")
+
+    for kind in (CoreWorker, NodeServer):
+        monkeypatch.setattr(kind, "__init__", forbidden)
+    monkeypatch.setattr(multiprocessing.process.BaseProcess, "start", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(threading.Timer, "__init__", forbidden)
+    monkeypatch.setattr(time, "sleep", forbidden)
+    for name in ("socket", "socketpair", "create_connection"):
+        monkeypatch.setattr(socket, name, forbidden)
+    monkeypatch.setattr(core_module, "rpc_request", forbidden)
+
+    def adoption_rpc(address, handler, request):
+        result = original_rpc(address, handler, request)
+        assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
+        assert result.request == request and result.accepted
+        assert fixture.journal.snapshot(identity).retirement.proof == request.proof
+        ack_applied.set()
+        assert allow_ack_return.wait(2.0), "adoption reply boundary was not released"
+        return result
+
+    def adoption_lane():
+        try:
+            terminal = core._drive_output_publication_adoption(pending, adoption)
+            # Match the dispatcher: only a terminal result runs finalization.
+            finished = core._finish_pending_task(pending) if terminal else False
+            lane_results.append((terminal, finished))
+        except BaseException as exc:
+            lane_errors.append(exc)
+        finally:
+            lane_done.set()
+
+    def release_then_lose_ack(address, handler, request):
+        result = original_borrow(address, handler, request)
+        release_requests.append(request)
+        if len(release_requests) == 1:
+            assert result.accepted and result.hold == request.hold
+            assert fixture.child_owners[request.owner_worker_id].contained_release_was_seen(request.object_id, request.hold)
+            assert not core._state_lock._is_owned()
+            if classified:
+                allow_ack_return.set()
+                assert lane_done.wait(2.0), "adoption lane failed to return"
+            raise TimeoutError("actual child Release reply lost after adoption ACK returned")
+        return result
+
+    core._rpc = adoption_rpc
+    thread = threading.Thread(target=adoption_lane, name="test-adoption-ack-lane", daemon=True)
+    try:
+        thread.start()
+        assert ack_applied.wait(2.0), "actual Node adoption ACK did not commit"
+        assert core.owner_table.snapshot(pending.object_id).state is ObjectState.READY_STORED
+        incarnation = envelope.manifest.header.node_incarnation
+        death = protocol.NodeDeathRecord("two-lane-node-death", node.node_id, incarnation.node_pid,
+            incarnation.registration_epoch, 1, 7, protocol.NodeDeathReason.PROCESS_EXIT, "explicit membership boundary")
+        # The supported membership observer enqueues classification; a lane
+        # then transfers the exact same attempt's marker to Node-loss work.
+        installed = protocol.InstallClusterSnapshot(1, "no-survivor", ())
+        core.handle_node_death(death, installed)
+        core._borrow_rpc = release_then_lose_ack
+        if classified:
+            assert core._consume_node_death_at_lane(pending, node.node_id) is False
+            ready = core._ready_tasks.get_nowait(); core._ready_tasks.task_done()
+            takeover = ready.output_node_loss
+            assert isinstance(takeover, _OutputNodeLossObligation) and takeover.publication_id == identity
+            assert core._protocol_unresolved[pending.task_key].obligation is takeover
+            assert not core._drive_output_node_loss(pending, takeover)
+        else:
+            # Same installed death, before the old caller/coordinator has
+            # transferred the marker. The adoption tail must start the exact
+            # loss continuation itself and retain its unknown child reply.
+            assert isinstance(core._protocol_unresolved[pending.task_key].obligation, _OutputAdoptionObligation)
+            allow_ack_return.set()
+            assert lane_done.wait(2.0)
+        if thread.ident is not None:
+            thread.join(2.0)
+        assert not thread.is_alive() and not lane_errors
+        assert lane_results == [(False, False)]
+        assert pending.task_key not in core._finished_tasks
+        assert core._accepted_task_count == 1 and core._task_finish_barriers[pending.object_id] == pending
+        work = core._output_node_cleanup[identity]
+        assert not work.keep and work.complete == envelope.complete and work.acks == {}
+        assert len(release_requests) == 1
+        current = core._protocol_unresolved[pending.task_key].obligation
+        assert isinstance(current, _OutputNodeLossObligation) and current.round == 1
+        assert not core._finish_pending_task(pending)
+        core._borrow_rpc = original_borrow
+        assert core._drive_output_node_loss(pending, current)
+        assert not core._protocol_unresolved and identity not in core._output_node_cleanup
+        assert core.owner_table.snapshot(pending.object_id).state is ObjectState.LOST
+        assert core._recovery.task_record(pending.task_id).state.value == "SUCCEEDED"
+        assert core._recovery.task_record(pending.task_id).retries_started == 0
+        assert core._finish_pending_task(pending)
+        # An already-completed loss is no longer a live takeover, so a late
+        # adoption replay remains terminal instead of blocking normal finish.
+        assert core._drive_output_publication_adoption(pending, adoption)
+        assert core._accepted_task_count == 0 and not core._task_finish_barriers
+        assert not core._protocol_unresolved and not core._output_result_custody
+        assert core.owner_table.release_local_reference(pending.object_id, "outer0")
+        core._reference_released(pending.object_id)
+        assert core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.COLLECTED
+        for transfer in fixture.manifest.value.transfers:
+            owner = fixture.child_owners[transfer.contained_owner_worker_id]
+            assert transfer.final_hold not in owner.snapshot(transfer.contained_object_id).contained_holds
+    finally:
+        allow_ack_return.set()
+        if thread.ident is not None:
+            thread.join(2.0)
+        assert not thread.is_alive()
+        core._rpc, core._borrow_rpc = original_rpc, original_borrow
+        _close(core)

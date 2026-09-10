@@ -1,0 +1,8 @@
+{
+  "status": "shared B/E correctness fix implemented on B and validated",
+  "finding": "A completed Node adoption ACK may return after same-attempt publisher-loss takeover. The old tail cleared the takeover marker, allowing finish before actual child cleanup.",
+  "proof": "Identical bounded two-lane test: before existing-takeover and death-before-takeover both observed premature (terminal,finished)=(True,True), fixed both passed with actual Node ACK and first child Release ACK loss.",
+  "fix": "Adoption tail checks the current marker and installed Node death under Core lock; leaves active loss marker/custody intact or hands off outside lock. No blanket cleanup erase and no loss-catch bypass.",
+  "validation": "2 exact L1 cases; pure343/1deselected; Core publication17; actual lost-adoption-ACK and contained reconstruction smokes",
+  "E_sync": "E isolated source adapted with a separate hunk; formal B commit/E commit mapping still to be recorded."
+}

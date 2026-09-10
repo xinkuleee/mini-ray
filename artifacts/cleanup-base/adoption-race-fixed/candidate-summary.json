@@ -1,0 +1,29 @@
+{
+  "status": "READY_FOR_BASELINE_RED_AND_FIXED_BOUNDED_RUN_NOT_EXECUTED",
+  "base_head": "54d1bca489b999d57e71fcc293973f3324b204a3",
+  "source_changed_methods": [
+    "_drive_output_publication_adoption"
+  ],
+  "patch_sha256": "6c4ac73084d2652a8fefc5c871f3c22a5b7a820d3f6c40a880f2abe0c1e47342",
+  "patch_bytes": 11362,
+  "apply_check": 0,
+  "test": "tests/unit/test_adoption_loss_lane_handoff.py::test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup",
+  "marker": "loopback_smoke",
+  "source_helper": "tests/unit/test_core_output_publication.py::_fixture(refs=True,stored=True)",
+  "bounded_effects": {
+    "actual_test_threads": 1,
+    "main_lane": 1,
+    "event_wait_seconds": 2,
+    "join_seconds": 2,
+    "runtime_processes": 0,
+    "sockets": 0,
+    "new_tasks": 1,
+    "store_bytes": 1024,
+    "child_transfers": 2
+  },
+  "reachability": "Initial actual Node adoption ACK is discarded by _publish_reply and schedules real DelayedReady(adoption). A replay lane starts before the original _execute caller resumes its post-published-False death check; _consume_node_death_at_lane queues the actual NodeLoss takeover.",
+  "fix": "Under Core lock, an active same-attempt NodeLoss marker owns cleanup and finish; old adoption tail returns nonterminal without clearing marker or payload custody. Already-obsolete completed takeover remains terminal.",
+  "no_B_loss_catch_bypass": true,
+  "base_modified": false,
+  "pytest_run": false
+}

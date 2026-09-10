@@ -1,6 +1,6 @@
 # teaching-base 当前状态
 
-日期：2026-09-10。**K4正式构造与单输出整理已完成，K5结构整理进行中，K7独立封版尚未完成。** 分批通过只归对应候选，不把旧tag或不同批次的结果相加成新B整体验收。
+日期：2026-09-10。**K4–K6清理及结构决策已完成，K7最终同版gate与验收HEAD映射尚未完成。** 分批通过只归对应候选，不把旧tag或不同批次的结果相加成新B整体验收。
 
 | 身份 | 当前记录 |
 |---|---|
@@ -20,7 +20,11 @@ K2/K3已分批迁移发布、owner、Node、Worker、引用与foreign lineage等
 本次已应用短README、设计、学习路径、测试指南及历史索引；4份过期计划和48份history工作副本按原blob可恢复。有效知识已进入[设计](design.md)与既定合同，live测试迁移完成状态仍按每项记录判断。文档行数减少不计作runtime精简。
 
 P1已实现TaskExecution和单个value/payload/result，14个受影响源码文件净减183物理行；同一隔离候选纯gate343通过、1项按原标记排除，32个smoke首次全部通过含七main。应用版另有准确快照映射与回归，见[P1验收](../artifacts/cleanup-base/k4p1/acceptance.json)。
-Node journal内部result/retirement已标量化；adapter八表合一在真实切片通过后因历史扫描和接口成本未采纳。effect、owner退休、typed义务与Core/ACK评估仍有后续工作，不能把候选类写成已实现。
+P2已退出journal、effect与公开snapshot的恒零输出维度，P3将owner membership/retirement改为单值并删除一处重复预检，最终owner提交校验仍保留。P4的put、Node-loss、退休待办使用具体记录；P5的OutputHandoffCompleteAck只确认准确Complete，完整历史查询保持独立。P1–P5已实施，见[P2收口决定](../artifacts/cleanup-base/k6-01/p2-final-closeout-final-disposition.md)、[P3决策](../artifacts/cleanup-base/k6-01/p3-validation-trial-assessment.md)与[K6结果](../artifacts/cleanup-base/k6-01/results.json)。
+
+adapter进度表合并和P6 Core领域提取都经过实际试做；前者增加历史扫描成本，后者未减少长期finish/drain职责，因此按证据保留现有结构，见[执行记录](cleanup-progress.md)。这两项保留决定不表示仍有待实施的候选重构。
+
+K7补齐旧绑定及17个原heavy函数的有限迁移，实际结果分别见[heavy01](../artifacts/cleanup-base/k7heavy-01/results.json)、[heavy02](../artifacts/cleanup-base/k7heavy-02/results.json)和[处置清单](../artifacts/cleanup-base/k7heavy-02/17-dispositions.md)。这些原场景的通过不替代尚未结束的最终同版gate；最终tested_source_commit/head_at_acceptance由K7完成时记录。
 本机多进程冷启动出现过多次5秒或30秒超时；原K3对照同样变慢。验收记录保留失败和相同解释器checked-hash源码缓存策略，未放宽时限，也不宣称已证明冷启动稳定或性能无回归。
 
 ## 后续边界

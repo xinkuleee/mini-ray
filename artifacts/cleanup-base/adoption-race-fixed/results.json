@@ -1,0 +1,66 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_adoption_loss_lane_handoff.py::test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup",
+    "exit_code": 0,
+    "seconds": 4.023,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-adoption-race-fixed/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_adoption_loss_lane_handoff.py::test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 15.108,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-adoption-race-fixed/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "001-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_output_publication.py",
+    "exit_code": 0,
+    "seconds": 8.614,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-adoption-race-fixed/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_output_publication.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+    "exit_code": 0,
+    "seconds": 7.329,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-adoption-race-fixed/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution"
+    ],
+    "log": "003-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+    "exit_code": 0,
+    "seconds": 13.549,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-adoption-race-fixed/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects"
+    ],
+    "log": "004-smoke.log"
+  }
+]
