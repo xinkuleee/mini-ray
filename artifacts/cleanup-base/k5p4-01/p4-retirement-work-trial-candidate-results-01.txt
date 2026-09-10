@@ -1,0 +1,49 @@
+{
+  "edition": "candidate",
+  "cases": [
+    {
+      "contained": false,
+      "installed_child_death": false,
+      "drop_receipts": 2,
+      "same_plan_same_request": true,
+      "owner_lineage_and_reference_preserved": true,
+      "child_proof_type": [],
+      "cleanup_record_fields": [
+        "plan",
+        "child",
+        "replica"
+      ]
+    },
+    {
+      "contained": true,
+      "installed_child_death": false,
+      "drop_receipts": 2,
+      "same_plan_same_request": true,
+      "owner_lineage_and_reference_preserved": true,
+      "child_proof_type": [
+        "ReleaseContainedReferenceReply"
+      ],
+      "cleanup_record_fields": [
+        "plan",
+        "child",
+        "replica"
+      ]
+    },
+    {
+      "contained": true,
+      "installed_child_death": true,
+      "drop_receipts": 2,
+      "same_plan_same_request": true,
+      "owner_lineage_and_reference_preserved": true,
+      "child_proof_type": [
+        "WorkerDeathRecord"
+      ],
+      "cleanup_record_fields": [
+        "plan",
+        "child",
+        "replica"
+      ]
+    }
+  ],
+  "limits": "actual Node physical Drop + Core retirement/owner commit, synchronous transport; no pytest/cluster/OS death; retained local finalizers only at teardown"
+}

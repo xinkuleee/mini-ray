@@ -1,0 +1,189 @@
+{
+  "status": "isolated_trial_static_audit_only_not_applied_not_tested",
+  "source_changes": [
+    {
+      "path": "src/miniray/core.py",
+      "input_sha256": "4d611007703c353b23cb90a4f068b46ccea70fb90a0d6f89e60f9343fd854d2a",
+      "candidate_sha256": "c197607bc4e9e94e724d7e437d9d92d5997ca051dac3bb8c76f937336ce04501",
+      "input_physical_lines": 12763,
+      "candidate_physical_lines": 12512
+    },
+    {
+      "path": "src/miniray/task_submissions.py",
+      "input_sha256": null,
+      "candidate_sha256": "d88be0480a9b494e4d8661838f4d28bb82865c471cb580e1ef7453773c0d4624",
+      "input_physical_lines": 0,
+      "candidate_physical_lines": 246
+    },
+    {
+      "path": "tests/unit/test_explicit_put_arguments.py",
+      "input_sha256": "5653c4d45288644cff4bce387e716973d55e4d1f606ca897befdc616f586bb5d",
+      "candidate_sha256": "28d5cbb1660bd27cf001aea0e3559bc09fc87b76aba971837e2fae22308fd3bb",
+      "input_physical_lines": 202,
+      "candidate_physical_lines": 203
+    },
+    {
+      "path": "tests/unit/test_core_placement_group_scheduling.py",
+      "input_sha256": "379037bc7ad9624369f72bc7966bce035b37ac0729dbf13bf264b76814b852cf",
+      "candidate_sha256": "5946c44f3b56ffc6961c8038ebeb76a66b4278d8c3df815a0af3ea45e56dea01",
+      "input_physical_lines": 1531,
+      "candidate_physical_lines": 1532
+    }
+  ],
+  "register_submission": {
+    "before_lines": 507,
+    "after_lines": 276,
+    "before_core_private_access": {
+      "direct_occurrences": 40,
+      "direct_names": [
+        "_accepted_task_count",
+        "_bind_prepared_local_object_refs",
+        "_completion",
+        "_enqueue_inline_gc_check",
+        "_foreign_guard_key",
+        "_foreign_lineage_registry",
+        "_inflight_submissions",
+        "_install_task_finish_barrier_locked",
+        "_object_waiter",
+        "_objects",
+        "_owner_table",
+        "_prepare_local_object_refs",
+        "_record_orphan_foreign_guard_release",
+        "_recovery_manager",
+        "_release_foreign_dependency_guard",
+        "_retain_foreign_dependency_guard",
+        "_state_lock",
+        "_submission_index",
+        "_submissions"
+      ],
+      "direct_unique_names": 19,
+      "getattr_occurrences": 11,
+      "getattr_names": [
+        "_accepting",
+        "_coordinator",
+        "_inflight_submissions",
+        "_orphan_foreign_guard_releases",
+        "_placement_group_states",
+        "_submissions",
+        "_task_finish_barriers"
+      ],
+      "all_unique_names": 24
+    },
+    "after_core_private_access": {
+      "direct_occurrences": 35,
+      "direct_names": [
+        "_accepted_task_count",
+        "_bind_prepared_local_object_refs",
+        "_completion",
+        "_enqueue_inline_gc_check",
+        "_foreign_lineage_registry",
+        "_inflight_submissions",
+        "_install_task_finish_barrier_locked",
+        "_object_waiter",
+        "_objects",
+        "_owner_table",
+        "_prepare_local_object_refs",
+        "_record_orphan_foreign_guard_release",
+        "_recovery_manager",
+        "_release_foreign_dependency_guard",
+        "_retain_foreign_dependency_guard",
+        "_state_lock",
+        "_submission_index",
+        "_submissions"
+      ],
+      "direct_unique_names": 18,
+      "getattr_occurrences": 11,
+      "getattr_names": [
+        "_accepting",
+        "_coordinator",
+        "_inflight_submissions",
+        "_orphan_foreign_guard_releases",
+        "_placement_group_states",
+        "_submissions",
+        "_task_finish_barriers"
+      ],
+      "all_unique_names": 23
+    }
+  },
+  "core_methods_ast_unchanged": 234,
+  "core_methods_changed": [
+    "_register_submission"
+  ],
+  "core_to_input_private_access": [],
+  "module_to_core_import_or_getattr": [],
+  "typed_protocols_added": [
+    "SubmissionReference",
+    "SubmissionInputOwner"
+  ],
+  "named_adapter_fields": [
+    "owner",
+    "as_reference",
+    "require_local",
+    "retain_foreign",
+    "release_foreign",
+    "record_orphan",
+    "enqueue_gc"
+  ],
+  "domain_methods": [
+    "__init__",
+    "lineage_dependency_ids",
+    "prepare_call",
+    "_export_nested_ref",
+    "prepare_dependencies",
+    "foreign_lineage_edges",
+    "commit_local_inputs",
+    "abort_inputs"
+  ],
+  "state_owners_after": {
+    "input_discovery_and_input_hold_rollback_ledger": "per-call TaskSubmissions; 8 existing logical collections",
+    "owner_submitted_and_lineage_hold_truth": "existing ObjectOwnerTable",
+    "task_success": "existing owner + RecoveryManager under Core lock",
+    "task_admission_identity_inflight_queue_and_output_rollback": "CoreWorker unchanged",
+    "foreign_lineage_registration": "existing ForeignLineageRegistry under Core lock",
+    "foreign_retain_release_and_orphan_death_fencing": "existing Core RPC and orphan reducer",
+    "task_finish_barriers_retries_and_shutdown": "CoreWorker unchanged"
+  },
+  "copy_cost": {
+    "payload_serializations_delta": 0,
+    "deepcopy_delta": 0,
+    "new_per_submission_records": [
+      "TaskSubmissions",
+      "SubmissionInputCustody",
+      "EncodedTaskCall",
+      "SubmittedInputs"
+    ],
+    "new_long_lived_success_tables": 0,
+    "tuple_reference_snapshots": "existing four pending-input tuples wrapped in one new SubmittedInputs DTO; no extra payload copies"
+  },
+  "ast_nodes": {
+    "before_core": 67016,
+    "candidate_core": 65681,
+    "candidate_input_module": 2076
+  },
+  "adapter_access_occurrences": {
+    "as_reference": 2,
+    "require_local": 2,
+    "retain_foreign": 2,
+    "owner": 3,
+    "enqueue_gc": 1,
+    "release_foreign": 1,
+    "record_orphan": 1
+  },
+  "read_path": {
+    "before": [
+      "Core._register_submission nested closures",
+      "dependency encoder",
+      "owner/RPC handlers",
+      "Core._register_submission local commit and rollback"
+    ],
+    "after": [
+      "Core._register_submission adapter wiring",
+      "TaskSubmissions.prepare_call/_export_nested_ref",
+      "dependency encoder",
+      "SubmissionInputCustody owner/RPC capability",
+      "TaskSubmissions.prepare_dependencies/commit_local_inputs",
+      "Core owner/recovery/enqueue commit",
+      "TaskSubmissions.abort_inputs or Core finish"
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "src/miniray/core.py": {
+    "before_sha256": "62789790856f160ee22d5cab558fd4a07e784bdde80c8e8b6e676286c0f77113",
+    "after_sha256": "27857f52b25a85b5eba4d5ea1c0cfa2c1726fd0ddd5942863de60e607bb07ee9",
+    "before_lf_sha256": "7f39e3a3eee8ef0d54eb8eb5210c539515d86d61f1ea065b21b771f6850d13c6",
+    "after_lf_sha256": "76d8864c2b491627433be788e25b0f0c0261f7a6c8eaf68825e143ece08cbbdc",
+    "trial02_expected_sha256": "27857f52b25a85b5eba4d5ea1c0cfa2c1726fd0ddd5942863de60e607bb07ee9",
+    "physical_before": 12756,
+    "physical_after": 12791,
+    "post_ast_sha256": "3c414dd5c171f1ec4e01ad739a495065c93e41f4c968e31623bea4ded1a6eb6b"
+  },
+  "src/miniray/put_work.py": {
+    "before_sha256": null,
+    "after_sha256": "3bc597a5750476cab1df5bab12b68682b9b3f0a4fb6b3336d6e167c8e9eccd9b",
+    "before_lf_sha256": null,
+    "after_lf_sha256": "a8351d24c8ff8fb3f9654de26a19ae276af58518e215dabebb48145496792e5d",
+    "trial02_expected_sha256": "3bc597a5750476cab1df5bab12b68682b9b3f0a4fb6b3336d6e167c8e9eccd9b",
+    "physical_before": 0,
+    "physical_after": 75,
+    "post_ast_sha256": "0e6b8228c0a3039cdad9ce98b18c87602a6b23c03e5671cf347d7fc824e15908"
+  },
+  "tests/unit/test_common_cleanup_progress.py": {
+    "before_sha256": "01fcc71f564aaf160e4376049e851a905cc88727b44a4552957867775eaedef3",
+    "after_sha256": "298d97b192c963081bbd8fcd2aed4c9676303c0ea505691585eb4842294e07b3",
+    "before_lf_sha256": "e25326a622ba891d73ea11bbe35a9732f86e60a0f2679eb873281d9f9a29a765",
+    "after_lf_sha256": "5a64e689cc82486fa9dfbeefa75fa98c3a3f20a1972f7f8eeb67c134ffa09736",
+    "trial02_expected_sha256": "298d97b192c963081bbd8fcd2aed4c9676303c0ea505691585eb4842294e07b3",
+    "physical_before": 395,
+    "physical_after": 395,
+    "post_ast_sha256": "ca710eaf6b5763efe1e9d61763e536c390902fca71acbd4dfb49263f5cb272f1"
+  },
+  "tests/unit/test_output_node_loss_control.py": {
+    "before_sha256": "bdc62345bd612c04bc6a42f978165dc3b3bb48f12355dbe300af7dec9e05a6db",
+    "after_sha256": "d9e16d61674fef9fed776ad547be08bdbb2d75657f0386ed86fa8e2bb2cb8ec4",
+    "before_lf_sha256": "0688e19233755d474118d08d4437099973c3dea3c74839e195da04827616fb48",
+    "after_lf_sha256": "a6eb28a5ef79983802380522af42af5750bd7369c971362ea63c2d4ddb929a13",
+    "trial02_expected_sha256": "d9e16d61674fef9fed776ad547be08bdbb2d75657f0386ed86fa8e2bb2cb8ec4",
+    "physical_before": 171,
+    "physical_after": 171,
+    "post_ast_sha256": "66504ab4d9d0e9c2577e360fc860f461c5907f34b202c21b6ea2e8bef3f0301e"
+  },
+  "tests/unit/test_put_home_failover.py": {
+    "before_sha256": "38619c780ae13355d4b3b6aba08468bd53034717ded80817f5d254220c362c2d",
+    "after_sha256": "425ceb0d4969b336d9aa76b370e686b37c17a641fecaa5da889abe521ef91bf5",
+    "before_lf_sha256": "6fb5d9902877d45a98dcb97da45f8b0a791ef68f4ee0e772da0d2ff24460aee2",
+    "after_lf_sha256": "782fa9120a2a51dfe3c1d3ef4ce06082ea1b8aca1827fe795dc896b0ee184967",
+    "trial02_expected_sha256": "425ceb0d4969b336d9aa76b370e686b37c17a641fecaa5da889abe521ef91bf5",
+    "physical_before": 260,
+    "physical_after": 261,
+    "post_ast_sha256": "44facd692afefa0da234393840b0b8e73e70190ee0f08a74e1080456febf425d"
+  },
+  "tests/unit/test_put_reference_runtime.py": {
+    "before_sha256": "e018d500ae23c0076e1f30f6648a3792815873c046dcbbb898e1faf4a097cab4",
+    "after_sha256": "1598a21d3865ceb3e16ba72a10d1e7c6f399e94512e820d7131414105e64d4a5",
+    "before_lf_sha256": "2d88c0728990dbeb503a6627bdf60ac9fdad265be001e35a9e7d2dbcc6ed20ec",
+    "after_lf_sha256": "bb323ee066afbb7552b2d39e6ac3eac1252a855acb429d5dbb3f6889ae8e5d08",
+    "trial02_expected_sha256": "1598a21d3865ceb3e16ba72a10d1e7c6f399e94512e820d7131414105e64d4a5",
+    "physical_before": 497,
+    "physical_after": 550,
+    "post_ast_sha256": "4d2474badc83c19d966a67d6909652f7d2575f00329d4dddb4268f2fa2bcecdd"
+  },
+  "tests/unit/test_targeted_owner_defer.py": {
+    "before_sha256": "fc70b3c968946c2ca7a240dfa3d543a733a2c6fbbfdee37332ebe6eaa5b10826",
+    "after_sha256": "18d99ce5ef588f55445e406c6929b22581d959f9917f5e114cf0d7e10b86568b",
+    "before_lf_sha256": "6c0c26fd66a52accd5dd46dee6c5d922bc6945e486da4fa8480f6f3f88770388",
+    "after_lf_sha256": "6b113610a80bd8af461b51ef2061b1f44141f8c1e8218fecf081d3d7fabb97a3",
+    "trial02_expected_sha256": "18d99ce5ef588f55445e406c6929b22581d959f9917f5e114cf0d7e10b86568b",
+    "physical_before": 345,
+    "physical_after": 345,
+    "post_ast_sha256": "8a284be9b8cc14ecd9ad23f0480c635910ffc1ab07554ce6b3aabf1aa76bcfe1"
+  }
+}

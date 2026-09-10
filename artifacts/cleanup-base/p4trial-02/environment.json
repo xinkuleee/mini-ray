@@ -1,0 +1,78 @@
+{
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-libc",
+  "packages": {
+    "pytest": "8.4.2",
+    "cloudpickle": "3.1.2",
+    "packaging": "26.3",
+    "pluggy": "1.6.0",
+    "iniconfig": "2.3.0",
+    "pygments": "2.21.0"
+  },
+  "source": {
+    "head": "ac3cee8f9454b0b03b3b99e48870237cfd7685c2",
+    "branch": "refs/heads/teaching-base",
+    "working_tree_status": "",
+    "archive_sha256": "cfc3730b2d2b595e39e623e698275b707b0c89ee9e7881733a820d633d7c6fb5",
+    "file_count": 420,
+    "mode": "isolated P4 put/node-cleanup/retirement records on frozen P3; no P6; not runtime accepted",
+    "previous_candidate": "base-p3trial-01",
+    "previous_archive_sha256": "eb1c4987f79ce3d123889d056b956a9ed6165de20243b44093e7996d73aa83d4",
+    "previous_snapshot_sha256": "ab7675b25dadd076d89c31611de877f31d0d98f89d195cbb3a2da85a205b5732",
+    "assembly_sha256": "7b029fc9e8836976f607bb0acc0de90cd433f97614fa759c77c7b485aabdd494",
+    "patches": [
+      {
+        "path": "C:/Users/t-hdong/Desktop/gao/audit/p4-put-after-p3/put-after-p3.patch",
+        "sha256": "25e0756a2ba039c843bf418227f04020a3f8d7ed3c8d88213499a02883af13c7"
+      },
+      {
+        "path": "C:/Users/t-hdong/Desktop/gao/audit/p4-owner-work-trial/candidate.patch",
+        "sha256": "d97aa769bf35e7bf78ea602975864256392c6603f83bb62b9504f116249bed54"
+      },
+      {
+        "path": "C:/Users/t-hdong/Desktop/gao/audit/p4-retirement-work-trial/candidate.patch",
+        "sha256": "b64062bf3b3730a14c5c6d14641f89a2c2a747609ed3ec2ee477c1e6e81a45e2"
+      }
+    ],
+    "changed_core_methods": [
+      "_put_value",
+      "_drive_put_handoff_cleanup",
+      "_retire_lost_output_memberships",
+      "_drive_output_node_loss_once"
+    ],
+    "changed_paths": [
+      "src/miniray/core.py",
+      "src/miniray/put_work.py",
+      "tests/unit/test_common_cleanup_progress.py",
+      "tests/unit/test_output_node_loss_control.py",
+      "tests/unit/test_put_home_failover.py",
+      "tests/unit/test_put_reference_runtime.py",
+      "tests/unit/test_targeted_owner_defer.py"
+    ],
+    "registry_refreshed": 311,
+    "delivery_gate": {
+      "pure_files": 26,
+      "smokes": 32
+    },
+    "gate_and_selectors_unchanged": true,
+    "owner_P3_source_preserved": true,
+    "P6_included": false,
+    "base_modified": false,
+    "pytest_run": false,
+    "fixed_from_candidate": "base-p4trial-01",
+    "fixed_from_archive_sha256": "b9d9fa2d85ac76378e6e75306ec8b497940ca1feb6b10bbe5be1b7435c6d0f0b",
+    "fix_patch_sha256": "0acecbf84cdc44170bf63203d46ebd700ec5270e16863b39902cddfa18272bfd",
+    "fix_description": "Explicit initial pending Seal observer plus exactly one post-GC replay observer; both retain actual typed absence-fenced receipts.",
+    "delta_from_trial01": {
+      "tests/unit/test_put_reference_runtime.py": {
+        "before_sha256": "cdd31c82a2cca425ad3f059daf02a3e24736bcacf6bb44b010eebefcc6c8941f",
+        "after_sha256": "1598a21d3865ceb3e16ba72a10d1e7c6f399e94512e820d7131414105e64d4a5"
+      }
+    },
+    "all_source_bytes_same_as_trial01": true,
+    "manifest_refresh_executed": true,
+    "manifest_bytes_changed_from_trial01": false,
+    "trial01_failure_evidence_preserved": true
+  },
+  "selection_mode": "pure"
+}

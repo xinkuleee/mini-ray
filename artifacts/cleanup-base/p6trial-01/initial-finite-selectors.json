@@ -1,0 +1,25 @@
+{
+  "status": "proposed_for_root_bounded_validation_not_executed_not_manifest_registration",
+  "edition": "base",
+  "prerequisites": ["P4 disposition recorded", "rebase over accepted P1 candidate if adopted", "refresh reviewed source/test closure"],
+  "pure": [
+    {"selector": "tests/unit/test_spillback_runtime.py::test_core_preserves_identity_and_does_not_release_from_submitter", "contract": "ordinary value through actual Node Complete, owner adoption, finish and GC"},
+    {"selector": "tests/unit/test_explicit_put_arguments.py::test_small_values_keep_normal_single_output_queue_admission", "contract": "scalar encoding and existing owner/recovery/enqueue admission"},
+    {"selector": "tests/unit/test_explicit_put_arguments.py::test_later_large_argument_releases_already_installed_nested_hold", "contract": "nested hold precedes second encoding; exact inline-budget rejection cleanup"},
+    {"selector": "tests/unit/test_core_nested_task_arguments.py::test_nested_local_ref_is_held_but_never_gates_readiness", "contract": "local nested ObjectRef submitted/lineage hold, finish and GC"},
+    {"selector": "tests/unit/test_core_nested_task_arguments.py::test_nested_hold_survives_system_retry_and_releases_once", "contract": "immutable input custody survives system retry and releases once"},
+    {"selector": "tests/unit/test_core_nested_task_arguments.py::test_ambiguous_foreign_nested_retain_is_recorded_before_rpc", "contract": "foreign retain intent precedes unknown reply; orphan responsibility retained"},
+    {"selector": "tests/unit/test_core_nested_task_arguments.py::test_top_level_and_nested_foreign_handles_share_one_logical_hold", "contract": "actual remote owner handlers; shared credentials; foreign lineage until GC"},
+    {"selector": "tests/unit/test_single_output_submission_rollback.py::test_enqueue_failure_rolls_back_count_refs_waiters_and_authorities", "contract": "failed final queue commit rolls back bound ref, authority, barrier, accounting"},
+    {"selector": "tests/unit/test_single_output_submission_rollback.py::test_dependency_holds_and_lineage_are_exactly_rolled_back", "contract": "exact local submitted and lineage cleanup after real effect"}
+  ],
+  "existing_smokes_if_promoted": [
+    {"selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects", "marker": "multiprocess_smoke", "contract": "actual contained Ref output, lineage, whole reconstruction and GC"},
+    {"selector": "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution", "marker": "multiprocess_smoke", "contract": "actual owner/Node finish barrier and exact retirement ACK"}
+  ],
+  "additional_changed_binding": {
+    "selector": "tests/unit/test_core_placement_group_scheduling.py::test_pg_submission_final_publication_fences_removal_and_rolls_back_hold",
+    "existing_marker": "heavy",
+    "disposition": "Kept heavy; encoder patch target only. Re-review exact helper/fixture budget before execution; do not place in pure or declare timeout-safe without review."
+  }
+}

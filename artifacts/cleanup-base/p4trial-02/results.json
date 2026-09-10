@@ -1,0 +1,14 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 12.625,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p4trial-02/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  }
+]

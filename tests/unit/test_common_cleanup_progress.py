@@ -272,7 +272,7 @@ def test_late_envelope_does_not_reverse_unknown_cleanup_or_consume_budget_twice(
     f.core._borrow_rpc = release_then_lose_reply
     assert not f.loss()
     assert f.core._output_handoff_table().query(f.identity).phase is OutputHandoffPhase.ABORTED
-    assert f.core._output_node_cleanup[f.identity]["complete"] is None
+    assert f.core._output_node_cleanup[f.identity].complete is None
     assert not f.loss(envelope=f.envelope)  # The real retry authority queues one new attempt.
     state = f.core.owner_table.snapshot(f.ref.object_id)
     record = f.core._recovery.task_record(f.pending.task_id)

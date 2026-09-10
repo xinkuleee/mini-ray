@@ -1,0 +1,715 @@
+--- a/src/miniray/core.py
++++ b/src/miniray/core.py
+@@ -30,8 +30,6 @@
+ from .actor_client import ActorCallFence, ActorClientTable
+ from .contained_edges import ContainedReferenceEdge, IncomingContainedReferenceHold, LineageReferenceEdge, ObjectMetadataCollectionPlan
+ from .dependency import (
+-    encode_task_argument,
+-    nested_references,
+     resolve_task_arguments,
+     top_level_references,
+ )
+@@ -100,6 +98,10 @@
+ from .runtime_binding import current_execution_context
+ from .trace import EventSink, causal_scope, current_cause_id
+ from .task_outputs import TaskExecution, validate_num_returns
++from .task_submissions import (
++    TaskDependencyGuard as _ForeignDependencyGuard,
++    SubmissionInputCustody, TaskSubmissions,
++)
+ from .transport import (
+     Address,
+     RemoteCallError,
+@@ -400,26 +402,6 @@
+ 
+ 
+ 
+-@dataclass(frozen=True)
+-class _ForeignDependencyGuard:
+-    """Stable owner credential held for one logical submitted task."""
+-
+-    object_id: ObjectID
+-    owner_worker_id: WorkerID
+-    owner_address: Address
+-    borrower_worker_id: WorkerID
+-    borrower_token: str
+-    hold: protocol.TaskReferenceHold
+-
+-    def __post_init__(self) -> None:
+-        if not isinstance(self.hold, protocol.TaskReferenceHold):
+-            raise TypeError("foreign dependency hold must be a TaskReferenceHold")
+-        if self.hold.kind is not protocol.TaskReferenceHoldKind.RETAINED:
+-            raise ValueError("foreign dependency hold must have RETAINED kind")
+-        if self.hold.submitting_worker_id != self.borrower_worker_id:
+-            raise ValueError(
+-                "foreign dependency hold submitter must match its borrower"
+-            )
+ 
+ 
+ @dataclass(frozen=True)
+@@ -6049,10 +6031,7 @@
+             self._inflight_submissions = (
+                 getattr(self, "_inflight_submissions", 0) + 1
+             )
+-        protected: list[ObjectID] = []
+-        foreign_guards: list[_ForeignDependencyGuard] = []
+-        nested_local_holds: list[ObjectID] = []
+-        nested_foreign_guards: list[_ForeignDependencyGuard] = []
++        inputs: TaskSubmissions | None = None
+         installed_lineage_holds: list[tuple[ObjectID, str]] = []
+         output_registration = None
+         recovery_registration_attempted = False
+@@ -6084,108 +6063,29 @@
+             output_ids = (ObjectID.for_task(task_id, 0),)
+             object_id = output_ids[0]
+             prepared_refs = self._prepare_local_object_refs(output_ids)
+-            nested_transfers: dict[
+-                tuple[ObjectID, WorkerID], protocol.NestedReferenceTransfer
+-            ] = {}
+-            nested_sources: dict[
+-                tuple[ObjectID, WorkerID], ObjectRef
+-            ] = {}
+-
+-            def export_nested_ref(value: object) -> protocol.NestedReferenceTransfer:
+-                if not isinstance(value, ObjectRef):
+-                    raise TypeError("nested task references must be ObjectRef values")
+-                if value.closed:
+-                    raise ValueError("cannot submit a closed nested ObjectRef")
+-                key = value.object_id, value.owner_worker_id
+-                previous_source = nested_sources.setdefault(key, value)
+-                if (
+-                    previous_source.owner_address != value.owner_address
+-                ):
+-                    raise ValueError(
+-                        "duplicate nested ObjectRef has conflicting owner credentials"
+-                    )
+-                previous = nested_transfers.get(key)
+-                if previous is not None:
+-                    return previous
+-                owner_address = value.owner_address
+-                if owner_address is None:
+-                    raise ValueError(
+-                        "nested ObjectRef has no reachable owner endpoint"
+-                    )
+-                hold = (
+-                    submitted_hold
+-                    if value.owner_worker_id == self.worker_id
+-                    else retained_hold
+-                )
+-                transfer = protocol.NestedReferenceTransfer(
+-                    value.object_id, value.owner_worker_id, owner_address,
+-                    hold,
+-                )
+-                # The first serialized occurrence is the handoff point.  Install
+-                # the logical hold before returning its manifest index so a
+-                # concurrent close of the source handle cannot create a lifetime
+-                # gap.  A later serialization/admission failure rolls this exact
+-                # hold back through the common cleanup path below.
+-                if value.owner_worker_id == self.worker_id:
+-                    self._object_waiter(value.object_id)
+-                    self._owner_table.add_submitted_reference(
+-                        value.object_id, submitted_hold
+-                    )
+-                    nested_local_holds.append(value.object_id)
+-                else:
+-                    if value.borrower_token is None:
+-                        raise ValueError(
+-                            "foreign nested ObjectRef is detached from its "
+-                            "owner protocol"
+-                        )
+-                    guard = _ForeignDependencyGuard(
+-                        value.object_id, value.owner_worker_id, owner_address,
+-                        self.worker_id, value.borrower_token, retained_hold,
+-                    )
+-                    nested_foreign_guards.append(guard)
+-                    self._retain_foreign_dependency_guard(guard)
+-                nested_transfers[key] = transfer
+-                return transfer
+-
+-            # The teaching API requires explicit put for large by-value inputs.
+-            # Encoding is still once per argument; partial nested holds use the
+-            # common submission rollback if the cumulative budget is exceeded.
+-            inline_bytes = 0
+-            inline_budget = getattr(
+-                self, "inline_threshold", _DEFAULT_INLINE_THRESHOLD_BYTES
+-            )
+-
+-            def encode_with_inline_budget(value: object) -> protocol.TaskArg:
+-                nonlocal inline_bytes
+-                argument = encode_task_argument(
+-                    value, serializer="cloudpickle",
+-                    export_nested_ref=export_nested_ref,
+-                )
+-                if not isinstance(argument, protocol.InlineArg):
+-                    return argument
+-                next_inline_bytes = inline_bytes + len(argument.data)
+-                if next_inline_bytes > inline_budget:
+-                    raise ValueError(
+-                        "task arguments exceed the inline budget; use ray.put(value) "
+-                        "and pass its ObjectRef for large inputs"
+-                    )
+-                inline_bytes = next_inline_bytes
+-                return argument
+-
+-            encoded_args = tuple(
+-                encode_with_inline_budget(value) for value in args
+-            )
+-            encoded_kwargs = tuple(
+-                (name, encode_with_inline_budget(value))
+-                for name, value in kwargs.items()
+-            )
++            # Per-call input custody owns discovery and exact hold rollback.
++            # It receives named capabilities, never this Core or its lock.
++            inputs = TaskSubmissions(
++                self.worker_id, submitted_hold, retained_hold,
++                getattr(self, "inline_threshold", _DEFAULT_INLINE_THRESHOLD_BYTES),
++                SubmissionInputCustody(
++                    owner=self._owner_table,
++                    as_reference=lambda value: value if isinstance(value, ObjectRef) else None,
++                    require_local=self._object_waiter,
++                    retain_foreign=self._retain_foreign_dependency_guard,
++                    release_foreign=self._release_foreign_dependency_guard,
++                    record_orphan=self._record_orphan_foreign_guard_release,
++                    enqueue_gc=self._enqueue_inline_gc_check,
++                ),
++            )
++            call = inputs.prepare_call(args, kwargs)
+             spec = protocol.TaskSpec(
+                 job_id=self.job_id,
+                 task_id=task_id,
+                 attempt_id=attempt_id,
+                 function=function.key,
+-                args=encoded_args,
+-                kwargs=encoded_kwargs,
++                args=call.args,
++                kwargs=call.kwargs,
+                 num_returns=num_returns,
+                 resources=resources,
+                 max_retries=max_retries,
+@@ -6194,98 +6094,8 @@
+                 function_definition=function.definition,
+                 scheduling_key=placement_group_scheduling_key,
+             )
+-            references = top_level_references(
+-                spec.args + tuple(value for _, value in spec.kwargs)
+-            )
+-            lineage_dependencies = tuple(
+-                reference for reference in references
+-                if reference.owner_worker_id == self.worker_id
+-            )
+-            nested_manifest = nested_references(
+-                spec.args + tuple(value for _, value in spec.kwargs)
+-            )
+-            if {
+-                (item.object_id, item.owner_worker_id): item
+-                for item in nested_manifest
+-            } != nested_transfers:
+-                raise SystemTaskError(
+-                    "encoded nested-reference manifest changed submission identity"
+-                )
+-            for item in nested_manifest:
+-                expected_hold = (
+-                    submitted_hold
+-                    if item.owner_worker_id == self.worker_id
+-                    else retained_hold
+-                )
+-                if item.hold != expected_hold:
+-                    raise SystemTaskError(
+-                        "nested-reference manifest changed its Task hold"
+-                    )
+-            # Producer lineage retains every local input named by the
+-            # canonical TaskSpec.  Top-level refs are readiness dependencies;
+-            # nested refs are lifetime-only handles.  Both must survive after
+-            # the initial execution hold is released so a later reconstruction
+-            # can replay the same immutable argument value.
+-            lineage_dependency_ids = tuple(dict.fromkeys(
+-                tuple(
+-                    reference.object_id
+-                    for reference in lineage_dependencies
+-                )
+-                + tuple(
+-                    transfer.object_id
+-                    for transfer in nested_manifest
+-                    if transfer.owner_worker_id == self.worker_id
+-                )
+-            ))
+-            input_refs: dict[tuple[ObjectID, WorkerID], ObjectRef] = {}
+-            for value in tuple(args) + tuple(kwargs.values()):
+-                if isinstance(value, ObjectRef):
+-                    key = value.object_id, value.owner_worker_id
+-                    previous = input_refs.get(key)
+-                    if previous is None or (
+-                        (previous.closed or previous.owner_address is None
+-                         or previous.borrower_token is None)
+-                        and not value.closed
+-                        and value.owner_address is not None
+-                        and value.borrower_token is not None
+-                    ):
+-                        input_refs[key] = value
+-            # Phase 1: owner-authoritative retain ACKs.  No Core lock is held.
+-            for reference in references:
+-                if reference.owner_worker_id != self.worker_id:
+-                    reference_key = (
+-                        reference.object_id, reference.owner_worker_id
+-                    )
+-                    existing_guard = next((
+-                        guard for guard in nested_foreign_guards
+-                        if (guard.object_id, guard.owner_worker_id)
+-                        == reference_key
+-                    ), None)
+-                    if existing_guard is not None:
+-                        foreign_guards.append(existing_guard)
+-                        continue
+-                    source = input_refs.get(
+-                        reference_key
+-                    )
+-                    if (
+-                        source is None
+-                        or source.closed
+-                        or source.owner_address is None
+-                        or source.borrower_token is None
+-                    ):
+-                        raise ValueError(
+-                            "foreign ObjectRef dependency is detached from its "
+-                            "owner protocol"
+-                        )
+-                    guard = _ForeignDependencyGuard(
+-                        reference.object_id, reference.owner_worker_id,
+-                        source.owner_address, self.worker_id,
+-                        source.borrower_token,
+-                        retained_hold,
+-                    )
+-                    foreign_guards.append(guard)
+-                    self._retain_foreign_dependency_guard(guard)
+-
++            # Owner-authoritative remote retains still precede the Core lock.
++            inputs.prepare_dependencies(spec, args, kwargs)
+             # Phase 2: shutdown either wins before this lock or the complete
+             # logical task and queue admission become visible together.
+             with self._state_lock:
+@@ -6323,37 +6133,9 @@
+                         token for _ref, token in prepared_refs
+                     ),
+                 )
+-                # Every remote owner has ACKed its retained hold before this
+-                # point.  Publish the TaskID-scoped foreign lineage in the same
+-                # composition stage as local owner/recovery state, before any
+-                # output or queue item becomes visible.  A duplicate nested +
+-                # top-level occurrence is merged by semantic roles.
+-                role_by_key: dict[
+-                    tuple[ObjectID, WorkerID], ForeignLineageRole
+-                ] = {}
+-                guard_by_key: dict[
+-                    tuple[ObjectID, WorkerID], _ForeignDependencyGuard
+-                ] = {}
+-                for guard in nested_foreign_guards:
+-                    key = guard.object_id, guard.owner_worker_id
+-                    guard_by_key[key] = guard
+-                    role_by_key[key] = role_by_key.get(
+-                        key, ForeignLineageRole(0)
+-                    ) | ForeignLineageRole.NESTED
+-                for guard in foreign_guards:
+-                    key = guard.object_id, guard.owner_worker_id
+-                    guard_by_key[key] = guard
+-                    role_by_key[key] = role_by_key.get(
+-                        key, ForeignLineageRole(0)
+-                    ) | ForeignLineageRole.TOP_LEVEL
+-                foreign_edges = tuple(
+-                    ForeignLineageEdge(
+-                        task_id, guard.object_id, guard.owner_worker_id,
+-                        guard.owner_address, guard.borrower_worker_id,
+-                        guard.hold, role_by_key[key],
+-                    )
+-                    for key, guard in sorted(guard_by_key.items())
+-                )
++                # The input domain supplies immutable edges; the existing
++                # registry joins owner/recovery under this composition lock.
++                foreign_edges = inputs.foreign_lineage_edges(task_id)
+                 if foreign_edges:
+                     foreign_lineage_preexisting = (
+                         self._foreign_lineage_registry.snapshot(task_id)
+@@ -6364,7 +6146,7 @@
+                             task_id, output_ids, foreign_edges
+                         )
+                     )
+-                for dependency_id in lineage_dependency_ids:
++                for dependency_id in inputs.lineage_dependency_ids:
+                     token = _lineage_hold_token(
+                         task_id, dependency_id
+                     )
+@@ -6375,14 +6157,9 @@
+                     installed_lineage_holds.append(
+                         (dependency_id, token)
+                     )
+-                for reference in references:
+-                    if reference.owner_worker_id == self.worker_id:
+-                        self._object_waiter(reference.object_id)
+-                        if reference.object_id not in nested_local_holds:
+-                            self._owner_table.add_submitted_reference(
+-                                reference.object_id, submitted_hold
+-                            )
+-                        protected.append(reference.object_id)
++                # Local input effects join owner/recovery/enqueue in this
++                # unchanged Core critical section, without a new success table.
++                submitted_inputs = inputs.commit_local_inputs()
+                 self._owner_table.commit_register_task_outputs(
+                     output_registration
+                 )
+@@ -6404,17 +6181,11 @@
+                 pending = _PendingTask(
+                     object_id=object_id,
+                     spec=spec,
+-                    protected_dependencies=tuple(protected),
++                    protected_dependencies=submitted_inputs.protected_dependencies,
+                     dependency_hold=submitted_hold,
+-                    foreign_dependency_guards=tuple(foreign_guards),
+-                    nested_local_holds=tuple(
+-                        object_id for object_id in nested_local_holds
+-                        if object_id not in protected
+-                    ),
+-                    nested_foreign_guards=tuple(
+-                        guard for guard in nested_foreign_guards
+-                        if guard not in foreign_guards
+-                    ),
++                    foreign_dependency_guards=submitted_inputs.foreign_guards,
++                    nested_local_holds=submitted_inputs.nested_local_holds,
++                    nested_foreign_guards=submitted_inputs.nested_foreign_guards,
+                 )
+                 if _enqueue:
+                     self._install_task_finish_barrier_locked(pending)
+@@ -6465,28 +6236,8 @@
+                     dependency_id, token
+                 ):
+                     self._enqueue_inline_gc_check(dependency_id)
+-            for dependency_id in dict.fromkeys(
+-                protected + nested_local_holds
+-            ):
+-                released = self._owner_table.release_submitted_reference(
+-                    dependency_id, submitted_hold
+-                )
+-                if released:
+-                    self._enqueue_inline_gc_check(dependency_id)
+-            seen_rollback_guards: set[
+-                tuple[WorkerID, ObjectID, protocol.TaskReferenceHold]
+-            ] = set()
+-            for guard in reversed(foreign_guards + nested_foreign_guards):
+-                key = self._foreign_guard_key(guard)
+-                if key in seen_rollback_guards:
+-                    continue
+-                seen_rollback_guards.add(key)
+-                try:
+-                    self._release_foreign_dependency_guard(guard)
+-                except Exception:
+-                    # Release-before-retain tombstones make this best-effort
+-                    # rollback safe even when a Retain ACK was ambiguous.
+-                    self._record_orphan_foreign_guard_release(guard)
++            if inputs is not None:
++                inputs.abort_inputs()
+             raise
+         finally:
+             # Even a defensive cleanup failure must not leave shutdown
+--- /dev/null
++++ b/src/miniray/task_submissions.py
+@@ -0,0 +1,246 @@
++"""Per-call input custody for ordinary Task submission.
++
++This scope trial extracts preparation/commit/abort of submitted input holds.
++The instance ends with Core admission; it is neither a Task success registry
++nor a second owner/recovery authority. Core reserves identity and commits
++owner/recovery/lineage/enqueue under its existing composition lock.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Callable, Mapping, Protocol
++
++from . import protocol
++from .dependency import ContainedRef, encode_task_argument, nested_references, top_level_references
++from .errors import SystemTaskError
++from .foreign_lineage import ForeignLineageEdge, ForeignLineageRole
++from .ids import ObjectID, TaskID, WorkerID
++from .transport import Address
++
++
++@dataclass(frozen=True)
++class TaskDependencyGuard:
++    """Stable owner credential held for one logical submitted task."""
++
++    object_id: ObjectID
++    owner_worker_id: WorkerID
++    owner_address: Address
++    borrower_worker_id: WorkerID
++    borrower_token: str
++    hold: protocol.TaskReferenceHold
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.hold, protocol.TaskReferenceHold):
++            raise TypeError("foreign dependency hold must be a TaskReferenceHold")
++        if self.hold.kind is not protocol.TaskReferenceHoldKind.RETAINED:
++            raise ValueError("foreign dependency hold must have RETAINED kind")
++        if self.hold.submitting_worker_id != self.borrower_worker_id:
++            raise ValueError(
++                "foreign dependency hold submitter must match its borrower"
++            )
++
++
++class SubmissionReference(Protocol):
++    object_id: ObjectID
++    owner_worker_id: WorkerID
++    owner_address: Address | None
++    borrower_token: str | None
++
++    @property
++    def closed(self) -> bool: ...
++
++
++class SubmissionInputOwner(Protocol):
++    def add_submitted_reference(self, object_id: ObjectID, token: protocol.TaskReferenceHold) -> bool: ...
++    def release_submitted_reference(self, object_id: ObjectID, token: protocol.TaskReferenceHold) -> bool: ...
++
++
++@dataclass(frozen=True)
++class SubmissionInputCustody:
++    owner: SubmissionInputOwner
++    as_reference: Callable[[object], SubmissionReference | None]
++    require_local: Callable[[ObjectID], object]
++    retain_foreign: Callable[[TaskDependencyGuard], None]
++    release_foreign: Callable[[TaskDependencyGuard], None]
++    record_orphan: Callable[[TaskDependencyGuard], None]
++    enqueue_gc: Callable[[ObjectID], None]
++
++
++@dataclass(frozen=True)
++class EncodedTaskCall:
++    args: tuple[protocol.TaskArg, ...]
++    kwargs: tuple[tuple[str, protocol.TaskArg], ...]
++
++
++@dataclass(frozen=True)
++class SubmittedInputs:
++    protected_dependencies: tuple[ObjectID, ...]
++    foreign_guards: tuple[TaskDependencyGuard, ...]
++    nested_local_holds: tuple[ObjectID, ...]
++    nested_foreign_guards: tuple[TaskDependencyGuard, ...]
++
++
++class TaskSubmissions:
++    """One submission's effect ledger; successful admission consumes it.
++
++    Mutations are sequential on the submitting thread. commit_local_inputs is
++    called only inside Core's owner/recovery composition lock; preparing and
++    releasing foreign credentials remain outside that lock. Its immutable
++    input metadata joins the existing PendingTask. No whole Core is accepted.
++    """
++
++    def __init__(self, worker_id: WorkerID, submitted: protocol.TaskReferenceHold,
++                 retained: protocol.TaskReferenceHold, inline_budget: int,
++                 custody: SubmissionInputCustody) -> None:
++        self._worker_id, self._submitted, self._retained = worker_id, submitted, retained
++        self._inline_budget, self._custody = inline_budget, custody
++        self._protected: list[ObjectID] = []
++        self._foreign_guards: list[TaskDependencyGuard] = []
++        self._nested_local_holds: list[ObjectID] = []
++        self._nested_foreign_guards: list[TaskDependencyGuard] = []
++        self._nested_transfers: dict[tuple[ObjectID, WorkerID], protocol.NestedReferenceTransfer] = {}
++        self._nested_sources: dict[tuple[ObjectID, WorkerID], SubmissionReference] = {}
++        self._references: tuple[ContainedRef, ...] = ()
++        self._lineage_dependency_ids: tuple[ObjectID, ...] = ()
++
++    @property
++    def lineage_dependency_ids(self) -> tuple[ObjectID, ...]:
++        return self._lineage_dependency_ids
++
++    def prepare_call(self, args: tuple[object, ...], kwargs: Mapping[str, object]) -> EncodedTaskCall:
++        inline_bytes = 0
++
++        def encode(value: object) -> protocol.TaskArg:
++            nonlocal inline_bytes
++            argument = encode_task_argument(value, serializer="cloudpickle",
++                                            export_nested_ref=self._export_nested_ref)
++            if not isinstance(argument, protocol.InlineArg):
++                return argument
++            next_inline_bytes = inline_bytes + len(argument.data)
++            if next_inline_bytes > self._inline_budget:
++                raise ValueError(
++                    "task arguments exceed the inline budget; use ray.put(value) "
++                    "and pass its ObjectRef for large inputs"
++                )
++            inline_bytes = next_inline_bytes
++            return argument
++
++        return EncodedTaskCall(tuple(encode(value) for value in args),
++                               tuple((name, encode(value)) for name, value in kwargs.items()))
++
++    def _export_nested_ref(self, value: object) -> protocol.NestedReferenceTransfer:
++        reference = self._custody.as_reference(value)
++        if reference is None:
++            raise TypeError("nested task references must be ObjectRef values")
++        if reference.closed:
++            raise ValueError("cannot submit a closed nested ObjectRef")
++        key = reference.object_id, reference.owner_worker_id
++        previous_source = self._nested_sources.setdefault(key, reference)
++        if previous_source.owner_address != reference.owner_address:
++            raise ValueError("duplicate nested ObjectRef has conflicting owner credentials")
++        previous = self._nested_transfers.get(key)
++        if previous is not None:
++            return previous
++        address = reference.owner_address
++        if address is None:
++            raise ValueError("nested ObjectRef has no reachable owner endpoint")
++        hold = self._submitted if reference.owner_worker_id == self._worker_id else self._retained
++        transfer = protocol.NestedReferenceTransfer(reference.object_id, reference.owner_worker_id, address, hold)
++        if reference.owner_worker_id == self._worker_id:
++            self._custody.require_local(reference.object_id)
++            self._custody.owner.add_submitted_reference(reference.object_id, self._submitted)
++            self._nested_local_holds.append(reference.object_id)
++        else:
++            if reference.borrower_token is None:
++                raise ValueError("foreign nested ObjectRef is detached from its owner protocol")
++            guard = TaskDependencyGuard(reference.object_id, reference.owner_worker_id, address,
++                                        self._worker_id, reference.borrower_token, self._retained)
++            # Save the exact intent before the potentially ambiguous retain.
++            self._nested_foreign_guards.append(guard)
++            self._custody.retain_foreign(guard)
++        self._nested_transfers[key] = transfer
++        return transfer
++
++    def prepare_dependencies(self, spec: protocol.TaskSpec, args: tuple[object, ...],
++                             kwargs: Mapping[str, object]) -> None:
++        encoded = spec.args + tuple(value for _, value in spec.kwargs)
++        self._references = top_level_references(encoded)
++        nested_manifest = nested_references(encoded)
++        if {(item.object_id, item.owner_worker_id): item for item in nested_manifest} != self._nested_transfers:
++            raise SystemTaskError("encoded nested-reference manifest changed submission identity")
++        for item in nested_manifest:
++            hold = self._submitted if item.owner_worker_id == self._worker_id else self._retained
++            if item.hold != hold:
++                raise SystemTaskError("nested-reference manifest changed its Task hold")
++        self._lineage_dependency_ids = tuple(dict.fromkeys(
++            tuple(item.object_id for item in self._references if item.owner_worker_id == self._worker_id)
++            + tuple(item.object_id for item in nested_manifest if item.owner_worker_id == self._worker_id)))
++        sources: dict[tuple[ObjectID, WorkerID], SubmissionReference] = {}
++        for value in tuple(args) + tuple(kwargs.values()):
++            source = self._custody.as_reference(value)
++            if source is not None:
++                key = source.object_id, source.owner_worker_id
++                previous = sources.get(key)
++                if previous is None or ((previous.closed or previous.owner_address is None
++                                         or previous.borrower_token is None)
++                                        and not source.closed and source.owner_address is not None
++                                        and source.borrower_token is not None):
++                    sources[key] = source
++        for reference in self._references:
++            if reference.owner_worker_id == self._worker_id:
++                continue
++            key = reference.object_id, reference.owner_worker_id
++            existing = next((guard for guard in self._nested_foreign_guards
++                             if (guard.object_id, guard.owner_worker_id) == key), None)
++            if existing is not None:
++                self._foreign_guards.append(existing)
++                continue
++            source = sources.get(key)
++            if (source is None or source.closed or source.owner_address is None
++                    or source.borrower_token is None):
++                raise ValueError("foreign ObjectRef dependency is detached from its owner protocol")
++            guard = TaskDependencyGuard(reference.object_id, reference.owner_worker_id, source.owner_address,
++                                        self._worker_id, source.borrower_token, self._retained)
++            self._foreign_guards.append(guard)
++            self._custody.retain_foreign(guard)
++
++    def foreign_lineage_edges(self, task_id: TaskID) -> tuple[ForeignLineageEdge, ...]:
++        roles: dict[tuple[ObjectID, WorkerID], ForeignLineageRole] = {}
++        guards: dict[tuple[ObjectID, WorkerID], TaskDependencyGuard] = {}
++        for guard in self._nested_foreign_guards:
++            key = guard.object_id, guard.owner_worker_id
++            guards[key] = guard
++            roles[key] = roles.get(key, ForeignLineageRole(0)) | ForeignLineageRole.NESTED
++        for guard in self._foreign_guards:
++            key = guard.object_id, guard.owner_worker_id
++            guards[key] = guard
++            roles[key] = roles.get(key, ForeignLineageRole(0)) | ForeignLineageRole.TOP_LEVEL
++        return tuple(ForeignLineageEdge(task_id, guard.object_id, guard.owner_worker_id,
++                     guard.owner_address, guard.borrower_worker_id, guard.hold, roles[key])
++                     for key, guard in sorted(guards.items()))
++
++    def commit_local_inputs(self) -> SubmittedInputs:
++        for reference in self._references:
++            if reference.owner_worker_id == self._worker_id:
++                self._custody.require_local(reference.object_id)
++                if reference.object_id not in self._nested_local_holds:
++                    self._custody.owner.add_submitted_reference(reference.object_id, self._submitted)
++                self._protected.append(reference.object_id)
++        return SubmittedInputs(tuple(self._protected), tuple(self._foreign_guards),
++            tuple(object_id for object_id in self._nested_local_holds if object_id not in self._protected),
++            tuple(guard for guard in self._nested_foreign_guards if guard not in self._foreign_guards))
++
++    def abort_inputs(self) -> None:
++        for object_id in dict.fromkeys(self._protected + self._nested_local_holds):
++            if self._custody.owner.release_submitted_reference(object_id, self._submitted):
++                self._custody.enqueue_gc(object_id)
++        released: set[tuple[WorkerID, ObjectID, protocol.TaskReferenceHold]] = set()
++        for guard in reversed(self._foreign_guards + self._nested_foreign_guards):
++            key = guard.owner_worker_id, guard.object_id, guard.hold
++            if key in released:
++                continue
++            released.add(key)
++            try:
++                self._custody.release_foreign(guard)
++            except Exception:
++                self._custody.record_orphan(guard)
+--- a/tests/unit/test_core_placement_group_scheduling.py
++++ b/tests/unit/test_core_placement_group_scheduling.py
+@@ -20,6 +20,7 @@
+ import pytest
+ 
+ import miniray.core as core_module
++from miniray import task_submissions as submissions_module
+ from miniray import (
+     node as node_module, output_protocol as output_wire, protocol,
+     transport as transport_module, worker as worker_module,
+@@ -1413,7 +1414,7 @@
+     encoded = threading.Event()
+     release = threading.Event()
+     errors = []
+-    real_encode = core_module.encode_task_argument
++    real_encode = submissions_module.encode_task_argument
+ 
+     def pause_after_encode(*args, **kwargs):
+         result = real_encode(*args, **kwargs)
+@@ -1421,7 +1422,7 @@
+         assert release.wait(1.0)
+         return result
+ 
+-    monkeypatch.setattr(core_module, "encode_task_argument", pause_after_encode)
++    monkeypatch.setattr(submissions_module, "encode_task_argument", pause_after_encode)
+ 
+     def submit():
+         try:
+--- a/tests/unit/test_explicit_put_arguments.py
++++ b/tests/unit/test_explicit_put_arguments.py
+@@ -19,6 +19,7 @@
+ import cloudpickle
+ import pytest
+ 
++from miniray import task_submissions as submissions_module
+ from miniray import control, core as core_module, node, protocol, transport, worker
+ from miniray.core import CoreWorker, _WAKE_COORDINATOR
+ from miniray.ids import AttemptID, ObjectID, TaskID
+@@ -167,7 +168,7 @@
+     assert before.state is ObjectState.READY_INLINE and before.local_tokens
+     assert not before.submitted_tokens and not before.lineage_tokens
+     monkeypatch.setattr(core, "_put_value", arguments.forbidden)
+-    original_encoder = core_module.encode_task_argument
++    original_encoder = submissions_module.encode_task_argument
+     encoded_values, observed_holds = [], []
+     large = b"x" * 256
+ 
+@@ -184,7 +185,7 @@
+         encoded_values.append(result)
+         return result
+ 
+-    monkeypatch.setattr(core_module, "encode_task_argument", encode)
++    monkeypatch.setattr(submissions_module, "encode_task_argument", encode)
+     rejected_task = _rejects_without_admission(arguments, ({"child": source}, large), {})
+     expected_hold = protocol.TaskReferenceHold(
+         protocol.TaskReferenceHoldKind.SUBMITTED, core.worker_id,

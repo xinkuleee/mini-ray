@@ -1,0 +1,66 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 1,
+    "seconds": 30.372,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p4trial-01/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_targeted_owner_defer.py",
+    "exit_code": 0,
+    "seconds": 14.034,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p4trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_targeted_owner_defer.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_node_loss_control.py",
+    "exit_code": 0,
+    "seconds": 13.256,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p4trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_node_loss_control.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_put_contained_ref_path.py::test_stored_put_foreign_ref_survives_source_close_and_task_argument_import",
+    "exit_code": 0,
+    "seconds": 14.626,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p4trial-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_put_contained_ref_path.py::test_stored_put_foreign_ref_survives_source_close_and_task_argument_import"
+    ],
+    "log": "003-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+    "exit_code": 0,
+    "seconds": 21.852,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p4trial-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects"
+    ],
+    "log": "004-smoke.log"
+  }
+]

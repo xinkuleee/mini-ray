@@ -1,0 +1,13 @@
+{
+  "package": "P4",
+  "disposition": "implemented_and_validated",
+  "scope": "Typed put custody, Node-loss cleanup and owner retirement work. Existing typed GC obligation retained; no Core domain extraction.",
+  "evidence": "P4trial02 pure343/1deselected; same-source trial01 owner-defer3, Node-loss9, actual contained put+reconstruction; combined applied P2effect/P3/P4 pure343/1deselected",
+  "cost": "Three put-specific records, one local choice enum and two local cleanup records; 110 added physical source lines in isolated composition. No new authority or RPC. Actual sent requests/receipts replace free string keys; GC already has typed fields.",
+  "scope_limit": "No standalone put-specific child-owner death case was added. Its per-child cleanup rule is unchanged; Task death evidence is not claimed equivalent.",
+  "P6": {
+    "disposition": "retain_current_design_with_recorded_evidence",
+    "evidence": "p6trial-01 pure343, four nested cases, rollback6, ordinary reducer and actual ordinary+contained reconstruction",
+    "reason": "Trial introduced seven adapter fields and four per-call objects but removed no persistent finish/drain responsibility, reduced Core dependency kinds only 24 to23, and added a read hop. Keep existing Core domains; do not mechanically move the remaining lease/shutdown code."
+  }
+}

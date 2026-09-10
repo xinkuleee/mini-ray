@@ -1,0 +1,666 @@
+--- a/src/miniray/core.py
++++ b/src/miniray/core.py
+@@ -70,8 +70,8 @@
+ from .ownership import (
+     DeadWorkerReferenceRecord, NodeLocationRemoval, ObjectOwnerSnapshot, ObjectOwnerTable, ObjectState, UnknownObjectError,
+ )
+-from .ownership import OutputOwnerPublicationPlan, OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError
+-from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID
++from .ownership import OutputOwnerPublicationPlan, OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError, OutputOwnerPublicationRetirementPlan
++from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID, OutputPublicationManifest
+ from .output_publication_journal import OutputPublicationAdoptionProof
+ from .owner_service import (
+     REPLACE_RETAINED_OBJECT_FOR_TASK_HANDLER,
+@@ -364,6 +364,28 @@
+     key: tuple[WorkerID, ObjectID, AttemptID]
+ 
+ 
++
++
++@dataclass
++class _OutputNodeCleanupWork:
++    """One latched publisher-loss choice plus exact child cleanup receipts."""
++
++    manifest: OutputPublicationManifest
++    complete: OutputPublicationCompleteWitness | None
++    keep: bool
++    acks: dict[protocol.ReleaseContainedReference,
++               protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
++
++
++@dataclass
++class _OutputRetirementWork:
++    """One exact owner retirement plan and its acknowledged cleanup work."""
++
++    plan: OutputOwnerPublicationRetirementPlan
++    child: dict[protocol.ReleaseContainedReference,
++                protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
++    replica: dict[protocol.DropObjectReplica,
++                  protocol.DropObjectReplicaReply | protocol.NodeDeathRecord] = field(default_factory=dict)
+ 
+ 
+ @dataclass
+@@ -3216,6 +3238,7 @@
+ 
+     def _put_value(self, value: object) -> ObjectRef:
+         from .put_handoff import discover_put
++        from .put_work import MaterializationWork, PutChoice, PutHandoff
+         index = self._begin_put()
+         identity = ObjectID.for_task(TaskID.for_put(self.job_id, self.worker_id, index), 0)
+         attempt = AttemptID(identity.task_id, 0)
+@@ -3226,20 +3249,26 @@
+                 self._owner_table.register(identity, current_attempt=attempt, producer_task_spec=None)
+                 self._objects[identity] = _ObjectWaiter(threading.Event())
+                 self._recovery_manager().register_put(identity)
+-                work = {'prepared': prepared, 'attempt': attempt, 'started': set(), 'acked': set(),
+-                        'releases': {}, 'seal': None, 'route': None, 'aborted': False, 'driver': True}
++                work = PutHandoff(prepared, attempt)
+                 obligations = getattr(self, '_put_handoffs', None)
+                 if obligations is None:
+                     obligations = self._put_handoffs = {}
+                 obligations[identity] = work
+             for stage, kind in (('prepare', protocol.PrepareStoredContainedPin), ('promote', protocol.PromoteStoredContainedPin)):
+-                for transfer in prepared.manifest.transfers:
++                for child in work.children:
++                    transfer = child.transfer
+                     request = kind(transfer=transfer, authority_worker_id=transfer.contained_owner_worker_id)
+-                    work['started'].add((stage, transfer))
++                    if stage == 'prepare':
++                        child.prepare_request = request
++                    else:
++                        child.promotion_request = request
+                     reply = self._put_child_rpc(transfer, stage + '_stored_contained_pin', request)
+                     if type(reply) is not protocol.StoredContainedPinReply or reply.request != request or not reply.accepted:
+                         raise SystemTaskError('put child handoff did not acknowledge its exact request')
+-                    work['acked'].add((stage, transfer))
++                    if stage == 'prepare':
++                        child.prepare_receipt = replace(reply)
++                    else:
++                        child.promotion_receipt = replace(reply)
+             manifest = prepared.manifest
+             node_id = self.node_id
+             seal = None
+@@ -3249,7 +3278,7 @@
+                 route = self._require_home_route('explicit put')
+             while True:
+                 if seal is not None:
+-                    work['route'], work['seal'] = route, seal
++                    work.materialization = MaterializationWork(route, seal)
+                     try:
+                         reply = self._rpc(route.address, 'seal_object', seal)
+                     except BaseException:
+@@ -3273,23 +3302,22 @@
+                                 != (identity, route.node_id, manifest.size_bytes, manifest.checksum)):
+                             raise SystemTaskError('put seal changed request identity')
+                         reply = replace(reply)
++                        work.materialization.seal_receipt = reply
+                         if not reply.sealed:
+-                            if reply.absence_fenced:
+-                                work['seal'] = None
+                             raise SystemTaskError(reply.error or 'put seal was rejected')
+                         node_id = route.node_id
+                     descriptor = protocol.ResultDescriptor(
+                         identity, manifest.tier, manifest.size_bytes, self.worker_id, node_id, manifest.checksum,
+                         prepared.payload if manifest.tier is protocol.ResultStorage.INLINE else None,
+                     )
+-                    if work['aborted']:
++                    if work.choice is PutChoice.ABORTED:
+                         raise SystemTaskError('put was aborted before owner installation')
+                     # Death handling and owner installation share this lock.
+                     # A winning death reroutes above; a later death observes
+                     # a real committed owner result and follows ordinary loss.
+                     if not self._owner_table.publish_put_value(identity, attempt, descriptor, manifest.edges):
+                         raise SystemTaskError('put owner installation was fenced')
+-                    work['committed'] = True
++                    work.choice = PutChoice.COMMITTED
+                     if descriptor.storage is protocol.ResultStorage.OBJECT_STORE:
+                         self._stored_descriptors[identity] = descriptor
+                     self._put_handoffs.pop(identity, None)
+@@ -3301,15 +3329,15 @@
+                 self._enqueue_inline_gc_check(identity)
+                 raise
+         except BaseException as exc:
+-            if work is not None and not work.get('committed', False):
+-                work['aborted'] = True
+-                work['driver'] = False
++            if work is not None and work.choice is not PutChoice.COMMITTED:
++                work.choice = PutChoice.ABORTED
++                work.driving = False
+                 self._drive_put_handoff_cleanup(identity)
+                 self._publish_error(identity, attempt, exc)
+             raise
+         finally:
+             if work is not None:
+-                work['driver'] = False
++                work.driving = False
+             self._end_put()
+ 
+     def _put_child_rpc(self, transfer, handler, request):
+@@ -3318,58 +3346,65 @@
+         return self._borrow_rpc(transfer.contained_owner_address, handler, request)
+ 
+     def _drive_put_handoff_cleanup(self, identity) -> bool:
++        from .put_work import PutChoice
+         with self._state_lock:
+             work = getattr(self, '_put_handoffs', {}).get(identity)
+             if work is None:
+                 return True
+-            if not work['aborted'] or work['driver']:
++            if work.choice is not PutChoice.ABORTED or work.driving:
+                 return False
+-            work['driver'] = True
++            work.driving = True
+         try:
+-            for transfer in work['prepared'].manifest.transfers:
+-                if not any((stage, transfer) in work['started'] for stage in ('prepare', 'promote')):
++            for child in work.children:
++                if not child.has_sent_effect:
+                     continue
++                transfer = child.transfer
+                 for hold in (transfer.final_hold, transfer.provisional_hold):
+                     request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
+-                    if request in work['releases']:
++                    if request in child.releases:
+                         continue
+                     with self._state_lock:
+                         death = self._owner_table.dead_worker_record(transfer.contained_owner_worker_id)
+                     if death is not None:
+-                        work['releases'][request] = death
++                        child.releases[request] = death
+                         continue
+                     reply = self._put_child_rpc(transfer, 'release_contained_reference', request)
+                     if (type(reply) is not protocol.ReleaseContainedReferenceReply or not reply.accepted
+                             or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
+                         return False
+-                    work['releases'][request] = replace(reply)
+-            if work['seal'] is not None:
+-                route, seal = work['route'], work['seal']
++                    child.releases[request] = replace(reply)
++            materialization = work.materialization
++            if materialization is not None and (materialization.drop_request is not None
++                                                or not materialization.absence_fenced):
++                route, seal = materialization.route, materialization.seal_request
+                 with self._state_lock:
+-                    dead = self._node_is_dead(route.node_id)
+-                if not dead:
+-                    drop = work.get('drop')
++                    death = self._dead_nodes.get(route.node_id)
++                if death is not None:
++                    materialization.drop_receipt = death
++                elif materialization.drop_receipt is None:
++                    drop = materialization.drop_request
+                     if drop is None:
+-                        # Resolve an unknown Seal once; once Drop may have been
+-                        # sent, replay only Drop so a deletion fence cannot stall
+-                        # cleanup by correctly refusing another Seal.
++                        # Resolve unknown Seal once. A sent Drop is sticky,
++                        # including when its exact acknowledgement is lost.
+                         reply = self._rpc(route.address, 'seal_object', seal)
+                         if (type(reply) is not protocol.SealObjectReply
+                                 or reply.object_id != identity or reply.node_id != route.node_id
+-                                or reply.size_bytes != work['prepared'].manifest.size_bytes
+-                                or reply.checksum != work['prepared'].manifest.checksum):
++                                or reply.size_bytes != work.prepared.manifest.size_bytes
++                                or reply.checksum != work.prepared.manifest.checksum):
+                             return False
+                         reply = replace(reply)
+                         if not reply.sealed and not reply.absence_fenced:
+                             return False
+-                        drop = protocol.DropObjectReplica(identity, work['attempt'], self.worker_id, route.node_id, reply.checksum)
+-                        work['drop'] = drop
++                        materialization.seal_receipt = reply
++                        drop = protocol.DropObjectReplica(identity, work.attempt, self.worker_id, route.node_id, reply.checksum)
++                        materialization.drop_request = drop
+                     dropped = self._rpc(route.address, _DROP_OBJECT_REPLICA_HANDLER, drop)
+                     if (type(dropped) is not protocol.DropObjectReplicaReply
+                             or dropped.status not in (protocol.DropObjectReplicaStatus.DROPPED, protocol.DropObjectReplicaStatus.ALREADY_DROPPED)
+                             or (dropped.object_id, dropped.producer_attempt_id, dropped.owner_worker_id, dropped.node_id, dropped.checksum)
+                             != (drop.object_id, drop.producer_attempt_id, drop.owner_worker_id, drop.node_id, drop.checksum)):
+                         return False
++                    materialization.drop_receipt = replace(dropped)
+             with self._state_lock:
+                 self._put_handoffs.pop(identity, None)
+                 self._completion.notify_all()
+@@ -3378,7 +3413,7 @@
+         except Exception:
+             return False
+         finally:
+-            work['driver'] = False
++            work.driving = False
+ 
+     def _begin_put(self) -> int:
+         """Reserve one put identity and join the shutdown drain."""
+@@ -6944,7 +6979,7 @@
+                         if member.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE else ()
+                     ),
+                 )
+-                current = {"plan": plan, "child": {}, "replica": {}}
++                current = _OutputRetirementWork(plan)
+                 work[object_id] = current
+             tickets = getattr(self, "_output_retirement_tickets", None)
+             if tickets is None:
+@@ -6953,31 +6988,31 @@
+             if object_id in tickets:
+                 return False
+             tickets.add(object_id)
+-        plan = current["plan"]
++        plan = current.plan
+         try:
+             routes = {
+                 (transfer.contained_object_id, transfer.final_hold): transfer.contained_owner_address
+                 for transfer in plan.membership.manifest.value.transfers
+             }
+             for request in plan.contained_releases:
+-                if request not in current["child"]:
++                if request not in current.child:
+                     with self._state_lock:
+                         death = getattr(self, "_worker_death_records", {}).get(request.owner_worker_id)
+                     if death is not None:
+-                        current["child"][request] = death
++                        current.child[request] = death
+                         continue
+                     reply = self._borrow_rpc(routes[(request.object_id, request.hold)], _RELEASE_CONTAINED_REFERENCE_HANDLER, request)
+                     if (not isinstance(reply, protocol.ReleaseContainedReferenceReply) or not reply.accepted
+                             or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
+                         raise SystemTaskError("output retirement child ACK mismatch")
+-                    current["child"][request] = reply
++                    current.child[request] = reply
+             for request in plan.replica_drops:
+-                if request in current["replica"]:
++                if request in current.replica:
+                     continue
+                 with self._state_lock:
+                     death = getattr(self, "_dead_nodes", {}).get(request.node_id)
+                 if death is not None:
+-                    current["replica"][request] = getattr(death, "death", death)
++                    current.replica[request] = getattr(death, "death", death)
+                     continue
+                 reply = self._rpc(self._resolve_node_address(request.node_id), _DROP_OBJECT_REPLICA_HANDLER, request)
+                 if (not isinstance(reply, protocol.DropObjectReplicaReply)
+@@ -6985,14 +7020,14 @@
+                         or (reply.object_id, reply.producer_attempt_id, reply.owner_worker_id, reply.node_id, reply.checksum)
+                         != (request.object_id, request.producer_attempt_id, request.owner_worker_id, request.node_id, request.checksum)):
+                     raise SystemTaskError("output retirement replica ACK mismatch")
+-                current["replica"][request] = reply
++                current.replica[request] = reply
+             with self._state_lock:
+                 if self._has_late_replica_cleanup_locked(plan.object_id):
+                     self._schedule_late_replica_cleanup_locked()
+                     return False
+                 self._owner_table.complete_output_publication_retirement(
+-                    plan, released_edges=tuple(current["child"][request] for request in plan.contained_releases),
+-                    dropped_replicas=tuple(current["replica"][request] for request in plan.replica_drops),
++                    plan, released_edges=tuple(current.child[request] for request in plan.contained_releases),
++                    dropped_replicas=tuple(current.replica[request] for request in plan.replica_drops),
+                 )
+                 work.pop(object_id, None)
+                 self._completion.notify_all()
+@@ -11231,7 +11266,7 @@
+                     # Recover only that verified local result, before latching
+                     # the loss choice; a later envelope cannot reverse DISCARD.
+                     envelope = self._locally_retained_output_completion(pending, handoff.complete)
+-                complete = (latched['complete'] if latched is not None else
++                complete = (latched.complete if latched is not None else
+                             handoff.complete or (None if envelope is None else envelope.complete))
+                 if complete is not None and handoff.complete is None and handoff.phase is not OutputHandoffPhase.ABORTED:
+                     table.record_complete(complete)
+@@ -11247,41 +11282,41 @@
+                             manifest, 0, unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
+                         )
+                     ))
+-                    work = {'manifest': manifest, 'complete': complete, 'keep': keep, 'acks': {}}
++                    work = _OutputNodeCleanupWork(manifest, complete, keep)
+                     works[identity] = work
+                     self._output_loss_choices = getattr(self, '_output_loss_choices', {})
+                     self._output_loss_choices[identity] = keep
+                     if not keep and handoff.phase is not OutputHandoffPhase.ADOPTED:
+                         table.abort(identity, 'publishing Node died before payload adoption')
+-            if not work['keep']:
++            if not work.keep:
+                 for transfer in manifest.value.transfers:
+                     for hold in (transfer.final_hold, transfer.provisional_hold):
+                         request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
+-                        if request in work['acks']:
++                        if request in work.acks:
+                             continue
+                         with self._state_lock:
+                             owner_death = getattr(self, '_worker_death_records', {}).get(transfer.contained_owner_worker_id)
+                         if owner_death is not None:
+-                            work['acks'][request] = owner_death
++                            work.acks[request] = owner_death
+                             continue
+                         reply = self._borrow_rpc(transfer.contained_owner_address, _RELEASE_CONTAINED_REFERENCE_HANDLER, request)
+                         if (type(reply) is not protocol.ReleaseContainedReferenceReply or not reply.accepted
+                                 or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
+                             raise SystemTaskError('Node-loss child release changed exact identity')
+-                        work['acks'][request] = replace(reply)
++                        work.acks[request] = replace(reply)
+             resolution = NodeLostOutputResolution(
+                 identity, manifest.manifest_digest, self.worker_id, obligation.node_death,
+-                complete=work['complete'], keep=work['keep'], cleanup=tuple(dict.fromkeys(work['acks'].values())),
++                complete=work.complete, keep=work.keep, cleanup=tuple(dict.fromkeys(work.acks.values())),
+             )
+             with self._state_lock:
+                 if self._output_replay_is_obsolete_locked(pending, identity):
+                     return True
+                 self._owner_table.resolve_output_node_loss(
+-                    manifest, resolution, envelope if work['keep'] else None,
++                    manifest, resolution, envelope if work.keep else None,
+                     unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
+                 )
+                 current = self._owner_table.snapshot(pending.object_id)
+-                if work['keep'] and current.state in (ObjectState.READY_INLINE, ObjectState.READY_STORED):
++                if work.keep and current.state in (ObjectState.READY_INLINE, ObjectState.READY_STORED):
+                     # The local resolution adopted surviving bytes. LOST is
+                     # deliberately not a payload-adoption acknowledgement.
+                     proof = OutputPublicationAdoptionProof(
+--- /dev/null
++++ b/src/miniray/put_work.py
+@@ -0,0 +1,75 @@
++"""Local put custody and exact outstanding effects, without runtime authority.
++
++Core owns locking, owner CAS and effect dispatch. These records retain only
++the put's prepared sources, sent requests and actual peer receipts. They never
++accept a Core, perform RPC, or derive success from the expected effect list.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from enum import Enum
++from typing import TYPE_CHECKING
++
++from . import protocol
++from .ids import AttemptID
++from .publication_sources import PreparedContainedTransfer
++from .put_handoff import PutPrepared
++
++if TYPE_CHECKING:
++    from .core import _HomeRoute
++    from .ownership import DeadWorkerReferenceRecord
++
++
++class PutChoice(Enum):
++    OPEN = "OPEN"
++    ABORTED = "ABORTED"
++    COMMITTED = "COMMITTED"
++
++
++@dataclass
++class ChildTransferProgress:
++    """Request presence is sent intent; receipt presence records actual ACK."""
++
++    transfer: PreparedContainedTransfer
++    prepare_request: protocol.PrepareStoredContainedPin | None = None
++    prepare_receipt: protocol.StoredContainedPinReply | None = None
++    promotion_request: protocol.PromoteStoredContainedPin | None = None
++    promotion_receipt: protocol.StoredContainedPinReply | None = None
++    releases: dict[protocol.ReleaseContainedReference,
++                   protocol.ReleaseContainedReferenceReply | DeadWorkerReferenceRecord] = field(default_factory=dict)
++
++    @property
++    def has_sent_effect(self) -> bool:
++        return self.prepare_request is not None or self.promotion_request is not None
++
++
++@dataclass
++class MaterializationWork:
++    """One exact Node intent; a retained Drop prevents another Seal."""
++
++    route: _HomeRoute
++    seal_request: protocol.SealObject
++    seal_receipt: protocol.SealObjectReply | None = None
++    drop_request: protocol.DropObjectReplica | None = None
++    drop_receipt: protocol.DropObjectReplicaReply | protocol.NodeDeathRecord | None = None
++
++    @property
++    def absence_fenced(self) -> bool:
++        reply = self.seal_receipt
++        return reply is not None and not reply.sealed and reply.absence_fenced
++
++
++@dataclass
++class PutHandoff:
++    """One local choice and driver; prepared keeps every actual source alive."""
++
++    prepared: PutPrepared
++    attempt: AttemptID
++    children: tuple[ChildTransferProgress, ...] = field(init=False)
++    materialization: MaterializationWork | None = None
++    choice: PutChoice = PutChoice.OPEN
++    driving: bool = True
++
++    def __post_init__(self) -> None:
++        self.children = tuple(ChildTransferProgress(transfer)
++                              for transfer in self.prepared.manifest.transfers)
+--- a/tests/unit/test_common_cleanup_progress.py
++++ b/tests/unit/test_common_cleanup_progress.py
+@@ -272,7 +272,7 @@
+     f.core._borrow_rpc = release_then_lose_reply
+     assert not f.loss()
+     assert f.core._output_handoff_table().query(f.identity).phase is OutputHandoffPhase.ABORTED
+-    assert f.core._output_node_cleanup[f.identity]["complete"] is None
++    assert f.core._output_node_cleanup[f.identity].complete is None
+     assert not f.loss(envelope=f.envelope)  # The real retry authority queues one new attempt.
+     state = f.core.owner_table.snapshot(f.ref.object_id)
+     record = f.core._recovery.task_record(f.pending.task_id)
+--- a/tests/unit/test_output_node_loss_control.py
++++ b/tests/unit/test_output_node_loss_control.py
+@@ -101,7 +101,7 @@
+         assert publication.child_table.contained_release_was_seen(publication.child, first.hold)
+         assert core.owner_table.snapshot(publication.ref.object_id) == before
+         work = core._output_node_cleanup[publication.identity]
+-        assert work["acks"] == {} and work["complete"] == publication.complete
++        assert work.acks == {} and work.complete == publication.complete
+         assert publication.pending.task_key in core._protocol_unresolved
+         assert core._output_loss_drivers == set()
+ 
+--- a/tests/unit/test_put_home_failover.py
++++ b/tests/unit/test_put_home_failover.py
+@@ -28,6 +28,7 @@
+ from miniray.object_manager import ObjectManager
+ from miniray.object_store import ObjectStore
+ from miniray.ownership import ObjectCollectionState, ObjectState
++from miniray.put_work import PutChoice
+ from miniray.resources import ResourceLedger, ResourceVector
+ from tests.unit._pure_core import close_pure_core, make_pure_core
+ 
+@@ -243,11 +244,11 @@
+     assert all(item[:2] == (homes.nodes[0].node_id, "seal_object") for item in homes.calls)
+     assert homes.calls[0][2] == homes.calls[1][2]
+     work = core._put_handoffs[identity]
+-    assert work['aborted'] and not work['driver']
+-    assert work['route'] == original_route and work['seal'] == homes.calls[0][2]
++    assert work.choice is PutChoice.ABORTED and not work.driving
++    assert work.materialization.route == original_route and work.materialization.seal_request == homes.calls[0][2]
+     assert core.owner_table.snapshot(identity).state is ObjectState.ERROR
+     assert core.owner_table.collection_state(identity) is ObjectCollectionState.ACTIVE
+-    assert homes.nodes[0].object_store.get(identity) == work['prepared'].payload
++    assert homes.nodes[0].object_store.get(identity) == work.prepared.payload
+     assert homes.nodes[1].object_store.used_bytes == 0
+     # Resolve the existing intent explicitly; no new put or alternate Node.
+     homes.mode = None
+--- a/tests/unit/test_put_reference_runtime.py
++++ b/tests/unit/test_put_reference_runtime.py
+@@ -28,6 +28,7 @@
+ from miniray.object_manager import ObjectManager
+ from miniray.object_store import ObjectStore
+ from miniray.ownership import ObjectCollectionState, ObjectState
++from miniray.put_work import PutChoice
+ from tests.unit._pure_core import (
+     SynchronousReferenceMailbox, close_pure_core, make_pure_core,
+ )
+@@ -253,9 +254,12 @@
+ def test_child_effect_unknown_retains_sources_and_both_exact_cleanup_holds(runtime, stage):
+     core, source, _ = runtime.source(True)
+     unknown = []
++    stage_receipts = []
+     cleanup_blocked = True
+ 
+     def after(handler, request, reply):
++        if handler in ("prepare_stored_contained_pin", "promote_stored_contained_pin"):
++            stage_receipts.append((request, reply))
+         if handler == stage + "_stored_contained_pin" and not unknown:
+             assert reply.accepted
+             unknown.append(request)
+@@ -272,10 +276,18 @@
+     transfer = unknown[0].transfer
+     failed_id = transfer.final_hold.container_object_id
+     retained = core._put_handoffs[failed_id]
+-    assert retained["prepared"].sources == (source,)
+-    assert retained["prepared"].sources[0] is source
+-    assert retained["prepared"].manifest.transfers == (transfer,)
+-    assert retained["aborted"] and not retained["driver"]
++    assert retained.prepared.sources == (source,)
++    assert retained.prepared.sources[0] is source
++    assert retained.prepared.manifest.transfers == (transfer,)
++    assert retained.choice is PutChoice.ABORTED and not retained.driving
++    child, = retained.children
++    assert child.prepare_request == stage_receipts[0][0]
++    if stage == "prepare":
++        assert child.prepare_receipt is None and child.promotion_request is None
++    else:
++        assert child.prepare_receipt == stage_receipts[0][1]
++        assert child.prepare_receipt.accepted and child.promotion_request == unknown[0]
++    assert child.promotion_receipt is None and not child.releases
+     assert core.owner_table.snapshot(failed_id).state is ObjectState.ERROR
+     runtime.close(source)
+     core._reference_released(failed_id)
+@@ -290,11 +302,11 @@
+     assert failed_id not in core._put_handoffs
+     assert core.owner_table.collection_state(failed_id) is ObjectCollectionState.COLLECTED
+     assert runtime.owner.owner_table.collection_state(source.object_id) is ObjectCollectionState.COLLECTED
+-    assert set(retained["releases"]) == {
++    assert set(retained.children[0].releases) == {
+         protocol.ReleaseContainedReference(source.object_id, source.owner_worker_id, hold)
+         for hold in (transfer.final_hold, transfer.provisional_hold)
+     }
+-    assert all(reply.accepted for reply in retained["releases"].values())
++    assert all(reply.accepted for reply in retained.children[0].releases.values())
+     runtime.assert_no_tasks()
+ 
+ 
+@@ -312,7 +324,7 @@
+ 
+ def _assert_unknown_seal_cleanup(runtime, core, value, *, sources):
+     core.inline_threshold = 1
+-    seal_lost, drop_lost = [], []
++    seal_lost, drop_lost, seal_receipts, drop_receipts = [], [], [], []
+     block_drop = True
+ 
+     def before(handler, _request):
+@@ -320,6 +332,10 @@
+             raise TimeoutError("Drop unavailable")
+ 
+     def after(handler, request, reply):
++        if handler == "seal_object":
++            seal_receipts.append((request, reply))
++        elif handler == "drop_object_replica":
++            drop_receipts.append((request, reply))
+         if handler == "seal_object" and not seal_lost:
+             assert reply.sealed and runtime.store.get(request.object_id) == request.data
+             seal_lost.append(request)
+@@ -335,10 +351,14 @@
+         core.put(value)
+     seal, = seal_lost
+     retained = core._put_handoffs[seal.object_id]
+-    assert retained["prepared"].payload == seal.data
+-    assert retained["prepared"].sources == sources
+-    assert all(actual is source for actual, source in zip(retained["prepared"].sources, sources))
+-    assert len(retained["prepared"].manifest.transfers) == len(sources)
++    assert retained.prepared.payload == seal.data
++    assert retained.prepared.sources == sources
++    assert all(actual is source for actual, source in zip(retained.prepared.sources, sources))
++    assert len(retained.prepared.manifest.transfers) == len(sources)
++    materialization = retained.materialization
++    assert materialization.seal_request == seal
++    assert materialization.seal_receipt == seal_receipts[-1][1]
++    assert materialization.drop_request is not None and materialization.drop_receipt is None
+     assert runtime.store.get(seal.object_id) == seal.data
+     assert core.owner_table.snapshot(seal.object_id).state is ObjectState.ERROR
+     core._reference_released(seal.object_id)
+@@ -351,6 +371,7 @@
+     assert not runtime.store.contains(seal.object_id, sealed_only=False)
+     assert core._put_handoffs[seal.object_id] is retained
+     assert core.owner_table.collection_state(seal.object_id) is ObjectCollectionState.ACTIVE
++    assert materialization.drop_request == drop_lost[0] and materialization.drop_receipt is None
+     call_count = len(runtime.calls)
+     core._reference_released(seal.object_id)
+     assert runtime.calls[call_count:] == [("drop_object_replica", drop_lost[0])]
+@@ -358,6 +379,8 @@
+     assert seal.object_id not in core._put_handoffs
+     assert core.owner_table.collection_state(seal.object_id) is ObjectCollectionState.COLLECTED
+     assert all(request == seal for handler, request in runtime.calls if handler == "seal_object")
++    assert materialization.drop_receipt == drop_receipts[-1][1]
++    assert materialization.drop_receipt.status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED
+ 
+ 
+ def test_custom_reducer_hidden_ref_uses_public_put_discovery_once(runtime):
+@@ -403,9 +426,29 @@
+     before_bytes = runtime.store.used_bytes
+     assert before_bytes > 8 * 1024
+     rejected = []
++    rejected_work = []
+ 
+     def after(handler, request, reply):
+         if handler == "seal_object" and not reply.sealed:
++            assert type(reply) is protocol.SealObjectReply and reply.absence_fenced
++            assert (reply.object_id, reply.node_id, reply.size_bytes, reply.checksum) == (
++                request.object_id, core.node_id, len(request.data), request.checksum,
++            )
++            if not rejected:
++                # The initial store-full rejection still owns its sent Seal.
++                assert request.object_id in core._put_handoffs
++                work = core._put_handoffs[request.object_id]
++                assert work.choice is PutChoice.OPEN and work.driving
++                assert work.materialization.seal_request == request
++                assert work.materialization.seal_receipt is None
++                rejected_work.append(work)
++            else:
++                # This is the one deliberate replay after actual GC/capacity
++                # recovery. Its absence fence must not recreate pending work.
++                assert len(rejected) == 1 and request == rejected[0][0]
++                assert request.object_id not in core._put_handoffs
++                assert core.owner_table.collection_state(request.object_id) is ObjectCollectionState.COLLECTED
++                assert runtime.store.used_bytes == 0
+             rejected.append((request, reply))
+ 
+     runtime.after = after
+@@ -414,6 +457,11 @@
+     assert len(rejected) == 1
+     seal, reply = rejected[0]
+     assert reply.absence_fenced and not reply.sealed
++    failed_work, = rejected_work
++    assert failed_work.choice is PutChoice.ABORTED and not failed_work.driving
++    assert failed_work.materialization.seal_receipt == reply
++    assert failed_work.materialization.absence_fenced
++    assert failed_work.materialization.drop_request is None
+     assert runtime.store.used_bytes == before_bytes
+     assert not runtime.store.contains(seal.object_id, sealed_only=False)
+     assert seal.object_id not in runtime.node._sealed_metadata
+@@ -432,6 +480,11 @@
+     # Capacity now permits these exact bytes, but the real deletion receipt
+     # fences the delayed request rather than letting it recreate an orphan.
+     late = runtime.rpc(core.node_address, "seal_object", seal)
++    assert rejected == [(seal, reply), (seal, late)]
++    assert rejected_work == [failed_work]
++    assert failed_work.materialization.seal_receipt == reply
++    assert failed_work.materialization.drop_request is None
++    assert seal.object_id not in core._put_handoffs
+     assert not late.sealed and late.absence_fenced
+     assert runtime.store.used_bytes == 0
+     assert not runtime.store.contains(seal.object_id, sealed_only=False)
+--- a/tests/unit/test_targeted_owner_defer.py
++++ b/tests/unit/test_targeted_owner_defer.py
+@@ -281,9 +281,9 @@
+         assert core._recovery.task_record(pending.task_id) == before_record
+         assert len(drop_requests) == 1
+         work = core._output_retirement_work[values.lost]
+-        assert work["plan"].retirement_id == target.output_retirement_id
+-        assert work["plan"].membership == old_target.output_publication
+-        assert not work["replica"]  # effect is real, its ACK is still missing
++        assert work.plan.retirement_id == target.output_retirement_id
++        assert work.plan.membership == old_target.output_publication
++        assert not work.replica  # effect is real, its ACK is still missing
+         assert core.owner_table.snapshot(values.lost).output_publication == old_target.output_publication
+         accepted = core.request_owned_object_reconstruction(values.request)
+         _assert_started_once(values, accepted)

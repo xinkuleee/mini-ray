@@ -1,0 +1,118 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 15.959,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_nested_task_arguments.py::test_nested_local_ref_is_held_but_never_gates_readiness",
+    "exit_code": 0,
+    "seconds": 6.22,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_nested_task_arguments.py::test_nested_local_ref_is_held_but_never_gates_readiness"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_nested_task_arguments.py::test_nested_hold_survives_system_retry_and_releases_once",
+    "exit_code": 0,
+    "seconds": 6.415,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_nested_task_arguments.py::test_nested_hold_survives_system_retry_and_releases_once"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_nested_task_arguments.py::test_ambiguous_foreign_nested_retain_is_recorded_before_rpc",
+    "exit_code": 0,
+    "seconds": 10.975,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_nested_task_arguments.py::test_ambiguous_foreign_nested_retain_is_recorded_before_rpc"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_nested_task_arguments.py::test_top_level_and_nested_foreign_handles_share_one_logical_hold",
+    "exit_code": 0,
+    "seconds": 7.722,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_nested_task_arguments.py::test_top_level_and_nested_foreign_handles_share_one_logical_hold"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_single_output_submission_rollback.py",
+    "exit_code": 0,
+    "seconds": 11.456,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_single_output_submission_rollback.py"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_core_preserves_identity_and_does_not_release_from_submitter",
+    "exit_code": 0,
+    "seconds": 11.749,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_core_preserves_identity_and_does_not_release_from_submitter"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+    "exit_code": 0,
+    "seconds": 14.61,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_path.py::test_one_node_one_worker_task_path"
+    ],
+    "log": "007-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+    "exit_code": 0,
+    "seconds": 14.761,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p6trial-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects"
+    ],
+    "log": "008-smoke.log"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "package": "P6",
+  "status": "retain_current_design_with_recorded_evidence; P4 implementation accepted",
+  "candidate": "base-p6trial-01",
+  "result": "343 passed/1 deselected; four nested-input pure selectors; six submission rollback cases; ordinary spillback reducer; two actual ordinary/contained reconstruction smokes",
+  "proposed_disposition": "retain current Core submission implementation",
+  "evidence": "Per-call input custody moves but no persistent finish/drain ownership is removed; 7 capability fields and 4 per-call objects are added, Core private dependency kinds only decrease 24 to 23. Runtime net three physical lines removed after P1. Retained work and authority become another reading hop.",
+  "limit": "Real trial validates selected preparation/rollback/ordinary+contained lifecycles, not a proof over all lease/drain behavior. P4 prerequisite and package-wide final record remain outstanding. No code from the trial is applied to base."
+}

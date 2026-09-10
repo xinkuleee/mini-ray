@@ -101,7 +101,7 @@ def test_cleanup_revalidates_child_ack_before_retiring_an_obligation(bad_reply):
         assert publication.child_table.contained_release_was_seen(publication.child, first.hold)
         assert core.owner_table.snapshot(publication.ref.object_id) == before
         work = core._output_node_cleanup[publication.identity]
-        assert work["acks"] == {} and work["complete"] == publication.complete
+        assert work.acks == {} and work.complete == publication.complete
         assert publication.pending.task_key in core._protocol_unresolved
         assert core._output_loss_drivers == set()
 

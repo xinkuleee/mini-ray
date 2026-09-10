@@ -28,6 +28,7 @@ from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.ownership import ObjectCollectionState, ObjectState
+from miniray.put_work import PutChoice
 from miniray.resources import ResourceLedger, ResourceVector
 from tests.unit._pure_core import close_pure_core, make_pure_core
 
@@ -243,11 +244,11 @@ def test_unknown_seal_does_not_change_home_or_discard_cleanup_identity(homes):
     assert all(item[:2] == (homes.nodes[0].node_id, "seal_object") for item in homes.calls)
     assert homes.calls[0][2] == homes.calls[1][2]
     work = core._put_handoffs[identity]
-    assert work['aborted'] and not work['driver']
-    assert work['route'] == original_route and work['seal'] == homes.calls[0][2]
+    assert work.choice is PutChoice.ABORTED and not work.driving
+    assert work.materialization.route == original_route and work.materialization.seal_request == homes.calls[0][2]
     assert core.owner_table.snapshot(identity).state is ObjectState.ERROR
     assert core.owner_table.collection_state(identity) is ObjectCollectionState.ACTIVE
-    assert homes.nodes[0].object_store.get(identity) == work['prepared'].payload
+    assert homes.nodes[0].object_store.get(identity) == work.prepared.payload
     assert homes.nodes[1].object_store.used_bytes == 0
     # Resolve the existing intent explicitly; no new put or alternate Node.
     homes.mode = None

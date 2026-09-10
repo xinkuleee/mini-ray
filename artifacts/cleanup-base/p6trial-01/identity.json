@@ -1,0 +1,59 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "42ed62d7231d17d3b7f703670a357c509183e853",
+  "mode": "isolated P6 after-P1 trial; P4 disposition pending; not applied or tested",
+  "evaluation_root": "C:/Users/t-hdong/Desktop/gao/audit/assessment-p6-evaluation",
+  "file_count": 420,
+  "archive_sha256": "fb6cd120fd05e410b88e31fb4835e09b55109e85c59a4270e02904af6ded320f",
+  "previous_candidate": "base-p1trial-02",
+  "previous_archive_sha256": "332d78b7dcedc67da3c1db3b384f5ee915b69b4516c411e4ac25a196f2024f73",
+  "p6_original_patch_sha256": "46327e95c3da6902388021c63080cd523a14b4ef019925ef9c173e25d7e94637",
+  "p6_after_p1_patch_sha256": "d22cf6b774f4df7083b0860b45d6b41676f8cdbbfb0df5dc96ff35a0307bc16c",
+  "assembly_sha256": "d8bd850f086b8953e3475c87dd368dbb442b241e65c19a39adf8e6ba2116b309",
+  "manifest_sha256": "e2f8ed0144e5c0b4dfa31ab297908ff0e0f14a5334cf2097efdcc64b77f46f69",
+  "delivery_gate": {
+    "pure_files": 26,
+    "smokes": 32
+  },
+  "reviewed_migrations": 315,
+  "existing_selector_metadata_preserved": true,
+  "added_reviewed_selectors": [
+    "tests/unit/test_core_nested_task_arguments.py::test_ambiguous_foreign_nested_retain_is_recorded_before_rpc",
+    "tests/unit/test_core_nested_task_arguments.py::test_nested_hold_survives_system_retry_and_releases_once",
+    "tests/unit/test_core_nested_task_arguments.py::test_nested_local_ref_is_held_but_never_gates_readiness",
+    "tests/unit/test_core_nested_task_arguments.py::test_top_level_and_nested_foreign_handles_share_one_logical_hold"
+  ],
+  "delta_from_P1trial02": {
+    "scripts/baseline_manifest.json": {
+      "before_sha256": "d89c18f8c1694503951a5fdd07e7f11fa06f53238a235b1e8e27c3f98de0f58c",
+      "after_sha256": "e2f8ed0144e5c0b4dfa31ab297908ff0e0f14a5334cf2097efdcc64b77f46f69"
+    },
+    "src/miniray/core.py": {
+      "before_sha256": "cf38a034f22fb79ff8e202b327f3d4d19a99c6afd344ce1c4045cee6475961ca",
+      "after_sha256": "73ab4e2108df6fb5f2efcb7ede2d5dfa2126725fe306d44fe797eab621020d90"
+    },
+    "src/miniray/task_submissions.py": {
+      "before_sha256": null,
+      "after_sha256": "d88be0480a9b494e4d8661838f4d28bb82865c471cb580e1ef7453773c0d4624"
+    },
+    "tests/unit/test_core_placement_group_scheduling.py": {
+      "before_sha256": "1a3922238504f9128d49d52aa2fa3783b21d88d6243be658cc7d7288f71aee04",
+      "after_sha256": "6015aa46b7fbcd9b3c2a8afa86d8de39e46b3e38e97343e361e56f0d900a1147"
+    },
+    "tests/unit/test_explicit_put_arguments.py": {
+      "before_sha256": "5653c4d45288644cff4bce387e716973d55e4d1f606ca897befdc616f586bb5d",
+      "after_sha256": "28d5cbb1660bd27cf001aea0e3559bc09fc87b76aba971837e2fae22308fd3bb"
+    }
+  },
+  "all_other_415_P1_inputs_unchanged": true,
+  "P1_execution_preserved": "all Core methods except submission are AST-identical; TaskExecution import retained; no old DTO import restored",
+  "runtime_files_modified": [
+    "src/miniray/core.py",
+    "src/miniray/task_submissions.py"
+  ],
+  "pytest_run": false,
+  "tests_executed": false,
+  "P4_final_disposition": "pending",
+  "adoption_status": "trial_only_no_early_acceptance",
+  "evidence_directory_note": "_assessment tooling excluded from archive; no Git/history artifacts copied"
+}

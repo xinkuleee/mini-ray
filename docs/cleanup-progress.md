@@ -71,3 +71,5 @@ K5/P2部分完成：journal内部result/retirement各改一个可空值，纯gat
 K5/P2 effect子项完成：实际退出effect恒零slot_index和prepare/materialize/promote/read参数，保child ordinal和所有claim/epoch/digest/owner物理检查；4源码/16测试闭合。纯343/1deselected、journal23/replica22/ownerDeath10和普通、含Ref stored实际发布GC全部通过，应用20文件与受测文本精确一致。净减33物理行，无新RPC/权威。退休tombstone与公开snapshot最后单元素投影仍在独立试做，P2全包尚未关闭。
 
 K5/P3记录子项完成：owner membership/retirement改为单值，退休id只对应pending plan或完整completed receipt，移除owner恒零index。P3独立pure343/retirement26/Core真实双caller1/containedrecon1/adoptionACK1通过；与已采P2effect合并后再验pure343/retirement26/containedrecon1通过，原1deselected标记不变。净减30物理行，保精确child死亡/副本/attempt屏障。重复prevalidate的一行试做另行验收，未删除最终ownercommit校验；P2snapshot仍独立推进。
+
+K5/P4完成：put、Node-loss和owner退休待办改为具体记录，保真实sent intent/收据与source保活；GC原六typed字段保留。隔离pure343/1deselected、同源码ownerdefer3/NodeLoss9/两contained真实进程通过，storefull新观察器初次遗漏GC后原work已退休的失败保留并修复；与P2effect/P3应用版纯343再通过。新增110物理行换明确字段与单一决定，无新RPC/权威。P6实际试做pure343、4nested、rollback6、普通/contained真实路径通过，但新适配/DTO未减少长期finish/drain职责，按计划保留现Core职责结构；不把搬文件当收益。P5与最后P2snapshot/prevalidation子项仍待完成，K7/E未完成。

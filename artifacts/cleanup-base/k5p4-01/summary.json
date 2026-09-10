@@ -1,0 +1,61 @@
+{
+  "status": "P4_COMPOSITE_READY_FOR_ROOT_REVIEW_NOT_APPLIED",
+  "patch_sha256": "06216a1c9fee5fe50400e5df5c476921576a0dd4b6de8404ea51757f35b5f5cb",
+  "patch_bytes": 36729,
+  "patch_paths": [
+    "src/miniray/core.py",
+    "src/miniray/put_work.py",
+    "tests/unit/test_common_cleanup_progress.py",
+    "tests/unit/test_output_node_loss_control.py",
+    "tests/unit/test_put_home_failover.py",
+    "tests/unit/test_put_reference_runtime.py",
+    "tests/unit/test_targeted_owner_defer.py"
+  ],
+  "baseline_candidate": "base-p3trial-01",
+  "baseline_archive_sha256": "eb1c4987f79ce3d123889d056b956a9ed6165de20243b44093e7996d73aa83d4",
+  "expected_candidate": "base-p4trial-02",
+  "expected_archive_sha256": "cfc3730b2d2b595e39e623e698275b707b0c89ee9e7881733a820d633d7c6fb5",
+  "source_patch_hashes": [
+    {
+      "path": "C:/Users/t-hdong/Desktop/gao/audit/p4-put-after-p3/put-after-p3.patch",
+      "sha256": "25e0756a2ba039c843bf418227f04020a3f8d7ed3c8d88213499a02883af13c7"
+    },
+    {
+      "path": "C:/Users/t-hdong/Desktop/gao/audit/p4-owner-work-trial/candidate.patch",
+      "sha256": "d97aa769bf35e7bf78ea602975864256392c6603f83bb62b9504f116249bed54"
+    },
+    {
+      "path": "C:/Users/t-hdong/Desktop/gao/audit/p4-retirement-work-trial/candidate.patch",
+      "sha256": "b64062bf3b3730a14c5c6d14641f89a2c2a747609ed3ec2ee477c1e6e81a45e2"
+    }
+  ],
+  "observer_fix_patch_sha256": "0acecbf84cdc44170bf63203d46ebd700ec5270e16863b39902cddfa18272bfd",
+  "after_p3_apply_check": 0,
+  "current_base_head_observed": "3f11f3c0200a14b9e5b1f17bf181edb203fa0b96",
+  "current_base_apply_check": {
+    "returncode": 1,
+    "stdout": "",
+    "stderr": "error: patch failed: src/miniray/core.py:6944\nerror: src/miniray/core.py: patch does not apply\nerror: patch failed: tests/unit/test_targeted_owner_defer.py:281\nerror: tests/unit/test_targeted_owner_defer.py: patch does not apply\n"
+  },
+  "changed_core_methods": [
+    "_put_value",
+    "_drive_put_handoff_cleanup",
+    "_retire_lost_output_memberships",
+    "_drive_output_node_loss_once"
+  ],
+  "other_core_methods_ast_unchanged": 231,
+  "all_other_source_bytes_preserved": 56,
+  "test_names_and_decorators_preserved": {
+    "tests/unit/test_common_cleanup_progress.py": 7,
+    "tests/unit/test_output_node_loss_control.py": 3,
+    "tests/unit/test_put_home_failover.py": 3,
+    "tests/unit/test_put_reference_runtime.py": 8,
+    "tests/unit/test_targeted_owner_defer.py": 3
+  },
+  "every_post_file_matches_frozen_trial02_bytes": true,
+  "manifest_in_patch": false,
+  "P6_included": false,
+  "later_P2_effect_snapshot_changes_not_overwritten": "Only these exact put/node-loss/retirement hunks; recheck after later P2 changes, never copy this Core snapshot over base.",
+  "pytest_run": false,
+  "base_modified": false
+}

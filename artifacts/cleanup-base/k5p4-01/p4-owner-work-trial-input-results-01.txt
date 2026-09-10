@@ -1,0 +1,38 @@
+{
+  "edition": "input",
+  "scenarios": [
+    "ordinary known Complete without bytes -> LOST, no retry or child effects",
+    "contained UNKNOWN + lost Release ACK latches DISCARD; late envelope cannot turn success; retry budget once",
+    "contained envelope before choice -> KEEP actual bytes and live child holds",
+    "CF001 installed full WorkerDeathRecord discharges exact child holds without dead RPC",
+    "no installed death proof cannot discharge unavailable child, obligation retained"
+  ],
+  "record_fields": null,
+  "gc_fields": [
+    [
+      "plan",
+      "ObjectMetadataCollectionPlan"
+    ],
+    [
+      "pending_drops",
+      "dict[NodeID, protocol.DropObjectReplica]"
+    ],
+    [
+      "pending_edges",
+      "set[ContainedReferenceEdge]"
+    ],
+    [
+      "output_plan",
+      "OutputOwnerPublicationCollectionPlan | None"
+    ],
+    [
+      "retry_scheduled",
+      "bool"
+    ],
+    [
+      "retry_round",
+      "int"
+    ]
+  ],
+  "limit": "actual synchronous Core/owner/recovery/member-consumer methods; no OS death, execution, physical GC or pytest claimed"
+}

@@ -1,0 +1,146 @@
+{
+  "phase": "P4 owner-node-cleanup typed record isolated trial",
+  "state": "candidate_not_adopted_no_pytest_or_base_changes",
+  "source": {
+    "source_root": "C:/Users/t-hdong/Desktop/gao/audit/p1-evaluation",
+    "execution_snapshot": "execution/base-p1trial-02",
+    "note": "02 is execution snapshot identity, not source directory suffix. Core same as trial01; only test_output_handoff later two-line change excluded from this slice.",
+    "state": "isolated_candidate_not_applied; later P3 may require hunk rebase",
+    "captured_at": "2026-09-10T12:11:10.9302977+08:00",
+    "core_sha256": "cf38a034f22fb79ff8e202b327f3d4d19a99c6afd344ce1c4045cee6475961ca"
+  },
+  "source_delta": {
+    "core_physical_lines_before": 12756,
+    "core_physical_lines_after": 12767,
+    "new_record_fields": [
+      "manifest",
+      "complete",
+      "keep",
+      "acks"
+    ],
+    "method_shape_before": {
+      "physical_lines": 116,
+      "ast_nodes": 1154
+    },
+    "method_shape_after": {
+      "physical_lines": 116,
+      "ast_nodes": 1141
+    },
+    "runtime_tables_removed": 0,
+    "rpc_count_change": 0,
+    "success_authorities_added": 0
+  },
+  "semantic_boundaries": [
+    "latched complete/keep never recomputed from late envelope",
+    "acks retain exact ReleaseContainedReferenceReply or full installed WorkerDeathRecord",
+    "NodeLostOutputResolution deep validation unchanged",
+    "loss choice history and driver ticket remain original Core tables",
+    "Owner/Recovery CAS and retry budget algorithms unchanged",
+    "no put changes; ObjectGcObligation AST identical"
+  ],
+  "actual_exercise": [
+    {
+      "edition": "input",
+      "scenarios": [
+        "ordinary known Complete without bytes -> LOST, no retry or child effects",
+        "contained UNKNOWN + lost Release ACK latches DISCARD; late envelope cannot turn success; retry budget once",
+        "contained envelope before choice -> KEEP actual bytes and live child holds",
+        "CF001 installed full WorkerDeathRecord discharges exact child holds without dead RPC",
+        "no installed death proof cannot discharge unavailable child, obligation retained"
+      ],
+      "record_fields": null,
+      "gc_fields": [
+        [
+          "plan",
+          "ObjectMetadataCollectionPlan"
+        ],
+        [
+          "pending_drops",
+          "dict[NodeID, protocol.DropObjectReplica]"
+        ],
+        [
+          "pending_edges",
+          "set[ContainedReferenceEdge]"
+        ],
+        [
+          "output_plan",
+          "OutputOwnerPublicationCollectionPlan | None"
+        ],
+        [
+          "retry_scheduled",
+          "bool"
+        ],
+        [
+          "retry_round",
+          "int"
+        ]
+      ],
+      "limit": "actual synchronous Core/owner/recovery/member-consumer methods; no OS death, execution, physical GC or pytest claimed"
+    },
+    {
+      "edition": "candidate",
+      "scenarios": [
+        "ordinary known Complete without bytes -> LOST, no retry or child effects",
+        "contained UNKNOWN + lost Release ACK latches DISCARD; late envelope cannot turn success; retry budget once",
+        "contained envelope before choice -> KEEP actual bytes and live child holds",
+        "CF001 installed full WorkerDeathRecord discharges exact child holds without dead RPC",
+        "no installed death proof cannot discharge unavailable child, obligation retained"
+      ],
+      "record_fields": [
+        "manifest",
+        "complete",
+        "keep",
+        "acks"
+      ],
+      "gc_fields": [
+        [
+          "plan",
+          "ObjectMetadataCollectionPlan"
+        ],
+        [
+          "pending_drops",
+          "dict[NodeID, protocol.DropObjectReplica]"
+        ],
+        [
+          "pending_edges",
+          "set[ContainedReferenceEdge]"
+        ],
+        [
+          "output_plan",
+          "OutputOwnerPublicationCollectionPlan | None"
+        ],
+        [
+          "retry_scheduled",
+          "bool"
+        ],
+        [
+          "retry_round",
+          "int"
+        ]
+      ],
+      "limit": "actual synchronous Core/owner/recovery/member-consumer methods; no OS death, execution, physical GC or pytest claimed"
+    }
+  ],
+  "tests_to_run_later": [
+    "tests/unit/test_common_cleanup_progress.py",
+    "tests/unit/test_core_output_node_loss.py",
+    "tests/unit/test_output_node_loss_control.py",
+    "tests/unit/test_node_lost_output_resolution.py",
+    "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
+    "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown"
+  ],
+  "exercise_limit": "Direct synchronous actual Core/owner/handoff/recovery/member-consumer methods with bounded fake transport; Complete/death/envelope input facts. No user execution, OS death, physical GC, network or pytest executed. Late original selectors retain full CF coverage for future root validation.",
+  "gc_audit": {
+    "class": "_ObjectGcObligation",
+    "fields_typed": true,
+    "needs_new_record": false,
+    "remaining_fields": [],
+    "notes": "plan, pending_drops, pending_edges, optional output_plan, retry_scheduled, retry_round already explicit types; generic marker union and typed members of plan are separate packages, not this slice."
+  },
+  "assessment": "Limited maintainability gain (field names/type contract); no measured fewer states or RPCs, LOC increases. Keep candidate for reviewed root trial; adoption or evidence-backed retain decision must follow current hunk rebase and retained selector execution.",
+  "hashes": {
+    "input/src/miniray/core.py": "cf38a034f22fb79ff8e202b327f3d4d19a99c6afd344ce1c4045cee6475961ca",
+    "candidate/src/miniray/core.py": "8a9a8d78da3179be994dfac731a4487950bd727057d92fc5b4ff790657a60a94",
+    "exercise.py": "8572117977774379fd8c64c7ee79c9fd5bea9a6b39b06edb4b796700a2d914b1"
+  }
+}

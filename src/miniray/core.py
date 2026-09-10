@@ -70,8 +70,8 @@ from .foreign_lineage_runtime import (
 from .ownership import (
     DeadWorkerReferenceRecord, NodeLocationRemoval, ObjectOwnerSnapshot, ObjectOwnerTable, ObjectState, UnknownObjectError,
 )
-from .ownership import OutputOwnerPublicationPlan, OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError
-from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID
+from .ownership import OutputOwnerPublicationPlan, OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError, OutputOwnerPublicationRetirementPlan
+from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID, OutputPublicationManifest
 from .output_publication_journal import OutputPublicationAdoptionProof
 from .owner_service import (
     REPLACE_RETAINED_OBJECT_FOR_TASK_HANDLER,
@@ -364,6 +364,28 @@ class _ReleaseAttemptBorrow:
     key: tuple[WorkerID, ObjectID, AttemptID]
 
 
+
+
+@dataclass
+class _OutputNodeCleanupWork:
+    """One latched publisher-loss choice plus exact child cleanup receipts."""
+
+    manifest: OutputPublicationManifest
+    complete: OutputPublicationCompleteWitness | None
+    keep: bool
+    acks: dict[protocol.ReleaseContainedReference,
+               protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
+
+
+@dataclass
+class _OutputRetirementWork:
+    """One exact owner retirement plan and its acknowledged cleanup work."""
+
+    plan: OutputOwnerPublicationRetirementPlan
+    child: dict[protocol.ReleaseContainedReference,
+                protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
+    replica: dict[protocol.DropObjectReplica,
+                  protocol.DropObjectReplicaReply | protocol.NodeDeathRecord] = field(default_factory=dict)
 
 
 @dataclass
@@ -3216,6 +3238,7 @@ class CoreWorker:
 
     def _put_value(self, value: object) -> ObjectRef:
         from .put_handoff import discover_put
+        from .put_work import MaterializationWork, PutChoice, PutHandoff
         index = self._begin_put()
         identity = ObjectID.for_task(TaskID.for_put(self.job_id, self.worker_id, index), 0)
         attempt = AttemptID(identity.task_id, 0)
@@ -3226,20 +3249,26 @@ class CoreWorker:
                 self._owner_table.register(identity, current_attempt=attempt, producer_task_spec=None)
                 self._objects[identity] = _ObjectWaiter(threading.Event())
                 self._recovery_manager().register_put(identity)
-                work = {'prepared': prepared, 'attempt': attempt, 'started': set(), 'acked': set(),
-                        'releases': {}, 'seal': None, 'route': None, 'aborted': False, 'driver': True}
+                work = PutHandoff(prepared, attempt)
                 obligations = getattr(self, '_put_handoffs', None)
                 if obligations is None:
                     obligations = self._put_handoffs = {}
                 obligations[identity] = work
             for stage, kind in (('prepare', protocol.PrepareStoredContainedPin), ('promote', protocol.PromoteStoredContainedPin)):
-                for transfer in prepared.manifest.transfers:
+                for child in work.children:
+                    transfer = child.transfer
                     request = kind(transfer=transfer, authority_worker_id=transfer.contained_owner_worker_id)
-                    work['started'].add((stage, transfer))
+                    if stage == 'prepare':
+                        child.prepare_request = request
+                    else:
+                        child.promotion_request = request
                     reply = self._put_child_rpc(transfer, stage + '_stored_contained_pin', request)
                     if type(reply) is not protocol.StoredContainedPinReply or reply.request != request or not reply.accepted:
                         raise SystemTaskError('put child handoff did not acknowledge its exact request')
-                    work['acked'].add((stage, transfer))
+                    if stage == 'prepare':
+                        child.prepare_receipt = replace(reply)
+                    else:
+                        child.promotion_receipt = replace(reply)
             manifest = prepared.manifest
             node_id = self.node_id
             seal = None
@@ -3249,7 +3278,7 @@ class CoreWorker:
                 route = self._require_home_route('explicit put')
             while True:
                 if seal is not None:
-                    work['route'], work['seal'] = route, seal
+                    work.materialization = MaterializationWork(route, seal)
                     try:
                         reply = self._rpc(route.address, 'seal_object', seal)
                     except BaseException:
@@ -3273,23 +3302,22 @@ class CoreWorker:
                                 != (identity, route.node_id, manifest.size_bytes, manifest.checksum)):
                             raise SystemTaskError('put seal changed request identity')
                         reply = replace(reply)
+                        work.materialization.seal_receipt = reply
                         if not reply.sealed:
-                            if reply.absence_fenced:
-                                work['seal'] = None
                             raise SystemTaskError(reply.error or 'put seal was rejected')
                         node_id = route.node_id
                     descriptor = protocol.ResultDescriptor(
                         identity, manifest.tier, manifest.size_bytes, self.worker_id, node_id, manifest.checksum,
                         prepared.payload if manifest.tier is protocol.ResultStorage.INLINE else None,
                     )
-                    if work['aborted']:
+                    if work.choice is PutChoice.ABORTED:
                         raise SystemTaskError('put was aborted before owner installation')
                     # Death handling and owner installation share this lock.
                     # A winning death reroutes above; a later death observes
                     # a real committed owner result and follows ordinary loss.
                     if not self._owner_table.publish_put_value(identity, attempt, descriptor, manifest.edges):
                         raise SystemTaskError('put owner installation was fenced')
-                    work['committed'] = True
+                    work.choice = PutChoice.COMMITTED
                     if descriptor.storage is protocol.ResultStorage.OBJECT_STORE:
                         self._stored_descriptors[identity] = descriptor
                     self._put_handoffs.pop(identity, None)
@@ -3301,15 +3329,15 @@ class CoreWorker:
                 self._enqueue_inline_gc_check(identity)
                 raise
         except BaseException as exc:
-            if work is not None and not work.get('committed', False):
-                work['aborted'] = True
-                work['driver'] = False
+            if work is not None and work.choice is not PutChoice.COMMITTED:
+                work.choice = PutChoice.ABORTED
+                work.driving = False
                 self._drive_put_handoff_cleanup(identity)
                 self._publish_error(identity, attempt, exc)
             raise
         finally:
             if work is not None:
-                work['driver'] = False
+                work.driving = False
             self._end_put()
 
     def _put_child_rpc(self, transfer, handler, request):
@@ -3318,58 +3346,65 @@ class CoreWorker:
         return self._borrow_rpc(transfer.contained_owner_address, handler, request)
 
     def _drive_put_handoff_cleanup(self, identity) -> bool:
+        from .put_work import PutChoice
         with self._state_lock:
             work = getattr(self, '_put_handoffs', {}).get(identity)
             if work is None:
                 return True
-            if not work['aborted'] or work['driver']:
+            if work.choice is not PutChoice.ABORTED or work.driving:
                 return False
-            work['driver'] = True
+            work.driving = True
         try:
-            for transfer in work['prepared'].manifest.transfers:
-                if not any((stage, transfer) in work['started'] for stage in ('prepare', 'promote')):
+            for child in work.children:
+                if not child.has_sent_effect:
                     continue
+                transfer = child.transfer
                 for hold in (transfer.final_hold, transfer.provisional_hold):
                     request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
-                    if request in work['releases']:
+                    if request in child.releases:
                         continue
                     with self._state_lock:
                         death = self._owner_table.dead_worker_record(transfer.contained_owner_worker_id)
                     if death is not None:
-                        work['releases'][request] = death
+                        child.releases[request] = death
                         continue
                     reply = self._put_child_rpc(transfer, 'release_contained_reference', request)
                     if (type(reply) is not protocol.ReleaseContainedReferenceReply or not reply.accepted
                             or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
                         return False
-                    work['releases'][request] = replace(reply)
-            if work['seal'] is not None:
-                route, seal = work['route'], work['seal']
+                    child.releases[request] = replace(reply)
+            materialization = work.materialization
+            if materialization is not None and (materialization.drop_request is not None
+                                                or not materialization.absence_fenced):
+                route, seal = materialization.route, materialization.seal_request
                 with self._state_lock:
-                    dead = self._node_is_dead(route.node_id)
-                if not dead:
-                    drop = work.get('drop')
+                    death = self._dead_nodes.get(route.node_id)
+                if death is not None:
+                    materialization.drop_receipt = death
+                elif materialization.drop_receipt is None:
+                    drop = materialization.drop_request
                     if drop is None:
-                        # Resolve an unknown Seal once; once Drop may have been
-                        # sent, replay only Drop so a deletion fence cannot stall
-                        # cleanup by correctly refusing another Seal.
+                        # Resolve unknown Seal once. A sent Drop is sticky,
+                        # including when its exact acknowledgement is lost.
                         reply = self._rpc(route.address, 'seal_object', seal)
                         if (type(reply) is not protocol.SealObjectReply
                                 or reply.object_id != identity or reply.node_id != route.node_id
-                                or reply.size_bytes != work['prepared'].manifest.size_bytes
-                                or reply.checksum != work['prepared'].manifest.checksum):
+                                or reply.size_bytes != work.prepared.manifest.size_bytes
+                                or reply.checksum != work.prepared.manifest.checksum):
                             return False
                         reply = replace(reply)
                         if not reply.sealed and not reply.absence_fenced:
                             return False
-                        drop = protocol.DropObjectReplica(identity, work['attempt'], self.worker_id, route.node_id, reply.checksum)
-                        work['drop'] = drop
+                        materialization.seal_receipt = reply
+                        drop = protocol.DropObjectReplica(identity, work.attempt, self.worker_id, route.node_id, reply.checksum)
+                        materialization.drop_request = drop
                     dropped = self._rpc(route.address, _DROP_OBJECT_REPLICA_HANDLER, drop)
                     if (type(dropped) is not protocol.DropObjectReplicaReply
                             or dropped.status not in (protocol.DropObjectReplicaStatus.DROPPED, protocol.DropObjectReplicaStatus.ALREADY_DROPPED)
                             or (dropped.object_id, dropped.producer_attempt_id, dropped.owner_worker_id, dropped.node_id, dropped.checksum)
                             != (drop.object_id, drop.producer_attempt_id, drop.owner_worker_id, drop.node_id, drop.checksum)):
                         return False
+                    materialization.drop_receipt = replace(dropped)
             with self._state_lock:
                 self._put_handoffs.pop(identity, None)
                 self._completion.notify_all()
@@ -3378,7 +3413,7 @@ class CoreWorker:
         except Exception:
             return False
         finally:
-            work['driver'] = False
+            work.driving = False
 
     def _begin_put(self) -> int:
         """Reserve one put identity and join the shutdown drain."""
@@ -6942,7 +6977,7 @@ class CoreWorker:
                         if member.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE else ()
                     ),
                 )
-                current = {"plan": plan, "child": {}, "replica": {}}
+                current = _OutputRetirementWork(plan)
                 work[object_id] = current
             tickets = getattr(self, "_output_retirement_tickets", None)
             if tickets is None:
@@ -6951,31 +6986,31 @@ class CoreWorker:
             if object_id in tickets:
                 return False
             tickets.add(object_id)
-        plan = current["plan"]
+        plan = current.plan
         try:
             routes = {
                 (transfer.contained_object_id, transfer.final_hold): transfer.contained_owner_address
                 for transfer in plan.membership.manifest.value.transfers
             }
             for request in plan.contained_releases:
-                if request not in current["child"]:
+                if request not in current.child:
                     with self._state_lock:
                         death = getattr(self, "_worker_death_records", {}).get(request.owner_worker_id)
                     if death is not None:
-                        current["child"][request] = death
+                        current.child[request] = death
                         continue
                     reply = self._borrow_rpc(routes[(request.object_id, request.hold)], _RELEASE_CONTAINED_REFERENCE_HANDLER, request)
                     if (not isinstance(reply, protocol.ReleaseContainedReferenceReply) or not reply.accepted
                             or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
                         raise SystemTaskError("output retirement child ACK mismatch")
-                    current["child"][request] = reply
+                    current.child[request] = reply
             for request in plan.replica_drops:
-                if request in current["replica"]:
+                if request in current.replica:
                     continue
                 with self._state_lock:
                     death = getattr(self, "_dead_nodes", {}).get(request.node_id)
                 if death is not None:
-                    current["replica"][request] = getattr(death, "death", death)
+                    current.replica[request] = getattr(death, "death", death)
                     continue
                 reply = self._rpc(self._resolve_node_address(request.node_id), _DROP_OBJECT_REPLICA_HANDLER, request)
                 if (not isinstance(reply, protocol.DropObjectReplicaReply)
@@ -6983,14 +7018,14 @@ class CoreWorker:
                         or (reply.object_id, reply.producer_attempt_id, reply.owner_worker_id, reply.node_id, reply.checksum)
                         != (request.object_id, request.producer_attempt_id, request.owner_worker_id, request.node_id, request.checksum)):
                     raise SystemTaskError("output retirement replica ACK mismatch")
-                current["replica"][request] = reply
+                current.replica[request] = reply
             with self._state_lock:
                 if self._has_late_replica_cleanup_locked(plan.object_id):
                     self._schedule_late_replica_cleanup_locked()
                     return False
                 self._owner_table.complete_output_publication_retirement(
-                    plan, released_edges=tuple(current["child"][request] for request in plan.contained_releases),
-                    dropped_replicas=tuple(current["replica"][request] for request in plan.replica_drops),
+                    plan, released_edges=tuple(current.child[request] for request in plan.contained_releases),
+                    dropped_replicas=tuple(current.replica[request] for request in plan.replica_drops),
                 )
                 work.pop(object_id, None)
                 self._completion.notify_all()
@@ -11229,7 +11264,7 @@ class CoreWorker:
                     # Recover only that verified local result, before latching
                     # the loss choice; a later envelope cannot reverse DISCARD.
                     envelope = self._locally_retained_output_completion(pending, handoff.complete)
-                complete = (latched['complete'] if latched is not None else
+                complete = (latched.complete if latched is not None else
                             handoff.complete or (None if envelope is None else envelope.complete))
                 if complete is not None and handoff.complete is None and handoff.phase is not OutputHandoffPhase.ABORTED:
                     table.record_complete(complete)
@@ -11245,41 +11280,41 @@ class CoreWorker:
                             manifest, 0, unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
                         )
                     ))
-                    work = {'manifest': manifest, 'complete': complete, 'keep': keep, 'acks': {}}
+                    work = _OutputNodeCleanupWork(manifest, complete, keep)
                     works[identity] = work
                     self._output_loss_choices = getattr(self, '_output_loss_choices', {})
                     self._output_loss_choices[identity] = keep
                     if not keep and handoff.phase is not OutputHandoffPhase.ADOPTED:
                         table.abort(identity, 'publishing Node died before payload adoption')
-            if not work['keep']:
+            if not work.keep:
                 for transfer in manifest.value.transfers:
                     for hold in (transfer.final_hold, transfer.provisional_hold):
                         request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
-                        if request in work['acks']:
+                        if request in work.acks:
                             continue
                         with self._state_lock:
                             owner_death = getattr(self, '_worker_death_records', {}).get(transfer.contained_owner_worker_id)
                         if owner_death is not None:
-                            work['acks'][request] = owner_death
+                            work.acks[request] = owner_death
                             continue
                         reply = self._borrow_rpc(transfer.contained_owner_address, _RELEASE_CONTAINED_REFERENCE_HANDLER, request)
                         if (type(reply) is not protocol.ReleaseContainedReferenceReply or not reply.accepted
                                 or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
                             raise SystemTaskError('Node-loss child release changed exact identity')
-                        work['acks'][request] = replace(reply)
+                        work.acks[request] = replace(reply)
             resolution = NodeLostOutputResolution(
                 identity, manifest.manifest_digest, self.worker_id, obligation.node_death,
-                complete=work['complete'], keep=work['keep'], cleanup=tuple(dict.fromkeys(work['acks'].values())),
+                complete=work.complete, keep=work.keep, cleanup=tuple(dict.fromkeys(work.acks.values())),
             )
             with self._state_lock:
                 if self._output_replay_is_obsolete_locked(pending, identity):
                     return True
                 self._owner_table.resolve_output_node_loss(
-                    manifest, resolution, envelope if work['keep'] else None,
+                    manifest, resolution, envelope if work.keep else None,
                     unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
                 )
                 current = self._owner_table.snapshot(pending.object_id)
-                if work['keep'] and current.state in (ObjectState.READY_INLINE, ObjectState.READY_STORED):
+                if work.keep and current.state in (ObjectState.READY_INLINE, ObjectState.READY_STORED):
                     # The local resolution adopted surviving bytes. LOST is
                     # deliberately not a payload-adoption acknowledgement.
                     proof = OutputPublicationAdoptionProof(

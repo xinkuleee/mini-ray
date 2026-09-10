@@ -1,0 +1,76 @@
+........................................................................ [ 20%]
+........................................................................ [ 41%]
+........................................................................ [ 62%]
+..............................................................F......... [ 83%]
+.......................................................                  [100%]
+=================================== FAILURES ===================================
+_ test_real_store_full_fences_absence_and_rejects_late_seal_after_capacity_returns _
+
+runtime = <test_put_reference_runtime._Runtime object at 0x75bf56813200>
+
+    def test_real_store_full_fences_absence_and_rejects_late_seal_after_capacity_returns(runtime):
+        core = runtime.owner
+        core.inline_threshold = 1
+        filler = runtime.track(core.put(b"F" * (8 * 1024)))
+        before_bytes = runtime.store.used_bytes
+        assert before_bytes > 8 * 1024
+        rejected = []
+        rejected_work = []
+    
+        def after(handler, request, reply):
+            if handler == "seal_object" and not reply.sealed:
+                rejected.append((request, reply))
+                rejected_work.append(core._put_handoffs[request.object_id])
+    
+        runtime.after = after
+        with pytest.raises(Exception, match="ObjectStoreFullError"):
+            core.put(b"R" * (8 * 1024))
+        assert len(rejected) == 1
+        seal, reply = rejected[0]
+        assert reply.absence_fenced and not reply.sealed
+        failed_work, = rejected_work
+        assert failed_work.choice is PutChoice.ABORTED and not failed_work.driving
+        assert failed_work.materialization.seal_receipt == reply
+        assert failed_work.materialization.absence_fenced
+        assert failed_work.materialization.drop_request is None
+        assert runtime.store.used_bytes == before_bytes
+        assert not runtime.store.contains(seal.object_id, sealed_only=False)
+        assert seal.object_id not in runtime.node._sealed_metadata
+        assert runtime.node._dropped_metadata[seal.object_id] == (
+            seal.attempt_id, seal.owner_worker_id, seal.checksum
+        )
+        assert seal.object_id not in core._put_handoffs
+        assert core.owner_table.snapshot(seal.object_id).state is ObjectState.ERROR
+        assert core._inflight_puts == 0
+        assert not any(handler == "drop_object_replica" and request.object_id == seal.object_id
+                       for handler, request in runtime.calls)
+        runtime.drain()
+        assert core.owner_table.collection_state(seal.object_id) is ObjectCollectionState.COLLECTED
+        runtime.close(filler)
+        assert runtime.store.used_bytes == 0
+        # Capacity now permits these exact bytes, but the real deletion receipt
+        # fences the delayed request rather than letting it recreate an orphan.
+>       late = runtime.rpc(core.node_address, "seal_object", seal)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_put_reference_runtime.py:464: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_put_reference_runtime.py:105: in rpc
+    self.after(handler, request, reply)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+handler = 'seal_object'
+request = SealObject(object_id=ObjectID(task_id=TaskID('3abe6776c7955cd1ff9965c6d31580ca'), return_index=0), attempt_id=AttemptI...RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR\x94.', checksum='1615616e5e19cf63a9306efd48c78a8b6db030b131bc4af4c15119a81b9fdce3')
+reply = SealObjectReply(object_id=ObjectID(task_id=TaskID('3abe6776c7955cd1ff9965c6d31580ca'), return_index=0), sealed=False, ...8c78a8b6db030b131bc4af4c15119a81b9fdce3', error='producer attempt was fenced by replica deletion', absence_fenced=True)
+
+    def after(handler, request, reply):
+        if handler == "seal_object" and not reply.sealed:
+            rejected.append((request, reply))
+>           rejected_work.append(core._put_handoffs[request.object_id])
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: ObjectID(task_id=TaskID('3abe6776c7955cd1ff9965c6d31580ca'), return_index=0)
+
+tests/unit/test_put_reference_runtime.py:434: KeyError
+=========================== short test summary info ============================
+FAILED tests/unit/test_put_reference_runtime.py::test_real_store_full_fences_absence_and_rejects_late_seal_after_capacity_returns
+1 failed, 342 passed, 1 deselected in 24.32s

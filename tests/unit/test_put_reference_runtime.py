@@ -28,6 +28,7 @@ from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.ownership import ObjectCollectionState, ObjectState
+from miniray.put_work import PutChoice
 from tests.unit._pure_core import (
     SynchronousReferenceMailbox, close_pure_core, make_pure_core,
 )
@@ -253,9 +254,12 @@ def test_put_complete_tuple_preserves_aliases_and_independent_child_lifetime(
 def test_child_effect_unknown_retains_sources_and_both_exact_cleanup_holds(runtime, stage):
     core, source, _ = runtime.source(True)
     unknown = []
+    stage_receipts = []
     cleanup_blocked = True
 
     def after(handler, request, reply):
+        if handler in ("prepare_stored_contained_pin", "promote_stored_contained_pin"):
+            stage_receipts.append((request, reply))
         if handler == stage + "_stored_contained_pin" and not unknown:
             assert reply.accepted
             unknown.append(request)
@@ -272,10 +276,18 @@ def test_child_effect_unknown_retains_sources_and_both_exact_cleanup_holds(runti
     transfer = unknown[0].transfer
     failed_id = transfer.final_hold.container_object_id
     retained = core._put_handoffs[failed_id]
-    assert retained["prepared"].sources == (source,)
-    assert retained["prepared"].sources[0] is source
-    assert retained["prepared"].manifest.transfers == (transfer,)
-    assert retained["aborted"] and not retained["driver"]
+    assert retained.prepared.sources == (source,)
+    assert retained.prepared.sources[0] is source
+    assert retained.prepared.manifest.transfers == (transfer,)
+    assert retained.choice is PutChoice.ABORTED and not retained.driving
+    child, = retained.children
+    assert child.prepare_request == stage_receipts[0][0]
+    if stage == "prepare":
+        assert child.prepare_receipt is None and child.promotion_request is None
+    else:
+        assert child.prepare_receipt == stage_receipts[0][1]
+        assert child.prepare_receipt.accepted and child.promotion_request == unknown[0]
+    assert child.promotion_receipt is None and not child.releases
     assert core.owner_table.snapshot(failed_id).state is ObjectState.ERROR
     runtime.close(source)
     core._reference_released(failed_id)
@@ -290,11 +302,11 @@ def test_child_effect_unknown_retains_sources_and_both_exact_cleanup_holds(runti
     assert failed_id not in core._put_handoffs
     assert core.owner_table.collection_state(failed_id) is ObjectCollectionState.COLLECTED
     assert runtime.owner.owner_table.collection_state(source.object_id) is ObjectCollectionState.COLLECTED
-    assert set(retained["releases"]) == {
+    assert set(retained.children[0].releases) == {
         protocol.ReleaseContainedReference(source.object_id, source.owner_worker_id, hold)
         for hold in (transfer.final_hold, transfer.provisional_hold)
     }
-    assert all(reply.accepted for reply in retained["releases"].values())
+    assert all(reply.accepted for reply in retained.children[0].releases.values())
     runtime.assert_no_tasks()
 
 
@@ -312,7 +324,7 @@ def test_plain_large_put_keeps_exact_cleanup_after_seal_and_drop_ack_loss(runtim
 
 def _assert_unknown_seal_cleanup(runtime, core, value, *, sources):
     core.inline_threshold = 1
-    seal_lost, drop_lost = [], []
+    seal_lost, drop_lost, seal_receipts, drop_receipts = [], [], [], []
     block_drop = True
 
     def before(handler, _request):
@@ -320,6 +332,10 @@ def _assert_unknown_seal_cleanup(runtime, core, value, *, sources):
             raise TimeoutError("Drop unavailable")
 
     def after(handler, request, reply):
+        if handler == "seal_object":
+            seal_receipts.append((request, reply))
+        elif handler == "drop_object_replica":
+            drop_receipts.append((request, reply))
         if handler == "seal_object" and not seal_lost:
             assert reply.sealed and runtime.store.get(request.object_id) == request.data
             seal_lost.append(request)
@@ -335,10 +351,14 @@ def _assert_unknown_seal_cleanup(runtime, core, value, *, sources):
         core.put(value)
     seal, = seal_lost
     retained = core._put_handoffs[seal.object_id]
-    assert retained["prepared"].payload == seal.data
-    assert retained["prepared"].sources == sources
-    assert all(actual is source for actual, source in zip(retained["prepared"].sources, sources))
-    assert len(retained["prepared"].manifest.transfers) == len(sources)
+    assert retained.prepared.payload == seal.data
+    assert retained.prepared.sources == sources
+    assert all(actual is source for actual, source in zip(retained.prepared.sources, sources))
+    assert len(retained.prepared.manifest.transfers) == len(sources)
+    materialization = retained.materialization
+    assert materialization.seal_request == seal
+    assert materialization.seal_receipt == seal_receipts[-1][1]
+    assert materialization.drop_request is not None and materialization.drop_receipt is None
     assert runtime.store.get(seal.object_id) == seal.data
     assert core.owner_table.snapshot(seal.object_id).state is ObjectState.ERROR
     core._reference_released(seal.object_id)
@@ -351,6 +371,7 @@ def _assert_unknown_seal_cleanup(runtime, core, value, *, sources):
     assert not runtime.store.contains(seal.object_id, sealed_only=False)
     assert core._put_handoffs[seal.object_id] is retained
     assert core.owner_table.collection_state(seal.object_id) is ObjectCollectionState.ACTIVE
+    assert materialization.drop_request == drop_lost[0] and materialization.drop_receipt is None
     call_count = len(runtime.calls)
     core._reference_released(seal.object_id)
     assert runtime.calls[call_count:] == [("drop_object_replica", drop_lost[0])]
@@ -358,6 +379,8 @@ def _assert_unknown_seal_cleanup(runtime, core, value, *, sources):
     assert seal.object_id not in core._put_handoffs
     assert core.owner_table.collection_state(seal.object_id) is ObjectCollectionState.COLLECTED
     assert all(request == seal for handler, request in runtime.calls if handler == "seal_object")
+    assert materialization.drop_receipt == drop_receipts[-1][1]
+    assert materialization.drop_receipt.status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED
 
 
 def test_custom_reducer_hidden_ref_uses_public_put_discovery_once(runtime):
@@ -403,9 +426,29 @@ def test_real_store_full_fences_absence_and_rejects_late_seal_after_capacity_ret
     before_bytes = runtime.store.used_bytes
     assert before_bytes > 8 * 1024
     rejected = []
+    rejected_work = []
 
     def after(handler, request, reply):
         if handler == "seal_object" and not reply.sealed:
+            assert type(reply) is protocol.SealObjectReply and reply.absence_fenced
+            assert (reply.object_id, reply.node_id, reply.size_bytes, reply.checksum) == (
+                request.object_id, core.node_id, len(request.data), request.checksum,
+            )
+            if not rejected:
+                # The initial store-full rejection still owns its sent Seal.
+                assert request.object_id in core._put_handoffs
+                work = core._put_handoffs[request.object_id]
+                assert work.choice is PutChoice.OPEN and work.driving
+                assert work.materialization.seal_request == request
+                assert work.materialization.seal_receipt is None
+                rejected_work.append(work)
+            else:
+                # This is the one deliberate replay after actual GC/capacity
+                # recovery. Its absence fence must not recreate pending work.
+                assert len(rejected) == 1 and request == rejected[0][0]
+                assert request.object_id not in core._put_handoffs
+                assert core.owner_table.collection_state(request.object_id) is ObjectCollectionState.COLLECTED
+                assert runtime.store.used_bytes == 0
             rejected.append((request, reply))
 
     runtime.after = after
@@ -414,6 +457,11 @@ def test_real_store_full_fences_absence_and_rejects_late_seal_after_capacity_ret
     assert len(rejected) == 1
     seal, reply = rejected[0]
     assert reply.absence_fenced and not reply.sealed
+    failed_work, = rejected_work
+    assert failed_work.choice is PutChoice.ABORTED and not failed_work.driving
+    assert failed_work.materialization.seal_receipt == reply
+    assert failed_work.materialization.absence_fenced
+    assert failed_work.materialization.drop_request is None
     assert runtime.store.used_bytes == before_bytes
     assert not runtime.store.contains(seal.object_id, sealed_only=False)
     assert seal.object_id not in runtime.node._sealed_metadata
@@ -432,6 +480,11 @@ def test_real_store_full_fences_absence_and_rejects_late_seal_after_capacity_ret
     # Capacity now permits these exact bytes, but the real deletion receipt
     # fences the delayed request rather than letting it recreate an orphan.
     late = runtime.rpc(core.node_address, "seal_object", seal)
+    assert rejected == [(seal, reply), (seal, late)]
+    assert rejected_work == [failed_work]
+    assert failed_work.materialization.seal_receipt == reply
+    assert failed_work.materialization.drop_request is None
+    assert seal.object_id not in core._put_handoffs
     assert not late.sealed and late.absence_fenced
     assert runtime.store.used_bytes == 0
     assert not runtime.store.contains(seal.object_id, sealed_only=False)
