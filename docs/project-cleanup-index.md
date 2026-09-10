@@ -183,7 +183,7 @@ keep_absent只用于真正增强模块；不存在于历史B的公共修复测�
 | 文件 | 分类 | B动作 | E动作 | 旧selector条目 | helper导入点B/E |
 |---|---|---|---|---:|---:|
 | [test_abandoned_dependency_custody_path.py](../tests/integration/test_abandoned_dependency_custody_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
-| [test_actor_node_loss_migration_path.py](../tests/integration/test_actor_node_loss_migration_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
+| [test_actor_node_loss_migration_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_actor_node_loss_migration_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
 | [test_ambiguous_grant_custody_path.py](../tests/integration/test_ambiguous_grant_custody_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_borrowed_output_unknown_path.py](../tests/integration/test_borrowed_output_unknown_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 5/5 |
 | [test_contained_cycle_control_path.py](../tests/integration/test_contained_cycle_control_path.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 1 | 0/0 |
@@ -193,13 +193,13 @@ keep_absent只用于真正增强模块；不存在于历史B的公共修复测�
 | [test_inline_node_loss_path.py](../tests/integration/test_inline_node_loss_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_late_output_replica_cleanup_path.py](../tests/integration/test_late_output_replica_cleanup_path.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 1 | 0/0 |
 | [test_local_replica_handoff_failure_path.py](../tests/integration/test_local_replica_handoff_failure_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 4/4 |
-| [test_mixed_borrowed_output_unknown_path.py](../tests/integration/test_mixed_borrowed_output_unknown_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
-| [test_multi_contained_output_path.py](../tests/integration/test_multi_contained_output_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 18/18 |
-| [test_multi_output_node_loss_path.py](../tests/integration/test_multi_output_node_loss_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
+| [test_mixed_borrowed_output_unknown_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_mixed_borrowed_output_unknown_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
+| [test_multi_contained_output_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_multi_contained_output_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 18/18 |
+| [test_multi_output_node_loss_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_multi_output_node_loss_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
 | [test_multi_owner_handoff_failure_path.py](../tests/integration/test_multi_owner_handoff_failure_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
-| [test_multi_return_partial_reconstruction_path.py](../tests/integration/test_multi_return_partial_reconstruction_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
-| [test_multi_return_path.py](../tests/integration/test_multi_return_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
-| [test_multi_return_reconstruction_path.py](../tests/integration/test_multi_return_reconstruction_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
+| [test_multi_return_partial_reconstruction_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_multi_return_partial_reconstruction_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
+| [test_multi_return_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_multi_return_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
+| [test_multi_return_reconstruction_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_multi_return_reconstruction_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
 | [test_nested_large_argument_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_nested_large_argument_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
 | [test_output_child_owner_worker_loss_path.py](../tests/integration/test_output_child_owner_worker_loss_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_output_owner_death_path.py](../tests/integration/test_output_owner_death_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 7/7 |
@@ -208,7 +208,7 @@ keep_absent只用于真正增强模块；不存在于历史B的公共修复测�
 | [test_pregrant_custody_path.py](../tests/integration/test_pregrant_custody_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_stored_outer_node_loss_path.py](../tests/integration/test_stored_outer_node_loss_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 6/6 |
 | [test_stored_outer_publication_path.py](../tests/integration/test_stored_outer_publication_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 2/2 |
-| [test_targeted_borrowed_output_unknown_path.py](../tests/integration/test_targeted_borrowed_output_unknown_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 2 | 0/0 |
+| [test_targeted_borrowed_output_unknown_path.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/integration/test_targeted_borrowed_output_unknown_path.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 2 | 0/0 |
 | [test_transfer_pin_ack_loss_path.py](../tests/integration/test_transfer_pin_ack_loss_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_transfer_pin_requester_death_path.py](../tests/integration/test_transfer_pin_requester_death_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_unreported_complete_node_loss_path.py](../tests/integration/test_unreported_complete_node_loss_path.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
@@ -263,7 +263,7 @@ keep_absent只用于真正增强模块；不存在于历史B的公共修复测�
 | [test_multi_return_partial_seal_cleanup.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_multi_return_partial_seal_cleanup.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 1 | 0/0 |
 | [test_multi_return_submission_transaction.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_multi_return_submission_transaction.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 6 | 0/0 |
 | [test_nested_argument_manifest.py](../tests/unit/test_nested_argument_manifest.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 4 | 0/0 |
-| [test_node_actor_node_loss_migration.py](../tests/unit/test_node_actor_node_loss_migration.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 3 | 0/0 |
+| [test_node_actor_node_loss_migration.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_node_actor_node_loss_migration.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 3 | 0/0 |
 | [test_node_blocking_get_authority.py](../tests/unit/test_node_blocking_get_authority.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_node_lease_execution.py](../tests/unit/test_node_lease_execution.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
 | [test_node_publication_owner_death_finalize.py](../tests/unit/test_node_publication_owner_death_finalize.py) | 保留目标修绑定 | 修旧import/属性/helper，保留业务目标 | 修绑定至现行增强路径，保留业务目标 | 0 | 0/0 |
@@ -313,11 +313,11 @@ keep_absent只用于真正增强模块；不存在于历史B的公共修复测�
 | [test_stored_publication_node_server.py](../tests/unit/test_stored_publication_node_server.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 0 | 0/0 |
 | [test_targeted_output_publication.py](../tests/unit/test_targeted_output_publication.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 2 | 2/2 |
 | [test_targeted_owner_defer.py](../tests/unit/test_targeted_owner_defer.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 1 | 0/0 |
-| [test_targeted_reconstruction.py](../tests/unit/test_targeted_reconstruction.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 18 | 0/0 |
+| [test_targeted_reconstruction.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_targeted_reconstruction.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 18 | 0/0 |
 | [test_targeted_reconstruction_first_ack.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_targeted_reconstruction_first_ack.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 1 | 0/0 |
-| [test_targeted_reconstruction_protocol.py](../tests/unit/test_targeted_reconstruction_protocol.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 10 | 0/0 |
+| [test_targeted_reconstruction_protocol.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_targeted_reconstruction_protocol.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 10 | 0/0 |
 | [test_targeted_retirement_admission.py](../tests/unit/test_targeted_retirement_admission.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 4 | 0/0 |
-| [test_targeted_worker_execution.py](../tests/unit/test_targeted_worker_execution.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 4 | 0/0 |
+| [test_targeted_worker_execution.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/test_targeted_worker_execution.py) | 整份旧实现退休 | 提取helper/共同反例后退文件 | 提取helper/共同反例后退文件 | 4 | 0/0 |
 | [test_task_finish_barrier.py](../tests/unit/test_task_finish_barrier.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 1 | 5/5 |
 | [test_task_readiness_trace_contract.py](../tests/unit/test_task_readiness_trace_contract.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 0 | 0/0 |
 | [test_trace_contract.py](../tests/unit/test_trace_contract.py) | 拆迁有效合同 | 共同反例接owner-led；纯GCS/图断言退出 | 共同反例＋适用增强保证接现行协议 | 1 | 0/0 |
@@ -363,7 +363,7 @@ keep_absent只用于真正增强模块；不存在于历史B的公共修复测�
 | helper | B/E导入点 | 处置 |
 |---|---:|---|
 | [_pure_core.py](../tests/unit/_pure_core.py) | 75/77 | retain_current_helper_extract_or_remove_only_retired_branches；不得按_pure前缀一起删除；actual Core/Node/owner obligations不被always_success fixture取代。 |
-| [_pure_node_output.py](../tests/unit/_pure_node_output.py) | 6/6 | migrate_meaningful_callers_to_version_correct_current_fixture_before_retiring_old_helper；不得按_pure前缀一起删除；actual Core/Node/owner obligations不被always_success fixture取代。 |
+| [_pure_node_output.py](https://github.com/xinkuleee/mini-ray/blob/69106772567a4131f5ec76e898a3c4bf3bb6dbe6/tests/unit/_pure_node_output.py) | 6/6 | migrate_meaningful_callers_to_version_correct_current_fixture_before_retiring_old_helper；不得按_pure前缀一起删除；actual Core/Node/owner obligations不被always_success fixture取代。 |
 | [_pure_reference_output_runtime.py](../tests/unit/_pure_reference_output_runtime.py) | 4/4 | migrate_meaningful_callers_to_version_correct_current_fixture_before_retiring_old_helper；不得按_pure前缀一起删除；actual Core/Node/owner obligations不被always_success fixture取代。 |
 
 其它所有测试路径也已列在JSON file_actions，未确认过期者保留；两版当前选择和完整import图在version_test_inventory。

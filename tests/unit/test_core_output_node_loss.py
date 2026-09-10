@@ -2,8 +2,8 @@
 
 One accepted task, one output/child and optionally one actual local put input.
 Real owner/handoff/recovery/finish reducers run with synchronous child releases,
-no GCS publication query, runtime constructor, thread, process, wait or execution.
-Complete is an explicit boundary input; it does not claim producer execution.
+with real enhanced publication authority and Node journal callbacks. No runtime
+constructor, thread, process, wait or user task execution occurs.
 """
 
 from dataclasses import replace
@@ -11,11 +11,14 @@ import hashlib
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import enhanced_publication as ep, output_protocol as wire, protocol
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.core import _DelayedReadyTask, _OutputAdoptionObligation, _OutputNodeLossObligation, _PendingTask, _WAKE_COORDINATOR
 from miniray.errors import SystemTaskError
 from miniray.ids import LeaseID, NodeID, ObjectID, TaskID, WorkerID
+from miniray.output_discovery import OutputDiscoverySession
+from miniray.output_publication_journal import OutputPublicationJournal
+from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope, OutputPublicationHeader,
     OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
@@ -26,9 +29,92 @@ from miniray.recovery import TaskState
 from miniray.resources import ResourceVector
 from tests.unit._pure_core import close_pure_core, make_pure_core
 from tests.unit.test_publication_pg_loss_paths import _no_runtime
+from tests.unit.test_enhanced_owner_client import runtime as enhanced_runtime
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_enhanced_query_arrival_is_observed_before_immutable_custody_choice(enhanced_runtime, monkeypatch):
+    from miniray import enhanced_publication as ep
+    r = enhanced_runtime
+    child = r.leaf(41)
+    pending, outer = r.submit()
+    envelope = r.prepare(pending, child)
+    identity = envelope.publication_id
+    incarnation = envelope.manifest.header.node_incarnation
+    death = protocol.NodeDeathRecord(
+        "query-window-publisher-loss", incarnation.node_id, incarnation.node_pid,
+        incarnation.registration_epoch, 1, 7, protocol.NodeDeathReason.PROCESS_EXIT,
+        "registered fixture publisher loss boundary",
+    )
+    r.owner._dead_nodes[incarnation.node_id] = death
+    client = r.owner._publication_client()
+    query = client.query
+    arrivals = []
+
+    def arrive(publication):
+        snapshot = query(publication)
+        if publication.reference.key == identity and not arrivals:
+            assert not r.owner._state_lock._is_owned()
+            assert identity not in getattr(r.owner, "_output_loss_choices", {})
+            assert snapshot.complete == envelope.complete
+            arrivals.append(envelope)
+            assert not r.adopt(pending, envelope)
+            assert r.owner._output_result_custody[identity] == envelope
+        return snapshot
+
+    with monkeypatch.context() as patch:
+        patch.setattr(client, "query", arrive)
+        assert r.owner._drive_output_node_loss(pending, _OutputNodeLossObligation(identity, death))
+    assert arrivals == [envelope] and r.owner._output_loss_choices[identity] is True
+    owner = r.owner.owner_table.snapshot(outer.object_id)
+    assert owner.state is ObjectState.READY_INLINE and owner.inline_data == envelope.result.inline_data
+    assert r.owner._recovery.task_record(pending.task_id).retries_started == 0
+    central = r.authority.query(ep.GetPublication(ep.PublicationRef(identity, envelope.manifest.manifest_digest))).snapshot
+    assert central.complete == envelope.complete and central.adoption is not None and central.graph_active
+    assert not any(handler == "release_contained_reference" for handler, _ in r.calls)
+    r.finish_attempt(pending)
+
+
+def test_enhanced_preterminal_history_cannot_downgrade_actual_complete_custody(enhanced_runtime, monkeypatch):
+    from miniray import enhanced_publication as ep
+    r = enhanced_runtime
+    child = r.leaf(42)
+    pending, outer = r.submit()
+    identity = OutputPublicationID(LeaseID(b'Q' * 16), pending.execution)
+    session = OutputDiscoverySession(OutputPublicationHeader(
+        identity, r.owner.job_id, r.publisher.worker_id, r.owner.worker_id, r.incarnation,
+    ), inline_threshold=1024)
+    prepared = session.discover((child, "actual-local-complete"))
+    r.adapter.prepare(prepared.manifest, prepared.payload)
+    session.release_sources_after_promotions()
+    envelope = r.adapter.complete(identity, commit_lease=r.completions.append)
+    r.envelopes[identity] = envelope
+    publication = ep.TaskPublication(envelope.manifest, r.owner.owner_address)
+    central = r.authority.query(ep.GetPublication(publication.reference)).snapshot
+    assert central.prepared is not None and central.complete is None
+    assert central.receipt(ep.PublicationStage.ARMED) is not None
+    assert r.owner._output_handoff_table().query(identity).complete is None
+    assert r.journal.snapshot(identity).complete == envelope.complete
+    assert r.owner.owner_table.snapshot(outer.object_id).state is ObjectState.PENDING
+    death = protocol.NodeDeathRecord(
+        "preterminal-publisher-loss", r.incarnation.node_id, r.incarnation.node_pid,
+        r.incarnation.registration_epoch, 1, 7, protocol.NodeDeathReason.PROCESS_EXIT,
+        "local Complete survived in owner-delivered envelope",
+    )
+    r.owner._dead_nodes[r.incarnation.node_id] = death
+    with monkeypatch.context() as patch:
+        patch.setattr(r.owner, "_retry_system_failure", lambda *_a, **_k: pytest.fail("actual Complete became unknown retry"))
+        assert r.owner._drive_output_node_loss(pending, _OutputNodeLossObligation(identity, death, envelope))
+    after = r.owner.owner_table.snapshot(outer.object_id)
+    assert after.state is ObjectState.READY_INLINE and after.inline_data == prepared.payload
+    assert r.owner._recovery.task_record(pending.task_id).retries_started == 0
+    central = r.authority.query(ep.GetPublication(publication.reference)).snapshot
+    assert central.complete == envelope.complete and central.adoption is not None
+    assert r.adapter.report_terminal(identity)
+    assert len(r.completions) == 1
+    r.finish_attempt(pending)
 
 
 def _id(kind, value):
@@ -78,17 +164,54 @@ class _LossFixture:
             self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
             OutputPublicationNodeIncarnation(self.publisher, 8101, 1),
         ), slot)
-        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
-        result = protocol.ResultDescriptor(self.ref.object_id, slot.tier, 5, self.core.worker_id, self.publisher, slot.checksum, self.payload)
-        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, result)
-        assert self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest)).accepted
-        if known:
-            assert self.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(self.complete)).accepted
         self.child_table = ObjectOwnerTable()
         self.child_table.register(self.child, local_token="child-source")
         self.child_table.publish_inline(self.child, None, b"child")
-        self.child_table.prepare_stored_contained_reference(self.transfer, authority_worker_id=self.child_owner)
-        self.child_table.promote_stored_contained_reference(self.transfer, authority_worker_id=self.child_owner)
+        self.journal = OutputPublicationJournal()
+        self.publication = ep.TaskPublication(self.manifest, self.core.owner_address)
+        self.gcs_calls, self.local_completions = [], []
+
+        def publication_rpc(request):
+            assert len(self.gcs_calls) < 40
+            reply = self.core._test_publication_authority.apply(request)
+            self.gcs_calls.append((request, reply))
+            return reply
+
+        def register(manifest):
+            reply = self.core.register_output_handoff(wire.RegisterOutputHandoff(manifest))
+            assert reply.accepted, reply.error
+
+        def report(witness):
+            reply = self.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(witness))
+            assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted and reply.witness == witness
+
+        def abort(publication, scope):
+            reply = self.core.abort_owner_publication(ep.AbortOwnerPublication(publication, scope))
+            assert reply.accepted and reply.receipt is not None, reply.error
+            return reply.receipt
+
+        def child(address, request):
+            assert address == self.transfer.contained_owner_address
+            method = (self.child_table.prepare_stored_contained_reference if type(request) is protocol.PrepareStoredContainedPin
+                      else self.child_table.promote_stored_contained_reference)
+            return protocol.StoredContainedPinReply(request, method(request.transfer, authority_worker_id=request.authority_worker_id))
+
+        def forbidden(*_args):
+            pytest.fail("INLINE loss setup attempted unrelated effect")
+
+        self.adapter = OutputPublicationNodeAdapter(
+            self.journal, register_owner=register, report_complete=report, report_rollback=forbidden,
+            publication_value=lambda manifest: ep.TaskPublication(manifest, self.core.owner_address),
+            publication_rpc=publication_rpc, abort_owner=abort, prepare_child=child, promote_child=child,
+            release_child=lambda address, request: self.release(address, "release_contained_reference", request),
+            seal_replica=forbidden, drop_replica=forbidden,
+        )
+        self.adapter.prepare(self.manifest, self.payload)
+        self.envelope = self.adapter.complete(self.identity, commit_lease=self.local_completions.append)
+        self.complete = self.envelope.complete
+        assert len(self.local_completions) == 1
+        if known:
+            assert self.adapter.report_terminal(self.identity)
         self.death = protocol.NodeDeathRecord(
             "core-loss-publisher", self.publisher, 8101, 1, 1, 7, protocol.NodeDeathReason.PROCESS_EXIT, "explicit membership fact",
         )
@@ -258,6 +381,8 @@ def test_adoption_rpc_error_after_other_lane_finished_cannot_reinsert_old_work()
     try:
         def finish_during_ack(address, handler, request):
             result = rpc(address, handler, request)
+            if handler == ep.PUBLICATION_HANDLER:
+                return result
             assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
             incarnation = fixture.manifest.header.node_incarnation
             death = protocol.NodeDeathRecord(

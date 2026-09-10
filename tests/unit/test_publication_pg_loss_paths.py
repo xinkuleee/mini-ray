@@ -3,8 +3,8 @@
 One accepted single-output Core task, one child owner and one lost Release
 ACK; the exact delayed ReadyTask and STOP run through the real dispatch loop.
 Complete/death are explicit input facts, not producer or process execution.
-No GCS publication authority, Store, runtime constructor, wait or background
-thread runs. Deferred failure is a routing contract, not physical replica GC.
+Actual enhanced authority and a local journal bind publication cleanup. No
+runtime constructor, wait or background thread runs; routing stays separate.
 """
 
 from dataclasses import replace
@@ -13,7 +13,7 @@ import queue
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import enhanced_publication as ep, output_protocol as wire, protocol
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.core import (
     _DeferredSystemFailure, _DelayedReadyTask, _NodeDeathObserved,
@@ -26,13 +26,77 @@ from miniray.output_publication import (
     OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import ObjectOwnerTable, ObjectState
+from miniray.output_publication_journal import OutputPublicationJournal
+from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
 from miniray.recovery import TaskState
 from miniray.resources import ResourceVector
 from tests.unit._pure_core import close_pure_core, make_pure_core
+from tests.unit.test_enhanced_owner_client import runtime as enhanced_runtime
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_enhanced_final_graph_cleanup_ack_loss_precedes_pg_lost_finish(enhanced_runtime):
+    from miniray import enhanced_publication as ep
+    r = enhanced_runtime
+    child = r.leaf(43)
+    key = protocol.PlacementGroupSchedulingKey(
+        PlacementGroupID(b'R' * 16), 0, 0, r.incarnation.node_id, "b" * 64,
+    )
+    r.owner._placement_group_states = {(key.placement_group_id, key.attempt): protocol.PlacementGroupPhaseStatus.CREATED}
+    r.owner._placement_group_manifests = {(key.placement_group_id, key.attempt): (key,)}
+    pending, outer = r.owner._register_submission(
+        r.owner.define_remote_function(lambda: None), (), {}, ResourceVector({"CPU": 1}),
+        max_retries=1, placement_group_scheduling_key=key, _enqueue=True,
+    )
+    r.references.append(outer)
+    assert r.take() == (pending,)
+    envelope = r.prepare(pending, child)
+    identity = envelope.publication_id
+    publication = ep.TaskPublication(envelope.manifest, r.owner.owner_address)
+    death = protocol.NodeDeathRecord(
+        "final-graph-ack-publisher-loss", r.incarnation.node_id, r.incarnation.node_pid,
+        r.incarnation.registration_epoch, 1, 7, protocol.NodeDeathReason.PROCESS_EXIT,
+        "publisher unavailable after actual local Complete",
+    )
+    before_owner = r.owner.owner_table.snapshot(outer.object_id)
+    before_recovery = replace(r.owner._recovery.task_record(pending.task_id))
+    r.lose = ep.RetireGraph
+    obligation = _OutputNodeLossObligation(identity, death)
+    assert not r.owner._execute(pending, pending.spec, output_node_loss=obligation)
+    central = r.authority.query(ep.GetPublication(publication.reference)).snapshot
+    assert central.receipt(ep.PublicationStage.RETIRED) is not None and not central.graph_active
+    assert central.complete == envelope.complete
+    assert r.owner.owner_table.snapshot(outer.object_id) == before_owner
+    assert r.owner._recovery.task_record(pending.task_id) == before_recovery
+    assert not r.owner._finish_pending_task(pending)
+    releases = tuple(request for handler, request in r.calls if handler == "release_contained_reference")
+    assert len(releases) == 2
+    assert not r.publisher.owner_table.snapshot(child.object_id).contained_holds
+    delayed = _take_delayed(r.owner)
+    capacity = ResourceVector({"CPU": 1})
+    live = protocol.NodeInfo(key.node_id, r.incarnation.node_pid, r.incarnation.registration_epoch,
+                             r.owner.node_address, capacity, capacity)
+    r.owner._membership_epoch = 0
+    r.owner._installed_cluster_snapshot = protocol.InstallClusterSnapshot(0, "before-final-ack-pg-loss", (live,))
+    r.owner.handle_node_death(death, protocol.InstallClusterSnapshot(1, "after-final-ack-pg-loss", ()))
+    assert r.owner._placement_group_phase_for_pending(pending) is protocol.PlacementGroupPhaseStatus.LOST
+    observed = r.owner._submissions.get_nowait()
+    r.owner._submissions.task_done()
+    assert observed == _NodeDeathObserved(death, 1)
+    assert delayed.ready.output_node_loss.publication_id == identity
+    _dispatch_once(r.owner, delayed.ready)
+    assert tuple(request for handler, request in r.calls if handler == "release_contained_reference") == releases
+    after = r.owner.owner_table.snapshot(outer.object_id)
+    assert after.state is ObjectState.LOST and after.inline_data is None
+    record = r.owner._recovery.task_record(pending.task_id)
+    assert record.state is TaskState.SUCCEEDED and record.retries_started == 0
+    assert record.current_attempt == pending.spec.attempt_id
+    assert not r.owner._protocol_unresolved and not r.owner._task_finish_barriers
+    assert r.owner._accepted_task_count == 0 and identity in r.owner._output_loss_completed
+    assert r.owner._drive_output_node_loss(pending, obligation)
 
 
 @pytest.fixture(autouse=True)
@@ -129,15 +193,43 @@ def test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal(known
             identity, core.job_id, executor, core.worker_id,
             OutputPublicationNodeIncarnation(key.node_id, 7101, 1),
         ), (OutputValue(protocol.ResultStorage.INLINE, 5, hashlib.sha256(b'value').hexdigest(), (transfer,))))
-        assert core.register_output_handoff(wire.RegisterOutputHandoff(manifest)).accepted
-        complete = OutputPublicationCompleteWitness.for_manifest(manifest)
-        if known:
-            assert core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(complete)).accepted
         child = ObjectOwnerTable()
         child.register(child_id, local_token="source")
         child.publish_inline(child_id, None, b"child")
-        child.prepare_stored_contained_reference(transfer, authority_worker_id=executor)
-        child.promote_stored_contained_reference(transfer, authority_worker_id=executor)
+        journal = OutputPublicationJournal()
+        completions = []
+
+        def register(value):
+            result = core.register_output_handoff(wire.RegisterOutputHandoff(value))
+            assert result.accepted, result.error
+
+        def report(witness):
+            result = core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(witness))
+            assert type(result) is wire.OutputHandoffCompleteAck and result.accepted and result.witness == witness
+
+        def abort(publication, scope):
+            result = core.abort_owner_publication(ep.AbortOwnerPublication(publication, scope))
+            assert result.accepted and result.receipt is not None, result.error
+            return result.receipt
+
+        def child_pin(address, request):
+            assert address == transfer.contained_owner_address
+            method = child.prepare_stored_contained_reference if type(request) is protocol.PrepareStoredContainedPin else child.promote_stored_contained_reference
+            return protocol.StoredContainedPinReply(request, method(request.transfer, authority_worker_id=request.authority_worker_id))
+
+        def forbidden(*_args):
+            pytest.fail("PG INLINE fixture attempted unrelated effect")
+
+        adapter = OutputPublicationNodeAdapter(journal, register_owner=register, report_complete=report,
+            report_rollback=forbidden, publication_value=lambda value: ep.TaskPublication(value, core.owner_address),
+            publication_rpc=core._test_publication_authority.apply, abort_owner=abort,
+            prepare_child=child_pin, promote_child=child_pin, release_child=forbidden,
+            seal_replica=forbidden, drop_replica=forbidden)
+        adapter.prepare(manifest, b"value")
+        complete = adapter.complete(identity, commit_lease=completions.append).complete
+        assert completions == [complete]
+        if known:
+            assert adapter.report_terminal(identity)
         calls = []
         def release(address, handler, request):
             assert address == transfer.contained_owner_address and handler == "release_contained_reference"

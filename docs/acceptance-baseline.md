@@ -107,4 +107,4 @@ snapshot03后仅汇总文档/证据；后续源码或测试修改必须另记其
 
 ## 整理E后继的引用说明
 
-本页B历史318/32原文保留。E在共同B机制上仅增加两项mini自定义保证，本页结果不作为E候选或正式E HEAD的独立验收。E历史377/37见[增强账本](acceptance-enhanced.md)，本次候选与待建立的正式分支映射见[状态页](current-status.md)。
+本页B历史318/32原文保留。E在共同B机制上仅增加两项mini自定义保证，本页结果不作为E候选或正式E HEAD的独立验收。E历史377/37见[增强账本](acceptance-enhanced.md)，本次候选与已建立的正式分支映射见[状态页](current-status.md)。

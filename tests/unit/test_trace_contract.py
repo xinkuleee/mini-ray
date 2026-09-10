@@ -473,13 +473,16 @@ def _change_record(records, event_id, *, fields=None, **changes):
 
 
 def _terminal_echo(records, prefix, *, fields=None):
-    """Independent synthetic retirement round trip and its identity fact."""
+    """Independent synthetic retirement replay after the actual C7 ACK shape."""
     original = next(record for record in records if record.event_id == "payload-retired")
+    adopted = next(record for record in records if record.event_id == "gcs-adopted-done")
+    assert adopted.event == "rpc_reply_received" and adopted.process_id == "driver-process"
     values = dict(original.fields)
     values.update(fields or {})
     echo = _rpc(prefix, "driver-process", "node-process", "ack_output_publication_adopted",
-                (1700, 1320, 1350, 1800), handler_span=True)
-    ack = _record(prefix + "-ack", "driver-process", 1810, "core_worker",
+                (adopted.process_sequence + 10, 1320, 1350, adopted.process_sequence + 20),
+                cause=adopted.event_id, handler_span=True)
+    ack = _record(prefix + "-ack", "driver-process", adopted.process_sequence + 30, "core_worker",
                   "output_payload_retired", cause=prefix + "-done", **values)
     return (*echo, ack)
 
