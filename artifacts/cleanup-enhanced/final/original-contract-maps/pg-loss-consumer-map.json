@@ -1,0 +1,26 @@
+{
+  "path": "tests/unit/test_publication_pg_loss_paths.py",
+  "fixed_hashes": {
+    "base": "3b50529b7b01590d952a1e170b0b6065b920991690b8368187b112c38a7e4a89",
+    "enhanced": "3b50529b7b01590d952a1e170b0b6065b920991690b8368187b112c38a7e4a89"
+  },
+  "plan_revision": "R2.2",
+  "status": "written_awaiting_parent_exact_validation",
+  "cost": "2 functions/4 pure cases; one accepted Core task, one child owner and 3 actual Release calls for each loss case, finite 2-item dispatch FIFO; no wait, runtime constructors, process, thread, GCS output authority or user execution",
+  "functions": [
+    {
+      "old_selector": "tests/unit/test_publication_pg_loss_paths.py::test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal",
+      "base_replacement": "tests/unit/test_publication_pg_loss_paths.py::test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal",
+      "retained": "Known Complete or completion unknown; cleanup effect ACK lost before PG LOST; exact retained delayed ReadyTask still reaches current output-loss authority and real child tombstone retry. Pending result/recovery/finish barrier unchanged until exact cleanup. Final known success is LOST without retry; unknown is PG error without consuming retry budget.",
+      "retired_representation": "Two-slot registry resolution, GET/DECIDE/PROGRESS GCS query sequence, frozen global KEEP/DROP vector and exact coordinator wake count retire. B has no central cleanup-final ACK, so lost real child ACK is the current analogous custody boundary, not a claim of identical GCS timing.",
+      "enhanced_pending": "K8 adapt old central final-cleanup ACK loss plus PG LOST dispatch to current enhanced single-output authority, preserve immutable known/unknown resolution and finalization. Existing E owner-client tests are partial references, not this schedule."
+    },
+    {
+      "old_selector": "tests/unit/test_publication_pg_loss_paths.py::test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority",
+      "base_replacement": "tests/unit/test_publication_pg_loss_paths.py::test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority",
+      "retained": "Fresh LOST task never enters execute; retained deferred system-failure continuation reaches actual retry authority; both terminate same attempt with PlacementGroupLostError, zero retry consumption and no remaining finish/unresolved state.",
+      "retired_representation": "Two outputs and exact fixed wake-vector counts retire; this remains routing-only with no claimed physical cleanup.",
+      "enhanced_pending": "Inherit B routing regression and revalidate it with E; no enhancement-only authority needed."
+    }
+  ]
+}

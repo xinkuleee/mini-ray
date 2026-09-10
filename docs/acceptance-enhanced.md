@@ -92,6 +92,6 @@ Core/Node/wire集中和整体阅读成本仍是保留债务，不能把所有现
 
 上文“当前/最终”及377 passed、37smoke均限定固定teaching-enhanced-v0.2 / ce29981a547f83b53b0c1df9f91354dcf89d8e4f；原Git全文在本文件前缀逐字节保留。后继使用从清理B适配的TaskExecution、单value/payload/result、typed待办与scalar snapshot，不恢复旧结果维度。
 
-2026-09-10的隔离enhanced-trial-01候选已实际运行30个pure文件、392 passed / 1 deselected和37个smoke；archive SHA256为babbc024ebed972a8da816cd06a9b7b0634e4bd356f5142faf87d121ee8f2596，identity中的branch/head仍为null。正式E现已从B交付HEAD f9a9b35015f114afda9c87e653b6fedcda2eb0b2 派生；B受测源码为 0a340b792c89667e493f7e7313935e45e29071bf。候选记录仍不替代E同版复验与最终HEAD映射，E tested_source_commit/head_at_acceptance继续待root准确记录。当前状态见[current-status](current-status.md)。
+2026-09-10的隔离enhanced-trial-01候选已实际运行30个pure文件、392 passed / 1 deselected和37个smoke；archive SHA256为babbc024ebed972a8da816cd06a9b7b0634e4bd356f5142faf87d121ee8f2596，identity中的branch/head仍为null。正式E现已从B交付HEAD f9a9b35015f114afda9c87e653b6fedcda2eb0b2 派生；B受测源码为 0a340b792c89667e493f7e7313935e45e29071bf。候选记录仍不替代E同版复验与最终HEAD映射，最终E已在3f5b725fb26390b86c78f085486fb73d897d3e42完成405/1deselected及37smoke、冻结安装；见[整理E验收](../artifacts/cleanup-enhanced/final/acceptance.json)。当前状态见[current-status](current-status.md)。
 
 首次学习继续推荐B。E只研究GCS普通发布事务和全局ObjectID图防环，不因此更接近生产Ray，也不增加HA、持久恢复、owner接管或外部副作用exactly-once承诺。

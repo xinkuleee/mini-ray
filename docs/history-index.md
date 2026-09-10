@@ -1,4 +1,6 @@
-# 基础版B历史资料索引
+# 增强版继承的共同历史资料索引
+
+本页索引从验收B继承的共同历史原文；E自身固定ce29981的协议与126份原证据另见[增强历史账本](acceptance-enhanced.md)及[61份增强增量的原字节导入记录](../artifacts/cleanup-enhanced/historical-artifact-import.json)。共同历史输入仍为下述6910677，不改标为E。
 
 本页索引固定版本中的历史原文；4份过期计划、48份history工作副本已退休，另附5份重写前当前文档。原tag、artifact及Git blob不改写；文件从整理工作副本移除后仍可按下表取回。
 

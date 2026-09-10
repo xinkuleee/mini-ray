@@ -1,0 +1,40 @@
+{
+  "plan_revision": "R2.2",
+  "status": "current_B_exact_cases_passed",
+  "path": "tests/integration/test_stored_outer_publication_path.py",
+  "frozen_sha256": "2b638bf5d389ea5ae4bd65f616d238a6578081a85b5fa7f318de497077c66451",
+  "archive_sha256": {
+    "base": "d7ca2e46974421888864e8f7018c1b8d687fc4e2fcab3603b23d46ca2a66aafc",
+    "enhanced": "d7ca2e46974421888864e8f7018c1b8d687fc4e2fcab3603b23d46ca2a66aafc"
+  },
+  "old_selector": "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_graph_and_collects",
+  "base_replacement": "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects",
+  "retained": [
+    "Real zero-CPU Worker parent submits one child and returns its foreign ObjectRef beside 64KiB padding; exact two real user tasks, one ordinary STORED output.",
+    "Driver imports actual borrower token, reads child from its real Worker owner, and verifies output descriptor size/checksum/owner/publisher/attempt plus exact OwnedContainedSource and outgoing edge.",
+    "After actual task finish barrier, query owner GetOutputHandoff over real owner TCP endpoint; ADOPTED and exact Complete/proof metadata persist. Replay actual Node adoption ACK and verify metadata-only successful lease outcome with no retired envelope.",
+    "Actual GetObject before GC proves checksum/payload; public child close and acknowledged borrower cleanup precede outer close. Actual collection removes metadata/lineage, exact child release replay returns accepted/not released, GetObject proves physical bytes absent.",
+    "Post-GC owner handoff remains exact; local terminal collection metadata binds publication/digest/edge and Node retirement replay cannot recreate bytes. Unconditional shutdown proves 4 child PIDs/5 endpoints gone."
+  ],
+  "retired_E_representation": [
+    "B has no global graph commit/release receipt or GCS output recovery slot-collection history; these are replaced by actual owner handoff/local collection and Node retirement facts.",
+    "K8 preserve E mandatory graph committed\u2192retired alongside same real stored-child lifecycle using current enhanced authority; do not restore ContainedGraph legacy APIs or fabricate child/Complete receipts. Existing test_enhanced_cycle_path three actual cases are references, not B/E normalized equivalence."
+  ],
+  "cost": {
+    "marker": "multiprocess_smoke",
+    "nodes": 1,
+    "workers": 2,
+    "gcs": 1,
+    "children": 4,
+    "endpoints": 5,
+    "tasks": 2,
+    "store_bytes": 1048576,
+    "padding_bytes": 65536,
+    "post_init_work_seconds": 10,
+    "shared_cleanup_seconds": 3,
+    "outer_process_tree_bound_seconds": 30,
+    "no_new_runtime_helpers": true
+  },
+  "validation": "AST and diff-only; no pytest invoked by subtask.",
+  "validation_evidence": "final-targeted-validation.json"
+}

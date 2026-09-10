@@ -1,0 +1,50 @@
+{
+  "path": "tests/unit/test_publication_control_boundary.py",
+  "fixed_sha256": {
+    "base": "a72f108fec926d605d514ad5b0e673238ba64d88a76fd33c252e0018325ad691",
+    "enhanced": "a72f108fec926d605d514ad5b0e673238ba64d88a76fd33c252e0018325ad691"
+  },
+  "status": "written_awaiting_root_bounded_validation",
+  "functions": [
+    {
+      "old": "test_service_uses_only_public_adapter_methods_and_current_callbacks",
+      "disposition": "retire_old_enhanced_adapter_delegation_representation",
+      "base": [
+        "test_output_publication_control.py::test_base_gcs_has_no_ordinary_output_publication_authority_or_routes"
+      ],
+      "reason": "B has no ordinary-result GCS adapter/callback delegation. Preserved membership owner fences have their own existing tests. The old fake PublicOnlyAdapter proves only a retired service interface shape.",
+      "enhanced_pending": "Review current enhanced GCS facade dispatch and current callback binding at K8; do not restore PublicationControlAdapter/public old API."
+    },
+    {
+      "old": "test_reentrant_node_progress_cannot_repeat_the_inflight_child_effect",
+      "disposition": "migrated_current_Core_driver",
+      "base": [
+        "test_publication_control_boundary.py::test_reentrant_node_progress_cannot_repeat_the_inflight_child_effect"
+      ],
+      "reason": "Real Core output-loss ticket prevents synchronous reentry from repeating actual child final/provisional release. Exact two real owner effects, no duplicate work, terminal replay no effect.",
+      "enhanced_pending": "Current E graph cleanup driver needs the analogous in-flight ticket assertion; base Core ticket alone does not establish the old GCS boundary."
+    },
+    {
+      "old": "test_owner_death_during_last_child_ack_fences_old_driver_and_releases_its_ticket",
+      "disposition": "enhanced_global_owner_death_handoff_only",
+      "base": [
+        "test_publication_control_boundary.py::test_reentrant_node_progress_cannot_repeat_the_inflight_child_effect",
+        "test_output_owner_death_node.py::test_inflight_publication_makes_finalize_nonblocking_without_mutation",
+        "test_output_owner_death_node.py::test_worker_cleanup_ack_loss_retains_node_payload_and_replays_exact_request",
+        "test_owner_led_publication.py::test_owner_death_releases_both_holds_then_sources_without_reversing_complete"
+      ],
+      "reason": "After actual logical Core owner death B has no surviving central ordinary-publication driver to choose between two global resolvers. Shared no-duplicate in-flight effect and ticket release after callback error remain current Core/Node tests. The old owner-death takeover of GCS node-loss saga itself is E-only.",
+      "enhanced_pending": "K8 interrupt current enhanced publisher cleanup at last actual child ACK with registered logical-owner death. Old driver must recheck authority, release ticket in finally, owner-death driver finishes without discarding Complete or duplicating already acknowledged obligations. Existing referenced E tests are partial."
+    },
+    {
+      "old": "test_registered_admission_owns_membership_and_intent_lock_cut_for_driver_owner",
+      "disposition": "shared_atomic_admission_migrated_at_B_owner",
+      "base": [
+        "test_publication_control_boundary.py::test_owner_registration_checks_pending_attempt_death_and_manifest_in_one_lock_cut"
+      ],
+      "reason": "B Core state lock covers pending attempt, local publisher death, accepted execution and exact owner manifest registration/replay; no GCS membership/INTENT pair is added.",
+      "enhanced_pending": "K8 preserve current enhanced BeginPublication membership+admission lock cut for unmanaged/driver owner; exact old lock names and callback public method shapes retire."
+    }
+  ],
+  "cost": "2 pure cases, one accepted Core, one child owner, at most two release callbacks, no runtime constructor/thread/process/socket/timer/wait."
+}

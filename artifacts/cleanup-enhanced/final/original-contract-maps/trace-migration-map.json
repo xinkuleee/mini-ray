@@ -1,0 +1,210 @@
+{
+  "plan_revision": "R2.2",
+  "status": "current_B_exact_cases_passed",
+  "files": [
+    {
+      "path": "tests/unit/test_trace_contract.py",
+      "frozen_sha256": "82acf423651b92df01d5f8d22324db70cae42227c93f794e5e3249f213676a83",
+      "archives": {
+        "base": "5743958033b82fd5bca674a63437f231d2e3171f7a53bbac2b206421cd9d04a0",
+        "enhanced": "5743958033b82fd5bca674a63437f231d2e3171f7a53bbac2b206421cd9d04a0"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_packaged_contracts_match_semantics_without_comparing_runtime_ids_or_time",
+          "old_line": 338,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_packaged_contracts_match_semantics_without_comparing_runtime_ids_or_time",
+          "retained": "Both packaged success/application-error contracts match shuffled synthetic input with arbitrary timestamps; concrete volatile IDs are bindings, not golden literals.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_renderer_is_a_stable_teaching_sequence_not_a_raw_trace_dump",
+          "old_line": 362,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_renderer_is_a_stable_teaching_sequence_not_a_raw_trace_dump",
+          "retained": "Exact current base render order: Worker prepare encloses Node\u2192OwnerService registration; local Complete/release before owner-ready, Node retirement before task finished/object ready. No GCS ordinary publication stages or volatile IDs.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_application_error_contract_rejects_retry_or_system_failure",
+          "old_line": 420,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_application_error_contract_rejects_retry_or_system_failure",
+          "retained": "Application error excludes system retry and renders no ordinary publication stages.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_contract_rejects_rpc_name_match_without_concrete_cross_process_edge",
+          "old_line": 441,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_contract_rejects_rpc_name_match_without_concrete_cross_process_edge",
+          "retained": "Same handler name without sent\u2192received concrete cross-process cause edge cannot match.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_success_contract_requires_each_publication_fact",
+          "old_line": 500,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_success_contract_requires_each_publication_fact",
+          "retained": "Each actually required B fact (local Complete, owner-ready, payload-retired) is mandatory; retired GCS stages not invented.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_transport_ok_does_not_replace_accepted_publication_facts",
+          "old_line": 516,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_transport_ok_does_not_replace_accepted_publication_facts",
+          "retained": "Transport ok cannot replace local released=True, COMPLETED, or exactly one ready output. Generic accepted=False negative retained in additional explicitly synthetic semantic-ACK test.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_other_publication_ack_cannot_substitute_or_hide_the_selected_report",
+          "old_line": 533,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_other_publication_ack_cannot_substitute_or_hide_the_selected_report",
+          "retained": "Foreign task/attempt/lease/digest retirement fact cannot substitute for selected publication; valid original plus unrelated echo still matches original exact reply cause.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_publication_rpc_requires_its_exact_ack_and_server_cause_chain",
+          "old_line": 567,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_publication_rpc_requires_its_exact_ack_and_server_cause_chain",
+          "retained": "Current handoff/Complete/retirement RPCs reject wrong receive/send, reply/receive and local fact/handler cause chains.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_publication_round_trip_cannot_mix_different_rpc_ids",
+          "old_line": 581,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_publication_round_trip_cannot_mix_different_rpc_ids",
+          "retained": "Current handoff/Complete/retire received/reply endpoints cannot mix RPC IDs.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_publication_stages_cannot_be_reversed_inside_valid_round_trips",
+          "old_line": 595,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_publication_stages_cannot_be_reversed_inside_valid_round_trips",
+          "retained": "Valid round trips still cannot move owner-ready after retirement request or payload-retired after task finish.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_publication_stages_select_four_distinct_request_edges",
+          "old_line": 606,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_publication_stages_select_distinct_current_base_request_edges",
+          "retained": "Distinct physical request edges retained for current B register-handoff, local Complete and payload-retire; constant four GCS stages retires.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_valid_duplicate_report_keeps_its_own_reply_ack_and_does_not_supply_other_stages",
+          "old_line": 620,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_valid_duplicate_report_keeps_its_own_reply_ack_and_does_not_supply_other_stages",
+          "retained": "Valid duplicate retirement round trip keeps its own causal payload-retired anchor and cannot supply handoff/Complete edges.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_one_request_edge_cannot_satisfy_two_rpc_rules",
+          "old_line": 635,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_one_request_edge_cannot_satisfy_two_rpc_rules",
+          "retained": "One exact register request cannot satisfy a second duplicate RPC rule.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_semantic_rpc_schema_rejects_non_event_anchor_or_non_round_trip",
+          "old_line": 668,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_semantic_rpc_schema_rejects_non_event_anchor_or_non_round_trip",
+          "retained": "Generic synthetic schema rejects nonexistent/non-event or no-roundtrip semantic anchors.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_render_schema_accepts_explicit_request_and_reply_endpoints",
+          "old_line": 678,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_render_schema_accepts_explicit_request_and_reply_endpoints",
+          "retained": "Generic schema supports explicit request_sent/reply_received render endpoints.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_render_schema_rejects_unknown_duplicate_or_unavailable_endpoints",
+          "old_line": 693,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_render_schema_rejects_unknown_duplicate_or_unavailable_endpoints",
+          "retained": "Unknown/duplicate/unavailable render endpoints rejected.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_nested_prepare_and_push_require_their_business_fact_in_the_explicit_span",
+          "old_line": 711,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_nested_prepare_and_push_require_their_business_fact_in_the_explicit_span",
+          "retained": "Current Complete and Push have actual B server fact anchors. Wrong handler-start/finish causes reject even unchanged process timing. Old Prepare-arm anchor is not in B golden; its shared-anchor rule preserved by generic synthetic nested schema.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_prepare_and_nested_arm_keep_the_same_ack_despite_an_earlier_independent_echo",
+          "old_line": 725,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_prepare_and_nested_handoff_reject_an_earlier_independent_echo",
+          "retained": "Generic explicit synthetic nested ACK schema selects same semantic anchor for outer server_event and inner reply_event, never earlier independent echo. No fabricated B ARM/registration ACK observation.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_ordinary_success_contract_rejects_retry_of_the_selected_task",
+          "old_line": 757,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_ordinary_success_contract_rejects_retry_of_the_selected_task",
+          "retained": "Selected successful ordinary task cannot contain retry event.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_trace_contract.py::test_contract_rejects_duplicate_event_ids_before_they_can_alias_a_causal_edge",
+          "old_line": 771,
+          "base_replacement": "tests/unit/test_trace_contract.py::test_contract_rejects_duplicate_event_ids_before_they_can_alias_a_causal_edge",
+          "retained": "Duplicate event IDs reject before a handoff request edge can alias.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        }
+      ]
+    },
+    {
+      "path": "tests/unit/test_publication_trace_observation.py",
+      "frozen_sha256": "baca828b2029ea0315dffd0c2855d0bdfc7ae8eb32de30992e99d8f9e5a2927d",
+      "archives": {
+        "base": "342f36ee3a4f2ca85075d80831cdbfc4d620854affae096af55e7eed115f88ef",
+        "enhanced": "342f36ee3a4f2ca85075d80831cdbfc4d620854affae096af55e7eed115f88ef"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_publication_trace_observation.py::test_node_observation_preserves_prepare_local_release_and_terminal_outbox",
+          "old_line": 149,
+          "base_replacement": "tests/unit/test_publication_trace_observation.py::test_node_observation_preserves_prepare_local_release_and_terminal_outbox",
+          "retained": "Real Node prepare/register handoff, local Complete/release/replay and pending owner-terminal outbox survive observer RuntimeError/BaseException. Causal scopes restore; exact unreported owner state before local completion, one actual final report; no GCS stage ACK observations.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        },
+        {
+          "old_selector": "tests/unit/test_publication_trace_observation.py::test_core_observation_preserves_ready_adoption_payload_retirement_and_gc",
+          "old_line": 244,
+          "base_replacement": "tests/unit/test_publication_trace_observation.py::test_core_observation_preserves_ready_adoption_payload_retirement_and_gc",
+          "retained": "Actual owner CAS/ready is observed outside Core/owner/Node/journal locks, then real Node payload retirement ACK precedes observation, physical stored bytes remain until actual owner GC. Observation RuntimeError/BaseException cannot consume retry or block terminal/GC.",
+          "enhanced_pending": "At K8 use E own actual golden/stage schema. INTENT/ARM/TERMINAL/ADOPTED semantic ACK causes and observation failure containment must be revalidated on current enhanced protocol; B migration is not equivalent GCS coverage. Generic matcher/schema/causal-edge tests inherit unchanged where version-independent.",
+          "representation_retired": "Old two/mixed slots and four-GCS-stage fixture are not base architecture. No B/E stage normalization or synthetic record presented as actual runtime evidence."
+        }
+      ]
+    }
+  ],
+  "schema_provenance": "B src/miniray/golden_traces/ordinary_task_success.json read directly; selected actual B render and RPC shape retained. Synthetic matcher <200 records; local observation uses real authority replies plus explicitly simulated rpc_reply_received only, not cross-process transport proof.",
+  "extra_shared_negative": "test_trace_contract.py::test_synthetic_semantic_ack_rejects_false_acceptance_despite_transport_success preserves generic false semantic ACK despite transport-ok under a clearly synthetic toy schema.",
+  "cost": "Matcher 21 pure functions; observation 2 funcs/6 pure cases, one 1KiB store/result, max32 observations/callbacks, no user execution/runtime constructor/thread/socket/process/wait.",
+  "case_counts": {
+    "tests/unit/test_trace_contract.py": 52,
+    "tests/unit/test_publication_trace_observation.py": 6
+  },
+  "validation_evidence": "final-targeted-validation.json"
+}

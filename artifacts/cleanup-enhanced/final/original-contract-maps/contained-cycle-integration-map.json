@@ -1,0 +1,53 @@
+{
+  "plan_revision": "R2.2",
+  "path": "tests/integration/test_contained_cycle_control_path.py",
+  "frozen_sha256": "b4027c7fcf00e4fb8e92ca074f123a364239766f39778a312d856153fdc32299",
+  "status": "current_B_exact_cases_passed",
+  "archive_sha256": {
+    "base": "67bbf879eace3ac44bb7bd92d9760f403794e3c6958187a8d9fed11c7b9dd27c",
+    "enhanced": "67bbf879eace3ac44bb7bd92d9760f403794e3c6958187a8d9fed11c7b9dd27c"
+  },
+  "old_selector": "tests/integration/test_contained_cycle_control_path.py::test_registered_unified_graph_rejects_cycle_then_real_owner_gc_releases_container",
+  "old_line": 183,
+  "base_replacement": "tests/integration/test_contained_cycle_control_path.py::test_real_borrowed_driver_child_survives_container_gc_and_exact_handoff_replay",
+  "original_topology_note": "Original fixed file is 1 GCS/1 Node/1 Worker (three children), not two Nodes. Migration retains original topology and lowers no real custody assertion.",
+  "common_preserved": [
+    "Exact registered real Node/Worker incarnation lookup over GCS membership wire, one real tiny Driver put, ordinary Worker task returns Driver-owned child in nested list/dict.",
+    "Actual BorrowedContainedSource transfer/owner route/final hold and absence provisional hold; restored public ObjectRef reads exact child.",
+    "Owner GetOutputHandoff ADOPTED/Complete/proof via real owner endpoint; actual Node adoption ACK replay.",
+    "Close restored handle and outer with shared deadline; actual outer COLLECTED removes exact child final/provisional holds, source remains readable; owner loss/collection metadata exact and Node replay has no new effect; source then COLLECTED.",
+    "Three child PIDs/four endpoints checked after unconditional shutdown even failed body; no source/process/ACK mocking."
+  ],
+  "retired_old_model": [
+    "Two phantom A/B manifests asserted no owner/child/byte/Complete effects; raw INTENT/PREPARE/ABORT old graph controller is retired, not promoted to valid B workload.",
+    "B has no global graph cycle rejection, committed graph history, naked ABORT or per-container graph release. No such authority reintroduced."
+  ],
+  "enhanced_pending": {
+    "required_guarantees": [
+      "R1 current ordinary-result publication transaction",
+      "R3 current global ObjectID edge cycle rejection over supported reachable entries"
+    ],
+    "current_fixed_E_refs": [
+      "tests/integration/test_enhanced_cycle_path.py::test_public_put_and_task_graphs_commit_then_release",
+      "tests/integration/test_enhanced_cycle_path.py::test_public_reconstruction_rejects_reachable_two_object_cycle",
+      "tests/integration/test_enhanced_cycle_path.py::test_concurrent_real_reservations_reject_one_four_object_cycle"
+    ],
+    "limit": "References are fixed E archived actual public-path tests, to adapt/revalidate on real teaching-enhanced K8/K9. Keep prepared-reservation inverse rejection, cleanup-before-reopen and committed edges released only after actual child cleanup; do not revive phantom multi-publication/legacy ABORT protocol."
+  },
+  "bounds": {
+    "marker": "multiprocess_smoke",
+    "post_init_work_seconds": 12,
+    "cleanup_seconds_shared": 3,
+    "max_condition_polls": 128,
+    "outer_deadline_seconds": 30,
+    "store_bytes": 1048576,
+    "tasks": 1,
+    "puts": 1,
+    "nodes": 1,
+    "workers": 1,
+    "children": 3,
+    "endpoints": 4
+  },
+  "validation": "AST/static only; subtask does not invoke pytest.",
+  "validation_evidence": "final-targeted-validation.json"
+}

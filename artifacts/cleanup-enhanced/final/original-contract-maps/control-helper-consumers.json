@@ -1,0 +1,48 @@
+{
+  "provider": "tests/unit/test_output_publication_control.py",
+  "helpers_preserved": [
+    "_Server",
+    "_no_runtime",
+    "_service"
+  ],
+  "consumers_remaining": [
+    {
+      "path": "tests/unit/test_core_output_node_loss.py",
+      "line": 30,
+      "names": [
+        "_service",
+        "_no_runtime"
+      ]
+    },
+    {
+      "path": "tests/unit/test_core_output_surviving_replica.py",
+      "line": 33,
+      "names": [
+        "_Server"
+      ]
+    },
+    {
+      "path": "tests/unit/test_publication_control_boundary.py",
+      "line": 25,
+      "names": [
+        "_no_runtime",
+        "_service"
+      ]
+    },
+    {
+      "path": "tests/unit/test_publication_owner_death_control.py",
+      "line": 39,
+      "names": [
+        "_service"
+      ]
+    },
+    {
+      "path": "tests/unit/test_publication_pg_loss_paths.py",
+      "line": 41,
+      "names": [
+        "_service"
+      ]
+    }
+  ],
+  "note": "Current pure helper imports are preserved. A consumer using old graph/recovery routes still requires its own function-level migration; this report does not claim those files runnable."
+}

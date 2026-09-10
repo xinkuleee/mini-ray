@@ -1,0 +1,119 @@
+{
+  "plan_revision": "R2.2",
+  "status": "pending_K8_K9_enhanced_migration_and_validation",
+  "purpose": "Deduplicated index into exhaustive original-function maps, not new scope or evidence that E work is complete. Existing fixed ce29981 references are historical; real teaching-enhanced must fork accepted B and validate its actual current source.",
+  "groups": [
+    {
+      "id": "E-CENTRAL-LIFECYCLE",
+      "contract": "Current enhanced ordinary-result authority and explicit stage/identity gates",
+      "sources": [
+        "graph-function-map.json",
+        "output-control-map.md",
+        "output-recovery-map.md",
+        "control-boundary-consumer-map.json"
+      ],
+      "work": "Port original valid identity/replay/unknown ACK/early fence contracts to current PublicationAuthority and enhanced GCS facade, including first registered publisher PID/epoch rejection. Verify actual enhanced architecture/routes and metadata-only wire. Do not restore old output_recovery/contained_cycle classes, generic graph RPC aliases, INTENT/ARM convenience receipts, or multi-target slots.",
+      "fixed_reference_files": [
+        "tests/unit/test_enhanced_publication.py",
+        "tests/unit/test_enhanced_publication_control.py",
+        "tests/unit/test_enhanced_node_publication.py"
+      ]
+    },
+    {
+      "id": "E-GLOBAL-CYCLES",
+      "contract": "Prepared union cycle rejection and genuine cleanup before edges retire",
+      "sources": [
+        "graph-function-map.json",
+        "contained-cycle-integration-map.json",
+        "stored-outer-integration-map.json"
+      ],
+      "work": "Adapt supported real put/task/reconstruction graph cases. Confirm self-cycle rejection has zero new graph effect; one supported publication with a safe edge plus cycle-closing edge must reject atomically; prepared inverse cycle remains blocked until actual cleanup. Audit independent single-output publications sharing a child so retirement of one cannot remove the other. No old cross-container batch/targeted guarantee.",
+      "fixed_reference_files": [
+        "tests/unit/test_enhanced_publication.py",
+        "tests/integration/test_enhanced_cycle_path.py"
+      ]
+    },
+    {
+      "id": "E-DEATH-SHUTDOWN",
+      "contract": "Surviving authority fences and drains accepted work under death or closed admission",
+      "sources": [
+        "output-control-map.md",
+        "output-recovery-map.md",
+        "owner-death-consumer-map.md",
+        "preflight-and-fence-control-map.json"
+      ],
+      "work": "Close new enhanced admission while exact accepted report/cleanup continues; preserve truthful late Complete as history without reopening forward permission. Cover shutdown then Node death replay, and one failure after membership commit repaired by exact ALREADY_DEAD replay over two independent single-output publications. Verify actual owner-wide fence before enhanced cleanup/finalization; retain malformed release/finalize ACK and installed independent death proofs. Existing bounded live driver cases remain separately classified.",
+      "fixed_reference_files": [
+        "tests/unit/test_enhanced_publication_control.py",
+        "tests/unit/test_enhanced_owner_retirement.py"
+      ]
+    },
+    {
+      "id": "E-REENTRANT-CLEANUP",
+      "contract": "Callback reentry and old-driver interruption cannot duplicate effects or retain a stuck ticket",
+      "sources": [
+        "control-boundary-consumer-map.json",
+        "core-loss-consumers-map.json",
+        "output-control-map.md"
+      ],
+      "work": "At current enhanced cleanup callback, reentrant progress must not repeat inflight hold release. Logical-owner death arriving with final child ACK fences old Node-loss driver before global mutation and releases its ticket; owner-death driver can finish using exact evidence. Preserve stale-lane ACK error after another lane has finished without reinserting old work.",
+      "fixed_reference_files": [
+        "tests/unit/test_enhanced_publication_control.py",
+        "tests/unit/test_enhanced_owner_client.py"
+      ]
+    },
+    {
+      "id": "E-CUSTODY-RECOVERY-PG",
+      "contract": "Independent bytes and exact Complete survive unknown enhanced metadata acknowledgements",
+      "sources": [
+        "core-loss-consumers-map.json",
+        "pg-loss-consumer-map.json",
+        "output-recovery-map.md",
+        "owner-survivor-and-replica-map.json"
+      ],
+      "work": "Adapt central metadata absent/precomplete contradiction against actual Complete envelope, query-window envelope arrival before immutable custody choice, final cleanup ACK loss then PG LOST dispatch, and owner CAS effect-before-error with no second cleanup. Inherit B common owner-INLINE scratch-custody fix and validated regressions; never use metadata to reconstruct missing bytes or reverse a latched UNKNOWN/DROP.",
+      "fixed_reference_files": [
+        "tests/unit/test_enhanced_owner_client.py",
+        "tests/unit/test_enhanced_node_publication.py"
+      ]
+    },
+    {
+      "id": "E-EXACT-PROOFS",
+      "contract": "Current graph retirement consumes exact unique hold/death proof sets",
+      "sources": [
+        "graph-function-map.json",
+        "owner-retirement-map.md",
+        "owner-retired-fencing-map.json",
+        "owner-terminal-map.md",
+        "owner-survivor-and-replica-map.json"
+      ],
+      "work": "Retain foreign/missing/duplicate and deep-tampered proof negatives at current ClosedContainedHolds/RetireGraph. E proof set permutations remain valid if current protocol treats them as a set; do not import old ordered graph vector oracle. Inherit exact per-hold installed death checks, canonical replica/epoch/lineage identity and detached terminal history.",
+      "fixed_reference_files": [
+        "tests/unit/test_enhanced_publication.py",
+        "tests/unit/test_enhanced_owner_retirement.py"
+      ]
+    },
+    {
+      "id": "E-TRACE",
+      "contract": "Version-specific actual enhanced golden and observation-only failure containment",
+      "sources": [
+        "trace-migration-map.json"
+      ],
+      "work": "Use E own actual stage schema for GCS transaction/graph boundaries. Preserve wrong cause/RPC ID/other publication/false semantic ACK/duplicate event and unique request-edge negatives, plus observer RuntimeError/BaseException without business mutation. Generic synthetic schemas inherit as matcher tests only; do not normalize E to B handoff stages or claim synthetic traces are actual runtime evidence.",
+      "fixed_reference_files": [
+        "src/miniray/golden_traces/ordinary_task_success.json",
+        "tests/unit/test_trace_contract.py",
+        "tests/unit/test_publication_trace_observation.py"
+      ]
+    }
+  ],
+  "do_not_restore": [
+    "multi-return/targeted sibling manifests",
+    "phantom A/B metadata-only graph client with naked ABORT",
+    "old graph receipt enum/alias APIs",
+    "cross-slot TaskSpec equality in single-output owner",
+    "ordered E proof vector when current ClosedContainedHolds is set-semantic",
+    "central GCS publication or global graph in base"
+  ],
+  "base_validation": "All delegated current B tests have exact bounded passing evidence; final same-version gate and branch acceptance remain root responsibilities. See final-targeted-validation.json and per-batch ledgers."
+}

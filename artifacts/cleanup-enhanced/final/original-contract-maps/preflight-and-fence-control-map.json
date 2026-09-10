@@ -1,0 +1,92 @@
+{
+  "status": "current_B_exact_cases_passed",
+  "plan_revision": "R2.2",
+  "files": [
+    {
+      "path": "tests/unit/test_output_owner_resolution_preflight.py",
+      "frozen_sha256": "5b70ade1dd2e1360470105382f127f0c4ab679e4c0dbab794d5b080c2c2b5240",
+      "archive_sha256": {
+        "base": "f6490f0a215c88d3bf75c4b7446633ef4e00304a5dc0e5d8f8b5edb6811061f0",
+        "enhanced": "f6490f0a215c88d3bf75c4b7446633ef4e00304a5dc0e5d8f8b5edb6811061f0"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_output_owner_resolution_preflight.py::test_pristine_unreceived_batch_preserves_incoming_holds_and_canonical_lineage",
+          "old_line": 95,
+          "base_replacement": "tests/unit/test_output_owner_resolution_preflight.py::test_pristine_unreceived_output_preserves_incoming_holds_and_canonical_lineage",
+          "retained": "Known/unknown exact current owner receipt resolves pristine single output preserving incoming local/contained/lineage holds and canonical producer; lost bytes never synthesized and exact history replay immutable. UNKNOWN stores exact _output_loss_receipts and retired-slot fence, but no publication-success receipt or retired-attempt success tombstone. Only known Complete retains publication success metadata.",
+          "retired_representation": "Old two-slot atomic batch representation retires. Last-slot args unequal first-slot canonical spec has no single-output authority comparison; removed that parameter. Incomplete two-slot num_returns maps to foreign TaskSpec task identity against exact one-output manifest. No duplicate TaskSpec authority added.",
+          "enhanced_action": "Inherit current shared owner preflight; E may bind actual enhanced retirement proof, but does not restore old multi-output batch."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_resolution_preflight.py::test_bad_second_unreceived_slot_cannot_erase_metadata_or_partially_resolve_batch",
+          "old_line": 130,
+          "base_replacement": "tests/unit/test_output_owner_resolution_preflight.py::test_bad_unreceived_output_cannot_erase_metadata_or_install_resolution",
+          "retained": "Twelve independently meaningful corruption states preserve owner/history on rejection: bytes,error,canonical stored descriptor,location,edges,missing spec,foreign owner/job/task lineage,LOST,READY,next attempt. Current typed final/provisional cleanup ACKs are explicit reducer inputs.",
+          "retired_representation": "Old two-slot atomic batch representation retires. Last-slot args unequal first-slot canonical spec has no single-output authority comparison; removed that parameter. Incomplete two-slot num_returns maps to foreign TaskSpec task identity against exact one-output manifest. No duplicate TaskSpec authority added.",
+          "enhanced_action": "Inherit current shared owner preflight; E may bind actual enhanced retirement proof, but does not restore old multi-output batch."
+        }
+      ]
+    },
+    {
+      "path": "tests/unit/test_owner_death_fence_control.py",
+      "frozen_sha256": "a2444acf33656478a3678d3c8618787ea1748070c4ad65f7b5177d04175de668",
+      "archive_sha256": {
+        "base": "2e53de824b64c53d16337d7f272a65e0053347e97961765e9df239c591d8ac92",
+        "enhanced": "2e53de824b64c53d16337d7f272a65e0053347e97961765e9df239c591d8ac92"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_owner_death_fence_control.py::test_zero_publication_owner_death_hides_node_until_fence_ack",
+          "old_line": 121,
+          "base_replacement": "tests/unit/test_owner_death_fence_control.py::test_zero_publication_owner_death_hides_node_until_fence_ack",
+          "retained": "Zero output publications still require exact owner-wide Node fence ACK before scheduling; worker death replay and dead registration remain fenced.",
+          "retired_representation": "PublicationControlAdapter/output_recovery and Drain/ProgressPublicationOwnerDeath wrapper replaced by current GCS owner_fence_rpc and DrainOwnerDeathFences. B has no global output transaction.",
+          "enhanced_action": "Shared owner-wide fence behavior inherited in E; original zero-publication late INTENT rejection maps separately to current enhanced BeginPublication dead-owner fence. No B global authority added."
+        },
+        {
+          "old_selector": "tests/unit/test_owner_death_fence_control.py::test_late_node_is_hidden_until_every_historical_fence_is_acked",
+          "old_line": 176,
+          "base_replacement": "tests/unit/test_owner_death_fence_control.py::test_late_node_is_hidden_until_every_historical_fence_is_acked",
+          "retained": "Late Node must ACK every historical owner fence before public/internal Node snapshots expose it to actor/PG scheduling.",
+          "retired_representation": "PublicationControlAdapter/output_recovery and Drain/ProgressPublicationOwnerDeath wrapper replaced by current GCS owner_fence_rpc and DrainOwnerDeathFences. B has no global output transaction.",
+          "enhanced_action": "Shared owner-wide fence behavior inherited in E; original zero-publication late INTENT rejection maps separately to current enhanced BeginPublication dead-owner fence. No B global authority added."
+        },
+        {
+          "old_selector": "tests/unit/test_owner_death_fence_control.py::test_process_exit_node_death_discharges_unreachable_fence",
+          "old_line": 221,
+          "base_replacement": "tests/unit/test_owner_death_fence_control.py::test_process_exit_node_death_discharges_unreachable_fence",
+          "retained": "Actual PROCESS_EXIT Node death discharges only unreachable target fence, surviving target remains pending; network failure alone not death.",
+          "retired_representation": "PublicationControlAdapter/output_recovery and Drain/ProgressPublicationOwnerDeath wrapper replaced by current GCS owner_fence_rpc and DrainOwnerDeathFences. B has no global output transaction.",
+          "enhanced_action": "Shared owner-wide fence behavior inherited in E; original zero-publication late INTENT rejection maps separately to current enhanced BeginPublication dead-owner fence. No B global authority added."
+        },
+        {
+          "old_selector": "tests/unit/test_owner_death_fence_control.py::test_live_progress_thread_retries_nonterminal_owner_sweep",
+          "old_line": 257,
+          "base_replacement": "tests/unit/test_owner_death_fence_control.py::test_live_progress_thread_retries_nonterminal_owner_sweep",
+          "retained": "Original bounded live progress thread retries exact PINNED sweep until ACK, stops and joins owned thread. Preserved loopback_smoke, not relabelled pure.",
+          "retired_representation": "PublicationControlAdapter/output_recovery and Drain/ProgressPublicationOwnerDeath wrapper replaced by current GCS owner_fence_rpc and DrainOwnerDeathFences. B has no global output transaction.",
+          "enhanced_action": "Shared owner-wide fence behavior inherited in E; original zero-publication late INTENT rejection maps separately to current enhanced BeginPublication dead-owner fence. No B global authority added."
+        },
+        {
+          "old_selector": "tests/unit/test_owner_death_fence_control.py::test_gcs_owner_wide_effect_drives_real_node_handler_and_deletes_bytes",
+          "old_line": 307,
+          "base_replacement": "tests/unit/test_owner_death_fence_control.py::test_gcs_owner_wide_effect_drives_real_node_handler_and_deletes_bytes",
+          "retained": "GCS exact owner-wide request drives real Node handler and in-memory ObjectStore deletion; lock released across callback, replica history and ABSENT proof retained.",
+          "retired_representation": "PublicationControlAdapter/output_recovery and Drain/ProgressPublicationOwnerDeath wrapper replaced by current GCS owner_fence_rpc and DrainOwnerDeathFences. B has no global output transaction.",
+          "enhanced_action": "Shared owner-wide fence behavior inherited in E; original zero-publication late INTENT rejection maps separately to current enhanced BeginPublication dead-owner fence. No B global authority added."
+        }
+      ]
+    }
+  ],
+  "selectors": {
+    "tests/unit/test_output_owner_resolution_preflight.py": "26 pure cases",
+    "tests/unit/test_owner_death_fence_control.py": "4 exact pure functions separately plus exact loopback_smoke test_live_progress_thread_retries_nonterminal_owner_sweep"
+  },
+  "cost": "Preflight one owner/output with explicit metadata, no runtime. Fence pure one GCS captured server at most two Nodes+one Worker; one 128KiB in-memory store, no sockets. Existing live case one owned thread, 2s completion wait + max100x10ms bounded poll and stop/join.",
+  "preflight_validation_correction": {
+    "evidence": "execution/base-k3m-01/005-case.log",
+    "result": "25 passed, one assertion failed because UNKNOWN correctly had no publication success receipt. Only that oracle was corrected conditionally; exact loss receipt, cleanup proof, incoming refs, lineage and replay state comparisons unchanged. No source change."
+  },
+  "validation_evidence": "final-targeted-validation.json"
+}

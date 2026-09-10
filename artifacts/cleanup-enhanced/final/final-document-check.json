@@ -1,0 +1,17 @@
+{
+  "scope": "Top-level current Markdown documents and README local link targets only; no network or tests",
+  "editions": {
+    "base": {
+      "documents": 15,
+      "relative_targets_checked": 753,
+      "missing": []
+    },
+    "enhanced": {
+      "documents": 16,
+      "relative_targets_checked": 784,
+      "missing": []
+    }
+  },
+  "enhanced_historical_prefix_sha256": "b52823e640af49b4e50fb9dd3e25851be4098fefca297d9b45a2e68530fbf6d1",
+  "final_install_identity_matches_frozen_source": true
+}

@@ -1,0 +1,34 @@
+{
+  "edition": "enhanced",
+  "status": "accepted with finite current-branch evidence",
+  "branch_ref": "refs/heads/teaching-enhanced",
+  "historical_start_commit": "ce29981a547f83b53b0c1df9f91354dcf89d8e4f",
+  "fork_point_commit": "f9a9b35015f114afda9c87e653b6fedcda2eb0b2",
+  "base_tested_source_commit": "0a340b792c89667e493f7e7313935e45e29071bf",
+  "runtime_implementation_commit": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+  "tested_source_commit": "3f5b725fb26390b86c78f085486fb73d897d3e42",
+  "head_at_acceptance": "3f5b725fb26390b86c78f085486fb73d897d3e42",
+  "source_archive_sha256": "4790883c8912f48afac88856825bb00dc3ce838dfaeec328eb79e7b6b82d1232",
+  "runtime_result": "405 passed, 1 deselected; 37 of 37 exact smokes passed first attempt, including seven original mains",
+  "original_contract_closure": "Seven original K3 enhanced groups dispositioned with bounded current-runtime evidence and explicit non-equivalent retired shapes; not a claim that all338 reviewed selectors ran",
+  "source_after_implementation": "Final contract batch changes tests, review hashes and documentation only; runtime source remains byte-equivalent in Git to dbc504c",
+  "environment": "Docker Desktop WSL Linux; Python3.12.13, uv0.11.26, frozen dependencies; CHECKED_HASH source bytecode cache, original startup/test bounds unchanged",
+  "installation": "Fresh isolated uv lock --check and uv sync --frozen --extra test, pip check/freeze and outside-project installed import passed on the same frozen final source",
+  "statistics": {
+    "source_python_files": 59,
+    "source_physical_lines": 60019,
+    "source_code_lines": 49138
+  },
+  "non_equivalence": "E adds ordinary GCS publication and global cycle admission; terminal success knowledge cannot recover bytes; INTENT/ARM are not success; B has no such central guarantees",
+  "failure_history": "Earlier K8 fixture failures and K9 trace57/1 failure remain preserved with subsequent passing evidence; no runtime validation, bounds or fault semantics weakened",
+  "following_commit_rule": "Only documentation/evidence may follow this tested commit. Final delivery maps actual B/E HEADs and verifies no execution-input changes; later HEAD is not relabeled directly tested",
+  "evidence_path_map": {
+    "audit/two-version-cleanup/execution/enhanced-final-02": "runtime",
+    "audit/two-version-cleanup/install/enhanced-final-02": "install",
+    "audit/two-version-cleanup/execution/enhanced-*": "prior/enhanced-*",
+    "audit/two-version-cleanup/k3-central-test-migration": "original-contract-maps",
+    "mini-ray-enhanced/artifacts/cleanup-enhanced/enhanced-k8-*": "../enhanced-k8-*",
+    "audit/two-version-cleanup/install/enhanced-final-01": "prior/enhanced-final-01-install"
+  },
+  "remote": "Local branches and acceptance only; no push or remote CI execution"
+}

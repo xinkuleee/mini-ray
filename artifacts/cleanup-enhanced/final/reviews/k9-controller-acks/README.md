@@ -1,0 +1,11 @@
+# Current controller malformed-finalization ACK contract
+
+This one-file audit patch maps the original `owner-death-consumer-map.md` promise for `test_exact_child_ack_loss_and_invalid_finalize_ack_keep_cleanup_replayable` to the current E GCS-to-Node `FinalizeOutputOwnerDeathReply` boundary. Existing Node-to-Worker malformed reply tests are adjacent evidence and are not substituted for this controller boundary.
+
+One new parameterized function adds exactly two cases: `wrong-request` and `invalid-closed-hold`. Each uses the existing real GCS membership/authority fixture, one live registered publisher, one remote logical owner, one borrowed child and a one-byte INLINE output. Actual child prepare/promote calls and real Node prepare/Complete handlers establish the journal and lease facts. A narrow Worker instance retains the actual output envelope and its real finalization handler disposes of that custody. No process starts and no dead Core callback is invoked: only the remote logical owner receives a committed membership death.
+
+The first actual child Release ACK is lost, leaving Node result custody and controller duty intact. Exact replay settles the two hold identities, then the real Node finalization reply is deep-copied and corrupted only at the outer controller transport boundary. The controller must retain pending work, clear its inflight ticket, reject graph retirement and preserve Complete history even though Node/Worker cleanup already occurred. A third exact request replays the real Node reply without repeating child or Worker effects. Real owner-wide sweep progress and RetireGraph then close the same actual closed-hold proofs.
+
+All 13 original function ASTs are preserved. Two cases do not expand into a general fault matrix. Existing `test_forged_child_death_is_rejected_before_retirement` supplies the independently registered-death negative; graph proof foreign/missing/duplicate/deep-tamper cases remain in `test_enhanced_publication.py`. This patch makes no broader release-RPC boundary claim.
+
+Only the audit-staged test changes. No runtime/source/base/formal files or manifests were edited. AST/compile-only verification and exact SHA256 inputs are in `source-review.json`; parent owns installation, frozen execution and final plan disposition.

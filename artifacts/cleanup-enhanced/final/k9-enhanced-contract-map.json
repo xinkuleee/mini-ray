@@ -1,0 +1,1264 @@
+{
+  "status": "ALL_SEVEN_ORIGINAL_GROUPS_DISPOSITIONED_AND_CURRENT_REACHABLE_CONTRACTS_VALIDATED",
+  "plan_revision": "R2.2",
+  "source_index": "audit\\two-version-cleanup\\k3-central-test-migration\\enhanced-migration-index.json",
+  "source_index_sha256": "0362a4e0e116fd53db8e56470419f17d4b699fe0ceff6de112fe94ccb6921ee2",
+  "index_original_status": "pending_K8_K9_enhanced_migration_and_validation",
+  "formal_root": "mini-ray-enhanced",
+  "groups": [
+    {
+      "id": "E-CENTRAL-LIFECYCLE",
+      "original_contract": "Current enhanced ordinary-result authority and explicit stage/identity gates",
+      "original_sources": [
+        "graph-function-map.json",
+        "output-control-map.md",
+        "output-recovery-map.md",
+        "control-boundary-consumer-map.json"
+      ],
+      "status": "closed_current_lifecycle_and_first_admission_contracts",
+      "current_function_mapping": [
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_plain_task_has_all_metadata_stages_but_no_adoption_before_owner_fact",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_begin_binds_complete_identity_and_rejects_rebinding",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_mutated_frozen_nested_wire_is_revalidated_and_returned_copy_cannot_mutate_authority",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_metadata_roundtrip_has_no_payload_and_preserves_exact_request",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_node_publication.py::test_unknown_intent_ack_has_no_child_effect_and_replays_exact_request",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_node_publication.py::test_unknown_arm_ack_keeps_real_preparation_but_does_not_authorize_complete",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_first_begin_rejects_wrong_registered_publisher_incarnation_without_history",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-02",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-02\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        }
+      ],
+      "remaining_or_adapted_limits": [
+        "Current first PID/epoch zero-history negatives now passed in control13. Old adapter/route class names retired; current actual facade retained."
+      ],
+      "disposition_notes": "Do not infer completion from index pending label or four pure file selection alone.",
+      "candidate_patch": "audit/k9-enhanced-control-candidate/enhanced-control.patch",
+      "candidate_patch_status": "applied and bounded tested; see current function exact snapshot evidence",
+      "remaining_or_adapted_limits_before_K9_tests": [
+        "First registered PID/epoch before INTENT had no current negative; control candidate adds test_first_begin_rejects_wrong_registered_publisher_incarnation_without_history.",
+        "Original named authority classes/routes retire; current GCS enhanced_publication facade and PublicationAuthority are actual mechanisms."
+      ]
+    },
+    {
+      "id": "E-GLOBAL-CYCLES",
+      "original_contract": "Prepared union cycle rejection and genuine cleanup before edges retire",
+      "original_sources": [
+        "graph-function-map.json",
+        "contained-cycle-integration-map.json",
+        "stored-outer-integration-map.json"
+      ],
+      "status": "closed_current_supported_cycle_contracts",
+      "current_function_mapping": [
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_prepared_union_rejects_inverse_edge_until_genuine_cleanup",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_self_cycle_rejected_and_two_alias_holds_do_not_hide_cycle",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_self_cycle_rejected_and_two_alias_holds_do_not_hide_cycle",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-01\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_safe_and_cycle_closing_edges_in_one_publication_reject_atomically",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-01\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_retiring_one_independent_publication_preserves_shared_child_membership",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-01\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        }
+      ],
+      "remaining_or_adapted_limits": [
+        "All three identified exact gaps now passed in graph37; current real cycle smokes separately passed final-01. No old multi-target guarantee restored."
+      ],
+      "disposition_notes": "Root/testing_audit prepared these new bounded cases; actual cycle integration three smokes passed final-01, no historical-only acceptance claim.",
+      "candidate_patch": null,
+      "candidate_patch_status": "applied and bounded tested; see current function exact snapshot evidence",
+      "remaining_or_adapted_limits_before_K9_tests": [
+        "Self-cycle original test lacked full before/after zero mutation assertion.",
+        "Same publication safe child plus closing child atomic rejection absent before K9.",
+        "Runtime shared child closed all refs before checks; one-retirement-preserves-other needed new oracle."
+      ]
+    },
+    {
+      "id": "E-DEATH-SHUTDOWN",
+      "original_contract": "Surviving authority fences and drains accepted work under death or closed admission",
+      "original_sources": [
+        "output-control-map.md",
+        "output-recovery-map.md",
+        "owner-death-consumer-map.md",
+        "preflight-and-fence-control-map.json"
+      ],
+      "status": "closed_current_death_shutdown_controller_ACK_and_background_liveness_contracts",
+      "current_function_mapping": [
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_dead_publisher_node_does_not_release_surviving_child_without_actual_ack",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_put_owner_death_releases_real_remote_holds_without_task_complete",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_accurate_terminal_and_commit_survive_executor_death",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_prior_abort_fence_is_not_rebound_by_later_owner_death",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_live_publication_does_not_block_pre_core_drain_but_blocks_final_shutdown",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_owner_retirement.py::test_unproven_or_wrong_child_death_never_partially_retires",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/integration/test_precomplete_output_owner_death_path.py::test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds",
+          "evidence": [
+            {
+              "run": "final-01",
+              "log": "audit/two-version-cleanup/execution/enhanced-final-01/028-smoke.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "actual current background owner-wide fences plus publisher cleanup and clean process shutdown"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_closed_shutdown_accepts_exact_node_death_and_late_terminal_until_cleanup",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-02",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-02\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_membership_commit_failure_replays_both_single_output_publications",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-02",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-02\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/integration/test_output_owner_death_path.py::test_adopted_output_owner_death_cleans_live_executor_and_source_holds",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\002-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "actual adopted owner death live GCS/Node/Worker cleanup; independent evidence from precomplete smoke",
+              "runner_seconds": 12.714,
+              "pytest_seconds": 9.18
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_controller_rejects_malformed_actual_node_finalize_and_retries_exact_cleanup",
+          "parameters": [
+            "wrong-request",
+            "invalid-closed-hold"
+          ],
+          "evidence": [
+            {
+              "run": "enhanced-contracts-05",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-05\\000-case.log",
+              "exit_code": 0,
+              "passed_whole_file_cases": 15,
+              "runner_seconds": 3.175,
+              "pytest_seconds": 1.55,
+              "current_test_raw_matches_snapshot": true,
+              "test_raw_sha256": "6979da11e01408bf29fea92aa5c84f620c4efec2426f286fd7b6a3eebc55f52c",
+              "meaning": "current GCS-to-Node actual child ACK loss and malformed Finalize response rejection, exact replay cleanup"
+            }
+          ]
+        }
+      ],
+      "remaining_or_adapted_limits": [
+        "Current control shutdown/death/ALREADY_DEAD two-publication schedules passed control13 and then complete control15. Current background liveness uses actual precomplete and adopted owner-death process runs, separately from finite fault/reentry safety.",
+        "Exact GCS-controller malformed Node Finalize ACK boundary passed both wrong-request and invalid-closed-hold cases in contracts05. Worker-to-Node adjacent negatives are retained but not mislabeled as this boundary."
+      ],
+      "disposition_notes": "Source controller may retire graph before owner-wide physical sweep but does not mark finished until sweep completes; record architectural boundary, not silent strict-order equivalence. Original dual-saga background mechanism is retired. Its current liveness projection is supported by the real precomplete owner-death smoke (GCS + 2 Nodes/Workers, SIGKILL owner, read-only fence observation, actual child release and Worker Finalize, bytes absent, clean nonforced shutdown), combined with finite fault/ACK-reentry safety tests. The smoke does not inject the old two per-saga background fault parameters; this difference is explicit, not equivalence-by-name. Additionally contracts-03 executed adopted-output-owner-death exact live selector successfully; this checks real GCS RETIRED and child/byte cleanup after an already adopted result.",
+      "candidate_patch": "audit/k9-enhanced-control-candidate/enhanced-control.patch",
+      "candidate_patch_status": "applied and bounded tested; see current function exact snapshot evidence",
+      "remaining_or_adapted_limits_before_K9_tests": [
+        "Control4 candidate adds shutdown then Node-death exact replay and membership-commit fault repaired by ALREADY_DEAD for two single-output publications.",
+        "Original GCS-to-Node invalid Finalize ACK is not the same as current Worker-to-Node negative; current controller validates typed reply/closed holds but exact malformed-boundary scenario has not been evidenced here."
+      ],
+      "final_pending_case": {
+        "candidate": "audit/k9-controller-acks/test_enhanced_publication_control.py",
+        "selector": "tests/unit/test_enhanced_publication_control.py::test_controller_rejects_malformed_actual_node_finalize_and_retries_exact_cleanup",
+        "parameters": [
+          "wrong-request",
+          "invalid-closed-hold"
+        ],
+        "source_contract": "owner-death-consumer-map.md old test_exact_child_ack_loss_and_invalid_finalize_ack_keep_cleanup_replayable",
+        "actual_boundary": "Real Node prepare/Complete, child Release ACK loss, live Worker custody Finalize, actual Node closed_holds then corrupt only GCS-observed reply; exact retry must retire graph",
+        "execution": "passed enhanced-contracts-05 whole file15",
+        "status": "closed"
+      }
+    },
+    {
+      "id": "E-REENTRANT-CLEANUP",
+      "original_contract": "Callback reentry and old-driver interruption cannot duplicate effects or retain a stuck ticket",
+      "original_sources": [
+        "control-boundary-consumer-map.json",
+        "core-loss-consumers-map.json",
+        "output-control-map.md"
+      ],
+      "status": "closed_current_control_reentry_and_ticket__old_dead_owner_Core_callback_shape_retired",
+      "current_function_mapping": [
+        {
+          "selector": "tests/unit/test_core_output_node_loss.py::test_adoption_rpc_error_after_other_lane_finished_cannot_reinsert_old_work",
+          "evidence": []
+        },
+        {
+          "selector": "tests/unit/test_enhanced_owner_client.py::test_w3_owner_ready_and_actual_adoption_survive_unknown_c7_ack_and_early_close",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication_control.py::test_reentrant_cleanup_suppresses_inflight_release_and_lost_ack_releases_ticket",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-02",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-02\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        }
+      ],
+      "remaining_or_adapted_limits": [
+        "Current real control reentry and lost-ACK finally-ticket case passed control13; common two-lane actual adoption ACK/Node-loss case passed K8.",
+        "Old owner-death interruption of a still-running logical-owner Core is not a real surviving-process schedule: actual owner death stops that Core; old separate GCS Node-loss saga no longer exists. No new source bug inferred from continuing a killed process in a mock."
+      ],
+      "disposition_notes": "Current GCS controller reentry/ticket fault passed enhanced-contracts-02. Common live-owner adoption ACK / Node-loss takeover passed actual enhanced K8 two-lane case. Exact C7-specific error-after-finish is not claimed as the same scene: current shared obsolete-lane entry/exit fence is exercised with actual enhanced source at the Node ACK boundary, while C7 ACK-loss safety is exercised by actual enhanced owner-client replay. This is a documented semantic decomposition, not restoration of obsolete dual GCS worksets.",
+      "candidate_patch": "audit/k9-enhanced-control-candidate/enhanced-control.patch",
+      "candidate_patch_status": "applied and bounded tested; see current function exact snapshot evidence",
+      "remaining_or_adapted_limits_before_K9_tests": [
+        "New control callback reentry case uses actual first release, reentry no duplicate, ACK loss, finally ticket clear and exact retry.",
+        "Old two-surviving-GCS-resolver owner death takeover shape no longer exists; current Node-loss runs in logical owner Core, actual owner-process death stops that driver. Do not declare source bug from forcing a dead Core callback to continue.",
+        "Current exact C7 error-after-other-lane-finished remains distinct from common Node ACK tail regression; absence not hidden."
+      ]
+    },
+    {
+      "id": "E-CUSTODY-RECOVERY-PG",
+      "original_contract": "Independent bytes and exact Complete survive unknown enhanced metadata acknowledgements",
+      "original_sources": [
+        "core-loss-consumers-map.json",
+        "pg-loss-consumer-map.json",
+        "output-recovery-map.md",
+        "owner-survivor-and-replica-map.json"
+      ],
+      "status": "closed_current_custody_and_PG_lost_ACK_contracts",
+      "current_function_mapping": [
+        {
+          "selector": "tests/unit/test_enhanced_owner_client.py::test_w3_graph_commit_ack_unknown_owner_still_pending_then_exact_replay_adopts",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_owner_client.py::test_w3_owner_ready_and_actual_adoption_survive_unknown_c7_ack_and_early_close",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_owner_client.py::test_w4_real_reconstruction_retires_old_edges_before_new_attempt_and_gc_preserves_history",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_receipt_loss.py::test_owner_cas_receipt_restores_inline_custody_for_node_loss_after_scratch_cache_disappears",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\003-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "receipt6 full pass"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_receipt_loss.py::test_node_loss_owner_cas_effect_then_error_reuses_resolution_without_second_cleanup",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\003-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "receipt6 full pass"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_node_loss.py::test_enhanced_query_arrival_is_observed_before_immutable_custody_choice",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_node_loss.py::test_enhanced_preterminal_history_cannot_downgrade_actual_complete_custody",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_node_loss.py::test_no_envelope_cleanup_ack_loss_fences_local_state_until_exact_replay",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_node_loss.py::test_old_delayed_completion_cannot_release_current_attempt_input_hold",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_node_loss.py::test_late_envelope_cannot_reverse_a_latched_drop",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_core_output_node_loss.py::test_adoption_rpc_error_after_other_lane_finished_cannot_reinsert_old_work",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_publication_pg_loss_paths.py::test_enhanced_final_graph_cleanup_ack_loss_precedes_pg_lost_finish",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\001-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_publication_pg_loss_paths.py::test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\001-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_publication_pg_loss_paths.py::test_lost_pg_gates_fresh_work_but_routes_deferred_failure_to_retry_authority",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\001-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        }
+      ],
+      "remaining_or_adapted_limits": [
+        "Both original fixture closures are now actual E journal/authority paths and passed: Core11, PG5. Legal preterminal/query-window/final RetireGraph ACK schedules covered.",
+        "Actual local C3 plus central ABSENT is causally impossible in current single surviving in-memory authority: Node requires C0/C1/ARM before C3. This old shape is explicitly retired without fabricated response."
+      ],
+      "disposition_notes": "Keeps old 9 Core cases and 4 PG cases and their names/decorators; no new matrix.",
+      "candidate_patch": "audit/k9-enhanced-custody-candidate/custody-current-enhanced.patch",
+      "candidate_patch_status": "applied and bounded tested; see current function exact snapshot evidence",
+      "remaining_or_adapted_limits_before_K9_tests": [
+        "Current inherited Core/PG fixture was B handcrafted without real C0/C1/ARM; candidate migrates both helpers rather than only registering added cases.",
+        "Adds lawful query-window envelope arrival before custody choice.",
+        "Adds actual local Complete with real central ARMED/preterminal history.",
+        "Adds actual RetireGraph applied then ACK loss followed by real Node/PG loss and exact dispatch replay.",
+        "Old actual Complete plus central ABSENT is impossible under current E Node C3 prerequisites; no second fake authority or clearing introduced. Legal preterminal variant replaces it with explicit causality note."
+      ]
+    },
+    {
+      "id": "E-EXACT-PROOFS",
+      "original_contract": "Current graph retirement consumes exact unique hold/death proof sets",
+      "original_sources": [
+        "graph-function-map.json",
+        "owner-retirement-map.md",
+        "owner-retired-fencing-map.json",
+        "owner-terminal-map.md",
+        "owner-survivor-and-replica-map.json"
+      ],
+      "status": "closed_current_exact_hold_set_contracts",
+      "current_function_mapping": [
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_unrelated_cleanup_and_conflicting_owner_do_not_remove_edges",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_w1_scope_settles_unknown_effects_and_does_not_claim_unattempted_effects",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_recorded_promotion_proves_provisional_retirement_but_final_release_still_required",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "prior prefix only; new appended cases untested at this run"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_owner_retirement.py::test_mutating_nested_death_input_cannot_change_retained_receipt",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "k8-02",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            },
+            {
+              "run": "final-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-final-01\\000-pure.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_enhanced_publication.py::test_closed_hold_proof_set_accepts_permutations_and_rejects_invalid_boundaries",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-01",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-01\\000-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full current file executed at exact snapshot"
+            }
+          ]
+        }
+      ],
+      "remaining_or_adapted_limits": [
+        "Added duplicate/tamper/permutation current-boundary cases passed graph37. Initial proof-set permutations do not imply changed terminal tuple replay acceptance."
+      ],
+      "disposition_notes": "No old ordered graph-vector oracle restored; real installed child death/epoch/lineage are inherited common boundaries.",
+      "candidate_patch": null,
+      "candidate_patch_status": "applied and bounded tested; see current function exact snapshot evidence",
+      "remaining_or_adapted_limits_before_K9_tests": [
+        "Missing exact duplicate release/death and RetireGraph deep-tamper tests were identified and passed to root/testing_audit.",
+        "Initial proof acceptance is set semantic; completed replay keeps exact accepted ClosedContainedHolds tuple, so fresh-equivalent-authority permutation test is correct, not terminal reorder acceptance."
+      ]
+    },
+    {
+      "id": "E-TRACE",
+      "original_contract": "Version-specific actual enhanced golden and observation-only failure containment",
+      "original_sources": [
+        "trace-migration-map.json"
+      ],
+      "status": "closed_current_E_matcher_negatives_and_actual_observation_contracts",
+      "current_function_mapping": [
+        {
+          "selector": "tests/unit/test_trace_contract.py::test_publication_stages_select_distinct_current_enhanced_request_edges",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\004-case.log",
+              "exit_code": 1,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "trace file 57 pass /1 failed synthetic duplicate-retire C7 cause; not full pass"
+            },
+            {
+              "run": "enhanced-contracts-04",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-04\\000-case.log",
+              "exit_code": 0,
+              "runner_seconds": 4.927,
+              "passed_cases": 58,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full E trace matcher58 after synthetic echo C7 cause fix; prior57/1fail preserved"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_trace_contract.py::test_publication_rpc_requires_its_exact_ack_and_server_cause_chain",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\004-case.log",
+              "exit_code": 1,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "trace file 57 pass /1 failed synthetic duplicate-retire C7 cause; not full pass"
+            },
+            {
+              "run": "enhanced-contracts-04",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-04\\000-case.log",
+              "exit_code": 0,
+              "runner_seconds": 4.927,
+              "passed_cases": 58,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full E trace matcher58 after synthetic echo C7 cause fix; prior57/1fail preserved"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_trace_contract.py::test_publication_round_trip_cannot_mix_different_rpc_ids",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\004-case.log",
+              "exit_code": 1,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "trace file 57 pass /1 failed synthetic duplicate-retire C7 cause; not full pass"
+            },
+            {
+              "run": "enhanced-contracts-04",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-04\\000-case.log",
+              "exit_code": 0,
+              "runner_seconds": 4.927,
+              "passed_cases": 58,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full E trace matcher58 after synthetic echo C7 cause fix; prior57/1fail preserved"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_trace_contract.py::test_transport_ok_does_not_replace_accepted_publication_facts",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\004-case.log",
+              "exit_code": 1,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "trace file 57 pass /1 failed synthetic duplicate-retire C7 cause; not full pass"
+            },
+            {
+              "run": "enhanced-contracts-04",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-04\\000-case.log",
+              "exit_code": 0,
+              "runner_seconds": 4.927,
+              "passed_cases": 58,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full E trace matcher58 after synthetic echo C7 cause fix; prior57/1fail preserved"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_trace_contract.py::test_valid_duplicate_report_keeps_its_own_reply_ack_and_does_not_supply_other_stages",
+          "evidence": [
+            {
+              "run": "enhanced-contracts-03",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03\\004-case.log",
+              "exit_code": 1,
+              "current_test_raw_matches_snapshot": false,
+              "meaning": "trace file 57 pass /1 failed synthetic duplicate-retire C7 cause; not full pass"
+            },
+            {
+              "run": "enhanced-contracts-04",
+              "log": "audit\\two-version-cleanup\\execution\\enhanced-contracts-04\\000-case.log",
+              "exit_code": 0,
+              "runner_seconds": 4.927,
+              "passed_cases": 58,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "full E trace matcher58 after synthetic echo C7 cause fix; prior57/1fail preserved"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_publication_trace_observation.py::test_node_observation_preserves_prepare_local_release_and_terminal_outbox",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\007-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        },
+        {
+          "selector": "tests/unit/test_publication_trace_observation.py::test_core_observation_preserves_ready_adoption_payload_retirement_and_gc",
+          "evidence": [
+            {
+              "run": "k8-01",
+              "log": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01\\007-case.log",
+              "exit_code": 0,
+              "current_test_raw_matches_snapshot": true,
+              "meaning": "exact current test file"
+            }
+          ]
+        }
+      ],
+      "remaining_or_adapted_limits": [
+        "Trace matcher58 passed contracts04 after helper-only C7 cause fix; E golden/runtime unchanged. Actual observation callbacks passed K8, actual traces/smokes are separate runtime evidence.",
+        "Synthetic matcher input is not relabeled producer/runtime execution."
+      ],
+      "disposition_notes": "E schema has actual INTENT/PREPARED/ARMED/TERMINAL/COMMITTED/ADOPTED stages, not normalized B stages.",
+      "candidate_patch": null,
+      "remaining_or_adapted_limits_before_K9_tests": [
+        "Trace matcher synthetic cases are matcher-only; actual trace/observation tests and real smokes provide separate runtime claims.",
+        "Final-01 gate does not itself execute every reviewed trace matcher file; exact review status is evidenced separately."
+      ]
+    }
+  ],
+  "evidence_runs": {
+    "k8-01": {
+      "path": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-01",
+      "head": "f9a9b35015f114afda9c87e653b6fedcda2eb0b2",
+      "archive_sha256": "07434e70486d0ac497348211bfebd7a0559c3b7c1b717f6b3511a78ad63df3ea",
+      "runs": 43,
+      "failed_rows": [
+        {
+          "selector": "tests/unit/test_output_publication_node.py",
+          "log": "002-case.log"
+        },
+        {
+          "selector": "tests/unit/test_lease_completion_handshake.py",
+          "log": "006-case.log"
+        }
+      ]
+    },
+    "k8-02": {
+      "path": "mini-ray-enhanced\\artifacts\\cleanup-enhanced\\enhanced-k8-02",
+      "head": "f9a9b35015f114afda9c87e653b6fedcda2eb0b2",
+      "archive_sha256": "212b2c13f8ba5494d95c9a99ef0b38fd1e037fd05d7628c1ddfe90ea27175087",
+      "runs": 3,
+      "failed_rows": []
+    },
+    "final-01": {
+      "path": "audit\\two-version-cleanup\\execution\\enhanced-final-01",
+      "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+      "archive_sha256": "8083cee2e467d2f33b15228ce89609358ab46213dac37cea0cf1128f9703d80a",
+      "runs": 38,
+      "failed_rows": []
+    },
+    "enhanced-contracts-01": {
+      "path": "audit\\two-version-cleanup\\execution\\enhanced-contracts-01",
+      "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+      "archive_sha256": "facd49222289741217b3504e054b0f87526c261d355f8e1c3b9965bff69d0a05",
+      "runs": 1,
+      "failed_rows": []
+    },
+    "enhanced-contracts-02": {
+      "path": "audit\\two-version-cleanup\\execution\\enhanced-contracts-02",
+      "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+      "archive_sha256": "e6bf31f4b510170c90ea894066c1dfd67e509af3a9b2503b0633ef74060e907b",
+      "runs": 1,
+      "failed_rows": []
+    },
+    "enhanced-contracts-03": {
+      "path": "audit\\two-version-cleanup\\execution\\enhanced-contracts-03",
+      "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+      "archive_sha256": "49a0b1a030cd9ed1de662e0023ace10b5448904ef52502d1325663e27dfb6e8e",
+      "runs": 5,
+      "failed_rows": [
+        {
+          "selector": "tests/unit/test_trace_contract.py",
+          "log": "004-case.log"
+        }
+      ]
+    },
+    "enhanced-contracts-04": {
+      "path": "audit\\two-version-cleanup\\execution\\enhanced-contracts-04",
+      "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+      "archive_sha256": "79b5bc1748067ac0183651b3d3f2758ad1e4f84e362b08678ecc5db3f1dad351",
+      "runs": 1,
+      "failed_rows": []
+    },
+    "enhanced-contracts-05": {
+      "path": "audit\\two-version-cleanup\\execution\\enhanced-contracts-05",
+      "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+      "archive_sha256": "4790883c8912f48afac88856825bb00dc3ce838dfaeec328eb79e7b6b82d1232",
+      "runs": 1,
+      "failed_rows": []
+    }
+  },
+  "final01_status_observed": "38 rows: pure +37 smokes all exit0; new K9 appended controls/graph tests are newer and not covered by that frozen archive",
+  "no_new_test_execution": true,
+  "formal_files_not_written_by_this_mapping": true,
+  "last_update": "Live background current mechanism mapped to actual final-01 precomplete owner-death smoke; old dual saga loop not restored.",
+  "observed_recent_results": {
+    "enhanced-contracts-01": "graph37 passed",
+    "enhanced-contracts-02": "control13 passed",
+    "enhanced-contracts-03": "Core11 + PG5 passed"
+  },
+  "remaining_bounded_runs": [],
+  "logical_owner_death_retired_shape_rationale": {
+    "old": "Surviving GCS maintained two independent publication Node-loss and owner-death driver worksets. It was meaningful for its old Node-loss driver to receive an owner-death event during a child ACK and hand off to another surviving global driver.",
+    "current": "Node-loss cleanup executes in the logical owner Core process. When that actual owner process dies, this driver no longer executes. E GCS EnhancedPublicationControl owns surviving owner-death cleanup and its inflight ticket. Running a mocked deceased Core callback after its death report is not the same reachable runtime schedule.",
+    "retained_current_safety": "The actual owner-death GCS control driver reentry/ticket, exact death fence, child ACK loss and cleanup history remain tested. Common Node-ACK tail takeover is a different live-owner schedule and was fixed/tested in both versions.",
+    "not_equivalent": "This is explicit retirement of an obsolete architecture shape, not a claim that pure ticket tests replay both old global saga loops. No new guard is added to animate a dead owner process."
+  },
+  "closure_interpretation": "Closed means each retained reachable current contract is mapped to specific current implementation/tests and exact run evidence, or an obsolete/impossible representation has an explicit non-equivalence rationale. It does not claim every historical scene or class survived verbatim.",
+  "final_closure": {
+    "groups": 7,
+    "unresolved_current_contracts": 0,
+    "registry_scope_claim": "Only named gate/case/smoke runs are claimed; no claim that all338 reviewed selectors executed.",
+    "latest_controller_test_sha256": "6979da11e01408bf29fea92aa5c84f620c4efec2426f286fd7b6a3eebc55f52c",
+    "runtime_source_changed_for_last_contract_batch": false,
+    "historical_failures_preserved": true,
+    "retired_or_impossible_shapes_explicit": true
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "status": "audit-only test patch; installation/execution parent-owned",
+  "validation": "AST/compile and preservation of all 13 original test ASTs passed; no pytest, collection, target imports or runtime execution",
+  "source_input_sha256": "40d914a8b9483f8ef08e58a1ceeebfadb61575da1bb89c393aee067f0f500fd8",
+  "staged_sha256": "6979da11e01408bf29fea92aa5c84f620c4efec2426f286fd7b6a3eebc55f52c",
+  "patch_sha256": "553a5aedafc8221b16b26c2efd7b1a9bc8405ba0c5532695303573f709f87b9f",
+  "original_test_functions": [
+    "test_dead_publisher_node_does_not_release_surviving_child_without_actual_ack",
+    "test_put_owner_death_releases_real_remote_holds_without_task_complete",
+    "test_unmanaged_owner_route_is_bound_but_dead_executor_blocks_new_admission",
+    "test_accurate_terminal_and_commit_survive_executor_death",
+    "test_prior_abort_fence_is_not_rebound_by_later_owner_death",
+    "test_live_publication_does_not_block_pre_core_drain_but_blocks_final_shutdown",
+    "test_clean_shutdown_permanently_rejects_late_new_begin",
+    "test_forged_child_death_is_rejected_before_retirement",
+    "test_dead_owner_progress_rotates_even_when_sweep_is_blocked",
+    "test_closed_shutdown_accepts_exact_node_death_and_late_terminal_until_cleanup",
+    "test_membership_commit_failure_replays_both_single_output_publications",
+    "test_reentrant_cleanup_suppresses_inflight_release_and_lost_ack_releases_ticket",
+    "test_first_begin_rejects_wrong_registered_publisher_incarnation_without_history"
+  ],
+  "added_tests": [
+    "test_controller_rejects_malformed_actual_node_finalize_and_retries_exact_cleanup"
+  ],
+  "new_collected_cases_expected": 2,
+  "parameters": [
+    "wrong-request",
+    "invalid-closed-hold"
+  ],
+  "source_inputs": {
+    "src/miniray/enhanced_publication_control.py": "28fc68d9865dc2701f3a214a0d63265095d81b71138f10740a7db199867136cc",
+    "src/miniray/enhanced_publication.py": "a262879b65b7e54b4d6bcf280b32d7fce081d08351e017f1974870373f681d47",
+    "src/miniray/output_protocol.py": "73a8775ff867bd3d5a8fe7c0224c96a46865849992ad2a072280a778e6259efc",
+    "src/miniray/output_publication_node.py": "71c1a69f6e0a7179625fef21aaa5a8c72e1a4424be18965c4adabc8feb7b112f",
+    "src/miniray/output_publication_journal.py": "6c27c7b28ce5ca33beffbe6d61d3f7fd31682fba17186e07622b31c1baae6312",
+    "src/miniray/node.py": "94db6273b6c779f6d827044b274dee83fc9bdbd71d679287528b207c131c4fa4",
+    "src/miniray/worker.py": "a8b5f68a4355219e0e13712013c253719af4826c7c49467bfbfdb32938dae6ea",
+    "src/miniray/ownership.py": "86619f97fa7718df3b3ad7ca698d37940c68702b4c2b780862f173225a5b4e37",
+    "src/miniray/control.py": "ed4d7258a11fb17a1a3b4cada4064c2189b925f584503b9e5ae06f2918c375e9"
+  },
+  "original_map_sha256": "968e8d60cf3e688b99e15702b03f39505532d6a6afc8860b70715dee9c591265",
+  "original_contract": "test_exact_child_ack_loss_and_invalid_finalize_ack_keep_cleanup_replayable: GCS-to-Node boundary"
+}

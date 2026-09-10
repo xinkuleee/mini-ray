@@ -1,0 +1,30 @@
+[
+  {
+    "path": "tests/unit/test_publication_pg_loss_paths.py",
+    "sha256": "f3d7849072a01dbcc90732ac97f3d52e471d0888280f2ff983fd4f75d1c59ee4"
+  },
+  {
+    "path": "tests/unit/test_publication_control_boundary.py",
+    "sha256": "478e921a0dd7f72666fcc6a6eaffeef2ef13e60c9d7233c531cbb9ce719e3c86"
+  },
+  {
+    "path": "tests/unit/test_publication_owner_death_control.py",
+    "sha256": "5212979acc7f6d7b302315ad9d2e1f5bb0b9226145112943bf309393e52f01fa"
+  },
+  {
+    "path": "tests/unit/test_core_output_node_loss.py",
+    "sha256": "0869e8c0df5b0f822b60c96596c9f6c7fbb2012110f1fc4e0118ab958fc34dc8"
+  },
+  {
+    "path": "tests/unit/test_core_output_receipt_loss.py",
+    "sha256": "0fdb3718cf196d23dae4f46c2d5aa328f4aae2b88776743d4326222bcf76e08a"
+  },
+  {
+    "path": "tests/unit/test_output_owner_retired_fencing.py",
+    "sha256": "ff17ac88e365d3c403474b780b6a97a9fab3d17b5e282a6b7aca37a45b89b175"
+  },
+  {
+    "path": "tests/unit/test_output_owner_terminal_metadata.py",
+    "sha256": "28694238a0e579521cbfe81b55775f0c40ac9ed23f4006ba5a4778e7b3a0fb70"
+  }
+]

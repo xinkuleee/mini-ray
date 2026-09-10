@@ -1,0 +1,186 @@
+{
+  "plan_revision": "R2.2",
+  "status": "written_awaiting_root_bounded_validation",
+  "files": [
+    {
+      "path": "tests/unit/test_output_owner_surviving_replica.py",
+      "fixed_sha256": {
+        "base": "c4d58e383ae4ba3fbb423c2dd40b2de6ae2d4125dd4a8f984e3f456706757313",
+        "enhanced": "c4d58e383ae4ba3fbb423c2dd40b2de6ae2d4125dd4a8f984e3f456706757313"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_survivor_query_filters_publisher_and_unavailable_nodes_without_mutation",
+          "old_line": 141,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_survivor_query_filters_publisher_and_unavailable_nodes_without_mutation",
+          "retained": "Current stored query excludes original publisher and unavailable secondary, preserves deterministic order and owner state. Separate inline owner query returns no physical route; out-of-manifest index rejected.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_survivor_query_never_authorizes_keep_from_fenced_metadata",
+          "old_line": 166,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_survivor_query_never_authorizes_keep_from_fenced_metadata",
+          "retained": "All nine original missing receipt/membership, stale replica/publisher epoch, canonical checksum, pending retirement, retired slot/attempt and collection fences remain non-mutating.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_mixed_keep_preserves_survivor_metadata_and_all_reference_lifetimes",
+          "old_line": 200,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_stored_keep_preserves_survivor_metadata_and_all_reference_lifetimes",
+          "retained": "KEEP preserves exact canonical descriptor, current secondary, incoming local/contained/lineage holds, outgoing child and producer lineage while removing unavailable locations.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_all_stored_keep_needs_adopted_identity_but_no_retained_envelope",
+          "old_line": 221,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_stored_keep_needs_adopted_identity_but_no_retained_envelope",
+          "retained": "STORED KEEP with exact adopted membership needs no retained data-plane envelope; Complete/manifest alone never creates unadopted stored custody.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_stored_keep_loses_last_secondary_after_decision_without_retiring_membership",
+          "old_line": 239,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_stored_keep_loses_last_secondary_after_decision_without_retiring_membership",
+          "retained": "Current immutable KEEP survives last secondary removal/location loss/unavailable-node reduction as LOST membership, not cleanup or regenerated bytes; all three interleavings retained.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_stored_keep_uses_new_current_replica_not_the_decision_time_location",
+          "old_line": 270,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_stored_keep_uses_new_current_replica_not_the_decision_time_location",
+          "retained": "After decision the replacement current replica is selected from current owner locations rather than a stale decision-time route.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_resolution_replay_cannot_resurrect_a_subsequently_lost_secondary",
+          "old_line": 292,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_resolution_replay_cannot_resurrect_a_subsequently_lost_secondary",
+          "retained": "Exact resolution replay after one-location or whole-node loss cannot resurrect replica locations or drop existing membership/history.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_unadopted_stored_keep_rejects_even_an_exact_complete_envelope_atomically",
+          "old_line": 313,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_unadopted_stored_keep_rejects_even_an_exact_complete_envelope_atomically",
+          "retained": "Unadopted STORED KEEP rejects even exact Complete envelope with no partial owner/history mutation.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_inline_keep_still_requires_bytes_even_when_stored_membership_is_adopted",
+          "old_line": 328,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_inline_keep_still_requires_bytes_with_adopted_owner_membership",
+          "retained": "INLINE owner resolution needs explicit independent envelope bytes; a metadata-only KEEP cannot stand in for bytes even with adopted owner membership.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_bad_last_stored_slot_cannot_partially_apply_a_keep_batch",
+          "old_line": 346,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_bad_stored_metadata_cannot_apply_keep_or_mutate_receipts",
+          "retained": "Ten supported negative cases: canonical checksum/publisher, producer epoch, replica epoch, foreign membership, missing membership, collection claim, TaskSpec job contradicting independently frozen publication header, LOST-with-locations and READY-without-locations. Rejection must leave owner state and receipts unchanged.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch. Old last-slot args differing from first-slot canonical TaskSpec is cross-slot equality and has no one-output counterpart. The shared lineage-authority mismatch is migrated to independently bound job identity; no duplicate stored spec added.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_output_owner_surviving_replica.py::test_wrong_publishing_node_death_identity_cannot_apply_stored_keep",
+          "old_line": 387,
+          "base_replacement": "tests/unit/test_output_owner_surviving_replica.py::test_wrong_publishing_node_death_identity_cannot_apply_stored_keep",
+          "retained": "Wrong publishing Node ID/PID/registration epoch or EXPECTED exit rejects at typed receipt or owner boundary with no mutation.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        }
+      ]
+    },
+    {
+      "path": "tests/unit/test_replica_cleanup.py",
+      "fixed_sha256": {
+        "base": "97271574116fa1ffc7a2ff5d2ec405682734cc72f8379dcb8fff00c936b06dca",
+        "enhanced": "97271574116fa1ffc7a2ff5d2ec405682734cc72f8379dcb8fff00c936b06dca"
+      },
+      "functions": [
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_claim_and_exact_receipt_are_distinct_from_pending_or_logical_retirement",
+          "old_line": 39,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_claim_and_exact_receipt_are_distinct_from_pending_or_logical_retirement",
+          "retained": "Queue claim/unclaim and exact terminal ACK are distinct; inflight stays pending for shutdown, repeats cannot recreate settled custody.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_non_receipts_never_release_exact_deletion_custody",
+          "old_line": 61,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_non_receipts_never_release_exact_deletion_custody",
+          "retained": "PINNED/STALE_EPOCH/NODE_DRAINING/INCONSISTENT/REJECTED statuses do not discharge the exact deletion.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_wrong_or_malformed_ack_leaves_pending_identity_unchanged",
+          "old_line": 70,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_wrong_or_malformed_ack_leaves_pending_identity_unchanged",
+          "retained": "Wrong checksum/node/owner/attempt or truthy status does not mutate queue.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_request_and_snapshot_ids_cannot_mutate_queue_custody",
+          "old_line": 91,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_request_and_snapshot_ids_cannot_mutate_queue_custody",
+          "retained": "Caller mutation and mutated query snapshots cannot poison queue identity.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_installed_node_death_discharges_only_that_node_without_fake_drop_ack",
+          "old_line": 105,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_installed_node_death_discharges_only_that_node_without_fake_drop_ack",
+          "retained": "Exact Node death receipt discharges only its own node requests; other node remains; returned IDs detached and EXPECTED exit rejected.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_owner_late_replica_requires_latched_or_applied_retirement_not_current_route",
+          "old_line": 132,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_owner_late_replica_requires_latched_or_applied_retirement_not_current_route",
+          "retained": "Latched rejection or actual Node-loss owner retirement authorizes exact old-epoch Drop; current route alone does not. Old epoch remains deletable after advance, new epoch not inferred.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_mismatched_late_replica_metadata_never_authorizes_a_destructive_request",
+          "old_line": 153,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_mismatched_late_replica_metadata_never_authorizes_a_destructive_request",
+          "retained": "Wrong owner/size/checksum rejects destructive cleanup request with unchanged owner.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        },
+        {
+          "old_selector": "tests/unit/test_replica_cleanup.py::test_active_or_completed_collection_still_admits_only_exact_physical_cleanup",
+          "old_line": 166,
+          "base_replacement": "tests/unit/test_replica_cleanup.py::test_active_or_completed_collection_still_admits_only_exact_physical_cleanup",
+          "retained": "Collection in progress, completed collection, or owner retirement admit only exact frozen old replica cleanup identity.",
+          "retired_representation": "Three-slot mixed/full KEEP and graph release receipt replaced with one current stored/inline owner and NodeLostOutputResolution. No multi-return atomicity or same-task sibling guarantee is added. Parent fixture _case default now explicitly stored single output; caller migrated in same batch.",
+          "enhanced_action": "Inherit and revalidate common owner/queue contract with current E receipt binding. These exact canonical/epoch/deletion negatives do not require a new global graph guarantee."
+        }
+      ]
+    }
+  ],
+  "cases": {
+    "test_output_owner_surviving_replica.py": 34,
+    "test_replica_cleanup.py": 20
+  },
+  "known_counterexample": "Old different-lineage changed one of three slot TaskSpecs while preserving another canonical first slot. Single output has only one authoritative TaskSpec, so cross-slot args equality retires. Current test instead changes its job (and consistent function job) against independently frozen publication.header.job_id. No duplicate TaskSpec authority or new arbitrary-args rejection is required.",
+  "boundary": "Locations and cleanup replies are explicit metadata inputs in owner-only tests, not proof of physical replica health/deletion. Queue has at most two requests; owner at most one output and two secondary locations; no runtime constructors/threads/processes/socket/waits.",
+  "frozen_sha256": {
+    "test_output_owner_surviving_replica.py": "c9856b5465acf193ec6488570c2cfa338f9e4cd81cfec6e7c7bd60a14121d0a8",
+    "test_replica_cleanup.py": "dffe10dc564443ce7917fc94db43593014e2de0932308272b1e2db93adcb7389"
+  }
+}

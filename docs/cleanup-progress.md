@@ -1,11 +1,11 @@
 # 双分支整理执行记录
 
-本页记录[清理计划](project-cleanup-plan.md)的执行，不是另一份计划。
+本页记录[清理计划](project-cleanup-plan.md)的执行，不是另一份计划。顶部为当前摘要；下方按时间保留各检查点当时的待办和失败，不作为当前状态。
 
 - K0完成：teaching-base从固定6910677派生，审计输入提交1a38228。原tag不变。
 - K1完成：单schema2有界gate/迁移入口、CF-001至004公共修复；新入口验证后退休三个旧工具文件。详见[实际记录](../artifacts/cleanup-base/k1/summary.json)。首轮新fixture失败已保存，真实准入修正后12组合case通过。
-- K2/K3低风险检查点已完成；K4继续关闭遗漏夹具并验收正式构造，P1标量化尚在隔离候选。
-- K4至K7未完成；teaching-enhanced尚未创建，须从K7已验收B派生后执行K8至K9。
+- K2至K6已按实施或有据保留现状的处置完成，B的K7已独立验收。
+- E已从验收B交付HEAD f9a9b35015f114afda9c87e653b6fedcda2eb0b2派生并完成K8–K9；两条实际分支继续保留。
 - 未运行远端Actions或发布清理分支。
 
 K1复现修正：registry文本身份只归一CRLF到LF，其它字节变化仍拒绝。新增工具回归31 passed；独立LF副本的两迁移闭包静态验证通过。原始测试artifact不改写。
@@ -87,3 +87,5 @@ K7基础版独立验收完成：clean源码0a340b792c89667e493f7e7313935e45e2907
 K8正式分支已创建：refs/heads/teaching-enhanced从B交付HEAD f9a9b35015f114afda9c87e653b6fedcda2eb0b2派生，B实测源码仍为0a340b792c89667e493f7e7313935e45e29071bf。E按具体hunk接入中央发布与全局图，继承单结果/typed工作/窄ACK及公共adoption-loss尾修复。原E新增61份artifact已按固定Git字节导入，原历史不变。隔离enhanced-trial-01的pure392/1deselected与37smoke全过仅属于该候选；正式E当前HEAD及28份E测试/helper增量需自身重新验证，K9尚未完成。
 
 K8增强增量接入并完成有限实际回归：正式E继承B全部清理/公共修复，启用真实C0–C7/graph和闭包收据；新增post-C5/pre-owner put死亡例验证不重绑已提交物化，pure393/1deselected通过。共同two-lane2、Node35/Worker75/sameowner12/finish11/lease6/trace6/foreignwait5及PG、supervisor注册场景通过；保两次ACTIVE-only preparation测试观察错误失败和修正。原E61份artifact已原字节保留。下一步固定正式E源码提交，运行本分支最终30pure/37smoke与安装校验；候选通过不冒充最终HEAD。
+
+K9双分支收尾完成：B实测0a340b792c89667e493f7e7313935e45e29071bf的343/1deselected、32/32smoke与冻结安装保持独立验收；E实测3f5b725fb26390b86c78f085486fb73d897d3e42的405/1deselected、37/37smoke同版首次全部通过，包含七main，冻结安装通过。原K3增强七组合同已逐项迁移或有据退休；GCS→Node坏Finalize ACK两例采用真实Node/Worker/child效果与精确重放。Core11、PG5、receipt6、trace58及实际owner死亡等补充证据各归准确候选，不称全部338注册项均已执行。trace旧57/1失败和K8夹具失败保留，运行时校验未弱化。各分支artifacts/cleanup-*/final/acceptance.json记录实测身份；随后仅文档/证据提交，实际交付HEAD由工作区audit/two-version-cleanup/delivery.json核对。main仅追加导航，不维护第三个整理运行时；本轮未推送或运行远端CI。

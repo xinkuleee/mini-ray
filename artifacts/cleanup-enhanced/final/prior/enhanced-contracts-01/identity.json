@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-enhanced",
+  "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+  "working_tree_status": " M docs/acceptance-baseline.md\n M docs/project-cleanup-index.md\n M docs/retirement-inventory.md\n M scripts/baseline_manifest.json\n M tests/unit/test_enhanced_publication.py\n",
+  "archive_sha256": "facd49222289741217b3504e054b0f87526c261d355f8e1c3b9965bff69d0a05",
+  "file_count": 433,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

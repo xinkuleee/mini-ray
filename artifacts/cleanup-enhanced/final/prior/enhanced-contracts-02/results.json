@@ -1,0 +1,15 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_enhanced_publication_control.py",
+    "exit_code": 0,
+    "seconds": 3.303,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/enhanced-contracts-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_enhanced_publication_control.py"
+    ],
+    "log": "000-case.log"
+  }
+]

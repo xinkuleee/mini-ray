@@ -1,0 +1,208 @@
+--- a/tests/unit/test_enhanced_publication.py
++++ b/tests/unit/test_enhanced_publication.py
+@@ -4,6 +4,8 @@
+ They do not claim a Worker executed, a Node journal observed an ACK, or a live
+ application formed a cycle. Runtime tests establish those separate boundaries.
+ Every test uses at most four graph objects and two children per publication.
++The graph isolation and closed-proof cases below execute actual child-table
++prepare/promote/release transitions; they still claim no scheduled runtime.
+ """
+ from dataclasses import fields, is_dataclass, replace
+ import hashlib
+@@ -20,7 +22,7 @@
+     OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
+ )
+ from miniray.output_publication_journal import OutputPublicationAdoptionProof
+-from miniray.ownership import StoredContainedReferenceDisposition as PinDisposition
++from miniray.ownership import ObjectOwnerTable, StoredContainedReferenceDisposition as PinDisposition
+ from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
+ from miniray.put_handoff import PutManifest
+ from miniray.task_outputs import TaskExecution
+@@ -114,6 +116,30 @@
+     _ok(authority, FencePublication(publication, OwnerAbortReceipt(publication.reference, OWNER, "abort-1")))
+     closed = ClosedContainedHolds(publication.reference, _releases(publication), rollback_scope=scope)
+     return _ok(authority, RetireGraph(closed))
++
++
++def _prepare_live_holds(publication, table, indices=None):
++    for transfer in publication.transfers:
++        if not table.contains(transfer.contained_object_id):
++            table.register(transfer.contained_object_id, local_token="graph-test-source")
++    indices = range(len(publication.transfers)) if indices is None else indices
++    for index in indices:
++        transfer = publication.transfers[index]
++        assert table.prepare_stored_contained_reference(
++            transfer, authority_worker_id=transfer.contained_owner_worker_id) is PinDisposition.PREPARED
++        assert table.promote_stored_contained_reference(
++            transfer, authority_worker_id=transfer.contained_owner_worker_id) is PinDisposition.PROMOTED
++
++
++def _release_live_holds(publication, table):
++    replies = []
++    for transfer in publication.transfers:
++        for hold in (transfer.final_hold, transfer.provisional_hold):
++            released = table.release_contained_reference(transfer.contained_object_id, hold)
++            assert table.contained_release_was_seen(transfer.contained_object_id, hold)
++            replies.append(protocol.ReleaseContainedReferenceReply(
++                transfer.contained_object_id, transfer.contained_owner_worker_id, hold, True, released))
++    return tuple(replies)
+ 
+ 
+ def test_plain_task_has_all_metadata_stages_but_no_adoption_before_owner_fact():
+@@ -191,9 +217,73 @@
+ 
+ def test_self_cycle_rejected_and_two_alias_holds_do_not_hide_cycle():
+     authority, publication = PublicationAuthority(), _task(10, (_object(10), _object(10)))
+-    _ok(authority, BeginPublication(publication))
++    before = _ok(authority, BeginPublication(publication)).snapshot
++    all_before = authority.snapshots()
+     reply = authority.apply(PrepareGraph(publication.reference))
+     assert not reply.accepted and reply.error_kind is PublicationErrorKind.CYCLE
++    assert reply.snapshot == before and authority.snapshots() == all_before
++    assert not reply.snapshot.graph_active and reply.snapshot.receipt(PublicationStage.PREPARED) is None
++
++
++def test_safe_and_cycle_closing_edges_in_one_publication_reject_atomically():
++    authority, children = PublicationAuthority(), ObjectOwnerTable()
++    existing = _task(11, (_object(10),))
++    candidate = _task(10, (_object(12), _object(11)))
++    inverse_safe = _task(12, (_object(10),))
++    _begin(authority, existing)
++    _prepare_live_holds(existing, children)
++    admitted = _ok(authority, BeginPublication(candidate)).snapshot
++    before = authority.snapshots()
++    rejected = authority.apply(PrepareGraph(candidate.reference))
++    assert not rejected.accepted and rejected.error_kind is PublicationErrorKind.CYCLE
++    assert rejected.snapshot == admitted and authority.snapshots() == before
++    assert not rejected.snapshot.graph_active
++    assert rejected.snapshot.receipt(PublicationStage.PREPARED) is None
++    # This actual inverse reservation would close a cycle if candidate's
++    # safe first edge had leaked before rejection of its second edge.
++    assert _begin(authority, inverse_safe).snapshot.graph_active
++    _prepare_live_holds(inverse_safe, children)
++    for publication in (existing, inverse_safe):
++        _ok(authority, FencePublication(publication, OwnerAbortReceipt(publication.reference, OWNER, "abort")))
++        closed = ClosedContainedHolds(publication.reference, _release_live_holds(publication, children))
++        assert not _ok(authority, RetireGraph(closed)).snapshot.graph_active
++    _ok(authority, FencePublication(candidate, OwnerAbortReceipt(candidate.reference, OWNER, "rejected")))
++    scope = TaskRollbackScope(candidate.reference, "no-child-effects", (), (), False)
++    _ok(authority, RetireGraph(ClosedContainedHolds(candidate.reference, rollback_scope=scope)))
++    assert not children.snapshot(_object(10)).contained_holds
++    assert all(not snapshot.graph_active for snapshot in authority.snapshots())
++
++
++def test_retiring_one_independent_publication_preserves_shared_child_membership():
++    authority, children = PublicationAuthority(), ObjectOwnerTable()
++    first, second = _task(10, (_object(12),)), _task(11, (_object(12),))
++    inverse_second = _task(12, (_object(11),))
++    for publication in (first, second):
++        _begin(authority, publication)
++        _prepare_live_holds(publication, children)
++    first_hold, second_hold = first.transfers[0].final_hold, second.transfers[0].final_hold
++    assert children.snapshot(_object(12)).contained_holds == frozenset((first_hold, second_hold))
++    second_before = authority.query(GetPublication(second.reference)).snapshot
++    _ok(authority, BeginPublication(inverse_second))
++    assert authority.apply(PrepareGraph(inverse_second.reference)).error_kind is PublicationErrorKind.CYCLE
++    _ok(authority, FencePublication(first, OwnerAbortReceipt(first.reference, OWNER, "first-abort")))
++    closed_first = ClosedContainedHolds(first.reference, _release_live_holds(first, children))
++    retired_first = _ok(authority, RetireGraph(closed_first))
++    assert not retired_first.snapshot.graph_active
++    assert authority.query(GetPublication(second.reference)).snapshot == second_before
++    assert children.snapshot(_object(12)).contained_holds == frozenset((second_hold,))
++    assert not children.contained_release_was_seen(_object(12), second_hold)
++    assert authority.apply(PrepareGraph(inverse_second.reference)).error_kind is PublicationErrorKind.CYCLE
++    assert _ok(authority, RetireGraph(closed_first)).receipt == retired_first.receipt
++    assert children.snapshot(_object(12)).contained_holds == frozenset((second_hold,))
++    _ok(authority, FencePublication(second, OwnerAbortReceipt(second.reference, OWNER, "second-abort")))
++    closed_second = ClosedContainedHolds(second.reference, _release_live_holds(second, children))
++    assert not _ok(authority, RetireGraph(closed_second)).snapshot.graph_active
++    assert not children.snapshot(_object(12)).contained_holds
++    assert _ok(authority, PrepareGraph(inverse_second.reference)).snapshot.graph_active
++    _ok(authority, FencePublication(inverse_second, OwnerAbortReceipt(inverse_second.reference, OWNER, "probe-abort")))
++    scope = TaskRollbackScope(inverse_second.reference, "no-child-effects", (), (), False)
++    _ok(authority, RetireGraph(ClosedContainedHolds(inverse_second.reference, rollback_scope=scope)))
+ 
+ 
+ @pytest.mark.parametrize("bad", ("missing-prepare", "missing-promote", "wrong-node", "reordered"))
+@@ -217,10 +307,14 @@
+ def test_w1_scope_settles_unknown_effects_and_does_not_claim_unattempted_effects():
+     authority, publication = PublicationAuthority(), _task(children=(_object(11), _object(12)))
+     _begin(authority, publication)
++    children = ObjectOwnerTable()
++    _prepare_live_holds(publication, children, indices=(0,))
+     _ok(authority, FencePublication(publication, OwnerAbortReceipt(publication.reference, OWNER, "abort-1")))
+     scope = TaskRollbackScope(publication.reference, "node-rollback-1", (0,), (0,), False)
+-    release = _releases(publication)
++    release = _release_live_holds(publication, children)
++    before = authority.snapshots()
+     assert not authority.retire(RetireGraph(ClosedContainedHolds(publication.reference, release[:1], rollback_scope=scope))).accepted
++    assert authority.snapshots() == before
+     retired = _ok(authority, RetireGraph(ClosedContainedHolds(publication.reference, release[:2], rollback_scope=scope)))
+     assert not retired.snapshot.graph_active
+     assert retired.snapshot.closed_holds.releases == release[:2]
+@@ -349,16 +443,64 @@
+ def test_unrelated_cleanup_and_conflicting_owner_do_not_remove_edges():
+     authority, publication = PublicationAuthority(), _task(children=(_object(11),))
+     _begin(authority, publication)
++    children = ObjectOwnerTable()
++    _prepare_live_holds(publication, children)
+     _ok(authority, FencePublication(publication, OwnerAbortReceipt(publication.reference, OWNER, "abort")))
+-    releases = _releases(publication)
++    releases = _release_live_holds(publication, children)
++    before = authority.snapshots()
+     changed = replace(releases[0], object_id=_object(99))
+     reply = authority.retire(RetireGraph(ClosedContainedHolds(publication.reference, (changed,) + releases[1:])))
+     assert not reply.accepted and reply.error_kind is PublicationErrorKind.CONFLICT
+     assert reply.snapshot.graph_active
++    assert authority.snapshots() == before
+     other = _task(11)
+     header = replace(other.manifest.header, owner_worker_id=_id(WorkerID, 9))
+     other = TaskPublication(OutputPublicationManifest.create(header, other.manifest.value), ROUTE)
+     assert authority.begin(BeginPublication(other)).error_kind is PublicationErrorKind.CONFLICT
++
++
++@pytest.mark.parametrize("proof_case", ("ordered", "reversed", "duplicate", "deep-tampered"))
++def test_closed_hold_proof_set_accepts_permutations_and_rejects_invalid_boundaries(proof_case):
++    authority, publication = PublicationAuthority(), _task(children=(_object(11), _object(12)))
++    children = ObjectOwnerTable()
++    _begin(authority, publication)
++    _prepare_live_holds(publication, children)
++    _ok(authority, FencePublication(publication, OwnerAbortReceipt(publication.reference, OWNER, "abort")))
++    releases = _release_live_holds(publication, children)
++    assert sum(reply.released for reply in releases) == 2
++    before = authority.snapshots()
++    ordered = releases[::-1] if proof_case == "reversed" else releases
++    request = RetireGraph(ClosedContainedHolds(publication.reference, ordered))
++    assert pickle.loads(pickle.dumps(request)) == request
++    if proof_case in ("duplicate", "deep-tampered"):
++        if proof_case == "duplicate":
++            with pytest.raises(ValueError, match="duplicates"):
++                ClosedContainedHolds(publication.reference, releases + releases[:1])
++            with pytest.raises(ValueError, match="duplicates"):
++                ClosedContainedHolds(publication.reference, child_deaths=(_death(), _death()))
++            object.__setattr__(request.closed_holds, "releases", request.closed_holds.releases + request.closed_holds.releases[:1])
++        else:
++            object.__setattr__(request.closed_holds.releases[0].hold, "transfer_token", "")
++        with pytest.raises(ValueError):
++            authority.apply(request)
++        with pytest.raises(ValueError):
++            pickle.loads(pickle.dumps(request))
++        assert authority.snapshots() == before
++        assert authority.query(GetPublication(publication.reference)).snapshot.graph_active
++        request = RetireGraph(ClosedContainedHolds(publication.reference, releases))
++    retired = _ok(authority, request)
++    assert retired.snapshot.closed_holds == request.closed_holds
++    assert set(retired.snapshot.closed_holds.releases) == set(releases)
++    assert not retired.snapshot.graph_active
++    assert _ok(authority, request).receipt == retired.receipt
++    # First acceptance treats the unique proof set independently of order;
++    # replay still preserves the exact recorded request rather than rebinding.
++    rebound = RetireGraph(replace(request.closed_holds, releases=request.closed_holds.releases[::-1]))
++    rejected = authority.apply(rebound)
++    assert not rejected.accepted and rejected.error_kind is PublicationErrorKind.CONFLICT
++    assert rejected.snapshot == retired.snapshot
++    assert all(not children.snapshot(transfer.contained_object_id).contained_holds
++               for transfer in publication.transfers)
+ 
+ 
+ def test_adoption_cannot_replace_successful_owner_abort():

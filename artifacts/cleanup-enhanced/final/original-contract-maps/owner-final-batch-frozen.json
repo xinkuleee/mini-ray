@@ -1,0 +1,54 @@
+[
+  {
+    "path": "tests/unit/test_output_owner_retirement.py",
+    "sha256": "8dd833f6f692e841c9f59ac4f94d370a170980655bd4e69e8aa533235e894123",
+    "test_functions": [
+      "test_retirement_preserves_stable_id_incoming_holds_and_task_lineage",
+      "test_retirement_gates_publish_advance_and_gc_but_not_reference_release",
+      "test_retirement_rejects_ready_slot_or_missing_replica_inventory_atomically",
+      "test_retirement_rejects_overlapping_claim_and_rebound_identity",
+      "test_completion_requires_every_cleanup_proof_and_never_partially_clears",
+      "test_replica_nonterminal_status_is_not_cleanup_proof",
+      "test_cleanup_proofs_cannot_substitute_another_hold_slot_or_epoch",
+      "test_dead_publishing_node_requires_its_exact_frozen_incarnation",
+      "test_additional_replica_obligations_require_every_exact_ack",
+      "test_retired_slot_can_reconstruct_with_original_index_and_old_replays_are_fenced",
+      "test_empty_edge_slot_retires_without_graph_or_child_operations",
+      "test_post_retirement_gc_collects_metadata_only_and_releases_final_task_lineage",
+      "test_normal_collection_and_reconstruction_retirement_cannot_overlap",
+      "test_public_plans_proofs_and_terminal_getters_cannot_mutate_owner_history",
+      "test_canonical_result_is_revalidated_before_retirement_claim_and_completion"
+    ]
+  },
+  {
+    "path": "tests/unit/test_output_owner_surviving_replica.py",
+    "sha256": "c9856b5465acf193ec6488570c2cfa338f9e4cd81cfec6e7c7bd60a14121d0a8",
+    "test_functions": [
+      "test_survivor_query_filters_publisher_and_unavailable_nodes_without_mutation",
+      "test_survivor_query_never_authorizes_keep_from_fenced_metadata",
+      "test_stored_keep_preserves_survivor_metadata_and_all_reference_lifetimes",
+      "test_stored_keep_needs_adopted_identity_but_no_retained_envelope",
+      "test_stored_keep_loses_last_secondary_after_decision_without_retiring_membership",
+      "test_stored_keep_uses_new_current_replica_not_the_decision_time_location",
+      "test_resolution_replay_cannot_resurrect_a_subsequently_lost_secondary",
+      "test_unadopted_stored_keep_rejects_even_an_exact_complete_envelope_atomically",
+      "test_inline_keep_still_requires_bytes_with_adopted_owner_membership",
+      "test_bad_stored_metadata_cannot_apply_keep_or_mutate_receipts",
+      "test_wrong_publishing_node_death_identity_cannot_apply_stored_keep"
+    ]
+  },
+  {
+    "path": "tests/unit/test_replica_cleanup.py",
+    "sha256": "dffe10dc564443ce7917fc94db43593014e2de0932308272b1e2db93adcb7389",
+    "test_functions": [
+      "test_claim_and_exact_receipt_are_distinct_from_pending_or_logical_retirement",
+      "test_non_receipts_never_release_exact_deletion_custody",
+      "test_wrong_or_malformed_ack_leaves_pending_identity_unchanged",
+      "test_request_and_snapshot_ids_cannot_mutate_queue_custody",
+      "test_installed_node_death_discharges_only_that_node_without_fake_drop_ack",
+      "test_owner_late_replica_requires_latched_or_applied_retirement_not_current_route",
+      "test_mismatched_late_replica_metadata_never_authorizes_a_destructive_request",
+      "test_active_or_completed_collection_still_admits_only_exact_physical_cleanup"
+    ]
+  }
+]

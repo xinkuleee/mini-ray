@@ -1,6 +1,6 @@
 # 协议增强版学习路径
 
-首次学习仍推荐teaching-base：先理解Task、lease、owner与引用回收，再在E比较两项mini自定义保证。本文面向E候选，正式分支是否已创建、候选与最终HEAD区别以[状态页](current-status.md)为准。[增强合同](redesign-plan.md)§10描述保证边界，不是新实现计划。
+首次学习仍推荐teaching-base：先理解Task、lease、owner与引用回收，再在E比较两项mini自定义保证。本文面向已独立验收的teaching-enhanced，实测提交与后续文档/证据HEAD的区别见[状态页](current-status.md)。[增强合同](redesign-plan.md)§10描述保证边界，不是新实现计划。
 
 ## 第一遍：提交、执行、交接
 

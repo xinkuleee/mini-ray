@@ -1,0 +1,51 @@
+TaskID:         ddf939018da2322b6c9013e16d681d30
+ObjectID:       ddf939018da2322b6c9013e16d681d30:0
+owner WorkerID: bfdabd236487e60c731778f3607b3285
+executor PID:   66157 result: 49
+
+Canonical trace (volatile IDs and timestamps omitted):
+ordinary_task_success: ordinary task: central publication receipts, owner readiness and reply custody retirement
+01. Owner CoreWorker : task_submitted
+02. Owner CoreWorker : dependency_ready [dependency_count=0]
+03. Owner CoreWorker -> NodeServer : request_worker_lease [request_sent]
+04. NodeServer -> Owner CoreWorker : request_worker_lease [reply_received, transport_ok=true]
+05. Owner CoreWorker : lease_granted
+06. Owner CoreWorker -> Execution Worker : push_task [request_sent]
+07. Execution Worker : task_started
+08. Execution Worker -> NodeServer : start_worker_lease [request_sent]
+09. NodeServer -> Execution Worker : start_worker_lease [reply_received, transport_ok=true]
+10. Execution Worker -> NodeServer : prepare_output_publication [request_sent]
+11. NodeServer -> OwnerService (Driver owner) : register_output_handoff [request_sent]
+12. OwnerService (Driver owner) -> NodeServer : register_output_handoff [reply_received, transport_ok=true]
+13. NodeServer -> GCS publication coordinator : enhanced_publication [request_sent]
+14. GCS publication coordinator : enhanced_publication_stage [stage=INTENT, request_type=BeginPublication]
+15. GCS publication coordinator -> NodeServer : enhanced_publication [reply_received, transport_ok=true]
+16. NodeServer -> GCS publication coordinator : enhanced_publication [request_sent]
+17. GCS publication coordinator : enhanced_publication_stage [stage=PREPARED, request_type=PrepareGraph]
+18. GCS publication coordinator -> NodeServer : enhanced_publication [reply_received, transport_ok=true]
+19. NodeServer -> GCS publication coordinator : enhanced_publication [request_sent]
+20. GCS publication coordinator : enhanced_publication_stage [stage=ARMED, request_type=ArmTask]
+21. GCS publication coordinator -> NodeServer : enhanced_publication [reply_received, transport_ok=true]
+22. NodeServer -> Execution Worker : prepare_output_publication [reply_received, transport_ok=true]
+23. Execution Worker -> NodeServer : complete_worker_lease [request_sent]
+24. NodeServer : output_lease_completed [status=SUCCEEDED, released=true]
+25. NodeServer -> Execution Worker : complete_worker_lease [reply_received, transport_ok=true]
+26. Execution Worker : task_succeeded
+27. Execution Worker -> Owner CoreWorker : push_task [reply_received, transport_ok=true]
+28. Owner CoreWorker -> GCS publication coordinator : enhanced_publication [request_sent]
+29. GCS publication coordinator : enhanced_publication_stage [stage=TERMINAL, request_type=RecordTerminal]
+30. GCS publication coordinator -> Owner CoreWorker : enhanced_publication [reply_received, transport_ok=true]
+31. Owner CoreWorker -> GCS publication coordinator : enhanced_publication [request_sent]
+32. GCS publication coordinator : enhanced_publication_stage [stage=COMMITTED, request_type=CommitGraph]
+33. GCS publication coordinator -> Owner CoreWorker : enhanced_publication [reply_received, transport_ok=true]
+34. Owner CoreWorker : output_owner_ready [return_count=1]
+35. Owner CoreWorker -> GCS publication coordinator : enhanced_publication [request_sent]
+36. GCS publication coordinator : enhanced_publication_stage [stage=ADOPTED, request_type=RecordAdoption]
+37. GCS publication coordinator -> Owner CoreWorker : enhanced_publication [reply_received, transport_ok=true]
+38. Owner CoreWorker -> NodeServer : ack_output_publication_adopted [request_sent]
+39. NodeServer -> Owner CoreWorker : ack_output_publication_adopted [reply_received, transport_ok=true]
+40. Owner CoreWorker : output_payload_retired
+41. Owner CoreWorker : task_finished [status=SUCCEEDED]
+42. Owner CoreWorker : object_ready [storage=INLINE]
+register_output_handoff: Node -> OwnerService; transport_ok is an RPC observation.
+owner_ready: owner CAS/wake; payload_retired: reply custody, not object GC.

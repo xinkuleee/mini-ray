@@ -1,0 +1,25 @@
+......................................F...................               [100%]
+=================================== FAILURES ===================================
+_ test_valid_duplicate_report_keeps_its_own_reply_ack_and_does_not_supply_other_stages _
+
+    def test_valid_duplicate_report_keeps_its_own_reply_ack_and_does_not_supply_other_stages() -> None:
+        records, task_id = _ordinary_records()
+        mixed = _bounded_records((*records, *_terminal_echo(records, "duplicate-retire")))
+>       match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(mixed, task_id=task_id).require()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_trace_contract.py:568: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = TraceContractMatch(contract=TraceContract(name='ordinary_task_success', title='ordinary task: central publication rece...pted'))))}, violations=('causal order is not established: gcs_adopted_rpc.reply_received -> retire_rpc.request_sent',))
+
+    def require(self) -> "TraceContractMatch":
+        if not self.ok:
+>           raise TraceContractMismatch(self.explain())
+E           miniray.trace_contract.TraceContractMismatch: trace contract 'ordinary_task_success' failed:
+E           - causal order is not established: gcs_adopted_rpc.reply_received -> retire_rpc.request_sent
+
+src/miniray/trace_contract.py:248: TraceContractMismatch
+=========================== short test summary info ============================
+FAILED tests/unit/test_trace_contract.py::test_valid_duplicate_report_keeps_its_own_reply_ack_and_does_not_supply_other_stages
+1 failed, 57 passed in 0.95s

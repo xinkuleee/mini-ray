@@ -1,0 +1,14 @@
+{
+  "source": {
+    "branch": "refs/heads/teaching-enhanced",
+    "head": "dbc504c0cbc69dcdc4b64128b72b6f852bdc34fa",
+    "working_tree_status": "",
+    "archive_sha256": "8083cee2e467d2f33b15228ce89609358ab46213dac37cea0cf1128f9703d80a",
+    "file_count": 433,
+    "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+  },
+  "project": "/dev/shm/mini-ray-cleanup-install/enhanced-final-01/project",
+  "cache": "/dev/shm/mini-ray-cleanup-install/enhanced-final-01/uv-cache",
+  "source_inputs_unchanged": true,
+  "runtime_test_executed": false
+}

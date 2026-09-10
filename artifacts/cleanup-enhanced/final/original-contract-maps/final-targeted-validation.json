@@ -1,0 +1,256 @@
+{
+  "status": "bounded_exact_cases_passed",
+  "records": [
+    {
+      "run": "base-k3m-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "aa0c3a25a2e5c6cb44e4ab0760789cef8c628f05",
+        "working_tree_status": " M docs/acceptance-baseline.md\n M scripts/baseline_manifest.json\n M tests/integration/test_abandoned_dependency_custody_path.py\n M tests/integration/test_borrowed_output_unknown_path.py\n M tests/integration/test_cross_cleanup_receipt_path.py\n M tests/integration/test_inline_node_loss_path.py\n M tests/integration/test_local_replica_handoff_failure_path.py\n M tests/integration/test_multi_owner_handoff_failure_path.py\n M tests/integration/test_output_child_owner_worker_loss_path.py\n M tests/integration/test_output_surviving_replica_path.py\n M tests/integration/test_pg_publication_peer_loss_path.py\n M tests/integration/test_unreported_complete_node_loss_path.py\n M tests/integration/test_worker_owner_node_loss_path.py\n M tests/unit/test_contained_edge_runtime.py\n M tests/unit/test_foreign_inline_task_dependencies.py\n M tests/unit/test_foreign_stored_object_refs.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_inline_publication_gate.py\n M tests/unit/test_inline_publication_node_server.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_output_publication_node.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_publication_pg_dispatch.py\n M tests/unit/test_publication_trace_observation.py\n M tests/unit/test_stored_publication_node_death_gc.py\n M tests/unit/test_stored_publication_node_server.py\n M tests/unit/test_targeted_output_publication.py\n M tests/unit/test_trace_contract.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01126d3f2c34f664ea8d9899a24adc020a46ff2f8eb351025fdce0152c89564e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_trace_contract.py",
+        "exit_code": 0,
+        "seconds": 4.599,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_trace_contract.py"
+        ],
+        "log": "003-case.log"
+      },
+      "tested_file_sha256": "82acf423651b92df01d5f8d22324db70cae42227c93f794e5e3249f213676a83"
+    },
+    {
+      "run": "base-k3m-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "aa0c3a25a2e5c6cb44e4ab0760789cef8c628f05",
+        "working_tree_status": " M docs/acceptance-baseline.md\n M scripts/baseline_manifest.json\n M tests/integration/test_abandoned_dependency_custody_path.py\n M tests/integration/test_borrowed_output_unknown_path.py\n M tests/integration/test_cross_cleanup_receipt_path.py\n M tests/integration/test_inline_node_loss_path.py\n M tests/integration/test_local_replica_handoff_failure_path.py\n M tests/integration/test_multi_owner_handoff_failure_path.py\n M tests/integration/test_output_child_owner_worker_loss_path.py\n M tests/integration/test_output_surviving_replica_path.py\n M tests/integration/test_pg_publication_peer_loss_path.py\n M tests/integration/test_unreported_complete_node_loss_path.py\n M tests/integration/test_worker_owner_node_loss_path.py\n M tests/unit/test_contained_edge_runtime.py\n M tests/unit/test_foreign_inline_task_dependencies.py\n M tests/unit/test_foreign_stored_object_refs.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_inline_publication_gate.py\n M tests/unit/test_inline_publication_node_server.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_output_publication_node.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_publication_pg_dispatch.py\n M tests/unit/test_publication_trace_observation.py\n M tests/unit/test_stored_publication_node_death_gc.py\n M tests/unit/test_stored_publication_node_server.py\n M tests/unit/test_targeted_output_publication.py\n M tests/unit/test_trace_contract.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01126d3f2c34f664ea8d9899a24adc020a46ff2f8eb351025fdce0152c89564e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_publication_trace_observation.py",
+        "exit_code": 0,
+        "seconds": 7.808,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3m-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_publication_trace_observation.py"
+        ],
+        "log": "004-case.log"
+      },
+      "tested_file_sha256": "baca828b2029ea0315dffd0c2855d0bdfc7ae8eb32de30992e99d8f9e5a2927d"
+    },
+    {
+      "run": "base-k3o-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "56ab9cc4843e0fc4c6856a54301d3d3d09e93286",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_abandoned_dependency_custody_path.py\n M tests/integration/test_borrowed_output_unknown_path.py\n M tests/integration/test_cross_cleanup_receipt_path.py\n M tests/integration/test_inline_node_loss_path.py\n M tests/integration/test_local_replica_handoff_failure_path.py\n M tests/integration/test_multi_owner_handoff_failure_path.py\n M tests/integration/test_output_child_owner_worker_loss_path.py\n M tests/integration/test_output_surviving_replica_path.py\n M tests/integration/test_pg_publication_peer_loss_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/integration/test_unreported_complete_node_loss_path.py\n M tests/integration/test_worker_owner_node_loss_path.py\n M tests/unit/test_collection_safety.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n?? artifacts/cleanup-base/k3central/retired-collection-classification-locks.json\n",
+        "archive_sha256": "11398a96419d75d4dd2d768ba65f865e58c999b9bd048c64e74cab54c1573cb4",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_output_owner_resolution_preflight.py",
+        "exit_code": 0,
+        "seconds": 2.996,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3o-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_output_owner_resolution_preflight.py"
+        ],
+        "log": "001-case.log"
+      },
+      "tested_file_sha256": "5b70ade1dd2e1360470105382f127f0c4ab679e4c0dbab794d5b080c2c2b5240"
+    },
+    {
+      "run": "base-k3p-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_owner_death_fence_control.py::test_zero_publication_owner_death_hides_node_until_fence_ack",
+        "exit_code": 0,
+        "seconds": 3.351,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3p-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_owner_death_fence_control.py::test_zero_publication_owner_death_hides_node_until_fence_ack"
+        ],
+        "log": "000-case.log"
+      },
+      "tested_file_sha256": "a2444acf33656478a3678d3c8618787ea1748070c4ad65f7b5177d04175de668"
+    },
+    {
+      "run": "base-k3p-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_owner_death_fence_control.py::test_late_node_is_hidden_until_every_historical_fence_is_acked",
+        "exit_code": 0,
+        "seconds": 2.881,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3p-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_owner_death_fence_control.py::test_late_node_is_hidden_until_every_historical_fence_is_acked"
+        ],
+        "log": "001-case.log"
+      },
+      "tested_file_sha256": "a2444acf33656478a3678d3c8618787ea1748070c4ad65f7b5177d04175de668"
+    },
+    {
+      "run": "base-k3p-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_owner_death_fence_control.py::test_process_exit_node_death_discharges_unreachable_fence",
+        "exit_code": 0,
+        "seconds": 3.561,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3p-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_owner_death_fence_control.py::test_process_exit_node_death_discharges_unreachable_fence"
+        ],
+        "log": "002-case.log"
+      },
+      "tested_file_sha256": "a2444acf33656478a3678d3c8618787ea1748070c4ad65f7b5177d04175de668"
+    },
+    {
+      "run": "base-k3p-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_owner_death_fence_control.py::test_live_progress_thread_retries_nonterminal_owner_sweep",
+        "exit_code": 0,
+        "seconds": 3.638,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3p-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_owner_death_fence_control.py::test_live_progress_thread_retries_nonterminal_owner_sweep"
+        ],
+        "log": "004-case.log"
+      },
+      "tested_file_sha256": "a2444acf33656478a3678d3c8618787ea1748070c4ad65f7b5177d04175de668"
+    },
+    {
+      "run": "base-k3p-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/unit/test_owner_death_fence_control.py::test_gcs_owner_wide_effect_drives_real_node_handler_and_deletes_bytes",
+        "exit_code": 0,
+        "seconds": 3.191,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3p-01/scripts/run_baseline.py",
+          "--case",
+          "tests/unit/test_owner_death_fence_control.py::test_gcs_owner_wide_effect_drives_real_node_handler_and_deletes_bytes"
+        ],
+        "log": "003-case.log"
+      },
+      "tested_file_sha256": "a2444acf33656478a3678d3c8618787ea1748070c4ad65f7b5177d04175de668"
+    },
+    {
+      "run": "base-k3p-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects",
+        "exit_code": 0,
+        "seconds": 8.506,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3p-01/scripts/run_baseline.py",
+          "--case",
+          "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects"
+        ],
+        "log": "005-case.log"
+      },
+      "tested_file_sha256": "2b638bf5d389ea5ae4bd65f616d238a6578081a85b5fa7f318de497077c66451"
+    },
+    {
+      "run": "base-k3p-01",
+      "source_identity": {
+        "branch": "refs/heads/teaching-base",
+        "head": "698c0c0cc36552c8a65444fe55c97e6e7fdeeb3f",
+        "working_tree_status": " M scripts/baseline_manifest.json\n M tests/integration/test_contained_cycle_control_path.py\n M tests/integration/test_stored_outer_publication_path.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_output_owner_resolution_preflight.py\n M tests/unit/test_owner_death_fence_control.py\n M tests/unit/test_worker_nested_task_arguments.py\n",
+        "archive_sha256": "01c3454a3f2152b847925fd98ca34ed8a91d8265bde02faaaa04b54a9fd7f16e",
+        "file_count": 432,
+        "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+      },
+      "result": {
+        "mode": "case",
+        "selector": "tests/integration/test_contained_cycle_control_path.py::test_real_borrowed_driver_child_survives_container_gc_and_exact_handoff_replay",
+        "exit_code": 0,
+        "seconds": 6.604,
+        "command": [
+          "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+          "/dev/shm/mini-ray-cleanup-candidates/base-k3p-01/scripts/run_baseline.py",
+          "--case",
+          "tests/integration/test_contained_cycle_control_path.py::test_real_borrowed_driver_child_survives_container_gc_and_exact_handoff_replay"
+        ],
+        "log": "006-case.log"
+      },
+      "tested_file_sha256": "b4027c7fcf00e4fb8e92ca074f123a364239766f39778a312d856153fdc32299"
+    }
+  ],
+  "limits": "Exact candidate results, not final branch gate acceptance. Root is independently running complete same-version gate. No E runtime acceptance claimed here. Original failed runs remain unchanged."
+}

@@ -1,0 +1,589 @@
+{
+  "status": "TRACKED_FINAL_SIZE_CALIBRATION_READ_ONLY",
+  "started_utc": "2026-09-10T07:23:21.885818+00:00",
+  "finished_utc": "2026-09-10T07:25:17.044268+00:00",
+  "method": {
+    "source_path": "C:/Users/t-hdong/Desktop/gao/audit/two-version-cleanup/build_file_coverage.py",
+    "source_sha256": "873120aed5a9238aafb14d8ad1a02c13a5db1ec5217b575a807a33c2e711bfa4",
+    "function": "code_count",
+    "function_source_sha256": "d814ea203678f9ca5c662727d1f290c7ede6d08bfd7f4162b9e4af495984b3dd",
+    "physical_lines": "len(raw_bytes.splitlines()) exactly as existing builder; binary artifacts retain raw splitline metric but are not code savings",
+    "code_lines": "Exact isolated code_count AST function, excludes docstrings/comments/layout; Python files under src/tests/scripts only, exactly as existing builder invocation",
+    "non_counted_categories": "docs/history, ordinary docs, artifacts, examples and other files report code_lines=0 (not applicable under this metric), not proof of zero embedded code",
+    "tracked_rule": "Immutable Git tree blobs for fixed refs. Current ls-files paths read working-tree bytes, including tracked staged/unstaged changes; missing tracked files listed/excluded, all untracked files excluded.",
+    "tree_hash": "SHA256 sorted JSON path->rawSHA256, UTF-8, compact separators"
+  },
+  "versions": {
+    "fixed_base": {
+      "input_kind": "immutable_git_tree",
+      "commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+      "repository": "C:/Users/t-hdong/Desktop/gao/mini-ray",
+      "archive_sha256": "9ae0a121e233ff8bc95c0b4c52065f10a1dace4b6a7347baaa23d3bcd1859c7d",
+      "groups": {
+        "source_python": {
+          "files": 56,
+          "bytes": 2611195,
+          "physical_lines": 59386,
+          "code_lines": 48555,
+          "code_counted_python_files": 56
+        },
+        "source_non_python": {
+          "files": 2,
+          "bytes": 15367,
+          "physical_lines": 604,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "tests": {
+          "files": 340,
+          "bytes": 6100135,
+          "physical_lines": 130975,
+          "code_lines": 110374,
+          "code_counted_python_files": 340
+        },
+        "scripts": {
+          "files": 5,
+          "bytes": 99238,
+          "physical_lines": 1527,
+          "code_lines": 784,
+          "code_counted_python_files": 3
+        },
+        "docs_history": {
+          "files": 48,
+          "bytes": 1440721,
+          "physical_lines": 33713,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "ordinary_docs": {
+          "files": 12,
+          "bytes": 836265,
+          "physical_lines": 10367,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "artifacts": {
+          "files": 65,
+          "bytes": 127097,
+          "physical_lines": 2440,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "examples": {
+          "files": 7,
+          "bytes": 20720,
+          "physical_lines": 557,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "other_tracked": {
+          "files": 6,
+          "bytes": 26176,
+          "physical_lines": 565,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "source_all": {
+          "files": 58,
+          "bytes": 2626562,
+          "physical_lines": 59990,
+          "code_lines": 48555,
+          "code_counted_python_files": 56
+        },
+        "total_disjoint_categories": {
+          "files": 541,
+          "bytes": 11276914,
+          "physical_lines": 240134,
+          "code_lines": 159713,
+          "code_counted_python_files": 399
+        }
+      },
+      "raw_tree_sha256": "52a20f165d2a25b3891e35c6774f716148568cafe21ac31d2c62edcd0db768da"
+    },
+    "fixed_enhanced": {
+      "input_kind": "immutable_git_tree",
+      "commit": "ce29981a547f83b53b0c1df9f91354dcf89d8e4f",
+      "repository": "C:/Users/t-hdong/Desktop/gao/mini-ray",
+      "archive_sha256": "65f8e886918f6a3cf28a0e84d1d3fac820747fbcab114172bfaef98f873c4c88",
+      "groups": {
+        "source_python": {
+          "files": 59,
+          "bytes": 2721312,
+          "physical_lines": 61440,
+          "code_lines": 50277,
+          "code_counted_python_files": 59
+        },
+        "source_non_python": {
+          "files": 2,
+          "bytes": 21211,
+          "physical_lines": 820,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "tests": {
+          "files": 348,
+          "bytes": 6232581,
+          "physical_lines": 133422,
+          "code_lines": 112419,
+          "code_counted_python_files": 348
+        },
+        "scripts": {
+          "files": 5,
+          "bytes": 100749,
+          "physical_lines": 1542,
+          "code_lines": 789,
+          "code_counted_python_files": 3
+        },
+        "docs_history": {
+          "files": 48,
+          "bytes": 1440721,
+          "physical_lines": 33713,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "ordinary_docs": {
+          "files": 13,
+          "bytes": 850984,
+          "physical_lines": 10498,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "artifacts": {
+          "files": 126,
+          "bytes": 250169,
+          "physical_lines": 4744,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "examples": {
+          "files": 7,
+          "bytes": 21216,
+          "physical_lines": 562,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "other_tracked": {
+          "files": 6,
+          "bytes": 26176,
+          "physical_lines": 565,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "source_all": {
+          "files": 61,
+          "bytes": 2742523,
+          "physical_lines": 62260,
+          "code_lines": 50277,
+          "code_counted_python_files": 59
+        },
+        "total_disjoint_categories": {
+          "files": 614,
+          "bytes": 11665119,
+          "physical_lines": 247306,
+          "code_lines": 163485,
+          "code_counted_python_files": 410
+        }
+      },
+      "raw_tree_sha256": "7105b9a3eec27271487954457100ea46fec5dd41475f9f8d81c79350f388be97"
+    },
+    "current_base": {
+      "input_kind": "git_tracked_paths_current_worktree_bytes",
+      "root": "C:/Users/t-hdong/Desktop/gao/mini-ray-base",
+      "branch": "refs/heads/teaching-base",
+      "head": "f9a9b35015f114afda9c87e653b6fedcda2eb0b2",
+      "tracked_paths_count": 1612,
+      "tracked_missing_excluded": [],
+      "untracked_excluded": true,
+      "tracked_dirty_status": " M docs/current-status.md\n M docs/learning-path.md\n M docs/project-cleanup-index.md\n M docs/retirement-inventory.md\n",
+      "includes_tracked_uncommitted_bytes": true,
+      "groups": {
+        "source_python": {
+          "files": 56,
+          "bytes": 2553166,
+          "physical_lines": 57995,
+          "code_lines": 47449,
+          "code_counted_python_files": 56
+        },
+        "source_non_python": {
+          "files": 2,
+          "bytes": 15367,
+          "physical_lines": 604,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "tests": {
+          "files": 329,
+          "bytes": 5366458,
+          "physical_lines": 115549,
+          "code_lines": 96828,
+          "code_counted_python_files": 329
+        },
+        "scripts": {
+          "files": 4,
+          "bytes": 2508912,
+          "physical_lines": 25580,
+          "code_lines": 659,
+          "code_counted_python_files": 3
+        },
+        "docs_history": {
+          "files": 0,
+          "bytes": 0,
+          "physical_lines": 0,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "ordinary_docs": {
+          "files": 18,
+          "bytes": 5977658,
+          "physical_lines": 123642,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "artifacts": {
+          "files": 1190,
+          "bytes": 9643462,
+          "physical_lines": 162698,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "examples": {
+          "files": 7,
+          "bytes": 20720,
+          "physical_lines": 557,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "other_tracked": {
+          "files": 6,
+          "bytes": 28199,
+          "physical_lines": 631,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "source_all": {
+          "files": 58,
+          "bytes": 2568533,
+          "physical_lines": 58599,
+          "code_lines": 47449,
+          "code_counted_python_files": 56
+        },
+        "total_disjoint_categories": {
+          "files": 1612,
+          "bytes": 26113942,
+          "physical_lines": 487256,
+          "code_lines": 144936,
+          "code_counted_python_files": 388
+        }
+      },
+      "raw_tree_sha256": "2e459f894cfd857e1ef99fc6148842daaa6b72a32bf03667101e8ce534ad0047",
+      "stable_during_read": true
+    },
+    "current_enhanced": {
+      "input_kind": "git_tracked_paths_current_worktree_bytes",
+      "root": "C:/Users/t-hdong/Desktop/gao/mini-ray-enhanced",
+      "branch": "refs/heads/teaching-enhanced",
+      "head": "3f5b725fb26390b86c78f085486fb73d897d3e42",
+      "tracked_paths_count": 1806,
+      "tracked_missing_excluded": [],
+      "untracked_excluded": true,
+      "tracked_dirty_status": "",
+      "includes_tracked_uncommitted_bytes": false,
+      "groups": {
+        "source_python": {
+          "files": 59,
+          "bytes": 2661060,
+          "physical_lines": 60019,
+          "code_lines": 49138,
+          "code_counted_python_files": 59
+        },
+        "source_non_python": {
+          "files": 2,
+          "bytes": 21211,
+          "physical_lines": 820,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "tests": {
+          "files": 336,
+          "bytes": 5596357,
+          "physical_lines": 119476,
+          "code_lines": 100248,
+          "code_counted_python_files": 336
+        },
+        "scripts": {
+          "files": 4,
+          "bytes": 2633575,
+          "physical_lines": 26618,
+          "code_lines": 659,
+          "code_counted_python_files": 3
+        },
+        "docs_history": {
+          "files": 0,
+          "bytes": 0,
+          "physical_lines": 0,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "ordinary_docs": {
+          "files": 19,
+          "bytes": 5993562,
+          "physical_lines": 123767,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "artifacts": {
+          "files": 1373,
+          "bytes": 11709781,
+          "physical_lines": 211723,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "examples": {
+          "files": 7,
+          "bytes": 20720,
+          "physical_lines": 557,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "other_tracked": {
+          "files": 6,
+          "bytes": 28379,
+          "physical_lines": 631,
+          "code_lines": 0,
+          "code_counted_python_files": 0
+        },
+        "source_all": {
+          "files": 61,
+          "bytes": 2682271,
+          "physical_lines": 60839,
+          "code_lines": 49138,
+          "code_counted_python_files": 59
+        },
+        "total_disjoint_categories": {
+          "files": 1806,
+          "bytes": 28664645,
+          "physical_lines": 543611,
+          "code_lines": 150045,
+          "code_counted_python_files": 398
+        }
+      },
+      "raw_tree_sha256": "c116123c29bb1e231e97d91ce25fb51aa0d9852014fe32ea16a202bdef56047b",
+      "stable_during_read": true
+    }
+  },
+  "deltas": {
+    "base_vs_fixed": {
+      "source_python": {
+        "files": 0,
+        "bytes": -58029,
+        "physical_lines": -1391,
+        "code_lines": -1106
+      },
+      "source_non_python": {
+        "files": 0,
+        "bytes": 0,
+        "physical_lines": 0,
+        "code_lines": 0
+      },
+      "tests": {
+        "files": -11,
+        "bytes": -733677,
+        "physical_lines": -15426,
+        "code_lines": -13546
+      },
+      "scripts": {
+        "files": -1,
+        "bytes": 2409674,
+        "physical_lines": 24053,
+        "code_lines": -125
+      },
+      "docs_history": {
+        "files": -48,
+        "bytes": -1440721,
+        "physical_lines": -33713,
+        "code_lines": 0
+      },
+      "ordinary_docs": {
+        "files": 6,
+        "bytes": 5141393,
+        "physical_lines": 113275,
+        "code_lines": 0
+      },
+      "artifacts": {
+        "files": 1125,
+        "bytes": 9516365,
+        "physical_lines": 160258,
+        "code_lines": 0
+      },
+      "examples": {
+        "files": 0,
+        "bytes": 0,
+        "physical_lines": 0,
+        "code_lines": 0
+      },
+      "other_tracked": {
+        "files": 0,
+        "bytes": 2023,
+        "physical_lines": 66,
+        "code_lines": 0
+      },
+      "source_all": {
+        "files": 0,
+        "bytes": -58029,
+        "physical_lines": -1391,
+        "code_lines": -1106
+      },
+      "total_disjoint_categories": {
+        "files": 1071,
+        "bytes": 14837028,
+        "physical_lines": 247122,
+        "code_lines": -14777
+      }
+    },
+    "enhanced_vs_fixed": {
+      "source_python": {
+        "files": 0,
+        "bytes": -60252,
+        "physical_lines": -1421,
+        "code_lines": -1139
+      },
+      "source_non_python": {
+        "files": 0,
+        "bytes": 0,
+        "physical_lines": 0,
+        "code_lines": 0
+      },
+      "tests": {
+        "files": -12,
+        "bytes": -636224,
+        "physical_lines": -13946,
+        "code_lines": -12171
+      },
+      "scripts": {
+        "files": -1,
+        "bytes": 2532826,
+        "physical_lines": 25076,
+        "code_lines": -130
+      },
+      "docs_history": {
+        "files": -48,
+        "bytes": -1440721,
+        "physical_lines": -33713,
+        "code_lines": 0
+      },
+      "ordinary_docs": {
+        "files": 6,
+        "bytes": 5142578,
+        "physical_lines": 113269,
+        "code_lines": 0
+      },
+      "artifacts": {
+        "files": 1247,
+        "bytes": 11459612,
+        "physical_lines": 206979,
+        "code_lines": 0
+      },
+      "examples": {
+        "files": 0,
+        "bytes": -496,
+        "physical_lines": -5,
+        "code_lines": 0
+      },
+      "other_tracked": {
+        "files": 0,
+        "bytes": 2203,
+        "physical_lines": 66,
+        "code_lines": 0
+      },
+      "source_all": {
+        "files": 0,
+        "bytes": -60252,
+        "physical_lines": -1421,
+        "code_lines": -1139
+      },
+      "total_disjoint_categories": {
+        "files": 1192,
+        "bytes": 16999526,
+        "physical_lines": 296305,
+        "code_lines": -13440
+      }
+    },
+    "enhanced_over_base": {
+      "source_python": {
+        "files": 3,
+        "bytes": 107894,
+        "physical_lines": 2024,
+        "code_lines": 1689
+      },
+      "source_non_python": {
+        "files": 0,
+        "bytes": 5844,
+        "physical_lines": 216,
+        "code_lines": 0
+      },
+      "tests": {
+        "files": 7,
+        "bytes": 229899,
+        "physical_lines": 3927,
+        "code_lines": 3420
+      },
+      "scripts": {
+        "files": 0,
+        "bytes": 124663,
+        "physical_lines": 1038,
+        "code_lines": 0
+      },
+      "docs_history": {
+        "files": 0,
+        "bytes": 0,
+        "physical_lines": 0,
+        "code_lines": 0
+      },
+      "ordinary_docs": {
+        "files": 1,
+        "bytes": 15904,
+        "physical_lines": 125,
+        "code_lines": 0
+      },
+      "artifacts": {
+        "files": 183,
+        "bytes": 2066319,
+        "physical_lines": 49025,
+        "code_lines": 0
+      },
+      "examples": {
+        "files": 0,
+        "bytes": 0,
+        "physical_lines": 0,
+        "code_lines": 0
+      },
+      "other_tracked": {
+        "files": 0,
+        "bytes": 180,
+        "physical_lines": 0,
+        "code_lines": 0
+      },
+      "source_all": {
+        "files": 3,
+        "bytes": 113738,
+        "physical_lines": 2240,
+        "code_lines": 1689
+      },
+      "total_disjoint_categories": {
+        "files": 194,
+        "bytes": 2550703,
+        "physical_lines": 56355,
+        "code_lines": 5109
+      }
+    }
+  },
+  "hash_manifest": "C:/Users/t-hdong/Desktop/gao/audit/k9-final-size-calibration-hashes.json",
+  "interpretation": [
+    "Acceptance materials and inherited artifacts are separate from runtime and do not count as runtime savings.",
+    "Deleted docs/history is documentation cleanup, not runtime reduction.",
+    "Runtime comparisons use source_python only; source_non_python golden JSON is separate.",
+    "This is a size measurement, not a validation run or proof all measured code is necessary.",
+    "Current tracked working-tree docs can be uncommitted; input state and hashes are explicit. No formal files or tests were changed or executed."
+  ],
+  "hash_manifest_sha256": "c57436a1e92565f2020ef21983e64bc8efa5bd6e4f24ef42dd3909f7ed27217a"
+}
