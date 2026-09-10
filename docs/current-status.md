@@ -1,34 +1,18 @@
 # teaching-base 当前状态
 
-日期：2026-09-10。**K4–K6清理及结构决策已完成，K7最终同版gate与验收HEAD映射尚未完成。** 分批通过只归对应候选，不把旧tag或不同批次的结果相加成新B整体验收。
+基础教学分支已独立验收。推荐从[学习路径](learning-path.md)开始理解所选Ray Core机制；增强分支在这一基础上增加两项mini自定义协议保证。
 
-| 身份 | 当前记录 |
-|---|---|
-| 实际分支 | refs/heads/teaching-base |
-| 历史起点 | teaching-base-v0.1 / 69106772567a4131f5ec76e898a3c4bf3bb6dbe6 |
-| 当前提交 | 用git rev-parse HEAD读取；可能另有未提交候选，以每批identity.json与snapshot.json共同识别 |
-| tested_source_commit / head_at_acceptance | 新B最终验收映射尚未建立；K7完成时单独记录 |
-| E派生点 | teaching-enhanced尚未创建；须从K7已验收B交付HEAD派生 |
-| 远端状态 | 未运行远端Actions或发布清理分支 |
+- 分支：`teaching-base`。
+- 实测源码与验收时HEAD：`0a340b792c89667e493f7e7313935e45e29071bf`。
+- 固定纯集合：343 passed，1项按原非unit标记排除。
+- 同源码32个精确smoke首次全部通过，包含七个原示例main。
+- Python3.12.13、uv0.11.26；当前源码冻结安装、依赖兼容与安装路径验证通过。
+- 源码56个Python文件，57,995物理行、47,449代码行；不含测试、文档或验收材料。
 
-## 已完成与当前工作
+详细身份、环境、命令、原日志与统计见[本版验收](../artifacts/cleanup-base/final/acceptance.json)。实测之后追加的证据/文档提交不冒充重新测试；最终交付映射会记录实际B分支HEAD。
 
-K0已创建B并固定输入。K1统一有界gate/migration入口与CF-001至004公共修复已完成；registry只归一CRLF→LF，其它内容变化仍拒绝。原始snapshot和日志继续按原字节保存，见[K1记录](../artifacts/cleanup-base/k1/summary.json)。
+P1–P5所采纳的单结果、owner退休、typed待办和窄Complete ACK已实现。P2进度表合并与P6 Core领域提取经过真实试做，因增加扫描/接口成本而保留现有设计。完整逐项结果见[执行记录](cleanup-progress.md)。
 
-K2/K3已分批迁移发布、owner、Node、Worker、引用与foreign lineage等合同；成功、失败、修正与受测输入逐批见[执行记录](cleanup-progress.md)和[cleanup-base证据](../artifacts/cleanup-base/)。近期[K3e](../artifacts/cleanup-base/k3e/results.json)修复owner仍持有INLINE bytes而scratch丢失被误判LOST的问题，增强后继须继承；[K3f](../artifacts/cleanup-base/k3f/results.json)保存当前工具与来源/Worker恢复验证。它们不替代新B最终gate与七个main同版验收。
+早期本机冷启动/运行曾发生5秒或30秒超时，全部失败保留；最终运行记录包含相同解释器checked-hash源码缓存策略，不放宽时限，不承诺冷启动性能等价。依赖离线缓存缺失的失败和随后联网冻结安装也分别保留。
 
-本次已应用短README、设计、学习路径、测试指南及历史索引；4份过期计划和48份history工作副本按原blob可恢复。有效知识已进入[设计](design.md)与既定合同，live测试迁移完成状态仍按每项记录判断。文档行数减少不计作runtime精简。
-
-P1已实现TaskExecution和单个value/payload/result，14个受影响源码文件净减183物理行；同一隔离候选纯gate343通过、1项按原标记排除，32个smoke首次全部通过含七main。应用版另有准确快照映射与回归，见[P1验收](../artifacts/cleanup-base/k4p1/acceptance.json)。
-P2已退出journal、effect与公开snapshot的恒零输出维度，P3将owner membership/retirement改为单值并删除一处重复预检，最终owner提交校验仍保留。P4的put、Node-loss、退休待办使用具体记录；P5的OutputHandoffCompleteAck只确认准确Complete，完整历史查询保持独立。P1–P5已实施，见[P2收口决定](../artifacts/cleanup-base/k6-01/p2-final-closeout-final-disposition.md)、[P3决策](../artifacts/cleanup-base/k6-01/p3-validation-trial-assessment.md)与[K6结果](../artifacts/cleanup-base/k6-01/results.json)。
-
-adapter进度表合并和P6 Core领域提取都经过实际试做；前者增加历史扫描成本，后者未减少长期finish/drain职责，因此按证据保留现有结构，见[执行记录](cleanup-progress.md)。这两项保留决定不表示仍有待实施的候选重构。
-
-K7补齐旧绑定及17个原heavy函数的有限迁移，实际结果分别见[heavy01](../artifacts/cleanup-base/k7heavy-01/results.json)、[heavy02](../artifacts/cleanup-base/k7heavy-02/results.json)和[处置清单](../artifacts/cleanup-base/k7heavy-02/17-dispositions.md)。这些原场景的通过不替代尚未结束的最终同版gate；最终tested_source_commit/head_at_acceptance由K7完成时记录。
-本机多进程冷启动出现过多次5秒或30秒超时；原K3对照同样变慢。验收记录保留失败和相同解释器checked-hash源码缓存策略，未放宽时限，也不宣称已证明冷启动稳定或性能无回归。
-
-## 后续边界
-
-B保留GCS成员、死亡事实、Actor/PG协调，普通结果没有GCS发布事务或全局防环。E的两项自定义保证仍是确定交付项；B独立验收不等待E，最终两个heads须同时保留。
-
-首次学习从[README](../README.md)和[学习路径](learning-path.md)进入。旧基础318/32及七main只属于[固定基础账本](acceptance-baseline.md)。[整理计划](project-cleanup-plan.md)是唯一执行计划，[历史索引](history-index.md)负责旧全文恢复；没有第二份滚动backlog。
+B保留成员、资源、Actor和PG的GCS职责，不含普通结果GCS发布事务或全局ObjectID防环。`teaching-enhanced`将从已验收B交付HEAD派生，分别验证这两项保证；尚未创建或验收增强分支，未发布远端或运行远端CI。原tag和历史artifact不变。

@@ -1,0 +1,7 @@
+{
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "executable": "/dev/shm/mini-ray-cleanup-install/base-k7final-02/project/.venv/bin/python",
+  "module": "/dev/shm/mini-ray-cleanup-install/base-k7final-02/project/src/miniray/__init__.py",
+  "version": "0.1.0.dev0",
+  "direct_url": "{\"url\":\"file:///dev/shm/mini-ray-cleanup-install/base-k7final-02/project\",\"dir_info\":{\"editable\":true}}"
+}

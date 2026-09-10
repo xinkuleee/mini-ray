@@ -1,0 +1,100 @@
+[
+  {
+    "command": [
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-x86_64-unknown-linux-musl/uv",
+      "--version"
+    ],
+    "mode": "online",
+    "exit_code": 0,
+    "seconds": 0.039,
+    "log": "000-online.log"
+  },
+  {
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "--version"
+    ],
+    "mode": "online",
+    "exit_code": 0,
+    "seconds": 0.022,
+    "log": "001-online.log"
+  },
+  {
+    "command": [
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-x86_64-unknown-linux-musl/uv",
+      "lock",
+      "--check",
+      "--offline",
+      "--python",
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "--no-python-downloads",
+      "--cache-dir",
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-cache"
+    ],
+    "mode": "online",
+    "exit_code": 0,
+    "seconds": 0.207,
+    "log": "002-online.log"
+  },
+  {
+    "command": [
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-x86_64-unknown-linux-musl/uv",
+      "sync",
+      "--frozen",
+      "--extra",
+      "test",
+      "--python",
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "--no-python-downloads",
+      "--cache-dir",
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-cache"
+    ],
+    "mode": "online",
+    "exit_code": 0,
+    "seconds": 5.441,
+    "log": "003-online.log"
+  },
+  {
+    "command": [
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-x86_64-unknown-linux-musl/uv",
+      "pip",
+      "check",
+      "--python",
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/project/.venv/bin/python",
+      "--offline",
+      "--cache-dir",
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-cache"
+    ],
+    "mode": "online",
+    "exit_code": 0,
+    "seconds": 0.276,
+    "log": "004-online.log"
+  },
+  {
+    "command": [
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-x86_64-unknown-linux-musl/uv",
+      "pip",
+      "freeze",
+      "--python",
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/project/.venv/bin/python",
+      "--offline",
+      "--cache-dir",
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-cache"
+    ],
+    "mode": "online",
+    "exit_code": 0,
+    "seconds": 0.062,
+    "log": "005-online.log"
+  },
+  {
+    "command": [
+      "/dev/shm/mini-ray-cleanup-install/base-k7final-02/project/.venv/bin/python",
+      "-c",
+      "import importlib.metadata as m,json,sys;import miniray;d=m.distribution(\"mini-ray\");print(json.dumps(dict(python=sys.version,executable=sys.executable,module=miniray.__file__,version=d.version,direct_url=d.read_text(\"direct_url.json\")),indent=2))"
+    ],
+    "mode": "online",
+    "exit_code": 0,
+    "seconds": 2.756,
+    "log": "006-online.log"
+  }
+]

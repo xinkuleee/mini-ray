@@ -1,0 +1,22 @@
+{
+  "edition": "base",
+  "status": "accepted independently; enhanced not required for this result",
+  "branch_ref": "refs/heads/teaching-base",
+  "historical_start_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+  "fork_point_commit": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
+  "tested_source_commit": "0a340b792c89667e493f7e7313935e45e29071bf",
+  "head_at_acceptance": "0a340b792c89667e493f7e7313935e45e29071bf",
+  "source_archive_sha256": "382c12d12c6da48c8aaeda35a708ea1c999124bd499b486e23bcf2c871227838",
+  "runtime_result": "343 passed, 1 deselected; 32 of 32 exact smokes passed first attempt, including seven original mains",
+  "additional_common_fix": "Identical new two-lane regression failed before and passed after; same final source retains the exact loss cleanup responsibility.",
+  "environment": "Python3.12.13, uv0.11.26, locked packages; CHECKED_HASH source bytecode cache prepared before runtime. Existing 5-second startup and 30-second test bounds unchanged.",
+  "installation": "Fresh current-source uv lock --check and uv sync --frozen --extra test with isolated build; pip check/freeze and outside-project installed import passed. Earlier cold offline attempt lacked pygments cache; online download performed and retained.",
+  "statistics": {
+    "source_python_files": 56,
+    "source_physical_lines": 57995,
+    "source_code_lines": 47449
+  },
+  "following_commit_rule": "Only acceptance evidence and documentation are added after this tested commit. The subsequent B HEAD is recorded in delivery mapping; no claim that later evidence-only HEAD was directly tested.",
+  "enhanced_branch": "not yet created; must fork from following accepted B delivery HEAD",
+  "remote": "Local acceptance only; no push or remote CI run claimed"
+}

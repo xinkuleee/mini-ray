@@ -1,0 +1,80 @@
+{
+  "status": "ADDITIVE_SIZE_DELTA_ONLY",
+  "measured_utc": "2026-09-10T06:10:36.938168+00:00",
+  "before_commit": "54d1bca489b999d57e71fcc293973f3324b204a3",
+  "after_commit": "0a340b792c89667e493f7e7313935e45e29071bf",
+  "baseline_report_unchanged": "audit/k7-size-calibration.json",
+  "metric_source": "audit\\two-version-cleanup\\build_file_coverage.py",
+  "changes": [
+    {
+      "path": "src/miniray/core.py",
+      "before": {
+        "bytes": 598640,
+        "physical_lines": 12788,
+        "code_lines": 10812,
+        "sha256": "f7f7c9d0827fb0c820993c055de02f11f20d5c47568efedce681f6ca6a081260"
+      },
+      "after": {
+        "bytes": 599738,
+        "physical_lines": 12806,
+        "code_lines": 10824,
+        "sha256": "3e7ab478b525f1746ed062d930ff120b5a54176a96db48b4d4510cc1029c31ab"
+      },
+      "delta": {
+        "bytes": 1098,
+        "physical_lines": 18,
+        "code_lines": 12
+      }
+    },
+    {
+      "path": "tests/unit/test_adoption_loss_lane_handoff.py",
+      "before": {
+        "bytes": 0,
+        "physical_lines": 0,
+        "code_lines": 0,
+        "sha256": null
+      },
+      "after": {
+        "bytes": 9411,
+        "physical_lines": 174,
+        "code_lines": 144,
+        "sha256": "41586a39709fcfc4c146e058a217c8ec282a67b352b8c32bc20f274295fe013a"
+      },
+      "delta": {
+        "bytes": 9411,
+        "physical_lines": 174,
+        "code_lines": 144
+      }
+    }
+  ],
+  "source_delta": {
+    "physical_lines": 18,
+    "code_lines": 12
+  },
+  "tests_delta": {
+    "physical_lines": 174,
+    "code_lines": 144
+  },
+  "new_source_python_totals": {
+    "physical_lines": 57995,
+    "code_lines": 47449
+  },
+  "new_source_all_physical": 58599,
+  "fixed_B_to_new_source_delta": {
+    "physical_lines": -1391,
+    "code_lines": -1106
+  },
+  "new_test_functions": [
+    {
+      "name": "test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup",
+      "decorators": [
+        "pytest.mark.loopback_smoke",
+        "pytest.mark.parametrize('classified', (True, False), ids=('existing-takeover', 'death-before-takeover'))"
+      ]
+    }
+  ],
+  "test_scope": "one original L1 function with two existing parameter values; this report does not execute or certify it",
+  "pytest_run": false,
+  "base_modified": false,
+  "note": "Exact Git blobs measured +18 source physical lines and +12 token-code lines under the established splitlines/token metric, matching the root source estimate. Git textual hunk line counts can differ with existing mixed line endings."
+}

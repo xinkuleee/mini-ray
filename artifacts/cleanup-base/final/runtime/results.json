@@ -1,0 +1,430 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 10.564,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+    "exit_code": 0,
+    "seconds": 7.399,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution"
+    ],
+    "log": "001-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+    "exit_code": 0,
+    "seconds": 13.109,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects"
+    ],
+    "log": "002-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example01]",
+    "exit_code": 0,
+    "seconds": 8.015,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example01]"
+    ],
+    "log": "003-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example02]",
+    "exit_code": 0,
+    "seconds": 8.417,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example02]"
+    ],
+    "log": "004-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example03]",
+    "exit_code": 0,
+    "seconds": 9.276,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example03]"
+    ],
+    "log": "005-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example04]",
+    "exit_code": 0,
+    "seconds": 11.259,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example04]"
+    ],
+    "log": "006-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example05]",
+    "exit_code": 0,
+    "seconds": 9.433,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example05]"
+    ],
+    "log": "007-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example06]",
+    "exit_code": 0,
+    "seconds": 8.136,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example06]"
+    ],
+    "log": "008-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example07]",
+    "exit_code": 0,
+    "seconds": 16.104,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example07]"
+    ],
+    "log": "009-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process",
+    "exit_code": 0,
+    "seconds": 23.144,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process"
+    ],
+    "log": "010-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently",
+    "exit_code": 0,
+    "seconds": 12.871,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently"
+    ],
+    "log": "011-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_cross_node_dependency_pull.py::test_store_backed_dependency_pulls_to_consumer_node_before_direct_push",
+    "exit_code": 0,
+    "seconds": 17.207,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_cross_node_dependency_pull.py::test_store_backed_dependency_pulls_to_consumer_node_before_direct_push"
+    ],
+    "log": "012-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_lease_locality_path.py::test_stored_dependency_selects_data_first_hop_and_resources_can_spill_back_home",
+    "exit_code": 0,
+    "seconds": 19.486,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_lease_locality_path.py::test_stored_dependency_selects_data_first_hop_and_resources_can_spill_back_home"
+    ],
+    "log": "013-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas",
+    "exit_code": 0,
+    "seconds": 19.826,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas"
+    ],
+    "log": "014-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_foreign_reconstruction_path.py::test_driver_reconstructs_worker_owned_stored_object_through_owner",
+    "exit_code": 0,
+    "seconds": 10.436,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_foreign_reconstruction_path.py::test_driver_reconstructs_worker_owned_stored_object_through_owner"
+    ],
+    "log": "015-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root",
+    "exit_code": 0,
+    "seconds": 8.588,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root"
+    ],
+    "log": "016-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+    "exit_code": 0,
+    "seconds": 6.094,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once"
+    ],
+    "log": "017-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_actor_restart_path.py::test_actor_crash_restarts_once_fences_inflight_call_and_resets_state",
+    "exit_code": 0,
+    "seconds": 12.245,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_actor_restart_path.py::test_actor_crash_restarts_once_fences_inflight_call_and_resets_state"
+    ],
+    "log": "018-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_placement_group_path.py::test_strict_spread_tasks_use_committed_bundles_and_remove_restores_resources",
+    "exit_code": 0,
+    "seconds": 6.387,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_placement_group_path.py::test_strict_spread_tasks_use_committed_bundles_and_remove_restores_resources"
+    ],
+    "log": "019-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_placement_group_prepare_failure_path.py::test_second_participant_prepare_rejection_aborts_first_and_restores_roots",
+    "exit_code": 0,
+    "seconds": 8.475,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_placement_group_prepare_failure_path.py::test_second_participant_prepare_rejection_aborts_first_and_restores_roots"
+    ],
+    "log": "020-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_placement_group_node_loss_path.py::test_participant_node_loss_is_terminal_and_survivor_cleans_pg",
+    "exit_code": 0,
+    "seconds": 17.867,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_placement_group_node_loss_path.py::test_participant_node_loss_is_terminal_and_survivor_cleans_pg"
+    ],
+    "log": "021-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+    "exit_code": 0,
+    "seconds": 12.161,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_path.py::test_one_node_one_worker_task_path"
+    ],
+    "log": "022-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container",
+    "exit_code": 0,
+    "seconds": 9.039,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_contained_ref_lifecycle_path.py::test_two_borrowers_outlive_their_inline_container"
+    ],
+    "log": "023-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_node_crash_recovery_path.py::test_remote_node_death_retries_task_on_survivor_and_reports_crash",
+    "exit_code": 0,
+    "seconds": 10.605,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_node_crash_recovery_path.py::test_remote_node_death_retries_task_on_survivor_and_reports_crash"
+    ],
+    "log": "024-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_worker_crash_recovery_path.py::test_after_complete_worker_crash_recovers_output_without_reexecution",
+    "exit_code": 0,
+    "seconds": 6.059,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_worker_crash_recovery_path.py::test_after_complete_worker_crash_recovers_output_without_reexecution"
+    ],
+    "log": "025-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_worker_owner_death_path.py::test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release",
+    "exit_code": 0,
+    "seconds": 9.639,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_worker_owner_death_path.py::test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release"
+    ],
+    "log": "026-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_put_contained_ref_path.py::test_stored_put_foreign_ref_survives_source_close_and_task_argument_import",
+    "exit_code": 0,
+    "seconds": 7.661,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_put_contained_ref_path.py::test_stored_put_foreign_ref_survives_source_close_and_task_argument_import"
+    ],
+    "log": "027-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_precomplete_output_owner_death_path.py::test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds",
+    "exit_code": 0,
+    "seconds": 13.229,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_precomplete_output_owner_death_path.py::test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds"
+    ],
+    "log": "028-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_put_contained_ref_path.py::test_stored_put_dependency_survives_consumer_reconstruction",
+    "exit_code": 0,
+    "seconds": 9.052,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_put_contained_ref_path.py::test_stored_put_dependency_survives_consumer_reconstruction"
+    ],
+    "log": "029-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown",
+    "exit_code": 0,
+    "seconds": 17.952,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_promoted_output_publisher_node_loss_cleans_live_child_then_reports_unknown"
+    ],
+    "log": "030-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost",
+    "exit_code": 0,
+    "seconds": 11.083,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_publisher_node_loss_handoff_path.py::test_completed_output_publisher_node_loss_keeps_success_receipt_but_result_lost"
+    ],
+    "log": "031-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_runner_process_tree_path.py::test_timeout_cleanup_reaps_owned_parent_and_detached_grandchild",
+    "exit_code": 0,
+    "seconds": 1.921,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k7final-02/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_runner_process_tree_path.py::test_timeout_cleanup_reaps_owned_parent_and_detached_grandchild"
+    ],
+    "log": "032-smoke.log"
+  }
+]

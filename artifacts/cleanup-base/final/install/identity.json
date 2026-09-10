@@ -1,0 +1,14 @@
+{
+  "source": {
+    "branch": "refs/heads/teaching-base",
+    "head": "0a340b792c89667e493f7e7313935e45e29071bf",
+    "working_tree_status": "",
+    "archive_sha256": "382c12d12c6da48c8aaeda35a708ea1c999124bd499b486e23bcf2c871227838",
+    "file_count": 422,
+    "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+  },
+  "project": "/dev/shm/mini-ray-cleanup-install/base-k7final-02/project",
+  "cache": "/dev/shm/mini-ray-cleanup-install/base-k7final-02/uv-cache",
+  "source_inputs_unchanged": true,
+  "runtime_test_executed": false
+}
