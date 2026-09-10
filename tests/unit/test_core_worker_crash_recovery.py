@@ -151,7 +151,7 @@ def _completed_output(core, pending, state, *, inline=False):
         OutputPublicationNodeIncarnation(core.node_id, 21001, 3),
     )
     discovery = OutputDiscoverySession(header, inline_threshold=1024 if inline else 0)
-    outputs = discovery.discover((OnceResult(),))
+    outputs = discovery.discover((OnceResult()))
     journal, store = OutputPublicationJournal(), ObjectStore(1024)
     ledger = ResourceLedger(ResourceVector({"CPU": 1}))
     ledger.allocate(pending.spec.resources, state.grant.allocation_token)
@@ -202,7 +202,7 @@ def _completed_output(core, pending, state, *, inline=False):
         seals.append(effect)
         return result
     adapter._seal_replica = seal
-    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads)).accepted
+    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(outputs.manifest, (outputs.payload))).accepted
     discovery.release_sources_after_promotions()
     completion = protocol.CompleteWorkerLease(state.grant.lease_id, pending.task_id, pending.spec.attempt_id,
                                                state.push.worker_id, protocol.TaskReplyStatus.SUCCEEDED)
@@ -211,12 +211,12 @@ def _completed_output(core, pending, state, *, inline=False):
     envelope = complete.output_publication
     completions.append(envelope.complete)
     assert envelope.manifest == outputs.manifest
-    assert len(envelope.results) == 1 and reductions == [True]
+    assert len(((envelope.result,))) == 1 and reductions == [True]
     assert core._output_handoff_table().query(identity).complete is None
     descriptors = tuple(protocol.ObjectStoreDescriptor(
         result.object_id, result.owner_worker_id, pending.spec.attempt_id,
         result.node_id, result.size_bytes, result.checksum,
-    ) for result in envelope.results if result.storage is protocol.ResultStorage.OBJECT_STORE)
+    ) for result in ((envelope.result,)) if result.storage is protocol.ResultStorage.OBJECT_STORE)
     def rpc(address, handler, request):
         calls.append((handler, request))
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
@@ -528,12 +528,12 @@ def test_completed_stored_result_publishes_while_worker_remains_alive(
     assert snapshot.output_publication.manifest == publication.outputs.manifest
     assert snapshot.output_publication.slot_index == 0
     assert snapshot.output_retirement_id is None
-    assert snapshot.canonical_stored_result == publication.envelope.results[0]
+    assert snapshot.canonical_stored_result == (publication.envelope.result)
     assert not snapshot.outgoing_contained_edges
     result = core._stored_descriptors[pending.object_id]
     assert result.inline_data is None and result.checksum == descriptor.checksum
-    assert result == publication.envelope.results[0]
-    assert publication.store.get(pending.object_id) == publication.outputs.slot_payloads[0]
+    assert result == (publication.envelope.result)
+    assert publication.store.get(pending.object_id) == (publication.outputs.payload)
     assert cloudpickle.loads(publication.store.get(pending.object_id)) == b"stored"
     assert publication.reductions == [True] and len(publication.seals) == 1
     assert publication.completions == [publication.envelope.complete]
@@ -611,11 +611,11 @@ def test_completed_without_local_bytes_and_malformed_query_keep_exact_replay(
     assert snapshot.current_attempt == pending.spec.attempt_id
     assert snapshot.output_publication.manifest == publication.outputs.manifest
     if inline:
-        assert snapshot.inline_data == publication.envelope.results[0].inline_data
+        assert snapshot.inline_data == (publication.envelope.result).inline_data
         assert cloudpickle.loads(snapshot.inline_data) == b"stored"
     else:
-        assert core._stored_descriptors[pending.object_id] == publication.envelope.results[0]
-        assert publication.store.get(pending.object_id) == publication.outputs.slot_payloads[0]
+        assert core._stored_descriptors[pending.object_id] == (publication.envelope.result)
+        assert publication.store.get(pending.object_id) == (publication.outputs.payload)
     assert core._recovery.task_record(pending.task_id).retries_started == 0
     assert not core._protocol_unresolved and _dependency_queue(core) == ()
     assert all(request == queries[0] for request in queries)
@@ -906,12 +906,12 @@ class _DependencyRetryFixture:
             identity, self.core.job_id, push.worker_id, self.core.worker_id,
             OutputPublicationNodeIncarnation(self.node.node_id, self.node._node_pid, self.node._registration_epoch),
         ), inline_threshold=1024)
-        outputs = session.discover((1,))
-        assert len(outputs.manifest.slots) == 1
-        assert outputs.manifest.slots[0].tier is protocol.ResultStorage.INLINE
-        assert outputs.manifest.slots[0].size_bytes <= 32 and not outputs.manifest.slots[0].transfers
+        outputs = session.discover((1))
+        assert len(((outputs.manifest.value,))) == 1
+        assert (outputs.manifest.value).tier is protocol.ResultStorage.INLINE
+        assert (outputs.manifest.value).size_bytes <= 32 and not (outputs.manifest.value).transfers
         prepared = self.node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-            outputs.manifest, outputs.slot_payloads,
+            outputs.manifest, (outputs.payload),
         ))
         assert prepared.accepted and self.handoffs.query(identity).manifest == outputs.manifest
         assert self.node.resource_ledger.available.is_zero()
@@ -927,7 +927,7 @@ class _DependencyRetryFixture:
         self.completions.append((completion, reply))
         result = protocol.TaskReply(
             push.spec.task_id, push.spec.attempt_id, push.worker_id, protocol.TaskReplyStatus.SUCCEEDED,
-            reply.output_publication.results, output_publication=reply.output_publication,
+            ((reply.output_publication.result,)), output_publication=reply.output_publication,
         )
         self.replies[identity] = result
         return result

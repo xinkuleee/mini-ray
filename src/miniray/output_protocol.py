@@ -89,24 +89,17 @@ class OutputPublicationRequestIdentity(_WireValue):
 @dataclass(frozen=True)
 class PrepareOutputPublication(_WireValue):
     manifest: "OutputPublicationManifest"
-    slot_payloads: Tuple[bytes, ...]
+    payload: bytes
 
     def __post_init__(self):
         from .output_publication import OutputPublicationManifest
-
         manifest = _copy(self.manifest, OutputPublicationManifest, "manifest")
-        if type(self.slot_payloads) not in (tuple, list):
-            raise ProtocolError("slot_payloads must be an ordered tuple or list")
-        payloads = tuple(self.slot_payloads)
-        if len(payloads) != len(manifest.slots):
-            raise ProtocolError("slot_payloads must contain the single output payload")
-        for slot, payload in zip(manifest.slots, payloads):
-            if type(payload) is not bytes:
-                raise ProtocolError("each slot payload must be bytes")
-            if len(payload) != slot.size_bytes or hashlib.sha256(payload).hexdigest() != slot.checksum:
-                raise ProtocolError("slot payload size/checksum does not match its manifest")
+        if type(self.payload) is not bytes:
+            raise ProtocolError("output payload must be bytes")
+        value = manifest.value
+        if len(self.payload) != value.size_bytes or hashlib.sha256(self.payload).hexdigest() != value.checksum:
+            raise ProtocolError("output payload size/checksum does not match its manifest")
         object.__setattr__(self, "manifest", manifest)
-        object.__setattr__(self, "slot_payloads", payloads)
 
     @property
     def request_identity(self):

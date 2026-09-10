@@ -454,7 +454,7 @@ class _SubmissionFixture:
         assert node.resource_ledger.available == node.resource_ledger.total
         envelope = completed.output_publication
         assert envelope.manifest == self.publication.manifest
-        assert len(envelope.results) == 1 and envelope.results[0].storage is protocol.ResultStorage.INLINE
+        assert (envelope.result.storage is protocol.ResultStorage.INLINE)
         assert envelope.complete == self.publication.journal.snapshot(envelope.publication_id).complete
         # Node Complete releases resources independently of report delivery.
         assert self.publication.adapter.pending_terminal_reports() == (envelope.complete,)
@@ -463,7 +463,7 @@ class _SubmissionFixture:
         self.assert_pending()
         self.task_reply = protocol.TaskReply(
             push.spec.task_id, push.spec.attempt_id, push.worker_id,
-            protocol.TaskReplyStatus.SUCCEEDED, envelope.results, output_publication=envelope,
+            protocol.TaskReplyStatus.SUCCEEDED, ((envelope.result,)), output_publication=envelope,
         )
         return self.task_reply
 

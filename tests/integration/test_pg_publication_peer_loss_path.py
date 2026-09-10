@@ -133,11 +133,11 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
                 assert envelope.manifest.header.node_incarnation.node_id == survivor.node_id
                 assert envelope.manifest.header.executor_worker_id == survivor.worker_id
                 assert envelope.manifest.header.owner_worker_id == core.worker_id
-                slot, = envelope.manifest.slots
+                slot = (envelope.manifest.value)
                 assert slot.tier is protocol.ResultStorage.INLINE and slot.size_bytes < 1024 and not slot.transfers
                 with core._state_lock:
-                    pending = core._task_finish_barriers[identity.output_ids[0]]
-                    before = core.owner_table.snapshot(identity.output_ids[0])
+                    pending = core._task_finish_barriers[((identity.object_id,))[0]]
+                    before = core.owner_table.snapshot(((identity.object_id,))[0])
                     assert pending.execution == identity.execution and core._accepted_task_count == 1
                     assert core._placement_group_states[group_identity] is protocol.PlacementGroupPhaseStatus.CREATED
                     history = core._output_handoff_table().query(identity)
@@ -153,8 +153,8 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
                     assert installed.membership_epoch >= death.death_epoch
                     assert tuple(node.node_id for node in installed.nodes) == (survivor.node_id,)
                     assert core._placement_group_states[group_identity] is protocol.PlacementGroupPhaseStatus.LOST
-                    assert core.owner_table.snapshot(identity.output_ids[0]) == before
-                    assert core._task_finish_barriers[identity.output_ids[0]] is pending
+                    assert core.owner_table.snapshot(((identity.object_id,))[0]) == before
+                    assert core._task_finish_barriers[((identity.object_id,))[0]] is pending
                     assert pending.task_key in core._protocol_unresolved and core._accepted_task_count == 1
             except Exception as exc:
                 cut["error"] = exc
@@ -206,7 +206,7 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
         death, pending = cut["death"], cut["pending"]
         identity = cut["envelope"].publication_id
         assert identity.task_id == reference.object_id.task_id
-        assert identity.output_ids == (reference.object_id,)
+        assert ((identity.object_id,)) == (reference.object_id,)
         assert identity.attempt_id.attempt_number == 0
         assert death.node_id == victim.node_id and death.node_pid == victim.node_pid
         assert death.exit_code == -signal.SIGKILL
@@ -252,7 +252,7 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
         # sending a second retirement operation that could repair the bug.
         outcome_request = protocol.GetWorkerLeaseOutcome(
             identity.lease_id, identity.task_id, identity.attempt_id,
-            survivor.worker_id, core.worker_id, identity.output_ids, survivor_key,
+            survivor.worker_id, core.worker_id, ((identity.object_id,)), survivor_key,
         )
         outcome = _query(
             survivor.node_address, GET_WORKER_LEASE_OUTCOME_HANDLER, outcome_request, deadline,
@@ -262,7 +262,7 @@ def test_publication_replay_finishes_after_other_pg_bundle_node_loss(lost_ack):
         assert (outcome.lease_id, outcome.task_id, outcome.attempt_id, outcome.executor_worker_id,
                 outcome.owner_worker_id, outcome.object_ids, outcome.node_id, outcome.scheduling_key) == (
             identity.lease_id, identity.task_id, identity.attempt_id, survivor.worker_id,
-            core.worker_id, identity.output_ids, survivor.node_id, survivor_key,
+            core.worker_id, ((identity.object_id,)), survivor.node_id, survivor_key,
         )
         assert outcome.state is protocol.LeaseExecutionState.COMPLETED
         assert outcome.completion_status is protocol.TaskReplyStatus.SUCCEEDED

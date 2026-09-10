@@ -53,7 +53,7 @@ def _service(monkeypatch, *, refs=True):
     ))
     header = replace(values.header, node_incarnation=replace(node, registration_epoch=registered.registration_epoch))
     values.header = header
-    values.manifest = OutputPublicationManifest.create(header, values.slots)
+    values.manifest = OutputPublicationManifest.create(header, (values.value))
     values.witness = OutputPublicationCompleteWitness.for_manifest(values.manifest)
     worker = protocol.WorkerIncarnation(
         node.node_id, node.node_pid, registered.registration_epoch, values.executor, 1801,

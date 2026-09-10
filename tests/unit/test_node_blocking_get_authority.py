@@ -76,7 +76,7 @@ def _running_lease(
     node._lease_outcomes = {request.lease_id: _LeaseOutcome(request, grant)}
     baseline = node._ledger.snapshot()
     prepared = node._handle_prepare_output_publication(
-        wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+        wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     )
     assert prepared.accepted
     assert record.output_publication_id == fixture.id
@@ -488,7 +488,7 @@ def test_concurrent_block_and_completion_linearize_without_leaking(
         assert snapshot.state is OutputPublicationJournalState.COMPLETED
         assert snapshot.retained_result_slots == (0,) and snapshot.retired_slots == ()
         assert snapshot.rollback is None and snapshot.rollback_tombstone is None
-        stored, = envelope.results
+        stored = (envelope.result)
         assert stored.inline_data is None
         assert node.object_store.capacity_bytes == 1024 and node.object_store.used_bytes == 13
         assert node.object_store.get(stored.object_id) == b"stored-result"

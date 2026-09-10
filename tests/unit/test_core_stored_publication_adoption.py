@@ -103,9 +103,9 @@ def _assert_published(fixture, core, pending):
     snapshot = core.owner_table.snapshot(pending.object_id)
     assert snapshot.state is ObjectState.READY_STORED
     assert snapshot.output_publication.manifest == fixture.manifest
-    assert snapshot.outgoing_contained_edges == frozenset(fixture.manifest.slots[0].edges)
+    assert snapshot.outgoing_contained_edges == frozenset((fixture.manifest.value).edges)
     assert core._objects[pending.object_id].event.is_set()
-    assert core._stored_descriptors[pending.object_id] == fixture.values.results[0]
+    assert core._stored_descriptors[pending.object_id] == (fixture.values.result)
     assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
     assert core._recovery.task_record(pending.task_id).retries_started == 0
 
@@ -310,10 +310,9 @@ def test_success_envelope_identity_is_checked_before_any_owner_or_node_effect(mo
             header = replace(header, executor_worker_id=WorkerID.random())
         else:
             header = replace(header, node_incarnation=replace(header.node_incarnation, node_id=NodeID.random()))
-        manifest = OutputPublicationManifest.create(header, envelope.manifest.slots)
-        results = tuple(replace(result, owner_worker_id=header.owner_worker_id,
-                                node_id=header.node_incarnation.node_id) for result in envelope.results)
-        changed = OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest), results)
+        manifest = OutputPublicationManifest.create(header, (envelope.manifest.value))
+        results = ((replace(envelope.result, owner_worker_id=header.owner_worker_id, node_id=header.node_incarnation.node_id),))
+        changed = OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (results[0]))
         damaged = replace(reply)
         object.__setattr__(damaged, "results", results)
         object.__setattr__(damaged, "output_publication", changed)
@@ -477,7 +476,7 @@ def test_reverse_gc_orders_children_drop_then_metadata_and_preserves_sources(mon
         assert not core._stored_descriptors and fixture.store.used_bytes == 0
         assert core._recovery.lineage_for_object(pending.object_id) is None
         fixture.assert_no_pins_or_bytes()
-        for transfer in fixture.manifest.slots[0].transfers:
+        for transfer in (fixture.manifest.value).transfers:
             assert fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
                 transfer.contained_object_id).local_tokens == frozenset(("source-live",))
 

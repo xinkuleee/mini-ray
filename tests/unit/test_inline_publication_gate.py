@@ -87,7 +87,10 @@ class _Connection:
 
     def sendall(self, data):
         self._check()
-        self.events.append(gates.OutputPublicationGateArrival.from_bytes(data))
+        arrival = gates.OutputPublicationGateArrival.from_bytes(data)
+        assert arrival.publication_id.object_id.return_index == 0
+        assert arrival.publication_id.execution.attempt_id == arrival.publication_id.attempt_id
+        self.events.append(arrival)
         if self.clock is not None:
             self.clock[0] += self.advance
 
@@ -327,7 +330,7 @@ def test_node_preparation_gate_observes_acknowledged_phase_outside_locks(monkeyp
         return _Connection(events)
 
     monkeypatch.setattr(gates.socket, "create_connection", connect)
-    request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+    request = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     assert node._handle_prepare_output_publication(request).accepted
     assert node._handle_prepare_output_publication(request).accepted
     assert events == [gates.OutputPublicationGateArrival.from_manifest(
@@ -341,7 +344,7 @@ def test_node_preparation_gate_observes_acknowledged_phase_outside_locks(monkeyp
 def _completed_node(*, stored=False):
     fixture, node, record, complete = _node(stored=stored)
     prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-        fixture.manifest, fixture.values.payloads,
+        fixture.manifest, (fixture.values.payload),
     ))
     assert prepared.accepted
     reply = node._handle_complete_worker_lease_inner(complete)
@@ -353,7 +356,7 @@ def _outcome_request(fixture, record):
     values = fixture.values
     return protocol.GetWorkerLeaseOutcome(
         values.lease, values.task, values.attempt, values.executor,
-        values.owner, fixture.id.output_ids,
+        values.owner, ((fixture.id.object_id,)),
     )
 
 
@@ -394,10 +397,9 @@ def test_complete_and_outcome_share_one_gate_without_authority_locks(monkeypatch
     first = exits[first_exit]()
     other = exits["outcome" if first_exit == "complete" else "complete"]()
     assert first.output_publication == other.output_publication == fixture.values.envelope
-    assert events == [gates.OutputPublicationGateArrival.from_manifest(
-        fixture.manifest, gates.OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY,
-    ), "released", "closed"]
-    assert len(terminal_calls) == 1
+    assert (first.output_publication.result) == (fixture.values.result)
+    assert events == ([gates.OutputPublicationGateArrival.from_manifest(fixture.manifest, gates.OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY), 'released', 'closed'])
+    assert (len(terminal_calls)) == (1)
     assert gate._done.waits == []
 
 

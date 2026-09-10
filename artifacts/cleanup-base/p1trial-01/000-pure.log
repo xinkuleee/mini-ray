@@ -1,0 +1,81 @@
+........................................................................ [ 20%]
+........................................................................ [ 41%]
+........................................................................ [ 62%]
+..........................F............................................. [ 83%]
+.......................................................                  [100%]
+=================================== FAILURES ===================================
+__ test_unknown_registration_and_child_ack_keep_full_compensation_obligation ___
+
+    def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
+        from miniray import output_protocol as wire
+        from miniray.output_publication_journal import (
+            OutputPublicationRollbackTombstone, OutputPublicationStage,
+        )
+        from miniray.output_publication_node import OutputPublicationNodeAdapter
+        from miniray.ownership import ObjectOwnerTable
+        from miniray import protocol
+        from miniray.transport import TransportTimeout
+        f = _Fixture()
+        core = _rollback_core(f)
+        child = ObjectOwnerTable()
+        child.register(f.child, current_attempt=AttemptID(f.child.task_id, 0))
+        child.publish_inline(f.child, AttemptID(f.child.task_id, 0), b"child")
+        registers, releases = [], []
+    
+        def register(manifest):
+            # Register really commits, but its first response is lost.
+            f.table.register(manifest, f.attempt)
+            registers.append(manifest)
+            if len(registers) == 1:
+                raise TransportTimeout("owner registration ACK lost")
+    
+        def prepare(address, request):
+            assert address == (f.manifest.value).transfers[0].contained_owner_address
+            child.prepare_stored_contained_reference(
+                request.transfer, authority_worker_id=request.authority_worker_id,
+            )
+            raise TransportTimeout("child prepare ACK lost after actual hold")
+    
+        def release(address, request):
+            assert address == (f.manifest.value).transfers[0].contained_owner_address
+            released = child.release_contained_reference(request.object_id, request.hold)
+            releases.append(request)
+            return protocol.ReleaseContainedReferenceReply(
+                request.object_id, request.owner_worker_id, request.hold, True, released,
+            )
+    
+        def report(tombstone, *, manifest):
+            reply = core.report_output_handoff_rollback(wire.ReportOutputHandoffRollback(manifest, tombstone))
+            assert reply.accepted, reply.error
+    
+        def forbidden(*args, **kwargs):
+            pytest.fail("unreached publication effect")
+    
+        journal = _journal(f)
+        adapter = OutputPublicationNodeAdapter(
+            journal, register_owner=register, report_complete=forbidden, report_rollback=report,
+            prepare_child=prepare, promote_child=forbidden, release_child=release,
+            seal_replica=forbidden, drop_replica=forbidden,
+        )
+        with pytest.raises(TransportTimeout, match="registration"):
+>           adapter.prepare(f.manifest, (b"value",))
+
+tests/unit/test_output_handoff.py:316: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/output_publication_node.py:146: in prepare
+    _require_type(payload, bytes, "payload")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = (b'value',), expected = <class 'bytes'>, label = 'payload'
+
+    def _require_type(value: object, expected: type, label: str) -> None:
+        # Protocol values have concrete wire types; accepting an arbitrary subclass
+        # can retain hidden payload attributes or override identity projections.
+        if type(value) is not expected:
+>           raise TypeError(f"{label} must be a {expected.__name__}")
+E           TypeError: payload must be a bytes
+
+src/miniray/output_publication.py:55: TypeError
+=========================== short test summary info ============================
+FAILED tests/unit/test_output_handoff.py::test_unknown_registration_and_child_ack_keep_full_compensation_obligation
+1 failed, 342 passed, 1 deselected in 8.21s

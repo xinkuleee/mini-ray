@@ -470,7 +470,7 @@ def test_single_output_contained_refs_require_current_publication_and_actual_gc(
         with pytest.raises(TypeError, match="contained_edges"):
             protocol.TaskReply(
                 reply.task_id, reply.attempt_id, reply.worker_id, reply.status, reply.results,
-                contained_edges=tuple(fixture.manifest.slots[0].edges),
+                contained_edges=tuple((fixture.manifest.value).edges),
             )
         with pytest.raises(SystemTaskError, match="single-output"):
             core._publish_reply(pending, replace(reply, output_publication=None), expected_node_id=node.node_id)

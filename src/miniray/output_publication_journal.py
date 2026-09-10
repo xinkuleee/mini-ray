@@ -107,7 +107,7 @@ class OutputPublicationEffect(_WireValue):
         object.__setattr__(self, "manifest_digest", _checksum(self.manifest_digest, "manifest_digest"))
         if self.stage in _TRANSFER_STAGES | _SLOT_STAGES:
             _uint(self.slot_index, "slot_index")
-            if self.slot_index >= len(self.publication_id.output_ids):
+            if self.slot_index != 0:
                 raise OutputPublicationConflictError("slot_index is outside the selected execution")
         elif self.slot_index is not None:
             raise ValueError("batch effect cannot carry a slot_index")
@@ -209,8 +209,8 @@ class OutputPublicationSlotTombstone(_WireValue):
         if (
             proof.complete.publication_id != publication_id
             or proof.complete.manifest_digest != digest
-            or self.slot_index >= len(publication_id.output_ids)
-            or publication_id.output_ids[self.slot_index] != object_id
+            or self.slot_index != 0
+            or publication_id.object_id != object_id
         ):
             raise OutputPublicationConflictError("slot retirement proof changed its identity")
         object.__setattr__(self, "publication_id", publication_id)
@@ -357,10 +357,10 @@ class OutputPublicationJournal:
                     record.manifest.publication_id,
                     tuple(record.retired_slots[index] for index in sorted(record.retired_slots)),
                 )
-            if len(record.results) != len(record.manifest.slots):
+            if set(record.results) != {0}:
                 raise OutputPublicationJournalStateError("Complete requires all local results")
             envelope = OutputPublicationEnvelope(
-                record.manifest, witness, tuple(record.results[index] for index in range(len(record.manifest.slots)))
+                record.manifest, witness, record.results[0]
             )
             record.complete = witness
             record.state = OutputPublicationJournalState.COMPLETED
@@ -384,9 +384,8 @@ class OutputPublicationJournal:
                 return replace(record.rollback)
             self._require_active(record)
             effects = []
-            for index in reversed(range(len(record.manifest.slots))):
-                if self._intended(record, OutputPublicationStage.MATERIALIZE, index):
-                    effects.append(self._effect(record, OutputPublicationStage.SLOT_DROP, index))
+            if self._intended(record, OutputPublicationStage.MATERIALIZE, 0):
+                effects.append(self._effect(record, OutputPublicationStage.SLOT_DROP, 0))
             for forward, inverse in ((OutputPublicationStage.PROMOTE, OutputPublicationStage.FINAL_RELEASE),
                                      (OutputPublicationStage.PREPARE, OutputPublicationStage.PROVISIONAL_RELEASE)):
                 for slot_index, transfer_index in reversed(self._transfer_indices(record)):
@@ -437,8 +436,8 @@ class OutputPublicationJournal:
         proof = replace(proof)
         with self._lock:
             record = self._record(proof.complete.publication_id)
-            terminals = tuple(self._prepare_retirement(record, index, proof)
-                              for index in range(len(record.manifest.slots)))
+            # Retain the retirement map boundary at its sole internal index.
+            terminals = (self._prepare_retirement(record, 0, proof),)
             for terminal in terminals:
                 self._commit_retirement(record, terminal)
             return tuple(replace(value) for value in terminals)
@@ -480,8 +479,7 @@ class OutputPublicationJournal:
                 replace(record.manifest), record.state,
                 tuple(replace(value) for value in intents),
                 tuple(replace(value) for value in acknowledgements),
-                tuple(index for index in range(len(record.manifest.slots))
-                      if self._acked(record, OutputPublicationStage.MATERIALIZE, index)),
+                (0,) if self._acked(record, OutputPublicationStage.MATERIALIZE, 0) else (),
                 tuple(sorted(record.results)),
                 None if record.complete is None else replace(record.complete),
                 None if record.rollback is None else replace(record.rollback),
@@ -542,9 +540,8 @@ class OutputPublicationJournal:
 
     @staticmethod
     def _transfer_indices(record):
-        return tuple((slot_index, transfer_index)
-                     for slot_index, slot in enumerate(record.manifest.slots)
-                     for transfer_index in range(len(slot.transfers)))
+        return tuple((0, transfer_index)
+                     for transfer_index in range(len(record.manifest.value.transfers)))
 
     @staticmethod
     def _effect(record, stage, slot_index=None, transfer_index=None):
@@ -553,9 +550,9 @@ class OutputPublicationJournal:
             stage, slot_index, transfer_index,
         )
         if slot_index is not None:
-            if slot_index >= len(record.manifest.slots):
+            if slot_index != 0:
                 raise OutputPublicationConflictError("slot_index is outside the selected manifest")
-            if transfer_index is not None and transfer_index >= len(record.manifest.slots[slot_index].transfers):
+            if transfer_index is not None and transfer_index >= len(record.manifest.value.transfers):
                 raise OutputPublicationConflictError("transfer_index is outside its slot")
         return effect
 
@@ -576,8 +573,7 @@ class OutputPublicationJournal:
             raise OutputPublicationJournalStateError("materialization requires every provisional prepare ACK")
 
     def _all_materialized(self, record):
-        return all(self._acked(record, OutputPublicationStage.MATERIALIZE, index)
-                   for index in range(len(record.manifest.slots)))
+        return self._acked(record, OutputPublicationStage.MATERIALIZE, 0)
 
     def _ready_to_complete(self, record):
         return (self._acked(record, OutputPublicationStage.OWNER_REGISTER)
@@ -600,9 +596,12 @@ class OutputPublicationJournal:
 
     @staticmethod
     def _validate_descriptor(record, slot_index, descriptor):
+        _uint(slot_index, "slot_index")
+        if slot_index != 0:
+            raise OutputPublicationConflictError("materialized descriptor must name the sole output")
         descriptor = _descriptor(descriptor)
-        slot = record.manifest.slots[slot_index]
-        if (descriptor.object_id != slot.object_id or descriptor.storage is not slot.tier
+        slot = record.manifest.value
+        if (descriptor.object_id != record.manifest.publication_id.object_id or descriptor.storage is not slot.tier
                 or descriptor.size_bytes != slot.size_bytes or descriptor.checksum != slot.checksum
                 or descriptor.owner_worker_id != record.manifest.header.owner_worker_id
                 or descriptor.node_id != record.manifest.header.node_incarnation.node_id):
@@ -627,7 +626,7 @@ class OutputPublicationJournal:
     @staticmethod
     def _prepare_retirement(record, slot_index, proof):
         _uint(slot_index, "slot_index")
-        if slot_index >= len(record.manifest.slots):
+        if slot_index != 0:
             raise OutputPublicationConflictError("retirement slot is outside its manifest")
         if record.complete is None:
             raise OutputPublicationJournalStateError("payload retirement requires local Complete")
@@ -639,7 +638,7 @@ class OutputPublicationJournal:
             raise OutputPublicationConflictError("whole-batch owner commit identity was rebound")
         terminal = OutputPublicationSlotTombstone(
             record.manifest.publication_id, record.manifest.manifest_digest, slot_index,
-            record.manifest.slots[slot_index].object_id, proof,
+            record.manifest.publication_id.object_id, proof,
         )
         previous = record.retired_slots.get(slot_index)
         if previous is not None and previous != terminal:
@@ -652,7 +651,7 @@ class OutputPublicationJournal:
         record.results.pop(terminal.slot_index, None)
         if type(terminal.proof) is OutputPublicationAdoptionProof:
             record.adoption_proof = terminal.proof
-        if len(record.retired_slots) == len(record.manifest.slots):
+        if set(record.retired_slots) == {0}:
             record.state = OutputPublicationJournalState.RETIRED
 
 

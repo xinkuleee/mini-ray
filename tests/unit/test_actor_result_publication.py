@@ -33,11 +33,11 @@ from miniray.ids import (
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope,
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import ObjectState
 from miniray.recovery import UnknownTaskError
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 from tests.unit._pure_core import make_pure_core, close_pure_core
 
 
@@ -341,17 +341,15 @@ def test_actor_rejects_task_publication_authority_without_graph_side_effects(ext
         reply = values.reply(call)
         descriptor = reply.task_reply.results[0]
         if extra == "output-envelope":
-            execution = TaskExecutionKey(TaskOutputManifest.for_task(call.request.task_id, 1), call.request.attempt_id)
+            execution = (TaskExecution(call.request.attempt_id))
             identity = OutputPublicationID(_id(LeaseID, 7), execution)
             header = OutputPublicationHeader(
                 identity, values.core.job_id, call.endpoint.worker_id, values.core.worker_id,
                 OutputPublicationNodeIncarnation(call.endpoint.node_id, 1101, 1),
             )
-            manifest = OutputPublicationManifest.create(header, (OutputSlotManifest(
-                descriptor.object_id, descriptor.storage, descriptor.size_bytes, descriptor.checksum,
-            ),))
+            manifest = OutputPublicationManifest.create(header, (OutputValue(descriptor.storage, descriptor.size_bytes, descriptor.checksum)))
             envelope = OutputPublicationEnvelope(
-                manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (descriptor,),
+                manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (descriptor[0]),
             )
             task_reply = replace(reply.task_reply, output_publication=envelope)
         else:

@@ -263,7 +263,7 @@ def test_owner_retirement_drop_ack_loss_defers_then_exact_request_starts():
                 assert request.object_id == values.lost
                 assert request.producer_attempt_id == pending.spec.attempt_id
                 assert request.owner_worker_id == core.worker_id
-                assert request.checksum == old_target.output_publication.slot.checksum
+                assert request.checksum == (old_target.output_publication.manifest.value).checksum
                 drop_requests.append(request)
                 drop_statuses.append(result.status)
                 assert not values.backend.store.contains(values.lost, sealed_only=False)

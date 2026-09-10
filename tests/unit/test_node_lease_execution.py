@@ -276,7 +276,7 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     prepared = publication.journal.snapshot(identity)
     assert prepared.ready_to_complete and prepared.retained_result_slots == (0,)
     assert prepared.complete is None and publication.handoffs.query(identity).manifest == publication.manifest
-    assert publication.manifest.slots[0].size_bytes <= 32
+    assert (publication.manifest.value).size_bytes <= 32
     assert node.object_store.capacity_bytes == 1024 and node.object_store.used_bytes == 0
     release_calls = []
     release = node.resource_ledger.release

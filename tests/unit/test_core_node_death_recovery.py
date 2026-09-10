@@ -326,7 +326,7 @@ def test_promoted_route_does_not_change_canonical_task_reply_replay(monkeypatch)
     _no_runtime.__wrapped__(monkeypatch)
     fixture = _Fixture(monkeypatch)
     core, pending = fixture.core, fixture.pending
-    original = fixture.envelope.results[0]
+    original = (fixture.envelope.result)
     output, survivor = fixture.output, fixture.target.node_id
     try:
         fixture.add_secondary()
@@ -348,7 +348,7 @@ def test_promoted_route_does_not_change_canonical_task_reply_replay(monkeypatch)
             )
         reply = protocol.TaskReply(
             pending.task_id, pending.spec.attempt_id, fixture.publication.values.executor,
-            protocol.TaskReplyStatus.SUCCEEDED, fixture.envelope.results,
+            protocol.TaskReplyStatus.SUCCEEDED, ((fixture.envelope.result,)),
             output_publication=fixture.envelope,
         )
         before_calls = tuple(fixture.calls)
@@ -361,7 +361,7 @@ def test_promoted_route_does_not_change_canonical_task_reply_replay(monkeypatch)
         assert after == snapshot and after.canonical_stored_result == original
         assert after.locations == frozenset({survivor})
         assert core._stored_descriptors[output] == replace(original, node_id=survivor)
-        assert fixture.target.object_store.get(output) == fixture.publication.values.payloads[0]
+        assert fixture.target.object_store.get(output) == (fixture.publication.values.payload)
     finally:
         fixture.close()
 
@@ -459,7 +459,7 @@ def test_dead_location_and_late_stored_result_cannot_resurrect(monkeypatch) -> N
         assert lost_core.owner_table.snapshot(lost.object_id) == current
         assert not lost_core._stored_descriptors
         assert publication.id not in lost_core._output_result_custody
-        for transfer in publication.manifest.slots[0].transfers:
+        for transfer in (publication.manifest.value).transfers:
             child = publication.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
             assert transfer.final_hold not in child.contained_holds
             assert transfer.provisional_hold not in child.contained_holds

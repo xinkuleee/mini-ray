@@ -25,7 +25,7 @@ from .recovery import (
     ProducerLineage, RecoveryAction, RecoveryDecision, RecoveryManager,
     RecoveryTransitionPlan, TaskState,
 )
-from .task_outputs import TaskExecutionKey
+from .task_outputs import TaskExecution
 
 
 class ReconstructionRuntimeError(RuntimeError):
@@ -52,8 +52,8 @@ class ReconstructionGraphNode:
     task_id: Optional[TaskID]
     action: ReconstructionGraphAction
     task_spec: Optional[TaskSpec]
-    # A producer is planned once by TaskID even when the graph names more than
-    # one of its return slots.  READY leaves remain singleton audit nodes.
+    # Recovery retains its tuple boundary for the producer's single output.
+    # READY leaves remain singleton audit nodes.
     output_ids: tuple[ObjectID, ...]
     # Only top-level RefArgs are readiness edges in the reconstruction DAG.
     dependency_ids: tuple[ObjectID, ...]
@@ -86,8 +86,7 @@ class ReconstructionPlan:
 
     task_id: TaskID
     requested_object_id: ObjectID
-    # ``object_id`` remains the slot-zero compatibility identity used by
-    # ``_PendingTask``; the request names the one producer output.
+    # ``object_id`` names the producer's single output for ``_PendingTask``.
     object_id: ObjectID
     output_ids: tuple[ObjectID, ...]
     previous_attempt: AttemptID
@@ -648,9 +647,13 @@ class ReconstructionCoordinator:
             # producer may already have consumed SYSTEM retries before its
             # output was lost, so the output CAS must use RecoveryManager's
             # current physical attempt rather than spec.attempt_id.
-            execution = TaskExecutionKey.from_task_spec(spec).for_attempt(
+            execution = TaskExecution.from_task_spec(spec).for_attempt(
                 before.current_attempt
             )
+            if (execution.object_id,) != output_ids:
+                raise ReconstructionRuntimeError(
+                    "reconstruction execution changed the single producer output"
+                )
             owner_plan = (self._owner.validate_advance_task_outputs(
                 execution, decision.attempt_id
             ) if preflight_owner else None)

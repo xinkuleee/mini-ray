@@ -152,7 +152,7 @@ def test_adopted_output_keeps_surviving_stored_replica_after_publisher_loss():
                 assert handoff.phase is OutputHandoffPhase.ADOPTED and handoff.adoption == request.proof
                 assert handoff.manifest.header.owner_worker_id == core.worker_id
                 assert handoff.manifest.header.executor_worker_id == source.worker_id
-                assert len(handoff.manifest.slots) == 1
+                assert len(((handoff.manifest.value,))) == 1
                 with observation_lock:
                     if not held_request:
                         held_request.append((request, handoff, time.monotonic() + _GATE_SECONDS))
@@ -187,12 +187,12 @@ def test_adopted_output_keeps_surviving_stored_replica_after_publisher_loss():
             (adopted_request, adopted_handoff, gate_deadline), = held_request
         gate_deadline = min(gate_deadline, deadline)
         publication = adopted_request.proof.complete.publication_id
-        assert publication.output_ids == tuple(ref.object_id for ref in refs)
+        assert ((publication.object_id,)) == tuple(ref.object_id for ref in refs)
         assert publication.attempt_id.attempt_number == 0
         manifest = adopted_handoff.manifest
         assert manifest.header.node_incarnation.node_id == source.node_id
         assert manifest.header.executor_worker_id == source.worker_id
-        assert tuple(slot.tier for slot in manifest.slots) == (protocol.ResultStorage.OBJECT_STORE,)
+        assert ((manifest.value.tier,)) == (protocol.ResultStorage.OBJECT_STORE,)
         with core._completion:
             assert all(ref.object_id in core._task_finish_barriers for ref in refs)
             assert publication in core._output_result_custody
@@ -266,7 +266,7 @@ def test_adopted_output_keeps_surviving_stored_replica_after_publisher_loss():
         record = core._recovery.task_record(publication.task_id)
         assert record.state is TaskState.SUCCEEDED and record.current_attempt == publication.attempt_id
         assert record.retries_started == 0 and core._recovery.active_recovery(publication.task_id) is None
-        transfer, = manifest.slots[0].transfers
+        transfer, = (manifest.value).transfers
         assert transfer.contained_object_id == child.object_id
         assert isinstance(transfer.source, BorrowedContainedSource)
         assert isinstance(transfer.source.original_source, protocol.TaskHoldSource)
@@ -296,7 +296,7 @@ def test_adopted_output_keeps_surviving_stored_replica_after_publisher_loss():
         assert reply.checksum == hashlib.sha256(reply.data).hexdigest() == canonical.checksum
         assert producer_push.lease_id == publication.lease_id
         assert producer_push.spec.attempt_id == publication.attempt_id
-        assert producer_push.spec.return_ids() == publication.output_ids
+        assert producer_push.spec.return_ids() == ((publication.object_id,))
         record = core._recovery.task_record(publication.task_id)
         assert record.state is TaskState.SUCCEEDED and record.current_attempt == publication.attempt_id
         assert record.max_retries == record.retries_started == 0

@@ -25,12 +25,12 @@ from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope, OutputPublicationHeader,
     OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation,
-    OutputSlotManifest,
+    OutputValue,
 )
 from miniray.output_handoff import NodeLostOutputResolution
 from miniray.ownership import ObjectState, OutputOwnerPublicationPlan
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from tests.unit._pure_core import close_pure_core, make_pure_core
 
 
@@ -69,21 +69,19 @@ class _Fixture:
         core._recovery.register_task(spec)
         core._objects[self.output] = _ObjectWaiter(threading.Event())
         self.source, self.target = NodeID(bytes((62,)) * 16), NodeID(bytes((63,)) * 16)
-        execution = TaskExecutionKey.from_task_spec(spec)
+        execution = TaskExecution.from_task_spec(spec)
         self.identity = OutputPublicationID(LeaseID(bytes((64,)) * 16), execution)
         header = OutputPublicationHeader(
             self.identity, core.job_id, WorkerID(bytes((65,)) * 16), core.worker_id,
             OutputPublicationNodeIncarnation(self.source, 1601, 1),
         )
         checksum = hashlib.sha256(b"x").hexdigest()
-        self.manifest = OutputPublicationManifest.create(header, (
-            OutputSlotManifest(self.output, protocol.ResultStorage.OBJECT_STORE, 1, checksum),
-        ))
+        self.manifest = OutputPublicationManifest.create(header, (OutputValue(protocol.ResultStorage.OBJECT_STORE, 1, checksum)))
         self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
         self.canonical = protocol.ResultDescriptor(
             self.output, protocol.ResultStorage.OBJECT_STORE, 1, core.worker_id, self.source, checksum,
         )
-        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (self.canonical,))
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (self.canonical))
         if unified:
             assert core.owner_table.commit_output_publication(OutputOwnerPublicationPlan(execution, self.envelope)).committed
         else:

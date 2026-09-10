@@ -2575,7 +2575,7 @@ def _validate_output_publication_envelope(
     from .output_publication import (
         OutputPublicationEnvelope, _attempt, _object_id, _opaque,
     )
-    from .task_outputs import TaskExecutionKey
+    from .task_outputs import TaskExecution
 
     if type(envelope) is not OutputPublicationEnvelope:
         raise ProtocolError(f"{operation} output_publication must be an OutputPublicationEnvelope")
@@ -2602,9 +2602,9 @@ def _validate_output_publication_envelope(
             or owner_worker_id is not None and header.owner_worker_id != owner_worker_id
             or node_id is not None and header.node_incarnation.node_id != node_id):
         raise ProtocolError(f"{operation} output publication changed lease, task, attempt, executor, owner, or Node")
-    if type(publication_id.execution) is not TaskExecutionKey:
+    if type(publication_id.execution) is not TaskExecution:
         raise ProtocolError(f"{operation} output publication requires an exact task execution")
-    if output_ids is not None and publication_id.output_ids != output_ids:
+    if output_ids is not None and (publication_id.object_id,) != output_ids:
         raise ProtocolError(f"{operation} output publication changed its single task output")
     return envelope
 
@@ -2620,7 +2620,7 @@ def _validate_output_completion_witness(
     from .output_publication import (
         OutputPublicationCompleteWitness, _attempt, _object_id, _opaque,
     )
-    from .task_outputs import TaskExecutionKey
+    from .task_outputs import TaskExecution
 
     if type(witness) is not OutputPublicationCompleteWitness:
         raise ProtocolError(f"{operation} output_completion must be an OutputPublicationCompleteWitness")
@@ -2637,9 +2637,9 @@ def _validate_output_completion_witness(
     if (identity.lease_id != lease_id or identity.task_id != task_id
             or identity.attempt_id != attempt_id):
         raise ProtocolError(f"{operation} output completion changed lease, task, or attempt")
-    if type(identity.execution) is not TaskExecutionKey:
+    if type(identity.execution) is not TaskExecution:
         raise ProtocolError(f"{operation} output completion requires an exact task execution")
-    if output_ids is not None and identity.output_ids != output_ids:
+    if output_ids is not None and (identity.object_id,) != output_ids:
         raise ProtocolError(f"{operation} output completion changed its single task output")
     return witness
 
@@ -3018,12 +3018,13 @@ class GetWorkerLeaseOutcomeReply:
                 owner_worker_id=self.owner_worker_id, node_id=self.node_id,
                 operation="worker lease outcome",
             )
-            expected_descriptors = tuple(
-                ObjectStoreDescriptor(
+            result = envelope.result
+            expected_descriptors = (
+                (ObjectStoreDescriptor(
                     result.object_id, result.owner_worker_id, self.attempt_id,
                     result.node_id, result.size_bytes, result.checksum,
-                )
-                for result in envelope.results if result.storage is ResultStorage.OBJECT_STORE
+                ),)
+                if result.storage is ResultStorage.OBJECT_STORE else ()
             )
             if descriptors != expected_descriptors:
                 raise ProtocolError("output publication outcome must retain its exact STORED descriptor projection")
@@ -3085,10 +3086,10 @@ class TaskReply:
                 output_ids=tuple(result.object_id for result in self.results),
                 operation="task reply",
             )
-            if self.results != envelope.results:
+            if self.results != (envelope.result,):
                 raise ProtocolError("output publication task reply must publish exactly its results")
             object.__setattr__(self, "output_publication", envelope)
-            object.__setattr__(self, "results", envelope.results)
+            object.__setattr__(self, "results", (envelope.result,))
 
     def __reduce__(self) -> tuple[object, tuple[object, ...]]:
         values = tuple(

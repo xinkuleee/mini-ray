@@ -139,7 +139,7 @@ def test_child_ack_loss_then_invalid_worker_finalize_preserves_exact_owner_clean
                 transfer.final_hold if final else transfer.provisional_hold,
             )
             for final in (True, False)
-            for transfer in fixture.manifest.slots[0].transfers
+            for transfer in (fixture.manifest.value).transfers
         )
         assert len(expected) == 4
 
@@ -159,7 +159,7 @@ def test_child_ack_loss_then_invalid_worker_finalize_preserves_exact_owner_clean
             assert handler == wire.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER
             assert address == node._workers[values.executor].address and message == request
             assert tuple(releases) == (expected[0],) + expected
-            for transfer in fixture.manifest.slots[0].transfers:
+            for transfer in (fixture.manifest.value).transfers:
                 child = fixture.child_owners[transfer.contained_owner_worker_id]
                 assert transfer.final_hold not in child.snapshot(transfer.contained_object_id).contained_holds
                 assert child.contained_release_was_seen(transfer.contained_object_id, transfer.final_hold)
@@ -181,7 +181,7 @@ def test_child_ack_loss_then_invalid_worker_finalize_preserves_exact_owner_clean
         assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
         assert not fixture.adapter.owner_death_finished(fixture.id)
         assert not node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-            fixture.manifest, values.payloads,
+            fixture.manifest, (values.payload),
         )).accepted
 
         with pytest.raises(ProtocolError, match="owner cleanup flag"):

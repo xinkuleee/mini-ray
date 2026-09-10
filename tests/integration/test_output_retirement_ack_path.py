@@ -51,9 +51,9 @@ def test_lost_actual_adoption_ack_replays_retirement_without_reexecution(monkeyp
             if handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER:
                 identity = request.proof.complete.publication_id
                 with core._completion:
-                    snapshot = core.owner_table.snapshot(identity.output_ids[0])
+                    snapshot = core.owner_table.snapshot(((identity.object_id,))[0])
                     window = (snapshot.state, snapshot.current_attempt,
-                              identity.output_ids[0] in core._task_finish_barriers,
+                              ((identity.object_id,))[0] in core._task_finish_barriers,
                               identity in core._output_result_custody,
                               core._output_handoff_table().query(identity).phase)
                 with lock:

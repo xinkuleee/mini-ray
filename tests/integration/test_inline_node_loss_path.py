@@ -394,7 +394,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         assert arrival.node_pid == victim.node_pid
         assert arrival.registration_epoch == runtime.nodes[1].registration_epoch
         assert publication.task_id == outer_id.task_id
-        assert publication.output_ids == publication.full_output_ids == (outer_id,)
+        assert ((publication.object_id,)) == ((publication.object_id,)) == (outer_id,)
         assert publication.attempt_id.attempt_number == 0
 
         # The actual Node reported Complete to this owner before opening its
@@ -420,9 +420,9 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         assert (node_incarnation.node_id, node_incarnation.node_pid, node_incarnation.registration_epoch) == (
             arrival.node_id, arrival.node_pid, arrival.registration_epoch,
         )
-        assert len(prepared.manifest.slots) == 1
-        slot = prepared.manifest.slots[0]
-        assert slot.object_id == outer_id and slot.tier is protocol.ResultStorage.INLINE
+        assert len(((prepared.manifest.value,))) == 1
+        slot = (prepared.manifest.value)
+        assert (prepared.manifest.publication_id).object_id == outer_id and slot.tier is protocol.ResultStorage.INLINE
         assert 0 < slot.size_bytes <= _INLINE_THRESHOLD and len(slot.transfers) == 1
 
         (edge,) = slot.edges
@@ -459,8 +459,8 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
                 assert received_envelope.publication_id == publication
                 assert received_envelope.manifest == prepared.manifest
                 assert received_envelope.complete == prepared.complete
-                assert len(received_envelope.results) == 1
-                assert received_envelope.results[0].inline_data is not None
+                assert len(((received_envelope.result,))) == 1
+                assert (received_envelope.result).inline_data is not None
                 assert core.owner_table.snapshot(outer_id).state is ObjectState.PENDING
             with observer_lock:
                 assert received_envelopes
@@ -498,7 +498,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         if keep_received:
             assert settled.state is ObjectState.READY_INLINE
             assert received_envelope is not None
-            assert settled.inline_data == received_envelope.results[0].inline_data
+            assert settled.inline_data == (received_envelope.result).inline_data
             assert settled.output_publication is not None
             assert settled.output_publication.publication_id == publication
             assert settled.output_publication.slot_index == 0
@@ -599,10 +599,10 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         assert after.output_retirement_id is None
         final_publication = after.output_publication.publication_id
         assert type(final_publication) is OutputPublicationID
-        assert final_publication.output_ids == final_publication.full_output_ids == (outer_id,)
+        assert ((final_publication.object_id,)) == ((final_publication.object_id,)) == (outer_id,)
         if keep_received:
             assert final_publication == publication
-            assert after.inline_data == received_envelope.results[0].inline_data
+            assert after.inline_data == (received_envelope.result).inline_data
             assert hashlib.sha256(after.inline_data).hexdigest() == slot.checksum
         else:
             assert final_publication != publication
@@ -616,8 +616,8 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             assert rebuilt_envelopes
             replacement_envelope = rebuilt_envelopes[0]
             assert replacement_envelope.manifest == after.output_publication.manifest
-            assert replacement_envelope.results[0].inline_data == after.inline_data
-            replacement = replacement_envelope.manifest.slots[0].transfers[0]
+            assert (replacement_envelope.result).inline_data == after.inline_data
+            replacement = (replacement_envelope.manifest.value).transfers[0]
             assert isinstance(replacement.source, BorrowedContainedSource)
             assert replacement.source.borrower_worker_id == survivor.worker_id
             assert replacement.source.original_source.hold != original_hold

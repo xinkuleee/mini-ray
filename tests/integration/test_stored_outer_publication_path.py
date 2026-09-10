@@ -265,22 +265,22 @@ def test_stored_outer_publication_adopts_owner_handoff_and_collects(
         assert descriptor.object_id == outer_id
         assert descriptor.owner_worker_id == core.worker_id
         assert descriptor.node_id == node.node_id
-        assert publication_id.output_ids == publication_id.full_output_ids == (outer_id,)
+        assert ((publication_id.object_id,)) == ((publication_id.object_id,)) == (outer_id,)
         assert snapshot.current_attempt == publication_id.attempt_id
         assert output_manifest.header.executor_worker_id == child.owner_worker_id
         assert output_manifest.header.owner_worker_id == core.worker_id
         assert output_manifest.header.node_incarnation.node_id == node.node_id
         assert output_manifest.header.node_incarnation.node_pid == node.node_pid
-        assert len(publication.slot.transfers) == 1
-        transfer = publication.slot.transfers[0]
+        assert len((publication.manifest.value).transfers) == 1
+        transfer = (publication.manifest.value).transfers[0]
         assert isinstance(transfer.source, OwnedContainedSource)
         assert transfer.source.owner_worker_id == child.owner_worker_id
 
-        edges = publication.slot.edges
+        edges = (publication.manifest.value).edges
         assert len(edges) == 1
         edge = edges[0]
         assert snapshot.outgoing_contained_edges == frozenset(edges)
-        assert output_manifest.ordered_edges == edges
+        assert (output_manifest.value.edges) == edges
         assert edge.container_object_id == outer_id
         assert edge.contained_object_id == child.object_id
         assert edge.contained_owner_worker_id == child.owner_worker_id

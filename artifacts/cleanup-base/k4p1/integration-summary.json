@@ -1,0 +1,172 @@
+{
+  "base_head": "2e50c35fe90c41626c5d38627a87da52334d55cd",
+  "status": "ready_for_root_apply_review_no_base_write_no_tests",
+  "paths": 121,
+  "source_paths": 14,
+  "test_paths": 107,
+  "patch_sha256": "bf9dc5a8c6539c35fe6510a35afcc268aa620407992e4dbd854fc40f423acd7f",
+  "patch_bytes": 523477,
+  "minimal_patch_sha256": "4abe790ee7c5f3132db60e78f3a0897d78cdd724a54591c4823f723c62716f8f",
+  "prepare_fix_patch_sha256": "fa8599ed8a3b40085e1c7b870dcf6d9b5f899af2af452c053d9fc914b8a64328",
+  "apply_check_returncode": 0,
+  "all_trial02_ast_equal_without_docstrings": true,
+  "later_docstrings_preserved": [
+    {
+      "path": "tests/integration/test_stored_outer_publication_path.py",
+      "symbol": "<module>",
+      "sha256": "bead88543d70b369f9f7f00d6076f2b5b1461c4871293a6cd80246bed4d9df18"
+    }
+  ],
+  "base_unchanged": true,
+  "manifest_not_in_patch": true,
+  "total_source_counts": {
+    "physical_before": 36986,
+    "physical_after": 36803,
+    "code_before": 30738,
+    "code_after": 30597
+  },
+  "pytest_run": false,
+  "docstring_update_paths_preserved": [
+    {
+      "path": "tests/integration/test_actor_cross_process_trace.py",
+      "within_patch": false,
+      "docstring_sha256": "d42d314738f0c1a603fbb3588a53c72c3bbde00dcc52152b34abeb2a801fbc48"
+    },
+    {
+      "path": "tests/integration/test_actor_restart_path.py",
+      "within_patch": false,
+      "docstring_sha256": "0313150d7a48c53bfbb6c113ea6cc1b0c8e2a797e714398c18b73670bef27653"
+    },
+    {
+      "path": "tests/integration/test_blocking_get_cpu_yield_path.py",
+      "within_patch": false,
+      "docstring_sha256": "d7e619365270b9dd44a7e429c0f92d65f23572c2be200e8131a92321c90aeb7f"
+    },
+    {
+      "path": "tests/integration/test_core_dispatch_concurrency.py",
+      "within_patch": false,
+      "docstring_sha256": "4e9bffd9ba58781540f43ef096312ed5892b3850bf01aa63e9ac50d7d57bf03a"
+    },
+    {
+      "path": "tests/integration/test_core_shutdown_concurrency.py",
+      "within_patch": false,
+      "docstring_sha256": "6abebb003c3912b89542ba3af0cf05514b573b1cccba534080f364aae3638eb2"
+    },
+    {
+      "path": "tests/integration/test_cross_node_dependency_pull.py",
+      "within_patch": false,
+      "docstring_sha256": "90332e619155e3a477b717ccc561274cb4c9048316f1f21c0745b3de73e48b99"
+    },
+    {
+      "path": "tests/integration/test_foreign_inline_dependency_path.py",
+      "within_patch": false,
+      "docstring_sha256": "ab81ef945a758906f9fe51369b36597321ebbc7e4e64b8d60a259b3e08b15e3e"
+    },
+    {
+      "path": "tests/integration/test_foreign_input_lineage_reconstruction_path.py",
+      "within_patch": false,
+      "docstring_sha256": "c545c01061c99e5bb2aa0c33353e17fbebd26234bb6cfac3568d939e5e795da7"
+    },
+    {
+      "path": "tests/integration/test_foreign_reconstruction_path.py",
+      "within_patch": false,
+      "docstring_sha256": "9d56db41471df23a46c5722832b9cd76f233510cdff1a9b25ea8386295812637"
+    },
+    {
+      "path": "tests/integration/test_foreign_stored_dependency_path.py",
+      "within_patch": false,
+      "docstring_sha256": "0b92418c1543764e298c465db93e36490072e84fb65c41fbe61c2f16b0d7252a"
+    },
+    {
+      "path": "tests/integration/test_foreign_stored_ref_path.py",
+      "within_patch": false,
+      "docstring_sha256": "159b1a32042345d41341a4ec82c37c6ad75eb1b607617869086e5c2181ae59f3"
+    },
+    {
+      "path": "tests/integration/test_foreign_wait_drop_path.py",
+      "within_patch": false,
+      "docstring_sha256": "7d8664e15821cba90eeeaa7f7520a81df1e5e5abc813df772bade3104557ccb8"
+    },
+    {
+      "path": "tests/integration/test_local_nested_reconstruction_path.py",
+      "within_patch": false,
+      "docstring_sha256": "507f8e6e2bb10cf0f0a8429fc6debfe66b261059177c83d348cf91372cf345b7"
+    },
+    {
+      "path": "tests/integration/test_nested_task_argument_path.py",
+      "within_patch": false,
+      "docstring_sha256": "a91d85cd77dc0589d358a840ba395904e7638231007fe11fdac8aacca46f81b0"
+    },
+    {
+      "path": "tests/integration/test_node_crash_recovery_path.py",
+      "within_patch": false,
+      "docstring_sha256": "757aa0002ff4ffbb42fca2b2887283637b348fa682576f92c1fe7ef2133969f2"
+    },
+    {
+      "path": "tests/integration/test_parallel_task_lanes.py",
+      "within_patch": false,
+      "docstring_sha256": "494ee43aac23e67eb0f1b8194d044c407f02b2d83194a1aea38f1f1ddc0b57a6"
+    },
+    {
+      "path": "tests/integration/test_placement_group_node_loss_path.py",
+      "within_patch": false,
+      "docstring_sha256": "ab4ab29cc6456697a8df7a7af476fbd5e13c453e01b20e6cdf72a95f54e47b8a"
+    },
+    {
+      "path": "tests/integration/test_placement_group_prepare_failure_path.py",
+      "within_patch": false,
+      "docstring_sha256": "46293d550ba671e4e905708d806504ab95e5036dcfec468e658fa5a21d4da793"
+    },
+    {
+      "path": "tests/integration/test_recursive_lineage_reconstruction_path.py",
+      "within_patch": false,
+      "docstring_sha256": "16632a969e68d814d552db634faa985c7bcf8fa4e3c6cfa2565d8f989abe5cb2"
+    },
+    {
+      "path": "tests/integration/test_secondary_replica_node_loss_path.py",
+      "within_patch": false,
+      "docstring_sha256": "5890e18a00eeeedf325c14dd3c6bdfc2eb972bb1ce83ea62e0db92ccbace6725"
+    },
+    {
+      "path": "tests/integration/test_startup_rollback_path.py",
+      "within_patch": false,
+      "docstring_sha256": "7921e0e031919b8dfe00248ec2e2700d99971d3126e326230ff24fe0d7826f53"
+    },
+    {
+      "path": "tests/integration/test_stored_outer_publication_path.py",
+      "within_patch": true,
+      "docstring_sha256": "bead88543d70b369f9f7f00d6076f2b5b1461c4871293a6cd80246bed4d9df18"
+    },
+    {
+      "path": "tests/integration/test_stored_physical_gc_path.py",
+      "within_patch": false,
+      "docstring_sha256": "c0f9d4a52e201c2765443ca91529690deaf4052eef2b8c7ed9cf17a516f08038"
+    },
+    {
+      "path": "tests/integration/test_two_worker_pool_path.py",
+      "within_patch": false,
+      "docstring_sha256": "dd45384e31a425c1c2b57f1c862eb44937a16f7b2cc03a337adae0a673d6bb17"
+    },
+    {
+      "path": "tests/integration/test_worker_death_ownership_path.py",
+      "within_patch": false,
+      "docstring_sha256": "85c484dd1ae3913bc309940d570e5b956933a2ff7dbea26300aac16ffe029e6b"
+    },
+    {
+      "path": "tests/integration/test_worker_nested_task_path.py",
+      "within_patch": false,
+      "docstring_sha256": "5eb31e23427bc20285328aa1a051cf3911ef605e22a56d0f132eba2ec81e7fb0"
+    },
+    {
+      "path": "tests/integration/test_worker_owned_ref_path.py",
+      "within_patch": false,
+      "docstring_sha256": "ee00015b3e7c76fd9df5a33a6845fb05e97a78d674d09bf0eea145169f247914"
+    },
+    {
+      "path": "tests/integration/test_worker_owner_death_path.py",
+      "within_patch": false,
+      "docstring_sha256": "ca6c9cd60106e2c981ce7a426511ed3b06ff1764fd2e02914ac504c5fcec2e32"
+    }
+  ],
+  "line_endings_normalized_for_patch_only": true
+}

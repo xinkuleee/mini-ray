@@ -831,15 +831,15 @@ class _CanonicalReportFixture:
                 self.target.node_id, self.target._node_pid, self.target._registration_epoch,
             ),
         ), inline_threshold=1024)
-        outputs = session.discover(("done",))
+        outputs = session.discover(('done'))
         self.publication.manifest = outputs.manifest
-        assert len(outputs.manifest.slots) == 1 and not outputs.manifest.slots[0].transfers
-        assert outputs.manifest.slots[0].tier is protocol.ResultStorage.INLINE
+        assert len(((outputs.manifest.value,))) == 1 and not (outputs.manifest.value).transfers
+        assert (outputs.manifest.value).tier is protocol.ResultStorage.INLINE
         assert getattr(self.target, "_output_publication_journal", None) is None
         self.target._output_publication_journal = self.publication.journal
         self.target._output_publications = self.publication.adapter
         prepared = self.target._handle_prepare_output_publication(
-            output_wire.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads),
+            output_wire.PrepareOutputPublication(outputs.manifest, (outputs.payload)),
         )
         assert prepared.accepted
         session.release_sources_after_promotions()
@@ -852,7 +852,7 @@ class _CanonicalReportFixture:
         assert self.publication.adapter.report_terminal(identity)
         assert self.publication.handoff_snapshot(identity).complete == self.envelope.complete
         return protocol.TaskReply(push.spec.task_id, push.spec.attempt_id, push.worker_id,
-                                  protocol.TaskReplyStatus.SUCCEEDED, self.envelope.results,
+                                  protocol.TaskReplyStatus.SUCCEEDED, ((self.envelope.result,)),
                                   output_publication=self.envelope)
 
     def take(self):

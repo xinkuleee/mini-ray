@@ -46,7 +46,7 @@ from miniray.placement import PlacementStrategy
 from miniray.reconstruction_runtime import ReconstructionCoordinator
 from miniray.recovery import RecoveryManager, TaskState
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from miniray.trace import EventSink
 from miniray.transport import TransportTimeout
 from miniray.worker import (
@@ -330,15 +330,15 @@ class _PurePgAdmission:
         assert mode in ("inline", "stored", "system")
         if mode != "system":
             assert len(self.publications) < 2
-            identity = OutputPublicationID(push.lease_id, TaskExecutionKey.from_task_spec(push.spec))
+            identity = OutputPublicationID(push.lease_id, TaskExecution.from_task_spec(push.spec))
             discovery = OutputDiscoverySession(OutputPublicationHeader(
                 identity, push.spec.job_id, push.worker_id, self.core.worker_id, started.node_incarnation,
             ), inline_threshold=1024 if mode == "inline" else 0)
-            outputs = discovery.discover(("pg" if mode == "inline" else "stored",))
-            assert len(outputs.manifest.slots) == 1
-            assert all(not slot.transfers and slot.size_bytes <= 1024 for slot in outputs.manifest.slots)
+            outputs = discovery.discover(('pg' if mode == 'inline' else 'stored'))
+            assert len(((outputs.manifest.value,))) == 1
+            assert (not outputs.manifest.value.transfers and outputs.manifest.value.size_bytes <= 1024)
             prepared = node._handle_prepare_output_publication(output_wire.PrepareOutputPublication(
-                outputs.manifest, outputs.slot_payloads,
+                outputs.manifest, (outputs.payload),
             ))
             assert prepared.accepted and self.journal.snapshot(identity).ready_to_complete
             assert self.handoff(identity).manifest == outputs.manifest
@@ -359,7 +359,7 @@ class _PurePgAdmission:
         assert envelope is not None and envelope.manifest == outputs.manifest
         self.publications[identity] = envelope
         return protocol.TaskReply(push.spec.task_id, push.spec.attempt_id, push.worker_id, status,
-                                  envelope.results, output_publication=envelope)
+                                  ((envelope.result,)), output_publication=envelope)
 
     def close(self):
         core = self.core
@@ -383,7 +383,7 @@ class _PurePgAdmission:
             for identity in self.publications:
                 snapshot = self.handoff(identity)
                 assert snapshot.adoption is not None
-                assert core.owner_table.collection_state(identity.output_ids[0]) is ObjectCollectionState.COLLECTED
+                assert core.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
                 assert not self.journal.snapshot(identity).retained_result_slots
                 assert self.adapter.report_terminal(identity)
             assert not self.adapter.pending_terminal_reports()
@@ -797,7 +797,7 @@ def test_pg_key_survives_system_retry_and_reconstruction() -> None:
         assert core._execute(retried, retried.spec)
         old_envelope = next(iter(scenario.publications.values()))
         assert core.owner_table.snapshot(ref.object_id).state is ObjectState.READY_STORED
-        assert core._stored_descriptors[ref.object_id] == old_envelope.results[0]
+        assert core._stored_descriptors[ref.object_id] == (old_envelope.result)
         assert cloudpickle.loads(node.object_store.get(ref.object_id)) == "stored"
         assert core._finish_pending_task(retried)
         assert core._accepted_task_count == 0 and not core._task_finish_barriers
@@ -879,17 +879,17 @@ def test_worker_start_and_complete_echo_task_scheduling_key(monkeypatch) -> None
     monkeypatch.setattr("miniray.worker.rpc_request", rpc)
     worker._start_worker_lease(push)
     session = OutputDiscoverySession(OutputPublicationHeader(
-        OutputPublicationID(push.lease_id, TaskExecutionKey.from_task_spec(spec)),
+        OutputPublicationID(push.lease_id, TaskExecution.from_task_spec(spec)),
         job_id, worker_id, spec.owner_worker_id, incarnation), inline_threshold=1024)
-    outputs = session.discover(("pg",))
-    assert actual.prepare(output_wire.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads)).accepted
+    outputs = session.discover(('pg'))
+    assert actual.prepare(output_wire.PrepareOutputPublication(outputs.manifest, (outputs.payload))).accepted
     session.release_sources_after_promotions()
     assert actual.journal.snapshot(outputs.manifest.publication_id).complete is None
     completion = protocol.CompleteWorkerLease(push.lease_id, task_id, spec.attempt_id,
         worker_id, protocol.TaskReplyStatus.SUCCEEDED, key)
     completed = actual.complete(completion)
     reply = protocol.TaskReply(task_id, spec.attempt_id, worker_id,
-        protocol.TaskReplyStatus.SUCCEEDED, completed.output_publication.results,
+        protocol.TaskReplyStatus.SUCCEEDED, ((completed.output_publication.result,)),
         output_publication=completed.output_publication)
     witness = worker._ensure_completion_acked(push, reply, (spec.attempt_id, push.lease_id))
     assert witness == completed.output_publication

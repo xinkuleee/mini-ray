@@ -23,7 +23,7 @@ from miniray.errors import PlacementGroupLostError, SystemTaskError
 from miniray.ids import LeaseID, NodeID, ObjectID, PlacementGroupID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationHeader, OutputPublicationID,
-    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import ObjectOwnerTable, ObjectState
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
@@ -128,8 +128,7 @@ def test_output_node_loss_replay_finishes_exact_cleanup_before_pg_terminal(known
         manifest = OutputPublicationManifest.create(OutputPublicationHeader(
             identity, core.job_id, executor, core.worker_id,
             OutputPublicationNodeIncarnation(key.node_id, 7101, 1),
-        ), (OutputSlotManifest(ref.object_id, protocol.ResultStorage.INLINE, 5,
-                               hashlib.sha256(b"value").hexdigest(), (transfer,)),))
+        ), (OutputValue(protocol.ResultStorage.INLINE, 5, hashlib.sha256(b'value').hexdigest(), (transfer,))))
         assert core.register_output_handoff(wire.RegisterOutputHandoff(manifest)).accepted
         complete = OutputPublicationCompleteWitness.for_manifest(manifest)
         if known:

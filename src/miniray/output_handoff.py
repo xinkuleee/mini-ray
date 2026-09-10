@@ -140,7 +140,7 @@ class NodeLostOutputResolution:
             return
         expected = {
             (transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
-            for transfer in manifest.slots[0].transfers
+            for transfer in manifest.value.transfers
             for hold in (transfer.final_hold, transfer.provisional_hold)
         }
         child_owners = {owner for _, owner, _ in expected}
@@ -183,7 +183,7 @@ class OutputHandoffSnapshot:
         manifest = self.manifest
         if manifest is not None:
             manifest = _copy(manifest, OutputPublicationManifest, "manifest")
-            if manifest.publication_id != identity or len(manifest.slots) != 1:
+            if manifest.publication_id != identity:
                 raise OutputHandoffConflictError("handoff requires the exact single-output manifest")
         elif self.phase is not OutputHandoffPhase.ABORTED:
             raise OutputHandoffStateError("only a pre-registration abort may lack a manifest")
@@ -230,7 +230,7 @@ class OutputHandoffTable:
         manifest = _copy(manifest, OutputPublicationManifest, "manifest")
         current_attempt = _copy(current_attempt, AttemptID, "current_attempt")
         identity = manifest.publication_id
-        if len(manifest.slots) != 1 or identity.attempt_id != current_attempt:
+        if identity.attempt_id != current_attempt:
             raise OutputHandoffStateError("registration requires the current single-output attempt")
         with self._lock:
             previous = self._records.get(identity)

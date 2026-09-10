@@ -16,7 +16,7 @@ from miniray import output_protocol as wire, protocol
 from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import ObjectOwnerTable, ObjectState, OwnershipError, UnknownObjectError
 from miniray.recovery import TaskState
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.unit
 
 def test_collected_child_accepts_exact_compensation_without_reviving_its_identity():
     values = _HandoffValues()
-    transfer = values.manifest.slots[0].transfers[0]
+    transfer = (values.manifest.value).transfers[0]
     child = transfer.contained_object_id
     owner = ObjectOwnerTable()
     attempt = AttemptID(child.task_id, 0)
@@ -144,10 +144,7 @@ def test_dead_publisher_first_registration_does_not_create_handoff_history():
             OutputPublicationHeader(
                 identity, core.job_id, WorkerID(b"e" * 16), core.worker_id, incarnation,
             ),
-            (OutputSlotManifest(
-                reference.object_id, protocol.ResultStorage.INLINE, len(payload),
-                hashlib.sha256(payload).hexdigest(), (),
-            ),),
+            (OutputValue(protocol.ResultStorage.INLINE, len(payload), hashlib.sha256(payload).hexdigest(), ())),
         )
         # An already-installed local membership fact is input to this handler
         # test; it is not a simulated detector or a new GCS admission rule.

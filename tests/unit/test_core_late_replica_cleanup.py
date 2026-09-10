@@ -151,7 +151,7 @@ class _Case:
         consumer._validate_granted_dependencies(self.dependencies, grant)
         self.lease_state = _LeaseRequestState(request, f.target_address, f.target.node_id, True)
         assert len(f.transfers) == 3 * len(self.dependencies)
-        assert f.target.object_store.get(f.output) == f.publication.values.payloads[1]
+        assert f.target.object_store.get(f.output) == (f.publication.values.payload)
         assert f.target.object_store.snapshot(f.output).pin_count == 1
         assert f.source.object_store.snapshot(f.output).pin_count == 0
         assert self.owner.owner_table.snapshot(f.output).locations == frozenset((f.source.node_id,))
@@ -225,7 +225,7 @@ class _Case:
 
         def execute():
             choice = self.owner._output_loss_choices[self.f.identity]
-            assert choice.slots[1].decision.value == "DROP"
+            assert (choice.value).decision.value == "DROP"
             assert self.owner.owner_table.snapshot(self.f.output).locations == frozenset()
             assert self.f.target.object_store.snapshot(self.f.output).pin_count == 1
             result = self.consumer._execute(
@@ -351,7 +351,7 @@ def test_late_drop_report_cancels_real_grant_and_exact_cleanup_survives_both_los
         owner._reference_mailbox.drain()
         assert owner.owner_table.collection_state(f.output) is ObjectCollectionState.COLLECTED
         assert f.target.object_store.used_bytes == 0 and f.output not in f.target._sealed_metadata
-        assert f.source.object_store.get(f.output) == f.publication.values.payloads[1]
+        assert f.source.object_store.get(f.output) == (f.publication.values.payload)
     finally:
         case.close()
 
@@ -440,7 +440,7 @@ def test_corrupt_late_foreign_report_cannot_authorize_historical_replica_deletio
         assert not reply.accepted
         assert tuple(owner.owner_table.snapshot(output) for output in f.pending.output_ids) == before
         assert not owner._has_late_replica_cleanup_locked() and case.drop_replies == []
-        assert f.target.object_store.get(f.output) == f.publication.values.payloads[1]
+        assert f.target.object_store.get(f.output) == (f.publication.values.payload)
         assert f.target.object_store.snapshot(f.output).pin_count == 1
         assert f.target._leases[case.grant.lease_id].state is protocol.LeaseExecutionState.GRANTED
         # Finish with the actual unmodified report and actual cancel/drop; no
@@ -475,7 +475,7 @@ def test_installed_target_death_discharges_cleanup_without_fabricating_drop_ack(
         assert not owner._late_replica_cleanup.has_pending() and case.drop_replies == []
         # The object models inaccessible memory of a dead process, not bytes
         # deleted by an invented response. Every future Node RPC is fenced.
-        assert f.target.object_store.get(f.output) == f.publication.values.payloads[1]
+        assert f.target.object_store.get(f.output) == (f.publication.values.payload)
         assert owner.owner_table.snapshot(f.output).state is ObjectState.LOST
     finally:
         case.close()

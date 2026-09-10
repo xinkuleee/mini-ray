@@ -374,7 +374,7 @@ def test_returned_materialized_child_stays_live_through_promotion_ack_replay(mon
 
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert pending.outputs is outputs and reply.output_publication.manifest == outputs.manifest
-    transfer = outputs.manifest.slots[0].transfers[0]
+    transfer = (outputs.manifest.value).transfers[0]
     assert isinstance(transfer.source, BorrowedContainedSource)
     assert transfer.source.original_source == protocol.ContainedTransferSource(imports.hold)
     assert transfer.final_hold in imports.table.snapshot(imports.child).contained_holds

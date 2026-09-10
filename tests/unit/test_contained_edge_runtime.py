@@ -260,7 +260,7 @@ def test_task_reply_edge_validation_and_worker_commit_names_outer(monkeypatch):
         assert f.transfer.final_hold.container_owner_worker_id==f.core.worker_id
         with pytest.raises(TypeError):replace(reply,contained_edges=(f.edge,))
         with pytest.raises(ValueError):
-            replace(reply.output_publication.manifest.slots[0],transfers=(replace(f.transfer,
+            replace((reply.output_publication.manifest.value),transfers=(replace(f.transfer,
                 final_hold=replace(f.transfer.final_hold,container_object_id=f.child_id)),))
         assert f.core._publish_reply(f.pending,reply,expected_node_id=f.node.node_id,expected_lease_id=f.grant.lease_id)
         assert f.core._finish_pending_task(f.pending)

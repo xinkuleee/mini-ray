@@ -47,7 +47,7 @@ def _guard_runtime(request, monkeypatch):
 
 def _prepare(fixture, node):
     return node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-        fixture.manifest, fixture.values.payloads,
+        fixture.manifest, (fixture.values.payload),
     ))
 
 
@@ -55,7 +55,7 @@ def _query(fixture, record):
     identity = fixture.id
     return protocol.GetWorkerLeaseOutcome(
         identity.lease_id, identity.task_id, identity.attempt_id,
-        fixture.values.executor, fixture.values.owner, identity.output_ids,
+        fixture.values.executor, fixture.values.owner, ((identity.object_id,)),
     )
 
 
@@ -120,7 +120,7 @@ def test_promotion_ack_loss_keeps_effects_and_replays_only_missing_promotions():
     with pytest.raises(TimeoutError, match="promote"):
         _prepare(fixture, node)
     before = tuple(fixture.events)
-    first = fixture.manifest.slots[0].transfers[0]
+    first = (fixture.manifest.value).transfers[0]
     assert first.final_hold in fixture.child_owners[first.contained_owner_worker_id].snapshot(first.contained_object_id).contained_holds
     assert not fixture.journal.snapshot(fixture.id).ready_to_complete
     assert _prepare(fixture, node).accepted
@@ -162,13 +162,15 @@ def test_complete_replay_and_outcome_return_without_any_gcs_io(monkeypatch):
     outcome = node._handle_get_worker_lease_outcome(_query(fixture, record))
     assert first.accepted and first.released and replay.accepted and not replay.released
     assert first.output_publication == replay.output_publication == outcome.output_publication == fixture.values.envelope
-    assert outcome.state is protocol.LeaseExecutionState.COMPLETED
-    assert outcome.descriptors == () and outcome.orphan_descriptors == ()
-    assert fixture.handoffs.query(fixture.id).complete is None
-    assert fixture.ledger.available == ResourceVector({"CPU": 1})
-    assert node._workers[fixture.values.executor].active_lease_id is None
-    assert record.completion == complete and record.output_complete_inflight is None
-    assert fixture.adapter.pending_terminal_reports() == (fixture.values.witness,)
+    assert (first.output_publication.result.inline_data == fixture.values.payload)
+    assert (first.output_publication.result.object_id == fixture.id.object_id)
+    assert (outcome.state) is (protocol.LeaseExecutionState.COMPLETED)
+    assert (outcome.descriptors == () and outcome.orphan_descriptors == ())
+    assert (fixture.handoffs.query(fixture.id).complete) is None
+    assert (fixture.ledger.available == ResourceVector({'CPU': 1}))
+    assert (node._workers[fixture.values.executor].active_lease_id is None)
+    assert (record.completion == complete and record.output_complete_inflight is None)
+    assert (fixture.adapter.pending_terminal_reports() == (fixture.values.witness,))
     assert tuple(fixture.events) == before
     assert not _clean(node)
 
@@ -181,9 +183,9 @@ def test_prepare_rejects_rebound_single_manifest_before_any_effect():
     events = tuple(fixture.events)
     wrong = OutputPublicationManifest.create(
         replace(fixture.manifest.header, job_id=type(fixture.values.job)(b"z" * 16)),
-        fixture.manifest.slots,
+        (fixture.manifest.value),
     )
-    reply = node._handle_prepare_output_publication(wire.PrepareOutputPublication(wrong, fixture.values.payloads))
+    reply = node._handle_prepare_output_publication(wire.PrepareOutputPublication(wrong, (fixture.values.payload)))
     assert not reply.accepted
     assert record.output_publication_id == fixture.id
     assert fixture.journal.snapshot(fixture.id) == before and tuple(fixture.events) == events
@@ -454,12 +456,10 @@ def test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_cus
         )).accepted
         if finish_cleanup:
             # This no-ref INLINE value has no physical replica or child cleanup.
-            for slot in fixture.manifest.slots:
-                if slot.object_id in node._sealed_metadata:
-                    reply = node._handle_drop_object_replica(protocol.DropObjectReplica(
-                        slot.object_id, fixture.id.attempt_id, fixture.values.owner, node.node_id, slot.checksum,
-                    ))
-                    assert reply.status is protocol.DropObjectReplicaStatus.DROPPED
+            value = fixture.manifest.value
+            if fixture.id.object_id in node._sealed_metadata:
+                reply = node._handle_drop_object_replica(protocol.DropObjectReplica(fixture.id.object_id, fixture.id.attempt_id, fixture.values.owner, node.node_id, value.checksum))
+                assert reply.status is protocol.DropObjectReplicaStatus.DROPPED
             assert node._handle_finalize_output_owner_death(cleanup).cleaned
         return acknowledgement
 

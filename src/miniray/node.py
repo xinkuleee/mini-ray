@@ -205,12 +205,11 @@ class _OutputReplicaWriteClaim:
     def matches_drop(self, request: protocol.DropObjectReplica) -> bool:
         """A physical completion may retire only its exact writer's claim."""
         index = self.effect.slot_index
-        outputs = self.effect.publication_id.output_ids
         metadata = self.expected_metadata
         return (
             self.effect.stage is OutputPublicationStage.MATERIALIZE
-            and type(index) is int and 0 <= index < len(outputs)
-            and outputs[index] == request.object_id
+            and type(index) is int and index == 0
+            and self.effect.publication_id.object_id == request.object_id
             and self.effect.publication_id.attempt_id == request.producer_attempt_id
             and (metadata[0], metadata[1], metadata[3])
             == (request.producer_attempt_id, request.owner_worker_id, request.checksum)
@@ -1234,7 +1233,7 @@ class NodeServer:
         if record is None:
             raise OutputPublicationConflictError("output publication has no local lease")
         request = record.request
-        if ((request.task_id != identity.task_id) or (request.attempt_id != identity.attempt_id) or (request.requester_worker_id != header.owner_worker_id) or (record.grant.worker_id != header.executor_worker_id) or (record.grant.node_id != header.node_incarnation.node_id) or (request.return_ids != identity.output_ids) or (header.node_incarnation != OutputPublicationNodeIncarnation(
+        if ((request.task_id != identity.task_id) or (request.attempt_id != identity.attempt_id) or (request.requester_worker_id != header.owner_worker_id) or (record.grant.worker_id != header.executor_worker_id) or (record.grant.node_id != header.node_incarnation.node_id) or (request.return_ids != (identity.object_id,)) or (header.node_incarnation != OutputPublicationNodeIncarnation(
                     self.node_id, self._node_pid, self._registration_epoch))):
             raise OutputPublicationConflictError("output manifest changed lease execution binding")
         if record.output_publication_id not in (None, identity):
@@ -1267,14 +1266,14 @@ class NodeServer:
                 str(exc) or type(exc).__name__,
             )
         try:
-            self._output_publications.prepare(manifest, request.slot_payloads)
+            self._output_publications.prepare(manifest, request.payload)
         except OutputPublicationBusy:
             raise
         except (OutputPublicationRemoteError, ObjectStoreError) as exc:
             # An exact rejection may follow effects.  The Worker chooses an
             # explicit failed Complete and waits for compensation acknowledgements.
-            # A local store refusal (including capacity after earlier slots
-            # sealed) is known failure, not an unknown RPC to retry forever.
+            # A local store refusal is known failure, not an unknown RPC
+            # to retry forever.
             return wire.PreparedOutputPublicationReply(
                 request.request_identity, False, wire.OutputPublicationRPCErrorKind.INVALID_STATE,
                 str(exc) or type(exc).__name__,
@@ -1389,7 +1388,7 @@ class NodeServer:
             manifest = snapshot.manifest
             with self._state_lock:
                 record = self._output_lease_record_locked(manifest)
-                if ((request.task_id != identity.task_id) or (request.attempt_id != identity.attempt_id) or (request.executor_worker_id != manifest.header.executor_worker_id) or (request.owner_worker_id != manifest.header.owner_worker_id) or (request.object_ids != identity.output_ids) or (request.scheduling_key != record.request.scheduling_key)):
+                if ((request.task_id != identity.task_id) or (request.attempt_id != identity.attempt_id) or (request.executor_worker_id != manifest.header.executor_worker_id) or (request.owner_worker_id != manifest.header.owner_worker_id) or (request.object_ids != (identity.object_id,)) or (request.scheduling_key != record.request.scheduling_key)):
                     raise OutputPublicationConflictError("output outcome query changed execution")
                 if snapshot.complete is not None:
                     completion = protocol.CompleteWorkerLease(
@@ -1434,7 +1433,7 @@ class NodeServer:
                 protocol.ObjectStoreDescriptor(
                     result.object_id, result.owner_worker_id, identity.attempt_id,
                     result.node_id, result.size_bytes, result.checksum,
-                ) for result in envelope.results
+                ) for result in (envelope.result,)
                 if result.storage is protocol.ResultStorage.OBJECT_STORE
             )
             return protocol.GetWorkerLeaseOutcomeReply(
@@ -1504,11 +1503,12 @@ class NodeServer:
                 record.output_complete_inflight = None
         # No admitted publisher can create new bytes after its owner fence.
         # Clean exact partial writes with their recorded local claim.
-        for slot_index, slot in enumerate(manifest.slots):
+        # Physical custody retains its effect index at the sole output boundary.
+        for slot_index, slot in ((0, manifest.value),):
             if slot.tier is not protocol.ResultStorage.OBJECT_STORE:
                 continue  # INLINE custody has no Node-local physical replica.
             drop = protocol.DropObjectReplica(
-                _output_object_id(slot.object_id), _output_attempt(identity.attempt_id),
+                _output_object_id(manifest.publication_id.object_id), _output_attempt(identity.attempt_id),
                 _output_opaque(manifest.header.owner_worker_id, ids.WorkerID, "drop owner"),
                 _output_opaque(self.node_id, ids.NodeID, "drop Node"), slot.checksum,
             )
@@ -1521,15 +1521,15 @@ class NodeServer:
                 slot.size_bytes, slot.checksum,
             ))
             with self._state_lock:
-                lock = self._object_localization_locks.setdefault(slot.object_id, threading.Lock())
+                lock = self._object_localization_locks.setdefault(manifest.publication_id.object_id, threading.Lock())
             with lock, self._state_lock:
                 if self._replica_drop_completed_locked(drop):
                     continue
-                claim = self._local_replica_write_claims.get(slot.object_id)
-                metadata = self._sealed_metadata.get(slot.object_id)
+                claim = self._local_replica_write_claims.get(manifest.publication_id.object_id)
+                metadata = self._sealed_metadata.get(manifest.publication_id.object_id)
                 if metadata is not None:
                     return False  # the owner-wide sweep still owns sealed cleanup
-                present = self._object_store.contains(slot.object_id, sealed_only=False)
+                present = self._object_store.contains(manifest.publication_id.object_id, sealed_only=False)
                 if expected_effect not in snapshot.intents:
                     if present or claim is not None:
                         return False
@@ -1539,18 +1539,18 @@ class NodeServer:
                 if present:
                     if claim != expected_claim:
                         return False
-                    stored = self._object_store.snapshot(slot.object_id)
+                    stored = self._object_store.snapshot(manifest.publication_id.object_id)
                     if (stored.pin_count or stored.size_bytes != slot.size_bytes
                             or stored.sealed and hashlib.sha256(
-                                self._object_store.get(slot.object_id)
+                                self._object_store.get(manifest.publication_id.object_id)
                             ).hexdigest() != slot.checksum):
                         return False
-                    removed = (self._object_store.delete(slot.object_id) if stored.sealed
-                               else self._object_store.abort(slot.object_id))
+                    removed = (self._object_store.delete(manifest.publication_id.object_id) if stored.sealed
+                               else self._object_store.abort(manifest.publication_id.object_id))
                     if not removed:
                         return False
                 if claim is None:
-                    self._local_replica_write_claims[slot.object_id] = expected_claim
+                    self._local_replica_write_claims[manifest.publication_id.object_id] = expected_claim
                 # Do not retire the claim, fabricate a rollback ACK, or proceed
                 # to Worker finalization until physical/manager cleanup agrees.
                 self._finish_replica_drop_locked(drop)
@@ -1699,16 +1699,16 @@ class NodeServer:
                 effect, OutputPublicationStage.MATERIALIZE,
             )
             manifest = snapshot.manifest
-            slot = manifest.slots[effect.slot_index]
+            slot = manifest.value
             if (slot.tier is not protocol.ResultStorage.OBJECT_STORE
                     or descriptor != protocol.ResultDescriptor(
-                        slot.object_id, slot.tier, slot.size_bytes,
+                        manifest.publication_id.object_id, slot.tier, slot.size_bytes,
                         manifest.header.owner_worker_id, self.node_id, slot.checksum,
                     )
                     or len(payload) != slot.size_bytes
                     or hashlib.sha256(payload).hexdigest() != slot.checksum):
                 raise OutputPublicationConflictError("replica bytes or descriptor changed its output slot")
-            object_id = slot.object_id
+            object_id = manifest.publication_id.object_id
             expected_metadata = (
                 effect.publication_id.attempt_id, descriptor.owner_worker_id,
                 descriptor.size_bytes, descriptor.checksum,
@@ -1797,14 +1797,14 @@ class NodeServer:
                 effect, OutputPublicationStage.SLOT_DROP,
             )
             manifest = snapshot.manifest
-            slot = manifest.slots[effect.slot_index]
+            slot = manifest.value
             if (slot.tier is not protocol.ResultStorage.OBJECT_STORE
                     or request != protocol.DropObjectReplica(
-                        slot.object_id, effect.publication_id.attempt_id,
+                        manifest.publication_id.object_id, effect.publication_id.attempt_id,
                         manifest.header.owner_worker_id, self.node_id, slot.checksum,
                     )):
                 raise OutputPublicationConflictError("drop changed its selected replica identity")
-            object_id = slot.object_id
+            object_id = manifest.publication_id.object_id
             expected_metadata = (
                 request.producer_attempt_id, request.owner_worker_id,
                 slot.size_bytes, request.checksum,
@@ -2173,7 +2173,7 @@ class NodeServer:
                                 or record.completion is None
                                 or record.completion.status is not protocol.TaskReplyStatus.SUCCEEDED
                                 or tuple(item.slot_index for item in snapshot.retired_slots)
-                                != tuple(range(len(snapshot.manifest.slots)))):
+                                != (0,)):
                             return False
                     elif (snapshot.rollback_tombstone is None
                           or not adapter.rollback_reported(identity)):
@@ -6382,8 +6382,7 @@ class NodeServer:
                     raise RuntimeError("output test gate lost its completed lease identity")
                 if envelope is not None:
                     if (envelope.manifest != manifest
-                            or any(journal.materialized_result(identity, index) != result
-                                   for index, result in enumerate(envelope.results))):
+                            or journal.materialized_result(identity, 0) != envelope.result):
                         raise RuntimeError("output test-gated payload was retired before delivery")
 
         def ensure_terminal(deadline: float) -> None:

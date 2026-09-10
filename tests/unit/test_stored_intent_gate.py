@@ -20,9 +20,9 @@ from miniray import protocol, publication_gate as gates
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationNodeIncarnation, OutputValue,
 )
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 
 # No module-level unit marker: the three real socketpair cases stay opt-in.
@@ -46,21 +46,17 @@ def _no_runtime_in_pure_cases(request, monkeypatch):
 
 def _manifest(*, task_byte=2, lease_byte=4, attempt_number=3, stored=False):
     task = TaskID(bytes((task_byte,)) * 16)
-    full = TaskOutputManifest.for_task(task, 1)
     attempt = AttemptID(task, attempt_number)
-    execution = TaskExecutionKey(full, attempt)
+    execution = (TaskExecution(attempt))
     publication = OutputPublicationID(LeaseID(bytes((lease_byte,)) * 16), execution)
     header = OutputPublicationHeader(
         publication, JobID(b"J" * 16), WorkerID(b"E" * 16), WorkerID(b"O" * 16),
         OutputPublicationNodeIncarnation(NodeID(b"N" * 16), 4321, 7),
     )
     slots = tuple(
-        OutputSlotManifest(
-            object_id, protocol.ResultStorage.OBJECT_STORE if stored else
-            protocol.ResultStorage.INLINE, 1, hashlib.sha256(bytes((index,))).hexdigest(),
-        ) for index, object_id in enumerate(publication.output_ids)
+        (OutputValue(protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE, 1, hashlib.sha256(bytes((index,))).hexdigest())) for index, object_id in enumerate(((publication.object_id,)))
     )
-    return OutputPublicationManifest.create(header, slots)
+    return OutputPublicationManifest.create(header, (slots[0]))
 
 
 def _arrival(*, phase=None, **manifest_options):
@@ -98,9 +94,9 @@ def test_stored_arrival_frame_preserves_single_output_and_attempt() -> None:
         observed = gates.recv_output_publication_gate_arrival(receiver)
         assert observed == arrival
         execution = observed.publication_id.execution
-        assert type(execution) is TaskExecutionKey
+        assert type(execution) is TaskExecution
         assert execution.attempt_id.attempt_number == 7
-        assert tuple(value.return_index for value in execution.output_ids) == (0,)
+        assert ((execution.object_id.return_index,)) == (0,)
     finally:
         sender.close()
         receiver.close()
@@ -134,8 +130,8 @@ def test_fixed_frame_round_trip_preserves_single_execution(phase, stored):
     assert restored.publication_id == manifest.publication_id
     assert restored.manifest_digest == manifest.manifest_digest
     assert len(frame) == struct.calcsize("!8s16sQQ16s16sQ32sB") == 113
-    assert type(restored.publication_id.execution) is TaskExecutionKey
-    assert restored.publication_id.output_ids[0].return_index == 0
+    assert type(restored.publication_id.execution) is TaskExecution
+    assert ((restored.publication_id.object_id,))[0].return_index == 0
     assert restored.node_id == manifest.header.node_incarnation.node_id
     assert restored.node_pid == manifest.header.node_incarnation.node_pid
     assert restored.registration_epoch == manifest.header.node_incarnation.registration_epoch

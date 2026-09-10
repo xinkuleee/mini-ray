@@ -213,8 +213,8 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
             publisher.node_id, publisher.node_pid, runtime.nodes[1].registration_epoch,
         )
         _assert_metadata_only(arrival)
-        output_id, = publication.output_ids
-        assert publication.full_output_ids == (output_id,) and publication.attempt_id == AttemptID(output_id.task_id, 0)
+        output_id = (publication.object_id)
+        assert ((publication.object_id,)) == (output_id,) and publication.attempt_id == AttemptID(output_id.task_id, 0)
         # The child belongs to the factory attempt's deterministic child namespace.
         expected_task = TaskID.derive(core.job_id, TaskID.derive(core.job_id, outer.object_id.task_id, 0), 0)
         assert output_id.task_id == expected_task
@@ -225,7 +225,7 @@ def test_live_worker_owner_retries_armed_child_after_certified_remote_node_death
         assert manifest.header.executor_worker_id == publisher.worker_id
         assert before.phase is OutputHandoffPhase.PENDING
         assert before.complete is before.adoption is before.abort_reason is None
-        slot, = manifest.slots
+        slot = (manifest.value)
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE and len(_PADDING) < slot.size_bytes < 32 * 1024
         transfer, = slot.transfers
         assert type(transfer.source) is BorrowedContainedSource

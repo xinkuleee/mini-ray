@@ -57,16 +57,13 @@ def _no_runtime(monkeypatch):
 def _case(*, all_stored=True, adopted=True):
     values = _Fixture(all_stored=all_stored)
     owner = values.table()
-    for index, output in enumerate(values.publication_id.output_ids):
-        container = ObjectID.for_task(TaskID.derive(values.job, values.task, 80 + index))
-        incoming = ContainedReferenceHold(
-            container, values.executor, "incoming-{}".format(index),
-        )
-        assert owner.add_contained_reference(output, incoming)
-        assert owner.add_lineage_reference(output, "incoming-lineage-{}".format(index))
-    first = values.publication_id.output_ids[0]
+    output = values.publication_id.object_id
+    container = ObjectID.for_task(TaskID.derive(values.job, values.task, 80))
+    incoming = ContainedReferenceHold(container, values.executor, 'incoming-0')
+    assert owner.add_contained_reference(output, incoming)
+    assert owner.add_lineage_reference(output, 'incoming-lineage-0')
     assert owner.add_outgoing_lineage_edge(
-        first, LineageReferenceEdge(first, values.child, "producer-input"),
+        output, LineageReferenceEdge(output, values.child, "producer-input"),
     )
     if adopted:
         assert owner.commit_output_publication(values.plan).committed
@@ -75,20 +72,12 @@ def _case(*, all_stored=True, adopted=True):
     return values, owner, secondary
 
 
-def _advertise(owner, values, node, indices=None):
+def _advertise(owner, values, node):
     """Model an already-validated location report, not a physical health check."""
-    if indices is None:
-        indices = tuple(
-            index for index, result in enumerate(values.envelope.results)
-            if result.storage is protocol.ResultStorage.OBJECT_STORE
-        )
-    for index in indices:
-        result = values.envelope.results[index]
-        assert result.storage is protocol.ResultStorage.OBJECT_STORE
-        assert owner.add_location(
-            result.object_id, values.execution.attempt_id, node,
-            descriptor=replace(result, node_id=node),
-        )
+    result = values.envelope.result
+    assert result.object_id == values.publication_id.object_id
+    assert result.storage is protocol.ResultStorage.OBJECT_STORE
+    assert owner.add_location(result.object_id, values.execution.attempt_id, node, descriptor=replace(result, node_id=node))
 
 
 def _resolution(values):
@@ -106,15 +95,15 @@ def _resolution(values):
 
 
 def _snapshots(owner, values):
-    return tuple(owner.snapshot(output) for output in values.publication_id.output_ids)
+    return ((owner.snapshot(values.publication_id.object_id),))
 
 
 def _owner_state(owner, values):
     # Snapshots omit per-location attempt values, so capture that map too.
+    output = values.publication_id.object_id
     return deepcopy((
         _snapshots(owner, values),
-        {output: dict(owner._entries[output].location_attempts)
-         for output in values.publication_id.output_ids},
+        ({output: dict(owner._entries[output].location_attempts)}),
         owner._task_lineage, owner._output_publication_receipts,
         owner._output_loss_receipts, owner._retired_output_slots,
         owner._retired_output_attempts,
@@ -124,16 +113,16 @@ def _owner_state(owner, values):
 def _assert_kept_identity(owner, values, lineage):
     assert owner._task_lineage == lineage
     assert not owner._retired_output_slots and not owner._retired_output_attempts
-    for result in values.envelope.results:
-        snapshot = owner.snapshot(result.object_id)
-        assert snapshot.current_attempt == values.execution.attempt_id
-        assert snapshot.local_tokens and snapshot.contained_holds and snapshot.lineage_tokens
-        assert snapshot.outgoing_lineage_edges
-        assert snapshot.output_publication is not None
-        assert owner.output_owner_result(result.object_id) == result
-        if result.storage is protocol.ResultStorage.OBJECT_STORE:
-            assert snapshot.canonical_stored_result == result
-            assert snapshot.canonical_stored_result.node_id == values.node
+    result = values.envelope.result
+    snapshot = owner.snapshot(result.object_id)
+    assert snapshot.current_attempt == values.execution.attempt_id
+    assert snapshot.local_tokens and snapshot.contained_holds and snapshot.lineage_tokens
+    assert snapshot.outgoing_lineage_edges
+    assert snapshot.output_publication is not None
+    assert owner.output_owner_result(result.object_id) == result
+    if result.storage is protocol.ResultStorage.OBJECT_STORE:
+        assert snapshot.canonical_stored_result == result
+        assert snapshot.canonical_stored_result.node_id == values.node
     _assert_metadata_only(owner._output_loss_receipts)
     _assert_metadata_only(owner._output_publication_receipts)
 
@@ -169,7 +158,7 @@ def test_survivor_query_filters_publisher_and_unavailable_nodes_without_mutation
 def test_survivor_query_never_authorizes_keep_from_fenced_metadata(fence):
     values, owner, secondary = _case()
     _advertise(owner, values, secondary)
-    output = values.publication_id.output_ids[0]
+    output = (values.publication_id.object_id)
     entry = owner._entries[output]
     # Deliberate negative metadata injection: a usable-looking secondary must
     # not bypass the exact commit receipt, any replica epoch, or lifecycle fence.
@@ -249,11 +238,11 @@ def test_stored_keep_loses_last_secondary_after_decision_without_retiring_member
     owner.remove_node_locations(values.node)
     unavailable = ()
     if loss == "remove-location":
-        for output in values.publication_id.output_ids:
-            assert owner.remove_location(output, values.attempt, secondary)
+        output = values.publication_id.object_id
+        assert owner.remove_location(output, values.attempt, secondary)
     elif loss == "remove-node":
         removal = owner.remove_node_locations(secondary)
-        assert set(removal.lost) == set(values.publication_id.output_ids)
+        assert set(removal.lost) == ({values.publication_id.object_id})
     else:
         unavailable = (secondary,)
     before = _snapshots(owner, values)
@@ -291,14 +280,14 @@ def test_stored_keep_uses_new_current_replica_not_the_decision_time_location():
     _assert_kept_identity(owner, values, lineage)
 
 
-@pytest.mark.parametrize("loss", ("one-slot", "entire-node"))
+@pytest.mark.parametrize("loss", (('one-output'), "entire-node"))
 def test_resolution_replay_cannot_resurrect_a_subsequently_lost_secondary(loss):
     values, owner, secondary = _case(all_stored=True)
     _advertise(owner, values, secondary)
     resolution = _resolution(values)
     assert owner.resolve_output_node_loss(values.manifest, resolution)
-    target = values.publication_id.output_ids[0]
-    if loss == "one-slot":
+    target = (values.publication_id.object_id)
+    if loss == ('one-output'):
         assert owner.remove_location(target, values.attempt, secondary)
     else:
         owner.remove_node_locations(secondary)
@@ -309,7 +298,7 @@ def test_resolution_replay_cannot_resurrect_a_subsequently_lost_secondary(loss):
         assert not owner.resolve_output_node_loss(values.manifest, resolution)
         assert _owner_state(owner, values) == before
     assert not owner.snapshot(target).locations
-    assert owner.output_owner_result(target) == values.envelope.results[0]
+    assert owner.output_owner_result(target) == (values.envelope.result)
     assert owner.snapshot(target).output_publication is not None
 
 
@@ -350,8 +339,8 @@ def test_bad_stored_metadata_cannot_apply_keep_or_mutate_receipts(corruption):
     values, owner, secondary = _case(all_stored=True)
     _advertise(owner, values, secondary)
     resolution = _resolution(values)
-    last = values.publication_id.output_ids[-1]
-    entry = owner._entries[last]
+    output = (values.publication_id.object_id)
+    entry = owner._entries[output]
     # Direct corruption is confined to this negative preflight test. Successful
     # histories above use commit/add/remove reducers rather than fake readiness.
     if corruption == "canonical-checksum":
@@ -364,7 +353,7 @@ def test_bad_stored_metadata_cannot_apply_keep_or_mutate_receipts(corruption):
         entry.location_attempts[secondary] = values.attempt.next()
     elif corruption == "different-membership":
         header = replace(values.header, publication_id=replace(values.publication_id, lease_id=LeaseID.random()))
-        manifest = OutputPublicationManifest.create(header, values.manifest.slots)
+        manifest = OutputPublicationManifest.create(header, (values.manifest.value))
         entry.output_publication = replace(entry.output_publication, manifest=manifest)
     elif corruption == "missing-membership":
         entry.output_publication = None

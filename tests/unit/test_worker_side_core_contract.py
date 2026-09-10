@@ -967,22 +967,22 @@ def test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack(
         from tests.unit.test_worker_completion_paths import _SingleOutputRPC
         from miniray.output_publication import OutputPublicationHeader, OutputPublicationID, OutputPublicationNodeIncarnation
         from miniray.output_discovery import OutputDiscoverySession
-        from miniray.task_outputs import TaskExecutionKey
+        from miniray.task_outputs import TaskExecution
         from miniray import output_protocol as protocol_output
         peer = _SingleOutputRPC()
         session = OutputDiscoverySession(OutputPublicationHeader(
-            OutputPublicationID(request.lease_id, TaskExecutionKey.from_task_spec(request.spec)),
+            OutputPublicationID(request.lease_id, TaskExecution.from_task_spec(request.spec)),
             request.spec.job_id, worker.worker_id, request.spec.owner_worker_id,
             OutputPublicationNodeIncarnation(worker.node_id, 21001, 3)), inline_threshold=1024)
-        outputs = session.discover(("reply",))
-        peer.prepare(protocol_output.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads))
+        outputs = session.discover(('reply'))
+        peer.prepare(protocol_output.PrepareOutputPublication(outputs.manifest, (outputs.payload)))
         session.release_sources_after_promotions()
         completion = protocol.CompleteWorkerLease(request.lease_id, request.spec.task_id,
             request.spec.attempt_id, worker.worker_id, protocol.TaskReplyStatus.SUCCEEDED,
             request.spec.scheduling_key)
         complete = peer.complete(completion)
         result = protocol.TaskReply(request.spec.task_id, request.spec.attempt_id, worker.worker_id,
-            protocol.TaskReplyStatus.SUCCEEDED, complete.output_publication.results,
+            protocol.TaskReplyStatus.SUCCEEDED, ((complete.output_publication.result,)),
             output_publication=complete.output_publication)
         key = request.spec.attempt_id, request.lease_id
         with worker._lifecycle:

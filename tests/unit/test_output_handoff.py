@@ -20,12 +20,12 @@ from miniray.output_handoff import (
 )
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationHeader, OutputPublicationID,
-    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.output_publication_journal import OutputPublicationAdoptionProof
 from miniray.protocol import ResultStorage
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 
 pytestmark = pytest.mark.unit
@@ -43,9 +43,7 @@ class _Fixture:
         self.attempt = AttemptID(self.task, 0)
         self.output = ObjectID.for_task(self.task)
         self.identity = OutputPublicationID(
-            _id(LeaseID, 4), TaskExecutionKey(
-                TaskOutputManifest.for_task(self.task, 1), self.attempt,
-            ),
+            _id(LeaseID, 4), (TaskExecution(self.attempt)),
         )
         header = OutputPublicationHeader(
             self.identity, _id(JobID, 5), self.executor, self.owner,
@@ -58,11 +56,8 @@ class _Fixture:
             ContainedReferenceHold(self.output, self.executor, "child-transfer"),
             ContainedReferenceHold(self.output, self.owner, "child-transfer"),
         )
-        slot = OutputSlotManifest(
-            self.output, ResultStorage.INLINE, 5,
-            hashlib.sha256(b"value").hexdigest(), (transfer,),
-        )
-        self.manifest = OutputPublicationManifest.create(header, (slot,))
+        slot = (OutputValue(ResultStorage.INLINE, 5, hashlib.sha256(b'value').hexdigest(), (transfer,)))
+        self.manifest = OutputPublicationManifest.create(header, slot)
         self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
         self.adoption = OutputPublicationAdoptionProof(self.complete, self.owner, "owner-cas-1")
         self.table = OutputHandoffTable()
@@ -87,7 +82,7 @@ def test_registration_keeps_exact_single_manifest_with_child_and_no_payload():
     assert registered.phase is OutputHandoffPhase.PENDING
     assert registered.manifest == f.manifest and registered.complete is None
     assert registered.adoption is None and registered.abort_reason is None
-    assert registered.manifest.slots[0].transfers[0].contained_object_id == f.child
+    assert (registered.manifest.value).transfers[0].contained_object_id == f.child
     assert f.table.register(f.manifest, f.attempt) == registered
     assert f.table.snapshots() == (registered,)
     _metadata_only(registered)
@@ -97,7 +92,7 @@ def test_registration_keeps_exact_single_manifest_with_child_and_no_payload():
 def test_registration_binds_all_manifest_fields_not_only_identity(change):
     f = _Fixture()
     before = f.table.register(f.manifest, f.attempt)
-    header, slot = f.manifest.header, f.manifest.slots[0]
+    header, slot = f.manifest.header, (f.manifest.value)
     if change == "checksum":
         slot = replace(slot, checksum=hashlib.sha256(b"other").hexdigest())
     elif change == "child-address":
@@ -106,7 +101,7 @@ def test_registration_binds_all_manifest_fields_not_only_identity(change):
         ),))
     else:
         header = replace(header, node_incarnation=replace(header.node_incarnation, registration_epoch=2))
-    changed = OutputPublicationManifest.create(header, (slot,))
+    changed = OutputPublicationManifest.create(header, slot)
     assert changed.publication_id == f.identity
     with pytest.raises(OutputHandoffConflictError, match="different manifest"):
         f.table.register(changed, f.attempt)
@@ -201,10 +196,10 @@ def test_adopted_history_survives_complete_replay_and_cannot_abort_or_rebind():
 def test_caller_mutation_cannot_change_saved_manifest_or_query_history():
     f = _Fixture()
     saved = f.table.register(f.manifest, f.attempt)
-    object.__setattr__(f.manifest.slots[0].transfers[0], "contained_owner_address", ("changed.invalid", 9))
+    object.__setattr__((f.manifest.value).transfers[0], "contained_owner_address", ("changed.invalid", 9))
     assert f.table.query(f.identity) == saved
     queried = f.table.query(f.identity)
-    object.__setattr__(queried.manifest.slots[0], "checksum", "f" * 64)
+    object.__setattr__((queried.manifest.value), "checksum", "f" * 64)
     assert f.table.query(f.identity) == saved
 
 
@@ -217,9 +212,7 @@ def test_abort_manifest_binds_unknown_cleanup_without_forward_registration():
     assert f.table.abort_manifest(f.manifest, "node rollback:late") == snapshot
     with pytest.raises(OutputHandoffStateError, match="aborted"):
         f.table.register(f.manifest, f.attempt)
-    changed = OutputPublicationManifest.create(f.manifest.header, (replace(
-        f.manifest.slots[0], checksum="f" * 64,
-    ),))
+    changed = OutputPublicationManifest.create(f.manifest.header, (replace(f.manifest.value, checksum='f' * 64)))
     with pytest.raises(OutputHandoffConflictError):
         f.table.abort_manifest(changed, "node rollback:late")
     assert f.table.query(f.identity) == snapshot
@@ -292,14 +285,14 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
             raise TransportTimeout("owner registration ACK lost")
 
     def prepare(address, request):
-        assert address == f.manifest.slots[0].transfers[0].contained_owner_address
+        assert address == (f.manifest.value).transfers[0].contained_owner_address
         child.prepare_stored_contained_reference(
             request.transfer, authority_worker_id=request.authority_worker_id,
         )
         raise TransportTimeout("child prepare ACK lost after actual hold")
 
     def release(address, request):
-        assert address == f.manifest.slots[0].transfers[0].contained_owner_address
+        assert address == (f.manifest.value).transfers[0].contained_owner_address
         released = child.release_contained_reference(request.object_id, request.hold)
         releases.append(request)
         return protocol.ReleaseContainedReferenceReply(
@@ -320,12 +313,12 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
         seal_replica=forbidden, drop_replica=forbidden,
     )
     with pytest.raises(TransportTimeout, match="registration"):
-        adapter.prepare(f.manifest, (b"value",))
+        adapter.prepare(f.manifest, b"value")
     assert f.table.query(f.identity).phase is OutputHandoffPhase.PENDING
     assert not child.snapshot(f.child).contained_holds and not releases
     with pytest.raises(TransportTimeout, match="child prepare"):
-        adapter.prepare(f.manifest, (b"value",))
-    hold = f.manifest.slots[0].transfers[0].provisional_hold
+        adapter.prepare(f.manifest, b"value")
+    hold = (f.manifest.value).transfers[0].provisional_hold
     assert hold in child.snapshot(f.child).contained_holds
     plan = journal.begin_rollback(f.identity, "partial-child")
     assert len(plan.effects) == 1 and plan.effects[0].stage is OutputPublicationStage.PROVISIONAL_RELEASE

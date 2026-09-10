@@ -18,7 +18,7 @@ from miniray.errors import SystemTaskError
 from miniray.ids import LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope, OutputPublicationHeader,
-    OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import ObjectOwnerTable, ObjectState
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
@@ -73,15 +73,14 @@ class _LossFixture:
         )
         self.identity = OutputPublicationID(_id(LeaseID, 84), self.pending.execution)
         self.payload = b"value"
-        slot = OutputSlotManifest(self.ref.object_id, protocol.ResultStorage.INLINE, 5,
-                                  hashlib.sha256(self.payload).hexdigest(), (self.transfer,))
+        slot = (OutputValue(protocol.ResultStorage.INLINE, 5, hashlib.sha256(self.payload).hexdigest(), (self.transfer,)))
         self.manifest = OutputPublicationManifest.create(OutputPublicationHeader(
             self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
             OutputPublicationNodeIncarnation(self.publisher, 8101, 1),
-        ), (slot,))
+        ), slot)
         self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
         result = protocol.ResultDescriptor(self.ref.object_id, slot.tier, 5, self.core.worker_id, self.publisher, slot.checksum, self.payload)
-        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (result,))
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, result)
         assert self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest)).accepted
         if known:
             assert self.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(self.complete)).accepted

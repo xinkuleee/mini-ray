@@ -17,7 +17,7 @@ from miniray.output_publication_journal import (
 )
 from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.ownership import ObjectOwnerTable
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 
 pytestmark = pytest.mark.unit
@@ -32,7 +32,7 @@ class _Publication:
         self.executor = WorkerID(b"w" * 16)
         self.owner = WorkerID(b"o" * 16)
         self.node = OutputPublicationNodeIncarnation(NodeID(b"n" * 16), 1234, 1)
-        execution = TaskExecutionKey(TaskOutputManifest.for_task(task, 1), AttemptID(task, 0))
+        execution = (TaskExecution(AttemptID(task, 0)))
         header = OutputPublicationHeader(OutputPublicationID(LeaseID(b"l" * 16), execution),
                                          job, self.executor, self.owner, self.node)
         self.child_table = ObjectOwnerTable()
@@ -40,7 +40,7 @@ class _Publication:
         self.child_table.register(self.child_id, local_token="source")
         value = [ObjectRef(self.child_id, self.executor, ("127.0.0.1", 31001))] if child else ("one", "value")
         self.discovery = OutputDiscoverySession(header, inline_threshold=10000)
-        self.outputs = self.discovery.discover((value,))
+        self.outputs = self.discovery.discover(value)
         self.manifest = self.outputs.manifest
         self.identity = self.manifest.publication_id
         self.handoffs = OutputHandoffTable()
@@ -92,7 +92,7 @@ class _Publication:
         return protocol.StoredContainedPinReply(request, disposition)
 
     def release_child(self, address, request):
-        transfer = self.manifest.slots[0].transfers[0]
+        transfer = (self.manifest.value).transfers[0]
         assert address == transfer.contained_owner_address
         assert request.object_id == self.child_id and request.owner_worker_id == self.executor
         assert request.hold in (transfer.final_hold, transfer.provisional_hold)
@@ -124,7 +124,7 @@ class _Publication:
         raise AssertionError("INLINE publication must not invoke a replica callback")
 
     def prepare(self):
-        self.adapter.prepare(self.manifest, self.outputs.slot_payloads)
+        self.adapter.prepare(self.manifest, (self.outputs.payload))
 
     def complete(self):
         return self.adapter.complete(self.identity, commit_lease=lambda witness: self.events.append("lease-release"))
@@ -141,7 +141,7 @@ def test_reference_free_complete_releases_locally_before_owner_reporting():
     p.prepare()
     assert p.journal.snapshot(p.identity).ready_to_complete
     envelope = p.complete()
-    assert cloudpickle.loads(envelope.results[0].inline_data) == ("one", "value")
+    assert cloudpickle.loads((envelope.result).inline_data) == ("one", "value")
     assert p.events == ["owner-register", "lease-release"]
     assert p.handoffs.query(p.identity).complete is None
     assert p.adapter.pending_terminal_reports() == (envelope.complete,)
@@ -162,7 +162,7 @@ def test_lost_owner_registration_ack_prevents_child_effects_until_exact_replay()
     assert not p.journal.snapshot(p.identity).ready_to_complete
     p.prepare()
     assert p.events == ["owner-register", "owner-register", "child-prepare", "child-promote"]
-    transfer = p.manifest.slots[0].transfers[0]
+    transfer = (p.manifest.value).transfers[0]
     assert p.child_table.snapshot(p.child_id).contained_holds == frozenset((transfer.final_hold,))
     assert p.journal.snapshot(p.identity).ready_to_complete
     p.discovery.release_sources_after_promotions()
@@ -213,7 +213,7 @@ def test_rollback_compensates_unknown_promotion_and_replays_exact_cleanup():
     assert p.adapter.pending_rollbacks() == ()
     assert p.journal.snapshot(p.identity).state is OutputPublicationJournalState.RETIRED
     assert p.journal.materialized_result(p.identity, 0) is None
-    for hold in (p.manifest.slots[0].transfers[0].final_hold, p.manifest.slots[0].transfers[0].provisional_hold):
+    for hold in ((p.manifest.value).transfers[0].final_hold, (p.manifest.value).transfers[0].provisional_hold):
         assert p.child_table.contained_release_was_seen(p.child_id, hold)
     p.discovery.abort()
 

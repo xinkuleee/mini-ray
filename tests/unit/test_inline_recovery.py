@@ -116,7 +116,7 @@ class _Fixture:
         )
         self.fence = protocol.InstallOwnerDeathFence("inline-owner-fence", self.owner_death, values.node)
         self.finalize = wire.FinalizeOutputOwnerDeath(self.manifest, self.owner_death)
-        self.prepare_request = wire.PrepareOutputPublication(self.manifest, values.payloads)
+        self.prepare_request = wire.PrepareOutputPublication(self.manifest, (values.payload))
 
     def background_rpc(self, address, handler, request):
         assert not self.node._state_lock._is_owned() and not self.f.journal._lock._is_owned()
@@ -157,7 +157,7 @@ class _Fixture:
 
     def children(self):
         return tuple(self.f.child_owners[t.contained_owner_worker_id].snapshot(t.contained_object_id)
-                     for t in self.manifest.slots[0].transfers)
+                     for t in (self.manifest.value).transfers)
 
     def install_publisher_death(self):
         snapshot = protocol.InstallClusterSnapshot(self.publisher_death.death_epoch, "inline-no-survivor", ())
@@ -208,8 +208,8 @@ def test_owner_handoff_is_complete_pre_effect_metadata_and_exact_replay(monkeypa
         assert historical == receipts[0].snapshot
         f.prepare()
         assert receipts[1] == receipts[0] and len(receipts) == 2
-        assert f.f.journal.materialized_result(f.identity, 0).inline_data == f.values.payloads[0]
-        for transfer, child in zip(f.manifest.slots[0].transfers, f.children()):
+        assert f.f.journal.materialized_result(f.identity, 0).inline_data == (f.values.payload)
+        for transfer, child in zip((f.manifest.value).transfers, f.children()):
             assert transfer.final_hold in child.contained_holds
         envelope = f.complete()
         assert historical.complete is None and f.handoffs.query(f.identity).complete is None
@@ -257,7 +257,7 @@ def test_owner_and_publisher_fences_preserve_independent_facts(owner_first):
         # These are independent local histories, not permission to send cleanup
         # to a dead Node. The live-Node owner cleanup is exercised below.
         assert f.f.journal.snapshot(f.identity) == journal_before
-        assert f.f.journal.materialized_result(f.identity, 0).inline_data == f.values.payloads[0]
+        assert f.f.journal.materialized_result(f.identity, 0).inline_data == (f.values.payload)
         assert f.children() == child_before and f.finalize_calls == []
         assert f.record.state is protocol.LeaseExecutionState.COMPLETED
         assert f.handoffs.query(f.identity) == historical and historical.complete is None
@@ -273,7 +273,7 @@ def test_owner_fence_and_prepare_have_two_serial_admission_histories(owner_first
         before = f.children()
         if not owner_first:
             f.prepare()
-            assert f.f.journal.materialized_result(f.identity, 0).inline_data == f.values.payloads[0]
+            assert f.f.journal.materialized_result(f.identity, 0).inline_data == (f.values.payload)
             assert any(child.contained_holds for child in f.children())
         assert f.node._handle_install_owner_death_fence(f.fence).accepted
         assert not f.node._handle_prepare_output_publication(f.prepare_request).accepted
@@ -321,7 +321,7 @@ def test_owner_keep_drop_serial_choice_is_immutable_and_metadata_only(keep):
         record = replace(f.core._recovery.task_record(f.pending.task_id))
         assert owner.local_tokens == frozenset({"outer-live"})
         assert owner.state is (ObjectState.READY_INLINE if keep else ObjectState.PENDING)
-        assert owner.inline_data == (f.values.payloads[0] if keep else None)
+        assert owner.inline_data == ((f.values.payload) if keep else None)
         assert record.state is (TaskState.SUCCEEDED if keep else TaskState.RETRY_PENDING)
         assert record.retries_started == (0 if keep else 1)
         assert historical.complete is None and f.f.journal.snapshot(f.identity) == journal_before
@@ -339,6 +339,6 @@ def test_owner_keep_drop_serial_choice_is_immutable_and_metadata_only(keep):
         assert f.core.owner_table._output_loss_receipts[f.identity] == receipt
         assert f.handoffs.query(f.identity) == current
         _metadata((historical, current, journal_before, receipt, opposite))
-        assert f.f.journal.materialized_result(f.identity, 0).inline_data == f.values.payloads[0]
+        assert f.f.journal.materialized_result(f.identity, 0).inline_data == (f.values.payload)
     finally:
         f.close()

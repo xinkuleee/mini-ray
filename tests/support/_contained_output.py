@@ -89,12 +89,12 @@ class ContainedOutput:
             OutputPublicationNodeIncarnation(node.node_id, node._node_pid, node._registration_epoch)),
             inline_threshold=0 if self.stored else 4096, owner_address=self.child_owner.owner_address)
         value = {'child': self.child_ref} if self.contained else 'stored-result'
-        self.outputs = self.session.discover((value,))
+        self.outputs = self.session.discover(value)
         if self.contained:
-            self.transfer, = self.outputs.manifest.slots[0].transfers
-            self.edge, = self.outputs.manifest.slots[0].edges
+            self.transfer, = (self.outputs.manifest.value).transfers
+            self.edge, = (self.outputs.manifest.value).edges
         prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-            self.outputs.manifest, self.outputs.slot_payloads))
+            self.outputs.manifest, (self.outputs.payload)))
         assert prepared.accepted
         self.session.release_sources_after_promotions()
         reply = node._handle_complete_worker_lease(protocol.CompleteWorkerLease(
@@ -102,7 +102,7 @@ class ContainedOutput:
         assert reply.accepted and reply.released and reply.output_publication is not None
         self.envelope = reply.output_publication
         return protocol.TaskReply(p.task_id, p.spec.attempt_id, self.grant.worker_id,
-            protocol.TaskReplyStatus.SUCCEEDED, self.envelope.results, output_publication=self.envelope)
+            protocol.TaskReplyStatus.SUCCEEDED, ((self.envelope.result,)), output_publication=self.envelope)
 
     def owner_rpc(self, address, handler, request):
         if handler in ('prepare_stored_contained_pin', 'promote_stored_contained_pin'):

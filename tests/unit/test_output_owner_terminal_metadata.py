@@ -40,8 +40,8 @@ _RESULT = b"single-inline-result-must-be-forgotten"
 class _Fixture(_OwnerValues):
     def __init__(self):
         super().__init__(edges=True, all_stored=False)
-        self.output = self.publication_id.output_ids[0]
-        self.transfer = self.manifest.slots[0].transfers[0]
+        self.output = (self.publication_id.object_id)
+        self.transfer = (self.manifest.value).transfers[0]
         # Set payload-bearing lineage before table() registers the TaskSpec.
         self.spec = replace(
             self.spec, args=(protocol.InlineArg(_ARGUMENT),),
@@ -52,13 +52,13 @@ class _Fixture(_OwnerValues):
 
     def publication(self, payload):
         checksum = hashlib.sha256(payload).hexdigest()
-        slot = replace(self.manifest.slots[0], size_bytes=len(payload), checksum=checksum)
-        manifest = OutputPublicationManifest.create(self.header, (slot,))
+        value = replace((self.manifest.value), size_bytes=len(payload), checksum=checksum)
+        manifest = OutputPublicationManifest.create(self.header, value)
         result = replace(
-            self.envelope.results[0], size_bytes=len(payload), checksum=checksum, inline_data=payload,
+            (self.envelope.result), size_bytes=len(payload), checksum=checksum, inline_data=payload,
         )
         envelope = OutputPublicationEnvelope(
-            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (result,),
+            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), result,
         )
         return OutputOwnerPublicationPlan(self.execution, envelope)
 

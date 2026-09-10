@@ -37,13 +37,13 @@ def _ack_worker(node, expected, calls):
 
 def _assert_no_owner_delivery(fixture, node, record, complete):
     assert not node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-        fixture.manifest, fixture.values.payloads,
+        fixture.manifest, (fixture.values.payload),
     )).accepted
     with pytest.raises(ValueError, match="death-fenced"):
         node._handle_complete_worker_lease_inner(complete)
     query = protocol.GetWorkerLeaseOutcome(
         fixture.id.lease_id, fixture.id.task_id, fixture.id.attempt_id,
-        fixture.values.executor, fixture.values.owner, fixture.id.output_ids,
+        fixture.values.executor, fixture.values.owner, ((fixture.id.object_id,)),
     )
     # Fenced Node handlers reject rather than turning a known Complete into
     # an ordinary descriptor-only success or supplying retired bytes.
@@ -89,10 +89,10 @@ def test_node_finalize_rejects_rebound_death_manifest_and_node_identity(monkeypa
     changed_header = replace(fixture.manifest.header, node_incarnation=replace(
         fixture.manifest.header.node_incarnation, registration_epoch=fixture.manifest.header.node_incarnation.registration_epoch + 1,
     ))
-    changed_manifest = OutputPublicationManifest.create(changed_header, fixture.manifest.slots)
+    changed_manifest = OutputPublicationManifest.create(changed_header, (fixture.manifest.value))
     with pytest.raises(OutputPublicationConflictError, match="Node incarnation"):
         node._handle_finalize_output_owner_death(wire.FinalizeOutputOwnerDeath(changed_manifest, request.owner_death))
-    slots = (replace(fixture.manifest.slots[0], checksum="ab" * 32),)
+    slots = (replace((fixture.manifest.value), checksum="ab" * 32),)
     rebound = OutputPublicationManifest.create(fixture.manifest.header, slots)
     with pytest.raises(OutputPublicationConflictError, match="publication identity"):
         node._handle_finalize_output_owner_death(wire.FinalizeOutputOwnerDeath(rebound, request.owner_death))

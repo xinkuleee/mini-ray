@@ -167,7 +167,7 @@ def _run_publisher_loss(phase):
             victim.node_id, victim.node_pid, runtime.nodes[1].registration_epoch,
         )
         identity = arrival.publication_id
-        assert identity.output_ids == (output.object_id,)
+        assert ((identity.object_id,)) == (output.object_id,)
         assert identity.attempt_id == AttemptID(output.object_id.task_id, 0)
         before = _handoff(owner_address, identity, deadline)
         manifest = before.manifest
@@ -177,7 +177,7 @@ def _run_publisher_loss(phase):
         assert manifest.header.node_incarnation.node_id == victim.node_id
         assert before.phase is OutputHandoffPhase.PENDING and before.adoption is None
         assert (before.complete is not None) is known_complete
-        slot, = manifest.slots
+        slot = (manifest.value)
         transfer, = slot.transfers
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE
         assert len(_PADDING) < slot.size_bytes < 32 * 1024

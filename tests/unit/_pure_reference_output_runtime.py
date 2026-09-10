@@ -16,7 +16,7 @@ from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
 from miniray.output_publication import OutputPublicationID
 from miniray.output_publication_journal import OutputPublicationStage
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from tests.unit._pure_output_runtime import PureOutputRuntime, _metadata
 
 
@@ -45,9 +45,9 @@ class PureReferenceOutputRuntime(PureOutputRuntime):
         core._rpc = self.rpc
 
     def complete(self, push, values, *, inline_threshold=1024):
-        execution = TaskExecutionKey.from_task_spec(push.spec)
+        execution = TaskExecution.from_task_spec(push.spec)
         identity = OutputPublicationID(push.lease_id, execution)
-        assert len(identity.output_ids) == 1
+        assert len(((identity.object_id,))) == 1
         assert identity in self.pushes or len(self.pushes) < 3
         return super().complete(push, values, inline_threshold=inline_threshold)
 

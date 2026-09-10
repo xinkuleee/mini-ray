@@ -55,12 +55,12 @@ class _Fixture:
         self.values = _Values(refs=refs, stored=stored)
         if reverse_children:
             assert refs
-            slot, = self.values.slots
-            self.values.slots = (replace(slot, transfers=tuple(reversed(slot.transfers))),)
-            self.values.manifest = OutputPublicationManifest.create(self.values.header, self.values.slots)
+            slot = (self.values.value)
+            (self.values.value) = (replace(slot, transfers=tuple(reversed(slot.transfers))))
+            self.values.manifest = OutputPublicationManifest.create(self.values.header, (self.values.value))
             self.values.witness = OutputPublicationCompleteWitness.for_manifest(self.values.manifest)
             self.values.envelope = OutputPublicationEnvelope(
-                self.values.manifest, self.values.witness, self.values.results)
+                self.values.manifest, self.values.witness, (self.values.result))
         self.manifest, self.id = self.values.manifest, self.values.publication_id
         self.journal, self.handoffs = OutputPublicationJournal(), OutputHandoffTable()
         self.store, self.child_owners = ObjectStore(1024), {}
@@ -68,7 +68,7 @@ class _Fixture:
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         self.token = AllocationToken("test-output-lease")
         self.ledger.allocate(ResourceVector({"CPU": 1}), self.token)
-        for transfer in self.manifest.slots[0].transfers:
+        for transfer in (self.manifest.value).transfers:
             table = self.child_owners.setdefault(transfer.contained_owner_worker_id, ObjectOwnerTable())
             table.register(transfer.contained_object_id, local_token="source-live")
             if isinstance(transfer.source, BorrowedContainedSource):
@@ -135,12 +135,12 @@ class _Fixture:
         return protocol.ReleaseContainedReferenceReply(request.object_id, request.owner_worker_id, request.hold, True, released)
 
     def prepare(self):
-        self.adapter.prepare(self.manifest, self.values.payloads)
+        self.adapter.prepare(self.manifest, (self.values.payload))
 
     def assert_no_pins_or_bytes(self):
         assert self.store.used_bytes == 0
         assert self.journal.snapshot(self.id).retained_result_slots == ()
-        for transfer in self.manifest.slots[0].transfers:
+        for transfer in (self.manifest.value).transfers:
             snapshot = self.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
             assert transfer.provisional_hold not in snapshot.contained_holds
             assert transfer.final_hold not in snapshot.contained_holds
@@ -180,7 +180,7 @@ def _node(*, refs=True, stored=True, reverse_children=False):
     node.event_sink = None
     request = protocol.RequestWorkerLease(
         values.lease, values.task, values.attempt, ResourceVector({"CPU": 1}),
-        values.node, values.owner, return_ids=values.publication_id.output_ids,
+        values.node, values.owner, return_ids=((values.publication_id.object_id,)),
     )
     grant = protocol.GrantWorkerLease(
         values.lease, values.task, values.attempt, values.node, values.executor,
@@ -204,12 +204,14 @@ def _node(*, refs=True, stored=True, reverse_children=False):
 @pytest.mark.parametrize("refs,stored", ((True, True), (False, True), (True, False)))
 def test_handlers_complete_single_output_locally_without_owner_complete_rpc(refs, stored):
     fixture, node, record, complete = _node(refs=refs, stored=stored)
-    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
+    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     assert prepared.accepted
     assert record.output_publication_id == fixture.id
     reply = node._handle_complete_worker_lease_inner(complete)
     assert reply.accepted and reply.released
     assert reply.output_publication == fixture.values.envelope
+    assert (reply.output_publication.result == fixture.values.result)
+    assert (reply.output_publication.result.object_id) == (fixture.id.object_id)
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
     assert fixture.handoffs.query(fixture.id).complete is None
     replay = node._handle_complete_worker_lease_inner(complete)
@@ -217,7 +219,7 @@ def test_handlers_complete_single_output_locally_without_owner_complete_rpc(refs
     assert replay.output_publication == reply.output_publication
     query = protocol.GetWorkerLeaseOutcome(
         fixture.values.lease, fixture.values.task, fixture.values.attempt, fixture.values.executor,
-        fixture.values.owner, fixture.id.output_ids,
+        fixture.values.owner, ((fixture.id.object_id,)),
     )
     outcome = node._handle_get_worker_lease_outcome(query)
     assert outcome.output_publication == reply.output_publication
@@ -228,7 +230,7 @@ def test_handlers_complete_single_output_locally_without_owner_complete_rpc(refs
 
 def test_failure_complete_releases_cpu_but_withholds_ack_until_all_compensation():
     fixture, node, record, complete = _node()
-    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)).accepted
+    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))).accepted
     failed = replace(complete, status=protocol.TaskReplyStatus.SYSTEM_ERROR)
     first = node._handle_complete_worker_lease_inner(failed)
     assert not first.accepted
@@ -236,7 +238,7 @@ def test_failure_complete_releases_cpu_but_withholds_ack_until_all_compensation(
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
     query = protocol.GetWorkerLeaseOutcome(
         fixture.values.lease, fixture.values.task, fixture.values.attempt, fixture.values.executor,
-        fixture.values.owner, fixture.id.output_ids,
+        fixture.values.owner, ((fixture.id.object_id,)),
     )
     unavailable = node._handle_get_worker_lease_outcome(query)
     assert unavailable.found and unavailable.state is protocol.LeaseExecutionState.COMPLETED
@@ -259,12 +261,12 @@ def test_failure_complete_releases_cpu_but_withholds_ack_until_all_compensation(
 
 def test_lost_rollback_report_ack_withholds_failed_outcome_after_local_cleanup():
     fixture, node, record, complete = _node(refs=False)
-    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)).accepted
+    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))).accepted
     failed = replace(complete, status=protocol.TaskReplyStatus.SYSTEM_ERROR)
     fixture.fault = "rollback-report"
     query = protocol.GetWorkerLeaseOutcome(
         fixture.values.lease, fixture.values.task, fixture.values.attempt, fixture.values.executor,
-        fixture.values.owner, fixture.id.output_ids,
+        fixture.values.owner, ((fixture.id.object_id,)),
     )
     observed = False
     for _ in range(4):
@@ -291,8 +293,8 @@ def test_wrong_lease_manifest_has_no_journal_record_or_child_effect():
     changed = replace(fixture.manifest.header, executor_worker_id=fixture.values.owner)
     # Preserve no-child metadata to isolate physical executor binding.
     from miniray.output_publication import OutputPublicationManifest
-    wrong = OutputPublicationManifest.create(changed, tuple(replace(slot, transfers=()) for slot in fixture.manifest.slots))
-    reply = node._handle_prepare_output_publication(wire.PrepareOutputPublication(wrong, fixture.values.payloads))
+    wrong = OutputPublicationManifest.create(changed, (replace(fixture.manifest.value, transfers=())))
+    reply = node._handle_prepare_output_publication(wire.PrepareOutputPublication(wrong, (fixture.values.payload)))
     assert not reply.accepted
     assert record.output_publication_id is None
     assert fixture.journal.publication_ids() == ()
@@ -302,7 +304,7 @@ def test_wrong_lease_manifest_has_no_journal_record_or_child_effect():
 def test_early_success_complete_cannot_fence_a_later_valid_prepare():
     fixture, node, record, complete = _node()
     fixture.fault = "owner-register"
-    request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+    request = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     with pytest.raises(TimeoutError):
         node._handle_prepare_output_publication(request)
     reply = node._handle_complete_worker_lease_inner(complete)
@@ -313,7 +315,7 @@ def test_early_success_complete_cannot_fence_a_later_valid_prepare():
 
 def test_payload_retirement_is_independent_of_terminal_outbox_and_physical_replica():
     fixture, node, record, complete = _node()
-    node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
+    node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     assert node._handle_complete_worker_lease_inner(complete).accepted
     proof = OutputPublicationAdoptionProof(fixture.values.witness, fixture.values.owner, "owner-cas")
     assert node._handle_ack_output_publication_adopted(wire.AckOutputPublicationAdopted(proof)).accepted
@@ -322,7 +324,7 @@ def test_payload_retirement_is_independent_of_terminal_outbox_and_physical_repli
     assert node._drive_output_publications()
     query = protocol.GetWorkerLeaseOutcome(
         fixture.values.lease, fixture.values.task, fixture.values.attempt, fixture.values.executor,
-        fixture.values.owner, fixture.id.output_ids,
+        fixture.values.owner, ((fixture.id.object_id,)),
     )
     outcome = node._handle_get_worker_lease_outcome(query)
     assert outcome.state is protocol.LeaseExecutionState.COMPLETED
@@ -336,11 +338,11 @@ def test_payload_retirement_is_independent_of_terminal_outbox_and_physical_repli
 
 def test_first_success_complete_after_worker_loss_cannot_change_terminal_history():
     fixture, node, record, complete = _node()
-    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)).accepted
+    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))).accepted
     node._release_record_locked(record, protocol.LeaseExecutionState.WORKER_LOST)
     query = protocol.GetWorkerLeaseOutcome(
         fixture.values.lease, fixture.values.task, fixture.values.attempt, fixture.values.executor,
-        fixture.values.owner, fixture.id.output_ids,
+        fixture.values.owner, ((fixture.id.object_id,)),
     )
     node._workers[fixture.values.executor].process = SimpleNamespace(is_alive=lambda: False)
     assert node._handle_get_worker_lease_outcome(query).state is protocol.LeaseExecutionState.WORKER_LOST
@@ -353,7 +355,7 @@ def test_first_success_complete_after_worker_loss_cannot_change_terminal_history
 
 def test_complete_keeps_both_local_locks_through_witness_and_ledger(monkeypatch):
     fixture, node, record, complete = _node()
-    node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
+    node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     original = fixture.journal.complete
     observed = []
 
@@ -373,7 +375,7 @@ def test_complete_keeps_both_local_locks_through_witness_and_ledger(monkeypatch)
 
 def test_preboundary_complete_error_does_not_block_worker_loss_rollback(monkeypatch):
     fixture, node, record, complete = _node()
-    node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
+    node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     original = fixture.journal.complete
     monkeypatch.setattr(fixture.journal, "complete", lambda *_: (_ for _ in ()).throw(ValueError("before witness")))
     with pytest.raises(ValueError, match="before witness"):
@@ -414,14 +416,14 @@ def test_configured_checkpoints_follow_exact_owner_registration_and_promotions()
             else:
                 assert arrival.phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK
                 assert local.ready_to_complete and fixture.store.used_bytes > 0
-                for transfer in fixture.manifest.slots[0].transfers:
+                for transfer in (fixture.manifest.value).transfers:
                     holds = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
                     assert transfer.final_hold in holds and transfer.provisional_hold not in holds
             observed.append(arrival.phase)
 
     node._output_publication_gate = Gate()
     fixture.adapter._test_checkpoint = node._test_output_publication_checkpoint
-    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)).accepted
+    assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))).accepted
     assert observed == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
                         OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK]
     assert node._handle_complete_worker_lease_inner(complete).accepted
@@ -437,7 +439,7 @@ def test_promoted_prepare_replay_cannot_emit_an_earlier_checkpoint():
 
     node._output_publication_gate = Gate()
     fixture.adapter._test_checkpoint = node._test_output_publication_checkpoint
-    request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+    request = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     fixture.fault = "promote"
     with pytest.raises(TimeoutError, match="promote"):
         node._handle_prepare_output_publication(request)

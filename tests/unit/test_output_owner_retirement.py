@@ -34,21 +34,22 @@ pytestmark = pytest.mark.unit
 class _Fixture(_OwnerValues):
     def __init__(self, *, edges=True, stored=True):
         super().__init__(edges=edges, all_stored=stored)
-        self.output = self.publication_id.output_ids[0]
+        self.output = (self.publication_id.object_id)
         if edges:
-            first = self.manifest.slots[0].transfers[0]
+            first = (self.manifest.value).transfers[0]
             second = replace(first, contained_object_id=ObjectID.for_task(TaskID.derive(self.job, self.task, 4)),
                 provisional_hold=replace(first.provisional_hold, transfer_token="second-child"),
                 final_hold=replace(first.final_hold, transfer_token="second-child"))
+            self.value = replace(self.manifest.value, transfers=(first, second))
             self.manifest = OutputPublicationManifest.create(
-                self.header, (replace(self.manifest.slots[0], transfers=(first, second)),),
+                self.header, (self.value),
             )
             self.envelope = OutputPublicationEnvelope(
-                self.manifest, OutputPublicationCompleteWitness.for_manifest(self.manifest), self.envelope.results,
+                self.manifest, OutputPublicationCompleteWitness.for_manifest(self.manifest), (self.envelope.result),
             )
             self.plan = OutputOwnerPublicationPlan(self.execution, self.envelope)
         self.child_owner = ObjectOwnerTable()
-        for transfer in self.manifest.slots[0].transfers:
+        for transfer in (self.manifest.value).transfers:
             self.child_owner.register(transfer.contained_object_id, local_token="child-source")
             self.child_owner.prepare_stored_contained_reference(transfer, authority_worker_id=self.executor)
             self.child_owner.promote_stored_contained_reference(transfer, authority_worker_id=self.executor)
@@ -60,7 +61,7 @@ def _state(table):
 
 def _begin(table, fixture, *, identity="retire:output", extra_nodes=()):
     member = table.output_owner_publication(fixture.output)
-    locations = ((fixture.node,) + extra_nodes if member.slot.tier is protocol.ResultStorage.OBJECT_STORE else ())
+    locations = ((fixture.node,) + extra_nodes if (member.manifest.value).tier is protocol.ResultStorage.OBJECT_STORE else ())
     return table.begin_output_publication_retirement(
         (member,), retirement_id=identity, replica_locations={member.object_id: locations},
     )
@@ -91,13 +92,13 @@ def _replacement_publication(fixture, attempt):
     transfers = tuple(replace(transfer,
         provisional_hold=replace(transfer.provisional_hold, transfer_token="new:" + transfer.provisional_hold.transfer_token),
         final_hold=replace(transfer.final_hold, transfer_token="new:" + transfer.final_hold.transfer_token),
-    ) for transfer in fixture.manifest.slots[0].transfers)
-    manifest = OutputPublicationManifest.create(header, (replace(fixture.manifest.slots[0], transfers=transfers),))
+    ) for transfer in (fixture.manifest.value).transfers)
+    manifest = OutputPublicationManifest.create(header, (replace(fixture.manifest.value, transfers=transfers)))
     for transfer in transfers:
         fixture.child_owner.prepare_stored_contained_reference(transfer, authority_worker_id=fixture.executor)
         fixture.child_owner.promote_stored_contained_reference(transfer, authority_worker_id=fixture.executor)
     return OutputOwnerPublicationPlan(execution, OutputPublicationEnvelope(
-        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), fixture.envelope.results,
+        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (fixture.envelope.result),
     ))
 
 
@@ -292,7 +293,7 @@ def test_retired_slot_can_reconstruct_with_original_index_and_old_replays_are_fe
         table.commit_validated_advance_task_outputs(advance)
     replacement = _replacement_publication(fixture, fixture.attempt.next())
     assert table.commit_output_publication(replacement).disposition is OutputOwnerPublicationDisposition.APPLIED
-    assert table.snapshot(fixture.output).output_publication.slot.object_id.return_index == 0
+    assert (table.snapshot(fixture.output).output_publication).object_id.return_index == 0
     ready = _state(table)
     children = _state(fixture.child_owner)
     assert table.commit_output_publication(fixture.plan).disposition is OutputOwnerPublicationDisposition.FENCED

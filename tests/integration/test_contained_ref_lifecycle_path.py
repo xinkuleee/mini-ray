@@ -216,9 +216,9 @@ def test_two_borrowers_outlive_their_inline_container() -> None:
         outer_before = core.owner_table.snapshot(outer.object_id)
         assert outer_before.state is ObjectState.READY_INLINE
         membership = outer_before.output_publication
-        assert membership is not None and membership.slot.object_id == outer.object_id
-        assert membership.slot.tier is protocol.ResultStorage.INLINE
-        transfer, = membership.slot.transfers
+        assert membership is not None and membership.object_id == outer.object_id
+        assert (membership.manifest.value).tier is protocol.ResultStorage.INLINE
+        transfer, = (membership.manifest.value).transfers
         hold = transfer.final_hold
         assert transfer.contained_object_id == first.object_id
         assert transfer.contained_owner_worker_id == first.owner_worker_id

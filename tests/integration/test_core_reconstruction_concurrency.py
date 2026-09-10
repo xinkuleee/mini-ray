@@ -263,11 +263,11 @@ class _Case:
         discovery = OutputDiscoverySession(OutputPublicationHeader(
             self.identity, core.job_id, grant.worker_id, core.worker_id, started.node_incarnation,
         ), inline_threshold=0)
-        outputs = discovery.discover(({"original": True},))
-        assert all(slot.tier is protocol.ResultStorage.OBJECT_STORE and not slot.transfers for slot in outputs.manifest.slots)
-        assert sum(slot.size_bytes for slot in outputs.manifest.slots) < 128
+        outputs = discovery.discover(({'original': True}))
+        assert (outputs.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE and (not outputs.manifest.value.transfers))
+        assert (outputs.manifest.value.size_bytes) < 128
         assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-            outputs.manifest, outputs.slot_payloads,
+            outputs.manifest, (outputs.payload),
         )).accepted
         discovery.release_sources_after_promotions()
         complete = node._handle_complete_worker_lease(protocol.CompleteWorkerLease(
@@ -277,7 +277,7 @@ class _Case:
         assert complete.state is protocol.LeaseExecutionState.COMPLETED and complete.output_publication is not None
         self.reply = protocol.TaskReply(
             pending.task_id, pending.spec.attempt_id, grant.worker_id, complete.status,
-            complete.output_publication.results, output_publication=complete.output_publication,
+            ((complete.output_publication.result,)), output_publication=complete.output_publication,
         )
         assert core._publish_reply(pending, self.reply, expected_node_id=node.node_id, expected_lease_id=request.lease_id)
         assert core._finish_pending_task(pending)

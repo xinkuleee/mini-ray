@@ -99,7 +99,7 @@ from .replica_cleanup import ReplicaCleanupQueue
 from .node_death_view import GET_NODE_DEATH_VIEW, GetInstalledNodeDeaths, GetInstalledNodeDeathsReply
 from .runtime_binding import current_execution_context
 from .trace import EventSink, causal_scope, current_cause_id
-from .task_outputs import TaskExecutionKey, validate_num_returns
+from .task_outputs import TaskExecution, validate_num_returns
 from .transport import (
     Address,
     RemoteCallError,
@@ -1097,11 +1097,11 @@ class _PendingTask:
     # and SYSTEM retries, but never enter readiness gating or Node pull.
     nested_local_holds: tuple[ObjectID, ...] = ()
     nested_foreign_guards: tuple[_ForeignDependencyGuard, ...] = ()
-    execution: TaskExecutionKey = field(init=False)
+    execution: TaskExecution = field(init=False)
 
     def __post_init__(self) -> None:
-        execution = TaskExecutionKey.from_task_spec(self.spec)
-        if self.object_id != execution.output_ids[0]:
+        execution = TaskExecution.from_task_spec(self.spec)
+        if self.object_id != execution.object_id:
             raise ValueError("pending object_id must be the task output")
         object.__setattr__(self, "execution", execution)
 
@@ -1111,11 +1111,11 @@ class _PendingTask:
 
     @property
     def output_ids(self) -> tuple[ObjectID, ...]:
-        return self.execution.output_ids
+        return (self.execution.object_id,)
 
     @property
     def full_output_ids(self) -> tuple[ObjectID, ...]:
-        return self.execution.output_ids
+        return (self.execution.object_id,)
 
     @property
     def task_key(self) -> object:
@@ -2896,7 +2896,7 @@ class CoreWorker:
         """
         rejected = tuple(identity for identity, keep in getattr(self, '_output_loss_choices', {}).items()
                          if identity.attempt_id == descriptor.producer_attempt_id
-                         and descriptor.object_id in identity.output_ids and not keep)
+                         and descriptor.object_id == identity.object_id and not keep)
         request = self._owner_table.retired_output_replica(descriptor, rejected_publications=rejected)
         if request is None:
             request = self._owner_table.retired_stored_replica(descriptor)
@@ -4635,12 +4635,12 @@ class CoreWorker:
             with self._state_lock:
                 if not self._owner_protocol_open or manifest.header.owner_worker_id != self.worker_id:
                     raise ValueError("output owner is stopped or does not match")
-                state = self._owner_table.snapshot(identity.output_ids[0])
+                state = self._owner_table.snapshot(identity.object_id)
                 if state.current_attempt != identity.attempt_id or state.state is not ObjectState.PENDING:
                     raise ValueError("output handoff requires the current pending owner attempt")
                 if self._node_is_dead(manifest.header.node_incarnation.node_id):
                     raise ValueError("publishing Node is dead")
-                pending = getattr(self, "_task_finish_barriers", {}).get(identity.output_ids[0])
+                pending = getattr(self, "_task_finish_barriers", {}).get(identity.object_id)
                 if pending is None or pending.execution != identity.execution:
                     raise ValueError("output handoff has no accepted task execution")
                 snapshot = self._output_handoff_table().register(manifest, state.current_attempt)
@@ -4683,13 +4683,11 @@ class CoreWorker:
             identity = manifest.publication_id
             if manifest.header.owner_worker_id != self.worker_id:
                 raise ValueError("rollback targets another output owner")
-            if len(manifest.slots) != 1:
-                raise ValueError("rollback requires a single-output manifest")
             for effect in tombstone.plan.effects:
                 if effect.slot_index != 0:
                     raise ValueError("rollback effect names another output")
                 if (effect.stage in (OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE)
-                        and effect.transfer_index >= len(manifest.slots[0].transfers)):
+                        and effect.transfer_index >= len(manifest.value.transfers)):
                     raise ValueError("rollback effect names an absent child transfer")
             with self._state_lock:
                 table = self._output_handoff_table()
@@ -6943,7 +6941,7 @@ class CoreWorker:
                     (member,), retirement_id="retire-output:{}".format(uuid.uuid4().hex),
                     replica_locations={member.object_id: (
                         (member.manifest.header.node_incarnation.node_id,)
-                        if member.slot.tier is protocol.ResultStorage.OBJECT_STORE else ()
+                        if member.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE else ()
                     )},
                 )
                 current = {"plan": plan, "child": {}, "replica": {}}
@@ -6959,7 +6957,7 @@ class CoreWorker:
         try:
             routes = {
                 (transfer.contained_object_id, transfer.final_hold): transfer.contained_owner_address
-                for member in plan.memberships for transfer in member.slot.transfers
+                for member in plan.memberships for transfer in member.manifest.value.transfers
             }
             for request in plan.contained_releases:
                 if request not in current["child"]:
@@ -10231,7 +10229,7 @@ class CoreWorker:
             if reply.completion_status is protocol.TaskReplyStatus.SUCCEEDED and output_publication is not None:
                 recovered = protocol.TaskReply(
                     pending.task_id, pending.spec.attempt_id, state.push.worker_id,
-                    protocol.TaskReplyStatus.SUCCEEDED, output_publication.results,
+                    protocol.TaskReplyStatus.SUCCEEDED, (output_publication.result,),
                      output_publication=output_publication,
                 )
                 return self._publish_reply(pending, recovered, expected_node_id=reply.node_id, expected_lease_id=state.grant.lease_id)
@@ -11242,7 +11240,7 @@ class CoreWorker:
                     works = self._output_node_cleanup = {}
                 work = works.get(identity)
                 if work is None:
-                    slot = manifest.slots[0]
+                    slot = manifest.value
                     keep = bool(complete is not None and (
                         envelope is not None and slot.tier is protocol.ResultStorage.INLINE
                         or self._owner_table.surviving_output_locations(
@@ -11256,7 +11254,7 @@ class CoreWorker:
                     if not keep and handoff.phase is not OutputHandoffPhase.ADOPTED:
                         table.abort(identity, 'publishing Node died before payload adoption')
             if not work['keep']:
-                for transfer in manifest.slots[0].transfers:
+                for transfer in manifest.value.transfers:
                     for hold in (transfer.final_hold, transfer.provisional_hold):
                         request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
                         if request in work['acks']:
@@ -11367,26 +11365,21 @@ class CoreWorker:
                 if envelope.complete != witness:
                     raise SystemTaskError("retained output custody changed Complete witness")
                 return envelope
-            memberships, results = [], []
-            for output_id in pending.output_ids:
-                if not self._owner_table.contains(output_id):
-                    return None
-                snapshot = self._owner_table.snapshot(output_id)
-                membership = snapshot.output_publication
-                stored_loss_metadata = (allow_lost_stored and snapshot.state is ObjectState.LOST
-                                        and membership is not None
-                                        and membership.slot.tier is protocol.ResultStorage.OBJECT_STORE)
-                if (membership is None or membership.publication_id != identity
-                        or snapshot.current_attempt != pending.spec.attempt_id
-                        or snapshot.state not in (ObjectState.READY_INLINE, ObjectState.READY_STORED)
-                        and not stored_loss_metadata):
-                    return None
-                memberships.append(membership)
-                results.append(self._owner_table.output_owner_result(output_id))
-            manifest = memberships[0].manifest
-            if any(member.manifest != manifest for member in memberships):
-                raise SystemTaskError("owner output slots belong to different manifests")
-            return OutputPublicationEnvelope(manifest, witness, tuple(results))
+            object_id = pending.execution.object_id
+            if not self._owner_table.contains(object_id):
+                return None
+            snapshot = self._owner_table.snapshot(object_id)
+            membership = snapshot.output_publication
+            stored_loss_metadata = (allow_lost_stored and snapshot.state is ObjectState.LOST
+                                    and membership is not None
+                                    and membership.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE)
+            if (membership is None or membership.publication_id != identity
+                    or snapshot.current_attempt != pending.spec.attempt_id
+                    or snapshot.state not in (ObjectState.READY_INLINE, ObjectState.READY_STORED)
+                    and not stored_loss_metadata):
+                return None
+            result = self._owner_table.output_owner_result(object_id)
+            return OutputPublicationEnvelope(membership.manifest, witness, result)
 
     def _drive_output_publication_adoption(
         self, pending: _PendingTask, obligation: _OutputAdoptionObligation,
@@ -11448,9 +11441,9 @@ class CoreWorker:
                     if not self._owner_table.commit_output_publication(plan).committed:
                         raise SystemTaskError("owner fenced output batch CAS")
                     recovery.commit_validated_transition(success)
-                    for result in envelope.results:
-                        if result.storage is protocol.ResultStorage.OBJECT_STORE:
-                            self._stored_descriptors[result.object_id] = result
+                    result = envelope.result
+                    if result.storage is protocol.ResultStorage.OBJECT_STORE:
+                        self._stored_descriptors[result.object_id] = result
                     for output_id in pending.output_ids:
                         self._wake_object(output_id)
                     # Capture immutable facts only. The trace sink runs after
@@ -11475,9 +11468,9 @@ class CoreWorker:
                             raise SystemTaskError("owner receipt cannot repair stale recovery")
                         recovery.commit_validated_transition(success)
                     if repair_current:
-                        for result in envelope.results:
-                            if result.storage is protocol.ResultStorage.OBJECT_STORE:
-                                self._stored_descriptors[result.object_id] = result
+                        result = envelope.result
+                        if result.storage is protocol.ResultStorage.OBJECT_STORE:
+                            self._stored_descriptors[result.object_id] = result
                         for output_id in pending.output_ids:
                             self._wake_object(output_id)
                     ordinary = getattr(self, "_reconstruction", None)
@@ -11565,7 +11558,7 @@ class CoreWorker:
             if self._output_replay_is_obsolete_locked(pending, envelope.publication_id):
                 return False
         results = self._decode_reply(pending, reply, expected_node_id=expected_node_id)
-        if envelope.results != results:
+        if (envelope.result,) != results:
             raise SystemTaskError("output envelope changed its result descriptors")
         return self._drive_output_publication_adoption(pending, _OutputAdoptionObligation(
             envelope, envelope.manifest.header.node_incarnation.node_id,

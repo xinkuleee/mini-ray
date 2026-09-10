@@ -156,7 +156,7 @@ class _UnreportedCompleteGate:
                 assert node._workers[manifest.header.executor_worker_id].active_lease_id is None
                 assert envelope is not None and envelope.manifest == manifest
                 assert tuple(journal.materialized_result(witness.publication_id, index)
-                             for index in range(len(manifest.slots))) == envelope.results
+                             for index in range(len(((manifest.value,))))) == ((envelope.result,))
                 return OutputPublicationGateArrival.from_manifest(
                     manifest, OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY,
                 )
@@ -319,7 +319,7 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
         assert (arrival.node_id, arrival.node_pid, arrival.registration_epoch) == (
             victim.node_id, victim.node_pid, runtime.nodes[1].registration_epoch,
         )
-        assert publication.output_ids == publication.full_output_ids == (object_id,)
+        assert ((publication.object_id,)) == ((publication.object_id,)) == (object_id,)
         assert publication.attempt_id == AttemptID(object_id.task_id, 0)
         _assert_metadata_only(arrival)
         # Arrival proves LOCAL Complete and CPU release, not owner knowledge.
@@ -331,7 +331,7 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
         assert before.phase is OutputHandoffPhase.PENDING
         assert before.complete is before.adoption is before.abort_reason is None
         assert manifest.header.owner_worker_id == core.worker_id and manifest.header.executor_worker_id == victim.worker_id
-        (slot,) = manifest.slots
+        slot = (manifest.value)
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE and len(_PADDING) < slot.size_bytes < 32 * 1024
         (transfer,) = slot.transfers
         assert type(transfer.source) is BorrowedContainedSource and transfer.source.borrower_worker_id == victim.worker_id
@@ -424,7 +424,7 @@ def test_locally_completed_unreported_output_crash_is_unknown_then_cleans_before
         assert completed.state is ObjectState.READY_STORED and completed.current_attempt == publication.attempt_id.next()
         assert member is not None and member.publication_id != publication
         assert member.manifest.header.executor_worker_id == survivor.worker_id
-        (successor,) = member.slot.transfers
+        (successor,) = (member.manifest.value).transfers
         assert successor.contained_object_id == source_id and successor.contained_owner_worker_id == core.worker_id
         assert successor.final_hold != transfer.final_hold and successor.provisional_hold != transfer.provisional_hold
         assert core.owner_table.snapshot(source_id).contained_holds == frozenset((successor.final_hold,))

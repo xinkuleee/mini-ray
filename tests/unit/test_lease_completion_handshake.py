@@ -464,7 +464,7 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     pending = worker._prepared_output_replies[key]
     assert executions == reductions == 1 and len(prepares) == 1
     assert pending.outputs.manifest == prepares[0].manifest
-    assert pending.outputs.slot_payloads == prepares[0].slot_payloads
+    assert (pending.outputs.payload) == (prepares[0].payload)
     assert pending.prepare_acked and pending.complete_envelope is None
     assert not worker._replies and not worker._cached_pushes
     assert not worker._completion_acked
@@ -485,7 +485,7 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     assert not hasattr(cached, "stored_publication") and not hasattr(cached, "inline_publication")
     assert all(not hasattr(reply, field) for reply in completion_replies
                for field in ("stored_publication", "inline_publication"))
-    assert cached.results[0].inline_data == pending.outputs.slot_payloads[0]
+    assert cached.results[0].inline_data == (pending.outputs.payload)
     assert real_cloudpickle_loads(cached.results[0].inline_data) == "once"
     assert executions == reductions == 1 and len(prepares) == 1
     assert not worker._prepared_output_replies

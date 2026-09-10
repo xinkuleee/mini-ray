@@ -19,7 +19,7 @@ from miniray.output_publication import (OutputPublicationCompleteWitness, Output
 from miniray.output_publication_journal import (OutputPublicationAck, OutputPublicationAdoptionProof,
     OutputPublicationConflictError, OutputPublicationJournal, OutputPublicationJournalState,
     OutputPublicationJournalStateError, OutputPublicationPayloadRetired)
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 pytestmark = pytest.mark.unit
 
@@ -28,15 +28,15 @@ def _prepared():
     job, task = JobID(b"j" * 16), TaskID(b"t" * 16)
     owner, executor = WorkerID(b"o" * 16), WorkerID(b"w" * 16)
     identity = OutputPublicationID(LeaseID(b"l" * 16),
-        TaskExecutionKey(TaskOutputManifest.for_task(task, 1), AttemptID(task, 0)))
+        (TaskExecution(AttemptID(task, 0))))
     header = OutputPublicationHeader(identity, job, executor, owner,
         OutputPublicationNodeIncarnation(NodeID(b"n" * 16), 1001, 1))
     discovery = OutputDiscoverySession(header, inline_threshold=1024)
-    outputs = discovery.discover((("one", 42),))
+    outputs = discovery.discover((('one', 42)))
     manifest, = (outputs.manifest,)
-    slot = manifest.slots[0]
-    descriptor = protocol.ResultDescriptor(slot.object_id, slot.tier, slot.size_bytes, owner,
-        header.node_incarnation.node_id, slot.checksum, outputs.slot_payloads[0])
+    slot = (manifest.value)
+    descriptor = protocol.ResultDescriptor(identity.object_id, slot.tier, slot.size_bytes, owner,
+        header.node_incarnation.node_id, slot.checksum, (outputs.payload))
     journal = OutputPublicationJournal()
     journal.open(manifest)
     journal.ack_owner_registered(OutputPublicationAck(journal.begin_owner_register(identity)))
@@ -61,7 +61,7 @@ def test_retirement_requires_complete_and_keeps_precomplete_payload_unchanged():
 def test_exact_retirement_replays_without_recreating_payload_or_erasing_complete():
     journal, identity, descriptor, witness, proof = _prepared()
     envelope = journal.complete(identity, witness)
-    assert envelope.results == (descriptor,)
+    assert ((envelope.result,)) == (descriptor,)
     retired = journal.retire_completed(proof)
     assert len(retired) == 1 and journal.retire_completed(proof) == retired
     snapshot = journal.snapshot(identity)

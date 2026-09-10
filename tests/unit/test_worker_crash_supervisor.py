@@ -30,13 +30,13 @@ from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationHeader, OutputPublicationID,
-    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.output_handoff import OutputHandoffTable, OutputHandoffPhase
 from miniray.resources import AllocationToken, NodeSnapshot, ResourceLedger, ResourceVector
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 from miniray.worker import (
     COMPLETE_WORKER_LEASE_HANDLER,
     START_WORKER_LEASE_HANDLER,
@@ -227,17 +227,12 @@ def _attach_output_publication(node):
 
 def _prepare_one_output(node, request, grant, publication, payload, *, stored):
     assert len(request.return_ids) == 1 and len(payload) <= 64
-    identity = OutputPublicationID(request.lease_id, TaskExecutionKey(
-        TaskOutputManifest(request.task_id, request.return_ids), request.attempt_id,
-    ))
+    identity = OutputPublicationID(request.lease_id, (TaskExecution(request.attempt_id)))
     header = OutputPublicationHeader(
         identity, JobID.random(), grant.worker_id, request.requester_worker_id,
         OutputPublicationNodeIncarnation(node.node_id, node._node_pid, node._registration_epoch),
     )
-    manifest = OutputPublicationManifest.create(header, (OutputSlotManifest(
-        request.return_ids[0], protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE,
-        len(payload), hashlib.sha256(payload).hexdigest(),
-    ),))
+    manifest = OutputPublicationManifest.create(header, (OutputValue(protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE, len(payload), hashlib.sha256(payload).hexdigest())))
     before = node.resource_ledger.snapshot()
     prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(manifest, (payload,)))
     assert prepared.accepted and node._leases[request.lease_id].output_publication_id == identity
@@ -895,8 +890,8 @@ def test_crash_failpoint_exits_after_complete_before_task_reply(
     assert key in worker._completion_acked
     envelope = worker._replies[key].output_publication
     assert envelope == completion_replies[0].output_publication
-    assert envelope.manifest.slots[0].tier is protocol.ResultStorage.OBJECT_STORE
-    assert envelope.manifest.slots[0].object_id == object_id
+    assert (envelope.manifest.value).tier is protocol.ResultStorage.OBJECT_STORE
+    assert (envelope.manifest.publication_id).object_id == object_id
     assert envelope.complete == OutputPublicationCompleteWitness.for_manifest(envelope.manifest)
     assert real_loads(node._object_store.get(object_id)) == b"stored"
     assert node._object_store.used_bytes < 64

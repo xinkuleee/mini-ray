@@ -49,15 +49,11 @@ def _case(*, known):
     # not claims that this local owner reducer performed remote releases.
     values = _Fixture()
     owner = values.table()
-    for index, output in enumerate(values.publication_id.output_ids):
-        incoming = ContainedReferenceHold(
-            ObjectID.for_task(TaskID(bytes((90 + index,)) * 16)),
-            WorkerID(bytes((80 + index,)) * 16), "incoming-live",
-        )
-        assert owner.add_contained_reference(output, incoming)
-        assert owner.add_lineage_reference(output, "incoming-lineage-{}".format(index))
-    first = values.publication_id.output_ids[0]
-    owner.add_outgoing_lineage_edge(first, LineageReferenceEdge(first, values.child, "producer-input"))
+    output = values.publication_id.object_id
+    incoming = ContainedReferenceHold(ObjectID.for_task(TaskID(bytes((90,)) * 16)), WorkerID(bytes((80,)) * 16), 'incoming-live')
+    assert owner.add_contained_reference(output, incoming)
+    assert owner.add_lineage_reference(output, 'incoming-lineage-0')
+    owner.add_outgoing_lineage_edge(output, LineageReferenceEdge(output, values.child, "producer-input"))
     node = values.header.node_incarnation
     death = protocol.NodeDeathRecord(
         "owner-preflight-publisher-exit", node.node_id, node.node_pid, node.registration_epoch,
@@ -65,7 +61,7 @@ def _case(*, known):
     )
     cleanup = tuple(protocol.ReleaseContainedReferenceReply(
         transfer.contained_object_id, transfer.contained_owner_worker_id, hold, True, False,
-    ) for transfer in values.manifest.slots[0].transfers
+    ) for transfer in (values.manifest.value).transfers
       for hold in (transfer.final_hold, transfer.provisional_hold))
     resolution = NodeLostOutputResolution(
         values.publication_id, values.manifest.manifest_digest, values.owner, death,
@@ -75,7 +71,7 @@ def _case(*, known):
 
 
 def _snapshots(owner, values):
-    return tuple(owner.snapshot(output) for output in values.publication_id.output_ids)
+    return ((owner.snapshot(values.publication_id.object_id),))
 
 
 def _metadata_history(owner):
@@ -101,8 +97,9 @@ def test_pristine_unreceived_output_preserves_incoming_holds_and_canonical_linea
                and snapshot.is_live and snapshot.inline_data is None
                and snapshot.canonical_stored_result is None and not snapshot.locations
                and not snapshot.outgoing_contained_edges for snapshot in after)
-    expected_slots = {(values.publication_id, output) for output in values.publication_id.output_ids}
-    expected_attempts = {(output, values.attempt) for output in values.publication_id.output_ids} if known else set()
+    output = values.publication_id.object_id
+    expected_slots = ({(values.publication_id, output)})
+    expected_attempts = ({(output, values.attempt)}) if known else set()
     assert owner._retired_output_slots == expected_slots
     assert owner._retired_output_attempts == expected_attempts
     # UNKNOWN retains its exact loss/cleanup history without asserting that
@@ -127,19 +124,19 @@ def test_pristine_unreceived_output_preserves_incoming_holds_and_canonical_linea
 ))
 def test_bad_unreceived_output_cannot_erase_metadata_or_install_resolution(known, corruption):
     values, owner, resolution = _case(known=known)
-    second = values.publication_id.output_ids[0]
-    entry = owner._entries[second]
+    output = (values.publication_id.object_id)
+    entry = owner._entries[output]
     assert entry.output_publication is None and entry.state is ObjectState.PENDING
     if corruption == "inline_data":
         entry.inline_data = b"already-received"
     elif corruption == "error":
         entry.error = "already-recorded-error"
     elif corruption == "canonical_stored_result":
-        entry.canonical_stored_result = replace(values.envelope.results[0], storage=protocol.ResultStorage.OBJECT_STORE, inline_data=None)
+        entry.canonical_stored_result = replace((values.envelope.result), storage=protocol.ResultStorage.OBJECT_STORE, inline_data=None)
     elif corruption == "location_attempts":
         entry.location_attempts[values.node] = values.attempt
     elif corruption == "outgoing_contained_edges":
-        entry.outgoing_contained_edges.add(values.manifest.slots[0].edges[0])
+        entry.outgoing_contained_edges.add((values.manifest.value).edges[0])
     elif corruption == "missing-lineage":
         entry.producer_task_spec = None
     elif corruption == "foreign-owner-lineage":

@@ -325,7 +325,7 @@ def _run_node_loss(window: _LossWindow) -> None:
         assert arrival.node_id == victim.node_id and arrival.node_pid == victim.node_pid
         assert arrival.registration_epoch == runtime.nodes[1].registration_epoch
         assert publication.task_id == object_id.task_id
-        assert publication.output_ids == publication.full_output_ids == (object_id,)
+        assert ((publication.object_id,)) == ((publication.object_id,)) == (object_id,)
         assert publication.attempt_id == AttemptID(object_id.task_id, 0)
         _assert_metadata_only(arrival)
 
@@ -344,9 +344,9 @@ def _run_node_loss(window: _LossWindow) -> None:
             assert before.complete.publication_id == publication
             assert before.complete.manifest_digest == arrival.manifest_digest
         assert before.adoption is None
-        assert len(manifest.slots) == 1
-        slot = manifest.slots[0]
-        assert slot.object_id == object_id and slot.tier is protocol.ResultStorage.OBJECT_STORE
+        assert len(((manifest.value,))) == 1
+        slot = (manifest.value)
+        assert (manifest.publication_id).object_id == object_id and slot.tier is protocol.ResultStorage.OBJECT_STORE
         assert len(_OUTER_PADDING) < slot.size_bytes < 128 * 1024
         assert len(slot.transfers) == 1
         transfer = slot.transfers[0]
@@ -509,12 +509,12 @@ def _run_node_loss(window: _LossWindow) -> None:
         assert owner.output_publication is not None
         new_publication = owner.output_publication.publication_id
         assert new_publication != publication
-        assert new_publication.output_ids == new_publication.full_output_ids == (object_id,)
+        assert ((new_publication.object_id,)) == ((new_publication.object_id,)) == (object_id,)
         new_incarnation = owner.output_publication.manifest.header.node_incarnation
         assert (new_incarnation.node_id, new_incarnation.node_pid, new_incarnation.registration_epoch) == (
             survivor.node_id, survivor.node_pid, runtime.nodes[0].registration_epoch,
         )
-        assert owner.output_publication.slot.transfers[0].contained_object_id == child.object_id
+        assert (owner.output_publication.manifest.value).transfers[0].contained_object_id == child.object_id
         assert core.owner_table.snapshot(object_id).local_tokens == owner_before.local_tokens
         record = core._recovery.task_record(object_id.task_id)
         assert record.state is TaskState.SUCCEEDED and record.retries_started == 1

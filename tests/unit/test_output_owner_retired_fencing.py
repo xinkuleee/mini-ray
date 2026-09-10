@@ -33,7 +33,7 @@ from miniray.ownership import (
     OutputOwnerPublicationConflictError, OutputOwnerPublicationDisposition,
     OutputOwnerPublicationPlan, OutputOwnerRetirementConflictError,
 )
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from tests.unit.test_output_owner_publication import _Fixture as _OwnerValues
 from tests.unit.test_output_publication import _assert_metadata
 
@@ -70,7 +70,7 @@ def _retired_owner():
         complete=complete, keep=False, cleanup=(),
     )
     assert table.resolve_output_node_loss(values.manifest, resolution)
-    (object_id,) = values.execution.output_ids
+    (object_id,) = ((values.execution.object_id,))
     snapshot = table.snapshot(object_id)
     assert snapshot.state is ObjectState.LOST and snapshot.current_attempt == values.attempt
     assert snapshot.producer_task_spec == values.spec
@@ -89,7 +89,7 @@ def _whole_owner_state(table):
     return deepcopy({name: value for name, value in vars(table).items() if name != "_lock"})
 
 
-def _replacement_plan(values, *, attempt, tiers, fresh_lease=True):
+def _replacement_plan(values, *, attempt, tier, fresh_lease=True):
     execution = values.execution.for_attempt(attempt)
     identity = OutputPublicationID(LeaseID.random(), execution) if fresh_lease else values.publication_id
     # The next attempt may execute on a surviving Node.  Same old-attempt
@@ -98,16 +98,11 @@ def _replacement_plan(values, *, attempt, tiers, fresh_lease=True):
     if attempt != values.attempt:
         node = replace(node, node_id=NodeID.random(), node_pid=node.node_pid + 1)
     header = replace(values.header, publication_id=identity, node_incarnation=node)
-    slots = tuple(replace(slot, tier=tier) for slot, tier in zip(values.manifest.slots, tiers))
-    manifest = OutputPublicationManifest.create(header, slots)
-    results = tuple(
-        protocol.ResultDescriptor(
-            slot.object_id, slot.tier, slot.size_bytes, values.owner, node.node_id, slot.checksum,
-            values.payloads[index] if slot.tier is protocol.ResultStorage.INLINE else None,
-        ) for index, slot in enumerate(slots)
-    )
+    value = (replace(values.manifest.value, tier=tier))
+    manifest = OutputPublicationManifest.create(header, value)
+    result = (protocol.ResultDescriptor(identity.object_id, value.tier, value.size_bytes, values.owner, node.node_id, value.checksum, values.payload if value.tier is protocol.ResultStorage.INLINE else None))
     return OutputOwnerPublicationPlan(execution, OutputPublicationEnvelope(
-        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), results,
+        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), result,
     ))
 
 
@@ -132,11 +127,9 @@ def _assert_rejected_without_mutation(table, call):
 ))
 def test_retired_attempt_is_fenced_across_plain_and_cross_tier_unified_publication(entrypoint):
     values, table, _resolution = _retired_owner()
-    stored = _replacement_plan(values, attempt=values.attempt, tiers=(
-        protocol.ResultStorage.OBJECT_STORE,
-    ))
-    first = values.execution.output_ids[0]
-    descriptor = stored.envelope.results[0]
+    stored = _replacement_plan(values, attempt=values.attempt, tier=protocol.ResultStorage.OBJECT_STORE)
+    first = ((values.execution.object_id,))[0]
+    descriptor = (stored.envelope.result)
     if entrypoint == "stored-replica":
         call = lambda: table.publish_stored(first, values.attempt, values.node, descriptor=descriptor)
     elif entrypoint == "location-only":
@@ -146,7 +139,7 @@ def test_retired_attempt_is_fenced_across_plain_and_cross_tier_unified_publicati
             # The shared actor/current owner contract validates and commits
             # under one lock. A retired epoch must fail at preflight.
             with table._lock:
-                plan = table.validate_publish_task_outputs(values.execution, stored.envelope.results)
+                plan = table.validate_publish_task_outputs(values.execution, ((stored.envelope.result,)))
                 if plan is None:
                     return False
                 table.commit_validated_publish_task_outputs(plan)
@@ -157,9 +150,7 @@ def test_retired_attempt_is_fenced_across_plain_and_cross_tier_unified_publicati
         elif entrypoint == "fresh-lease-stored":
             plan = stored
         else:
-            plan = _replacement_plan(values, attempt=values.attempt, tiers=(
-                protocol.ResultStorage.INLINE,
-            ))
+            plan = _replacement_plan(values, attempt=values.attempt, tier=protocol.ResultStorage.INLINE)
         call = lambda: table.commit_output_publication(plan)
     _assert_rejected_without_mutation(table, call)
     assert table._output_publication_receipts == {values.publication_id: values.manifest}
@@ -175,9 +166,7 @@ def test_next_attempt_accepts_fresh_cross_tier_publication_without_replaying_old
     assert _whole_owner_state(table) == pending
     assert table.commit_output_publication(values.plan).disposition is OutputOwnerPublicationDisposition.FENCED
     assert _whole_owner_state(table) == pending
-    fresh = _replacement_plan(values, attempt=next_attempt, tiers=(
-        protocol.ResultStorage.OBJECT_STORE,
-    ))
+    fresh = _replacement_plan(values, attempt=next_attempt, tier=protocol.ResultStorage.OBJECT_STORE)
     assert table.validate_output_publication(fresh) is OutputOwnerPublicationDisposition.APPLIED
     assert _whole_owner_state(table) == pending
     receipt = table.commit_output_publication(fresh)
@@ -187,7 +176,7 @@ def test_next_attempt_accepts_fresh_cross_tier_publication_without_replaying_old
     assert not table.resolve_output_node_loss(values.manifest, resolution)
     assert _whole_owner_state(table) == ready
     assert frozenset(table._retired_output_attempts) == old_tombstones
-    for index, object_id in enumerate(values.execution.output_ids):
+    for index, object_id in enumerate(((values.execution.object_id,))):
         snapshot = table.snapshot(object_id)
         assert snapshot.current_attempt == next_attempt and snapshot.producer_task_spec == values.spec
         assert snapshot.output_publication.publication_id == fresh.publication_id
@@ -200,7 +189,7 @@ def test_old_epoch_tombstone_does_not_waive_new_lost_replica_canonical_gc_identi
     values, table, resolution = _retired_owner()
     next_attempt = values.attempt.next()
     assert table.advance_task_outputs(values.execution, next_attempt)
-    (target,) = values.execution.output_ids
+    (target,) = ((values.execution.object_id,))
     new_node = NodeID.random()
     # The public location-only path is legitimate for narrow owner callers.
     # It is deliberately missing canonical bytes/integrity metadata.
@@ -222,12 +211,12 @@ def test_old_epoch_tombstone_does_not_waive_new_lost_replica_canonical_gc_identi
 @pytest.mark.parametrize("contamination", ("payload", "canonical", "locations", "edges"))
 def test_contaminated_retired_metadata_cannot_be_collected_or_silently_repaired(contamination):
     values, table, resolution = _retired_owner()
-    (target,) = values.execution.output_ids
+    (target,) = ((values.execution.object_id,))
     values.release_handle(table, target)
     entry = table._entries[target]
     # Fault-inject exactly one stale field after a genuine retirement.  The
     # collector must reject this inconsistent history without discarding it.
-    descriptor = replace(values.envelope.results[0],
+    descriptor = replace((values.envelope.result),
                          storage=protocol.ResultStorage.OBJECT_STORE, inline_data=None)
     if contamination == "payload":
         entry.inline_data = b"late-result-bytes"
@@ -251,7 +240,7 @@ def test_contaminated_retired_metadata_cannot_be_collected_or_silently_repaired(
 
 def test_exact_retired_epoch_without_contamination_remains_metadata_only_collectible():
     values, table, _resolution = _retired_owner()
-    for object_id in values.execution.output_ids:
+    for object_id in ((values.execution.object_id,)):
         values.release_handle(table, object_id)
         plan = table.begin_collection(object_id, collection_id="clean-retired-{}".format(object_id.return_index))
         assert plan is not None

@@ -50,7 +50,7 @@ def _no_runtime(monkeypatch):
 def _metadata_roundtrip(value, fixture):
     _assert_metadata(value)
     encoded = pickle.dumps(value)
-    assert all(payload not in encoded for payload in fixture.payloads)
+    assert (fixture.payload not in encoded)
     assert pickle.loads(encoded) == value
 
 
@@ -71,28 +71,32 @@ def _rollback(f):
 @pytest.mark.parametrize("stored,refs", ((False, False), (False, True), (True, True)))
 def test_prepare_carries_the_single_payload_and_reply_is_identity_only(stored, refs):
     f = _Fixture(stored=stored, refs=refs)
-    request = wire.PrepareOutputPublication(f.manifest, list(f.payloads))
-    assert request.slot_payloads == f.payloads and len(request.slot_payloads) == 1
+    request = wire.PrepareOutputPublication(f.manifest, (f.payload))
+    assert (request.payload) == (f.payload) and (type(request.payload) is bytes)
+    assert not hasattr(request, "slot_payloads")
+    for wrapped in ((f.payload,), [f.payload]):
+        with pytest.raises(ProtocolError):
+            wire.PrepareOutputPublication(f.manifest, wrapped)
     assert request.request_identity == _identity(f)
     assert pickle.loads(pickle.dumps(request)) == request
     reply = wire.PreparedOutputPublicationReply(request.request_identity, True)
     _metadata_roundtrip(reply, f)
     assert not hasattr(reply, "request") and not hasattr(reply, "manifest")
-    assert not hasattr(reply, "slot_payloads")
+    assert (not hasattr(reply, "payload") and not hasattr(reply, "slot_payloads"))
 
 
 @pytest.mark.parametrize("case", ("missing", "extra", "size", "hash", "bytearray", "generator"))
 def test_prepare_rejects_inexact_single_payload_before_effects(case):
     f = _Fixture()
-    payloads = {
-        "missing": (), "extra": f.payloads + (b"extra",),
-        "size": (f.payloads[0] + b"x",),
-        "hash": (b"X" * len(f.payloads[0]),),
-        "bytearray": (bytearray(f.payloads[0]),),
-        "generator": iter(f.payloads),
+    payload = {
+        "missing": (), "extra": ((f.payload, b"extra")),
+        "size": (f.payload + b"x"),
+        "hash": (b"X" * len(f.payload)),
+        "bytearray": (bytearray(f.payload)),
+        "generator": iter(((f.payload,))),
     }[case]
     with pytest.raises(ProtocolError):
-        wire.PrepareOutputPublication(f.manifest, payloads)
+        wire.PrepareOutputPublication(f.manifest, payload)
 
 
 def test_owner_handoff_and_retirement_echo_exact_metadata_facts():
@@ -126,7 +130,7 @@ def test_handoff_rejects_digest_manifest_and_adoption_proof_rebinding():
     table = OutputHandoffTable()
     registered = table.register(f.manifest, f.attempt)
     changed = OutputPublicationManifest.create(
-        f.header, (replace(f.slots[0], size_bytes=f.slots[0].size_bytes + 1),),
+        f.header, (replace(f.manifest.value, size_bytes=f.manifest.value.size_bytes + 1)),
     )
     with pytest.raises(ProtocolError, match="manifest"):
         wire.OutputHandoffReply(wire.RegisterOutputHandoff(changed), True, registered)
@@ -222,13 +226,13 @@ def test_queries_and_retirement_reject_payload_values_and_other_identity():
         with pytest.raises(ProtocolError):
             constructor(f.envelope)
     with pytest.raises(ProtocolError):
-        wire.PreparedOutputPublicationReply(wire.PrepareOutputPublication(f.manifest, f.payloads), True)
+        wire.PreparedOutputPublicationReply(wire.PrepareOutputPublication(f.manifest, (f.payload)), True)
 
 
 def _task_reply(f):
     return protocol.TaskReply(
         f.task, f.attempt, f.executor, protocol.TaskReplyStatus.SUCCEEDED,
-        f.envelope.results, output_publication=f.envelope,
+        ((f.envelope.result,)), output_publication=f.envelope,
     )
 
 
@@ -241,12 +245,13 @@ def _complete_reply(f):
 
 
 def _outcome_reply(f):
-    descriptors = tuple(protocol.ObjectStoreDescriptor(
+    result = f.envelope.result
+    descriptors = ((protocol.ObjectStoreDescriptor(
         result.object_id, result.owner_worker_id, f.attempt, result.node_id,
         result.size_bytes, result.checksum,
-    ) for result in f.envelope.results if result.storage is protocol.ResultStorage.OBJECT_STORE)
+    ),) if result.storage is protocol.ResultStorage.OBJECT_STORE else ())
     return protocol.GetWorkerLeaseOutcomeReply(
-        f.lease, f.task, f.attempt, f.executor, f.owner, f.publication_id.output_ids,
+        f.lease, f.task, f.attempt, f.executor, f.owner, ((f.publication_id.object_id,)),
         f.node, True, True, protocol.LeaseExecutionState.COMPLETED,
         protocol.TaskReplyStatus.SUCCEEDED, descriptors, output_publication=f.envelope,
     )
@@ -258,7 +263,7 @@ def _outcome_reply(f):
 def test_cleanup_pending_keeps_terminal_truth_but_never_returns_result_custody(state):
     f = _Fixture(stored=True)
     reply = protocol.GetWorkerLeaseOutcomeReply(
-        f.lease, f.task, f.attempt, f.executor, f.owner, f.publication_id.output_ids,
+        f.lease, f.task, f.attempt, f.executor, f.owner, ((f.publication_id.object_id,)),
         f.node, True, state is not protocol.LeaseExecutionState.WORKER_LOST, state,
         protocol.TaskReplyStatus.SYSTEM_ERROR if state is protocol.LeaseExecutionState.COMPLETED else None,
         cleanup_pending=True,
@@ -286,8 +291,8 @@ def test_single_output_envelopes_work_on_all_terminal_boundaries(stored):
         assert restored.output_publication is not f.envelope
         assert not hasattr(restored, "stored_publication") and not hasattr(restored, "inline_publication")
     outcome = _outcome_reply(f)
-    assert tuple(item.object_id for item in outcome.descriptors) == (f.publication_id.output_ids if stored else ())
-    assert outcome.output_publication.results[0].inline_data == (None if stored else f.payloads[0])
+    assert tuple(item.object_id for item in outcome.descriptors) == (((f.publication_id.object_id,)) if stored else ())
+    assert (outcome.output_publication.result).inline_data == (None if stored else (f.payload))
 
 
 def test_inline_outcome_has_no_stored_projection_and_stored_projection_is_exact():
@@ -313,7 +318,7 @@ def test_terminal_replies_reject_incompatible_authority_and_deep_envelope_mutati
         with pytest.raises(TypeError, match="unexpected keyword argument.*" + field):
             replace(reply, **{field: object()})
     invalid_envelope = replace(f.envelope)
-    object.__setattr__(invalid_envelope.results[0], "inline_data", b"changed")
+    object.__setattr__((invalid_envelope.result), "inline_data", b"changed")
     with pytest.raises(ProtocolError):
         replace(reply, output_publication=invalid_envelope)
     object.__setattr__(reply, "output_publication", invalid_envelope)
@@ -363,11 +368,11 @@ def test_terminal_wire_rebuild_rejects_wrong_field_count_and_shifted_values(fact
 def test_task_results_and_success_status_cannot_disagree_with_envelope():
     f = _Fixture(stored=True)
     reply = _task_reply(f)
-    for results in ((), f.results * 2, (replace(f.results[0], size_bytes=99),)):
+    for results in ((), ((f.envelope.result,)) * 2, (replace((f.envelope.result), size_bytes=99),)):
         with pytest.raises(ProtocolError):
             replace(reply, results=results)
     with pytest.raises(TypeError, match="unexpected keyword argument.*contained_edges"):
-        replace(reply, contained_edges=f.slots[0].edges)
+        replace(reply, contained_edges=(f.manifest.value).edges)
     with pytest.raises(ProtocolError):
         replace(reply, status=protocol.TaskReplyStatus.SYSTEM_ERROR, results=(),
                 error=protocol.RemoteErrorInfo("Failed", "failed"))
@@ -381,12 +386,12 @@ def test_task_results_and_success_status_cannot_disagree_with_envelope():
 
 def test_prepare_and_handoff_deep_revalidate_tampered_values_on_roundtrip():
     f = _Fixture()
-    request = wire.PrepareOutputPublication(f.manifest, f.payloads)
-    object.__setattr__(request, "slot_payloads", (b"changed",))
+    request = wire.PrepareOutputPublication(f.manifest, (f.payload))
+    object.__setattr__(request, ("payload"), (b"changed"))
     with pytest.raises(ProtocolError):
         pickle.loads(pickle.dumps(request))
     manifest = replace(f.manifest)
-    object.__setattr__(manifest.slots[0], "size_bytes", -1)
+    object.__setattr__((manifest.value), "size_bytes", -1)
     with pytest.raises(ProtocolError):
         wire.RegisterOutputHandoff(manifest)
     f = _Fixture()
@@ -396,8 +401,8 @@ def test_prepare_and_handoff_deep_revalidate_tampered_values_on_roundtrip():
         wire.OutputHandoffReply(wire.RegisterOutputHandoff(f.manifest), True, snapshot)
     f = _Fixture()
     report = wire.ReportOutputHandoffComplete(f.witness)
-    object.__setattr__(report.witness.publication_id.execution.manifest,
-                       "output_ids", (ObjectID(f.task, 1),))
+    object.__setattr__((report.witness.publication_id.execution.attempt_id),
+                       ("attempt_number"), (-1))
     with pytest.raises(ValueError):
         pickle.loads(pickle.dumps(report))
 

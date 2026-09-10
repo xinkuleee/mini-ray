@@ -46,12 +46,13 @@ class _Fixture:
             values.execution, attempt_id=ids.AttemptID(values.task, attempt),
         ))
         self.manifest = OutputPublicationManifest.create(
-            replace(values.header, publication_id=publication_id), values.slots,
+            replace(values.header, publication_id=publication_id), (values.value),
         )
         self.id = publication_id
-        self.payload = values.payloads[0]
-        self.descriptor = values.results[0]
-        self.object_id = self.descriptor.object_id
+        self.payload = (values.payload)
+        self.descriptor = (values.result)
+        self.object_id = publication_id.object_id
+        assert self.descriptor.object_id == self.object_id
         if node is None:
             node = object.__new__(NodeServer)
             node.node_id = values.node

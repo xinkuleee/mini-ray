@@ -149,7 +149,7 @@ def _assert_sink(sink, error_type):
                          ids=("records", "exception-sink", "base-exception-sink"))
 def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(error_type):
     fixture, node, record, complete = _node(refs=False, stored=True)
-    stored_id = fixture.manifest.slots[0].object_id
+    stored_id = (fixture.manifest.publication_id).object_id
     calls = []
     def probe(name, _attributes):
         if name != "output_lease_completed":
@@ -177,13 +177,13 @@ def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(er
     adapter = node._output_publications
     prior_cause = current_cause_id()
     with causal_scope("inert-prepare-handler"):
-        prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
+        prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     assert prepared.accepted and current_cause_id() == prior_cause
     assert len(calls) == 1 and type(calls[0][0]) is wire.RegisterOutputHandoff
     assert record.state is protocol.LeaseExecutionState.RUNNING
     assert fixture.journal.snapshot(fixture.id).ready_to_complete
     assert fixture.store.capacity_bytes == 1024
-    assert fixture.store.get(stored_id) == fixture.values.payloads[0]
+    assert fixture.store.get(stored_id) == (fixture.values.payload)
     assert fixture.handoffs.query(fixture.id).complete is None
     with causal_scope("inert-complete-handler"):
         first = node._handle_complete_worker_lease(complete)
@@ -202,7 +202,7 @@ def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(er
         for released in (True, False)
     ]
     assert all(sample[4] == (False, False, protocol.LeaseExecutionState.COMPLETED, fixture.ledger.total,
-                            fixture.values.witness, None, fixture.values.payloads[0]) for sample in sink.samples)
+                            fixture.values.witness, None, (fixture.values.payload)) for sample in sink.samples)
     assert sink.samples[0][3] == "inert-complete-handler"
     with causal_scope("inert-terminal-parent"):
         assert adapter.report_terminal(fixture.id)
@@ -213,7 +213,7 @@ def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(er
     assert fixture.handoffs.query(fixture.id).complete == fixture.values.witness
     assert len(sink.samples) == 2
     _assert_sink(sink, error_type)
-    assert fixture.store.get(stored_id) == fixture.values.payloads[0]
+    assert fixture.store.get(stored_id) == (fixture.values.payload)
 
 
 @pytest.mark.parametrize("error_type", (None, RuntimeError, ObservationOnlyFailure),
@@ -253,16 +253,16 @@ def test_core_observation_preserves_ready_adoption_payload_retirement_and_gc(err
         ready, retired = sink.samples
         assert ready[2] == dict(_identity_fields(fixture), return_count=1)
         assert retired[2] == _identity_fields(fixture)
-        ready_facts = (False, False, False, False, ObjectState.READY_STORED, True, True, (0,), fixture.values.payloads[0])
+        ready_facts = (False, False, False, False, ObjectState.READY_STORED, True, True, (0,), (fixture.values.payload))
         assert ready[4] == ready_facts
-        assert retired[4] == (*ready_facts[:7], (), fixture.values.payloads[0])
+        assert retired[4] == (*ready_facts[:7], (), (fixture.values.payload))
         assert retired[3] == boundaries[0][3].event_id
         if error_type is None:
             actual = tuple(event for event in sink.events if event.name in _OBSERVATIONS)
             assert actual[1].cause_id == boundaries[0][3].event_id
         assert fixture.ledger.available == fixture.ledger.total
         assert fixture.journal.snapshot(fixture.id).state is OutputPublicationJournalState.RETIRED
-        assert fixture.store.get(stored_id) == fixture.values.payloads[0]
+        assert fixture.store.get(stored_id) == (fixture.values.payload)
         assert not core._protocol_unresolved and core._stored_descriptors[stored_id] == reply.results[0]
         record = core._recovery.task_record(pending.task_id)
         assert record.state is TaskState.SUCCEEDED and record.current_attempt == pending.spec.attempt_id

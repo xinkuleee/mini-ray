@@ -143,7 +143,7 @@ def test_late_sealed_secondary_is_rejected_then_cleaned_after_real_consumer_canc
             if (handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
                     and type(request) is wire.AckOutputPublicationAdopted
                     and address == source.node_address
-                    and len(request.proof.complete.publication_id.output_ids) == 1):
+                    and len(((request.proof.complete.publication_id.object_id,))) == 1):
                 assert not core._state_lock._is_owned()
                 with core._state_lock:
                     handoff = core._output_handoff_table().query(request.proof.complete.publication_id)
@@ -176,7 +176,7 @@ def test_late_sealed_secondary_is_rejected_then_cleaned_after_real_consumer_canc
 
         def delay_location_record(requested, grant, foreign_guards=()):
             should_hold = (publication is not None and len(grant.dependencies) == 1
-                           and grant.dependencies[0].object_id == publication.output_ids[0])
+                           and grant.dependencies[0].object_id == ((publication.object_id,))[0])
             if should_hold:
                 assert grant.node_id == target.node_id and not foreign_guards
                 with observation_lock:
@@ -215,9 +215,9 @@ def test_late_sealed_secondary_is_rejected_then_cleaned_after_real_consumer_canc
         assert handoff_before.adoption == adopted_request.proof
         assert handoff_before.complete == adopted_request.proof.complete
         manifest = handoff_before.manifest
-        assert publication.output_ids == tuple(ref.object_id for ref in refs)
+        assert ((publication.object_id,)) == tuple(ref.object_id for ref in refs)
         assert manifest.header.node_incarnation.node_id == source.node_id
-        assert len(manifest.slots) == 1 and manifest.slots[0].tier is protocol.ResultStorage.OBJECT_STORE
+        assert len(((manifest.value,))) == 1 and (manifest.value).tier is protocol.ResultStorage.OBJECT_STORE
         with core._completion:
             assert all(ref.object_id in core._task_finish_barriers for ref in refs)
             source_before = core.owner_table.snapshot(child.object_id)
@@ -330,7 +330,7 @@ def test_late_sealed_secondary_is_rejected_then_cleaned_after_real_consumer_canc
         assert resolved.complete == adopted_request.proof.complete
         resolved.validate_manifest(manifest)
         assert handoff_after == handoff_before
-        (transfer,) = manifest.slots[0].transfers
+        (transfer,) = (manifest.value).transfers
         assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in resolved.cleanup} == {
             (child.object_id, core.worker_id, transfer.final_hold),
             (child.object_id, core.worker_id, transfer.provisional_hold),

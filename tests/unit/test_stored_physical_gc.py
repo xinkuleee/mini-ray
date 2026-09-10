@@ -30,11 +30,11 @@ from miniray.reconstruction_runtime import (
 from miniray.recovery import RecoveryManager
 from miniray.resources import ResourceVector
 from miniray.output_publication import (OutputPublicationHeader, OutputPublicationID,
-    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
     OutputPublicationCompleteWitness, OutputPublicationEnvelope)
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
 from miniray.ownership import OutputOwnerPublicationPlan
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from miniray.ids import LeaseID
 
 
@@ -137,7 +137,7 @@ def test_owner_freezes_complete_stored_plan_and_fences_every_mutator() -> None:
     descriptor = protocol.ResultDescriptor(
         object_id, protocol.ResultStorage.OBJECT_STORE, 17, owner_id, nodes[0], "a" * 64,
     )
-    execution = TaskExecutionKey.from_task_spec(spec)
+    execution = TaskExecution.from_task_spec(spec)
     transfer = PreparedContainedTransfer(child, edge.contained_owner_worker_id,
         edge.contained_owner_address, OwnedContainedSource(edge.contained_owner_worker_id),
         ContainedReferenceHold(object_id, edge.contained_owner_worker_id, edge.transfer_token),
@@ -145,10 +145,10 @@ def test_owner_freezes_complete_stored_plan_and_fences_every_mutator() -> None:
     manifest = OutputPublicationManifest.create(OutputPublicationHeader(
         OutputPublicationID(LeaseID.random(), execution), job_id, edge.contained_owner_worker_id,
         owner_id, OutputPublicationNodeIncarnation(nodes[0], 101, 1)),
-        (OutputSlotManifest(object_id, descriptor.storage, 17, descriptor.checksum, (transfer,)),))
+        (OutputValue(descriptor.storage, 17, descriptor.checksum, (transfer,))))
     assert table.commit_output_publication(OutputOwnerPublicationPlan(execution,
         OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest),
-                                  (descriptor,)))).committed
+                                  descriptor))).committed
     for node in nodes[1:]:
         table.publish_stored(object_id, attempt, node)
 

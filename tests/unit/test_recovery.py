@@ -145,7 +145,7 @@ def test_single_output_terminal_reconstruction_failure_keeps_budget_and_fences_l
     from miniray.ids import NodeID, WorkerID
     from miniray.resources import ResourceVector
     from miniray.ownership import ObjectOwnerTable, ObjectState
-    from miniray.task_outputs import TaskExecutionKey
+    from miniray.task_outputs import TaskExecution
 
     job = opaque_id(JobID, 7)
     tid = TaskID.derive(job, TaskID.for_driver(job), 0)
@@ -153,7 +153,7 @@ def test_single_output_terminal_reconstruction_failure_keeps_budget_and_fences_l
         protocol.FunctionKey(job, __name__, "single_recovery", "1"), (), 1,
         ResourceVector(), opaque_id(WorkerID, 8), max_retries=3)
     output, = spec.return_ids()
-    execution = TaskExecutionKey.from_task_spec(spec)
+    execution = TaskExecution.from_task_spec(spec)
     manager, owner = RecoveryManager(), ObjectOwnerTable()
     manager.register_task(spec, max_retries=3)
     owner.register_task_outputs(spec, local_tokens=("live",))
@@ -170,7 +170,7 @@ def test_single_output_terminal_reconstruction_failure_keeps_budget_and_fences_l
         owner.commit_validated_advance_task_outputs(advance)
         manager.commit_validated_transition(start)
     attempt = start.decision.attempt_id
-    current_execution = TaskExecutionKey(execution.manifest, attempt)
+    current_execution = (TaskExecution(attempt))
     before = replace(manager.task_record(tid))
     error = SystemTaskError("current reconstruction cannot continue")
     with owner._lock:

@@ -327,7 +327,7 @@ def test_worker_drain_retains_real_source_until_local_release_and_same_publicati
             worker._handle_push_task(state.push)
         prepared = worker._prepared_output_replies[key]
         identity = prepared.outputs.manifest.publication_id
-        transfer, = prepared.outputs.manifest.slots[0].transfers
+        transfer, = (prepared.outputs.manifest.value).transfers
         assert prepared.prepare_acked and prepared.complete_envelope is None
         assert prepared.failure_reply is None
         assert prepared.discovery.source_references[0].object_id == child_id

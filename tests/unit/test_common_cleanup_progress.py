@@ -27,7 +27,7 @@ from miniray.output_handoff import OutputHandoffPhase
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope,
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.owner_death_fence_registry import OwnerDeathFenceRegistry, OwnerFenceNodeIncarnation
 from miniray.ownership import ObjectOwnerTable, ObjectState, OutputOwnerPublicationPlan
@@ -103,23 +103,20 @@ class _CorePublication:
         )
         payload = b"one published result"
         tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
-        self.slot = OutputSlotManifest(
-            self.ref.object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
-            (self.transfer,),
-        )
+        (self.value) = (OutputValue(tier, len(payload), hashlib.sha256(payload).hexdigest(), (self.transfer,)))
         self.identity = OutputPublicationID(_id(LeaseID, 44), self.pending.execution)
         self.manifest = OutputPublicationManifest.create(
             OutputPublicationHeader(
                 self.identity, self.core.job_id, self.child_owner, self.core.worker_id,
                 OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
-            ), (self.slot,),
+            ), (self.value),
         )
         self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
         descriptor = protocol.ResultDescriptor(
             self.ref.object_id, tier, len(payload), self.core.worker_id,
-            self.publisher, self.slot.checksum, None if stored else payload,
+            self.publisher, (self.manifest.value).checksum, None if stored else payload,
         )
-        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (descriptor,))
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, descriptor)
         registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
         assert registered.accepted and registered.snapshot.manifest == self.manifest
         self.child_table = ObjectOwnerTable()
@@ -297,7 +294,7 @@ def test_known_inline_envelope_keeps_actual_bytes_and_child_holds(publication):
     f.core._borrow_rpc = _forbidden_rpc
     assert f.loss(envelope=f.envelope)
     state = f.core.owner_table.snapshot(f.ref.object_id)
-    assert state.state is ObjectState.READY_INLINE and state.inline_data == f.envelope.results[0].inline_data
+    assert state.state is ObjectState.READY_INLINE and state.inline_data == (f.envelope.result).inline_data
     assert f.child_table.snapshot(f.child) == before
     assert f.core._recovery.task_record(f.pending.task_id).retries_started == 0
 

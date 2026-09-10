@@ -56,10 +56,10 @@ def _receipts(node):
     return set(getattr(node, "_replica_drop_receipts", ()))
 
 
-def _drop(fixture, node, slot_index=1):
-    slot = fixture.manifest.slots[slot_index]
+def _drop(fixture, node, slot_index=(0)):
+    slot = (fixture.manifest.value)
     return protocol.DropObjectReplica(
-        slot.object_id, fixture.id.attempt_id, fixture.values.owner, node.node_id, slot.checksum,
+        (fixture.id).object_id, fixture.id.attempt_id, fixture.values.owner, node.node_id, slot.checksum,
     )
 
 
@@ -92,13 +92,13 @@ def _case(monkeypatch, phase):
         fixture, node, record, _complete, request = _fixture(monkeypatch, phase="partial")
     else:
         fixture, node, record, _complete = _node(refs=False)
-        prepare = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
-        stored = fixture.manifest.slots[1]
+        prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
+        stored = (fixture.manifest.value)
         with monkeypatch.context() as fault:
             if phase == "intent-only":
                 def before_storage(effect, descriptor, payload):
-                    assert effect.slot_index == 1 and descriptor.object_id == stored.object_id
-                    assert payload == fixture.values.payloads[1]
+                    assert effect.slot_index == (0) and descriptor.object_id == (fixture.id).object_id
+                    assert payload == (fixture.values.payload)
                     raise _InjectedLocalFailure("before replica create")
 
                 fault.setattr(fixture.adapter, "_seal_replica", before_storage)
@@ -106,7 +106,7 @@ def _case(monkeypatch, phase):
                 original = fixture.store.create
 
                 def created_then_error(object_id, size_bytes):
-                    assert object_id == stored.object_id and size_bytes == stored.size_bytes
+                    assert object_id == (fixture.id).object_id and size_bytes == stored.size_bytes
                     original(object_id, size_bytes)
                     raise _InjectedLocalFailure("after replica create")
 
@@ -116,7 +116,7 @@ def _case(monkeypatch, phase):
                 original_seal = fixture.store.seal
 
                 def sealed_then_error(object_id):
-                    assert object_id == stored.object_id
+                    assert object_id == (fixture.id).object_id
                     original_seal(object_id)
                     raise _InjectedLocalFailure("after replica seal")
 
@@ -125,7 +125,7 @@ def _case(monkeypatch, phase):
                     original_write = fixture.store.write
 
                     def corrupt_write(object_id, payload):
-                        assert object_id == stored.object_id
+                        assert object_id == (fixture.id).object_id
                         original_write(object_id, b"X" * len(payload))
 
                     fault.setattr(fixture.store, "write", corrupt_write)
@@ -133,8 +133,8 @@ def _case(monkeypatch, phase):
                 node._handle_prepare_output_publication(prepare)
         request = _owner_request(fixture, node)
 
-    stored = fixture.manifest.slots[1]
-    expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE, 1)
+    stored = (fixture.manifest.value)
+    expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE, (0))
     snapshot = fixture.journal.snapshot(fixture.id)
     assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
     assert snapshot.retained_result_slots == (0,) and snapshot.complete is None
@@ -142,24 +142,24 @@ def _case(monkeypatch, phase):
     assert fixture.store.capacity_bytes == 1024 and not node._sealed_metadata
     assert not _receipts(node) and not node._dropped_metadata
     if phase == "intent-only":
-        assert not fixture.store.contains(stored.object_id, sealed_only=False)
+        assert not fixture.store.contains((fixture.id).object_id, sealed_only=False)
         assert not node._local_replica_write_claims
     else:
-        claim = node._local_replica_write_claims[stored.object_id]
+        claim = node._local_replica_write_claims[(fixture.id).object_id]
         assert claim.effect == expected_effect
-        physical = fixture.store.snapshot(stored.object_id)
+        physical = fixture.store.snapshot((fixture.id).object_id)
         assert physical.sealed is (phase in ("seal-before-metadata", "corrupt-sealed"))
         assert physical.size_bytes == stored.size_bytes and physical.pin_count == 0
         if phase == "seal-before-metadata":
-            assert fixture.store.get(stored.object_id) == fixture.values.payloads[1]
+            assert fixture.store.get((fixture.id).object_id) == (fixture.values.payload)
             # Real local-ready metadata makes both manager failure cuts meaningful.
             decision = node._object_manager.request_pull(
-                stored.object_id, locations=(node.node_id,), waiter_token="finalize-local-ready",
+                (fixture.id).object_id, locations=(node.node_id,), waiter_token="finalize-local-ready",
                 expected_size=stored.size_bytes, expected_checksum=stored.checksum, attempt_id=fixture.id.attempt_id,
             )
             assert decision.action is PullAction.LOCAL_READY
         elif phase == "corrupt-sealed":
-            assert fixture.store.get(stored.object_id) != fixture.values.payloads[1]
+            assert fixture.store.get((fixture.id).object_id) != (fixture.values.payload)
     _install_owner_wide_fence(fixture, node, request)
     return fixture, node, record, request
 
@@ -197,7 +197,7 @@ def _assert_not_finalized(fixture, node, record, request):
 
 
 def _forbid_stored_work(patch, fixture, node):
-    stored_id = fixture.manifest.slots[1].object_id
+    stored_id = (fixture.manifest.publication_id).object_id
 
     def guard_for(original):
         def guarded(object_id, *args, **kwargs):
@@ -252,7 +252,7 @@ def test_finalize_of_interrupted_physical_write_supplies_generic_drop_receipt(mo
     assert node._handle_finalize_output_owner_death(request) == first
     assert calls == [request]
     with pytest.raises(UnknownPullError):
-        node._object_manager.snapshot(fixture.manifest.slots[1].object_id)
+        node._object_manager.snapshot((fixture.manifest.publication_id).object_id)
 
 
 def test_uncreated_stored_intent_is_fenced_but_inline_has_no_physical_drop_receipt(monkeypatch):
@@ -262,7 +262,7 @@ def test_uncreated_stored_intent_is_fenced_but_inline_has_no_physical_drop_recei
     _assert_finalized(fixture, node, record, request, monkeypatch)
     assert calls == [request]
     inline_drop = _drop(fixture, node, 0)
-    assert fixture.manifest.slots[0].tier is protocol.ResultStorage.INLINE
+    assert (fixture.manifest.value).tier is protocol.ResultStorage.INLINE
     before = deepcopy((node._dropped_metadata, _receipts(node)))
     reply = node._handle_drop_object_replica(inline_drop)
     assert type(reply) is protocol.DropObjectReplicaReply
@@ -275,7 +275,7 @@ def test_uncreated_stored_intent_is_fenced_but_inline_has_no_physical_drop_recei
 @pytest.mark.parametrize("fault", ("false", "exception"))
 def test_unfinished_physical_removal_keeps_claim_and_never_finalizes(monkeypatch, phase, method, fault):
     fixture, node, record, request = _case(monkeypatch, phase)
-    stored_id = fixture.manifest.slots[1].object_id
+    stored_id = (fixture.manifest.publication_id).object_id
     before_claim = deepcopy(node._local_replica_write_claims[stored_id])
     before_store = fixture.store.snapshot(stored_id)
     worker_calls, physical_calls = [], []
@@ -303,7 +303,7 @@ def test_unfinished_physical_removal_keeps_claim_and_never_finalizes(monkeypatch
 @pytest.mark.parametrize("after_effect", (False, True), ids=("before-forget", "after-forget"))
 def test_manager_failure_retains_claim_until_same_finalize_completes_cleanup(monkeypatch, after_effect):
     fixture, node, record, request = _case(monkeypatch, "seal-before-metadata")
-    stored_id = fixture.manifest.slots[1].object_id
+    stored_id = (fixture.manifest.publication_id).object_id
     claim = deepcopy(node._local_replica_write_claims[stored_id])
     before_pull = node._object_manager.snapshot(stored_id)
     assert before_pull.state is PullState.READY
@@ -367,7 +367,7 @@ def test_worker_ack_loss_preserves_physical_receipt_and_finalize_replay_skips_st
 @pytest.mark.parametrize("phase,method", (("partial", "abort"), ("seal-before-metadata", "delete")))
 def test_removal_effect_then_exception_replays_from_retained_claim(monkeypatch, phase, method):
     fixture, node, record, request = _case(monkeypatch, phase)
-    stored_id = fixture.manifest.slots[1].object_id
+    stored_id = (fixture.manifest.publication_id).object_id
     claim = deepcopy(node._local_replica_write_claims[stored_id])
     original = getattr(fixture.store, method)
     worker_calls = []
@@ -390,7 +390,7 @@ def test_removal_effect_then_exception_replays_from_retained_claim(monkeypatch, 
 @pytest.mark.parametrize("corruption", ("bytes", "claim"))
 def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monkeypatch, corruption):
     fixture, node, record, request = _case(monkeypatch, "corrupt-sealed" if corruption == "bytes" else "partial")
-    stored_id = fixture.manifest.slots[1].object_id
+    stored_id = (fixture.manifest.publication_id).object_id
     if corruption == "claim":
         original = node._local_replica_write_claims[stored_id]
         node._local_replica_write_claims[stored_id] = replace(
@@ -405,4 +405,4 @@ def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monke
     assert node._local_replica_write_claims == before_claims
     assert fixture.store.snapshot(stored_id) == before_store
     if corruption == "bytes":
-        assert fixture.store.get(stored_id) == b"X" * fixture.manifest.slots[1].size_bytes
+        assert fixture.store.get(stored_id) == b"X" * (fixture.manifest.value).size_bytes

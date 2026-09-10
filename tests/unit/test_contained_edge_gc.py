@@ -20,7 +20,7 @@ from miniray.ids import AttemptID, JobID, ObjectID, TaskID, WorkerID
 from miniray.ownership import ObjectOwnerTable, ObjectCollectionInProgressError, InvalidObjectTransitionError
 from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_publication import OutputPublicationHeader, OutputPublicationID, OutputPublicationNodeIncarnation
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 from miniray.ids import LeaseID, NodeID
 
 
@@ -118,8 +118,7 @@ def test_collection_release_obligations_remove_child_holds_idempotently():
 
 def _discovery(outer, owner):
     task = outer.task_id
-    identity = OutputPublicationID(LeaseID(b"l" * 16), TaskExecutionKey(
-        TaskOutputManifest.for_task(task, 1), AttemptID(task, 0)))
+    identity = OutputPublicationID(LeaseID(b"l" * 16), (TaskExecution(AttemptID(task, 0))))
     header = OutputPublicationHeader(identity, JobID(b"j" * 16), owner, WorkerID(b"x" * 16),
         OutputPublicationNodeIncarnation(NodeID(b"n" * 16), 1001, 1))
     return OutputDiscoverySession(header, inline_threshold=1024, owner_address=("owner.invalid", 1))
@@ -138,8 +137,8 @@ def test_single_output_discovery_binds_exact_outer_edges_without_pinning_childre
     before = tuple(table.snapshot(object_id) for object_id in (child_a, child_b))
     session = _discovery(outer, owner)
     try:
-        outputs = session.discover(({"children": refs},))
-        slot, = outputs.manifest.slots
+        outputs = session.discover(({'children': refs}))
+        slot = (outputs.manifest.value)
         assert len(slot.edges) == len(slot.transfers) == 2
         assert {edge.container_object_id for edge in slot.edges} == {outer}
         assert {edge.contained_object_id for edge in slot.edges} == {child_a, child_b}
@@ -166,7 +165,7 @@ def test_failed_single_output_serialization_discards_local_sources_without_child
     session = _discovery(outer, owner)
     try:
         with pytest.raises(TypeError, match="later result reduction failed"):
-            session.discover(([ref, Invalid()],))
+            session.discover(([ref, Invalid()]))
         assert session.source_references == () and session.discovered is None
         assert not ref.closed
     finally:

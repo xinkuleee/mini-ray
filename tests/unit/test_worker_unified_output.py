@@ -63,14 +63,10 @@ def _install_no_runtime(monkeypatch):
 
 def _envelope(request):
     manifest = request.manifest
-    header = manifest.header
-    results = tuple(protocol.ResultDescriptor(
-        slot.object_id, slot.tier, slot.size_bytes, header.owner_worker_id,
-        header.node_incarnation.node_id, slot.checksum,
-        payload if slot.tier is protocol.ResultStorage.INLINE else None,
-    ) for slot, payload in zip(manifest.slots, request.slot_payloads))
+    (header, value) = ((manifest.header, manifest.value))
+    result = (protocol.ResultDescriptor(manifest.publication_id.object_id, value.tier, value.size_bytes, header.owner_worker_id, header.node_incarnation.node_id, value.checksum, request.payload if value.tier is protocol.ResultStorage.INLINE else None))
     return OutputPublicationEnvelope(
-        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), results,
+        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), result,
     )
 
 
@@ -241,9 +237,9 @@ class _ActualNodePublication:
         )
 
     def prepare(self, request):
-        assert len(request.manifest.slots) == 1
+        assert len(((request.manifest.value,))) == 1
         assert request.manifest == self.fixture.pending.outputs.manifest
-        self.adapter.prepare(request.manifest, request.slot_payloads)
+        self.adapter.prepare(request.manifest, (request.payload))
         return wire.PreparedOutputPublicationReply(request.request_identity, True)
 
     def complete(self, request):
@@ -279,7 +275,7 @@ def test_every_success_uses_one_output_and_one_actual_complete(monkeypatch, case
     reply = f.worker._handle_push_task(f.push)
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert reply.output_publication == f.complete_envelope
-    assert reply.results == f.complete_envelope.results
+    assert reply.results == ((f.complete_envelope.result,))
     assert len(actual.completions) == 1 and actual.completions[0] == reply.output_publication.complete
     assert not hasattr(reply, "stored_publication") and not hasattr(reply, "inline_publication")
     assert not hasattr(reply, "contained_edges")
@@ -288,8 +284,9 @@ def test_every_success_uses_one_output_and_one_actual_complete(monkeypatch, case
     assert f.worker._handle_push_task(f.push) is reply and f.executions == [True]
     manifest = f.prepares[0].manifest
     assert manifest.header.node_incarnation == f.incarnation
-    slot, = manifest.slots
-    assert slot.object_id == f.push.spec.return_ids()[0] and slot.object_id.return_index == 0
+    slot = manifest.value
+    assert manifest.publication_id.object_id == f.push.spec.return_ids()[0]
+    assert (manifest.publication_id.object_id.return_index == 0)
     assert slot.tier is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     if "contained" in case:
         transfer, = slot.transfers
@@ -373,7 +370,7 @@ def test_prepare_ambiguity_keeps_once_bytes_and_borrower_custody_for_exact_repla
     reply = f.worker._handle_push_task(f.push)
     assert f.executions == [True] and reductions == [True]
     assert all(request == attempts[0] for request in f.prepares)
-    assert f.prepared_request.slot_payloads == cached_outputs.slot_payloads
+    assert (f.prepared_request.payload) == (cached_outputs.payload)
     assert child.closed and child.closes == 1
     assert reply.output_publication.manifest == cached_outputs.manifest
 
@@ -429,11 +426,11 @@ def test_complete_ambiguity_retains_prepared_success_without_republication_or_re
             return _completion(request)
         if mode == "manifest":
             header = replace(envelope.manifest.header, node_incarnation=replace(f.incarnation, registration_epoch=8))
-            manifest = OutputPublicationManifest.create(header, envelope.manifest.slots)
-            envelope = OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest), envelope.results)
+            manifest = OutputPublicationManifest.create(header, (envelope.manifest.value))
+            envelope = OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (envelope.result))
             return _completion(request, envelope)
         reply = _completion(request, envelope)
-        object.__setattr__(reply.output_publication.results[0], "inline_data", b"changed")
+        object.__setattr__((reply.output_publication.result), "inline_data", b"changed")
         return reply
 
     f.on_complete = complete
@@ -469,7 +466,7 @@ def _outcome(f, request, envelope=None, *, witness=None):
     descriptors = tuple(protocol.ObjectStoreDescriptor(
         result.object_id, result.owner_worker_id, request.attempt_id, result.node_id,
         result.size_bytes, result.checksum,
-    ) for result in envelope.results if result.storage is protocol.ResultStorage.OBJECT_STORE)
+    ) for result in ((envelope.result,)) if result.storage is protocol.ResultStorage.OBJECT_STORE)
     return protocol.GetWorkerLeaseOutcomeReply(
         request.lease_id, request.task_id, request.attempt_id, request.executor_worker_id,
         request.owner_worker_id, request.object_ids, f.worker.node_id, True, True,
@@ -652,7 +649,7 @@ def test_owner_retires_payload_after_lost_complete_ack_then_worker_drain_uses_lo
         deadlines.append(options)
         reply = _completion(request, witness=node_metadata[0])
         assert reply.output_publication is None
-        assert all(payload not in pickle.dumps(reply) for payload in local_outputs.slot_payloads)
+        assert (local_outputs.payload not in pickle.dumps(reply))
         return reply
 
     monkeypatch.setattr("miniray.worker.rpc_request", retired_rpc)
@@ -664,7 +661,7 @@ def test_owner_retires_payload_after_lost_complete_ack_then_worker_drain_uses_lo
     assert reply.output_publication.complete == node_metadata[0]
     assert reply.output_publication.manifest == local_outputs.manifest
     result, = reply.results
-    assert result.inline_data == (None if stored else local_outputs.slot_payloads[0])
+    assert result.inline_data == (None if stored else (local_outputs.payload))
     assert result.storage is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     assert len(deadlines) == 1
     assert 0 < deadlines[0]["request_timeout"] <= 0.5
@@ -686,7 +683,7 @@ def test_metadata_completion_without_exact_witness_and_local_data_stays_pending(
             reply = _completion(request, witness=witness)
             object.__setattr__(reply.output_completion, "manifest_digest", "invalid")
             return reply
-        object.__setattr__(f.pending.outputs, "slot_payloads", ())
+        object.__setattr__(f.pending.outputs, ('payload'), (b'corrupt'))
         return _completion(request, witness=witness)
 
     f.on_complete = complete
@@ -885,13 +882,12 @@ def test_output_owner_death_retires_exact_custody_and_replays_lost_cleanup_ack(m
     assert replay == acknowledged[0] and _owner_cleanup_state(worker) == before
     assert child.closes == 1 and len(f.calls) == rpc_count
     assert f.executions == [True] and reductions == [True]
-    assert all(payload not in pickle.dumps(worker._owner_abandoned_outputs[f.key])
-               for payload in f.prepared_request.slot_payloads)
+    assert (f.prepared_request.payload not in pickle.dumps(worker._owner_abandoned_outputs[f.key]))
 
 
 def _rebound_owner_cleanup(request, field):
     manifest, death = request.manifest, request.owner_death
-    header, slots = manifest.header, manifest.slots
+    header, slots = manifest.header, ((manifest.value,))
     if field == "owner":
         owner = WorkerID.random()
         header = replace(header, owner_worker_id=owner)
@@ -912,7 +908,7 @@ def _rebound_owner_cleanup(request, field):
             assert field == "node-epoch"
             node = replace(node, registration_epoch=node.registration_epoch + 1)
         header = replace(header, node_incarnation=node)
-    return wire.FinalizeOutputOwnerDeath(OutputPublicationManifest.create(header, slots), death)
+    return wire.FinalizeOutputOwnerDeath(OutputPublicationManifest.create(header, (slots[0])), death)
 
 
 @pytest.mark.parametrize("stage", ("pending", "cached", "aborted", "retired"))
@@ -1005,13 +1001,13 @@ def test_output_owner_death_preflights_all_local_manifests_before_source_release
     pending = f.pending
     actual = _envelope(f.prepared_request)
     changed = _rebound_owner_cleanup(request, "node-epoch").manifest
-    wrong = OutputPublicationEnvelope(changed, OutputPublicationCompleteWitness.for_manifest(changed), actual.results)
+    wrong = OutputPublicationEnvelope(changed, OutputPublicationCompleteWitness.for_manifest(changed), (actual.result))
     if conflict == "pending-complete":
         pending.complete_envelope = wrong
     else:
         f.worker._replies[f.key] = protocol.TaskReply(
             f.push.spec.task_id, f.push.spec.attempt_id, f.worker.worker_id,
-            protocol.TaskReplyStatus.SUCCEEDED, results=wrong.results, output_publication=wrong,
+            protocol.TaskReplyStatus.SUCCEEDED, results=((wrong.result,)), output_publication=wrong,
         )
         f.worker._cached_pushes[f.key] = f.push
     before = _owner_cleanup_state(f.worker)
@@ -1045,11 +1041,11 @@ def test_output_owner_death_busy_execution_lock_is_nonblocking_and_does_not_reti
 def test_output_owner_death_rejects_unretained_or_wrong_executor_without_poisoning_push(monkeypatch, wrong_executor):
     f = _Fixture(monkeypatch, lambda: 7)
     _owner_cleanup_lifecycle(f.worker)
-    outputs = f.worker._output_discovery_session(f.push, f.incarnation).discover((7,))
+    outputs = f.worker._output_discovery_session(f.push, f.incarnation).discover((7))
     manifest = outputs.manifest
     if wrong_executor:
         manifest = OutputPublicationManifest.create(
-            replace(manifest.header, executor_worker_id=WorkerID.random()), manifest.slots,
+            replace(manifest.header, executor_worker_id=WorkerID.random()), (manifest.value),
         )
     before = _owner_cleanup_state(f.worker)
     with pytest.raises(RuntimeError, match="another executor" if wrong_executor else "no retained publication"):

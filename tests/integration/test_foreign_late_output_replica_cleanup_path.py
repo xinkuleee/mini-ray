@@ -54,7 +54,7 @@ from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.publication_sources import BorrowedContainedSource
 from miniray.resources import ResourceVector
 from miniray.runtime_binding import current_core_worker, current_execution_context
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 from miniray.recovery import TaskState
 from miniray.transport import _receive, _send
 from miniray.worker import GET_OWNED_OBJECT_HANDLER, REPORT_RETAINED_OBJECT_LOCATION_HANDLER
@@ -114,7 +114,7 @@ def _return_worker_owned_output_before_node_adoption_ack(container, control_addr
                 return result
             old_resolution = replace(receipt)
             handoff = core._output_handoff_table().query(identity)
-            owner = core.owner_table.snapshot(identity.output_ids[0])
+            owner = core.owner_table.snapshot(((identity.object_id,))[0])
             record = core._recovery.task_record(identity.task_id)
             assert owner.state is ObjectState.LOST and owner.current_attempt == identity.attempt_id
             assert owner.inline_data is None and owner.canonical_stored_result is None
@@ -145,7 +145,7 @@ def _return_worker_owned_output_before_node_adoption_ack(container, control_addr
                 assert handoff.phase is OutputHandoffPhase.ADOPTED and handoff.adoption == request.proof
                 old_manifest = handoff.manifest
                 assert old_manifest.header.owner_worker_id == core.worker_id
-                assert len(identity.output_ids) == 1 and identity.output_ids[0].return_index == 0
+                assert len(((identity.object_id,))) == 1 and ((identity.object_id,))[0].return_index == 0
             gate_deadline = min(deadline, time.monotonic() + _GATE_SECONDS)
             assert not core._state_lock._is_owned()
             try:
@@ -172,13 +172,13 @@ def _return_worker_owned_output_before_node_adoption_ack(container, control_addr
             assert reply.accepted and reply.request == request
             with core._state_lock:
                 assert old_resolution is not None and loss_sent
-                owner_before = core.owner_table.snapshot(identity.output_ids[0])
+                owner_before = core.owner_table.snapshot(((identity.object_id,))[0])
                 assert owner_before.state is ObjectState.READY_STORED and owner_before.current_attempt == identity.attempt_id
                 # Replay the real prior owner commit; it must return its
                 # existing receipt without mutating the reconstructed epoch.
                 committed = core.owner_table.resolve_output_node_loss(old_manifest, old_resolution)
                 assert committed is False
-                assert core.owner_table.snapshot(identity.output_ids[0]) == owner_before
+                assert core.owner_table.snapshot(((identity.object_id,))[0]) == owner_before
                 assert core.owner_table._output_loss_receipts[selected[0]] == old_resolution
                 record = core._recovery.task_record(identity.task_id)
                 observation = (_REPLAY_KIND, identity, old_resolution, committed,
@@ -320,7 +320,7 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
 
         def hold_real_foreign_grant(requested, grant, foreign_guards=()):
             result = original_build(requested, grant, foreign_guards)
-            if publication is not None and grant.dependencies and grant.dependencies[0].object_id == publication.output_ids[0]:
+            if publication is not None and grant.dependencies and grant.dependencies[0].object_id == ((publication.object_id,))[0]:
                 assert len(result) == len(foreign_guards) == len(grant.dependencies) == 1
                 assert grant.node_id == target.node_id and grant.worker_id == target.worker_id
                 with observation_lock:
@@ -355,10 +355,10 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         publication = adoption_request.proof.complete.publication_id
         task_id = publication.task_id
         assert task_id == TaskID.derive(core.job_id, TaskID.derive(core.job_id, outer.object_id.task_id, 0), 0)
-        assert publication.execution == TaskExecutionKey(TaskOutputManifest.for_task(task_id, 1), AttemptID(task_id, 0))
+        assert publication.execution == (TaskExecution(AttemptID(task_id, 0)))
         owner_gate_deadline = min(deadline, time.monotonic() + _GATE_SECONDS)
         refs = tuple(ray.get(outer, timeout=_remaining(owner_gate_deadline)))
-        assert len(refs) == 1 and tuple(ref.object_id for ref in refs) == publication.output_ids
+        assert len(refs) == 1 and tuple(ref.object_id for ref in refs) == ((publication.object_id,))
         assert all(isinstance(ref, ray.ObjectRef) and ref.owner_worker_id == target.worker_id
                    and ref.owner_address == target.worker_address and ref.borrower_token for ref in refs)
         assert all(not core.owner_table.contains(ref.object_id) for ref in refs)
@@ -369,11 +369,10 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         assert before.adoption.complete == before.complete and before.abort_reason is None
         assert manifest.header.owner_worker_id == target.worker_id != core.worker_id
         assert manifest.header.executor_worker_id == publisher.worker_id and manifest.header.node_incarnation.node_id == publisher.node_id
-        assert tuple(slot.tier for slot in manifest.slots) == (protocol.ResultStorage.OBJECT_STORE,)
-        assert len(_PADDING) < manifest.slots[0].size_bytes < 32 * 1024
-        assert all(len(slot.transfers) == 1 and slot.transfers[0].contained_object_id == source_id for slot in manifest.slots)
-        assert all(type(slot.transfers[0].source) is BorrowedContainedSource
-                   and slot.transfers[0].contained_owner_worker_id == core.worker_id for slot in manifest.slots)
+        assert ((manifest.value.tier,)) == (protocol.ResultStorage.OBJECT_STORE,)
+        assert len(_PADDING) < (manifest.value).size_bytes < 32 * 1024
+        assert (len(manifest.value.transfers) == 1 and manifest.value.transfers[0].contained_object_id == source_id)
+        assert (type(manifest.value.transfers[0].source) is BorrowedContainedSource and manifest.value.transfers[0].contained_owner_worker_id == core.worker_id)
         stored_before = _owned(refs[0], core.worker_id, owner_gate_deadline)
         assert stored_before.state is protocol.OwnedObjectState.READY_STORED and stored_before.descriptor.node_id == publisher.node_id
         assert stored_before.current_attempt == publication.attempt_id
@@ -421,7 +420,7 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         assert resolution.owner_worker_id == target.worker_id != core.worker_id
         assert resolution.complete == before.complete and not resolution.keep
         resolution.validate_manifest(manifest)
-        transfer, = manifest.slots[0].transfers
+        transfer, = (manifest.value).transfers
         assert all(type(reply) is protocol.ReleaseContainedReferenceReply and reply.accepted
                    for reply in resolution.cleanup)
         assert {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in resolution.cleanup} == {
@@ -493,10 +492,8 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         assert rebuilt["padding"] == _PADDING and rebuilt["producer_pid"] == target.worker_pid
         new_attempt = publication.attempt_id.next()
         assert rebuilt["attempt"] == new_attempt
-        new_publication = OutputPublicationID(rebuilt["lease_id"], TaskExecutionKey(
-            TaskOutputManifest.for_task(task_id, 1), new_attempt,
-        ))
-        assert new_publication.output_ids == publication.output_ids and new_publication.lease_id != publication.lease_id
+        new_publication = OutputPublicationID(rebuilt["lease_id"], (TaskExecution(new_attempt)))
+        assert ((new_publication.object_id,)) == ((publication.object_id,)) and new_publication.lease_id != publication.lease_id
         new_owned = _owned(refs[0], core.worker_id, deadline)
         assert new_owned.state is protocol.OwnedObjectState.READY_STORED and new_owned.current_attempt == new_attempt
         assert new_owned.descriptor.node_id == target.node_id and new_owned.owner_worker_id == target.worker_id
@@ -513,8 +510,8 @@ def test_foreign_late_replica_is_collected_and_old_messages_preserve_reconstruct
         owner_connection = None
         assert new_history.complete is not None and new_history.adoption is not None
         assert new_history.manifest.header.owner_worker_id == new_history.manifest.header.executor_worker_id == target.worker_id
-        assert new_history.manifest.slots[0].object_id == refs[0].object_id
-        new_transfer, = new_history.manifest.slots[0].transfers
+        assert (new_history.manifest.publication_id).object_id == refs[0].object_id
+        new_transfer, = (new_history.manifest.value).transfers
         assert new_transfer.contained_object_id == source_id and new_transfer.contained_owner_worker_id == core.worker_id
         assert new_transfer.final_hold != transfer.final_hold
         new_replica = _physical(target, refs[0].object_id, deadline)

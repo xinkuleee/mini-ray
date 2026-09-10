@@ -670,7 +670,7 @@ def test_failed_queue_acceptance_cannot_issue_receipt_or_authorize_join():
 def test_system_retry_join_requires_its_own_committed_queue_handoff():
     from miniray.reconstruction_runtime import ReconstructionRuntimeError
     from miniray.errors import SystemTaskError
-    from miniray.task_outputs import TaskExecutionKey
+    from miniray.task_outputs import TaskExecution
     fixture = _Fixture(max_retries=2)
     admitted = fixture.coordinator.handoff(
         fixture.coordinator.request(fixture.object_id), fixture.queue.put,
@@ -683,7 +683,7 @@ def test_system_retry_join_requires_its_own_committed_queue_handoff():
     )
     attempt = transition.decision.attempt_id
     plan = fixture.owner.validate_advance_task_outputs(
-        TaskExecutionKey.from_task_spec(fixture.spec).for_attempt(previous), attempt,
+        TaskExecution.from_task_spec(fixture.spec).for_attempt(previous), attempt,
     )
     fixture.owner.commit_validated_advance_task_outputs(plan)
     fixture.recovery.commit_transition(transition)

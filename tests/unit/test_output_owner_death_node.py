@@ -22,7 +22,7 @@ pytestmark = pytest.mark.unit
 
 def _fixture(monkeypatch, *, phase="running"):
     fixture, node, record, complete = _node(refs=False)
-    prepare = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+    prepare = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     if phase == "partial":
         write = fixture.store.write
 
@@ -52,12 +52,10 @@ def _fixture(monkeypatch, *, phase="running"):
         "owner-sweep", death, node.node_id,
     ))
     assert fence.accepted
-    for slot in fixture.manifest.slots:
-        if slot.object_id in node._sealed_metadata:
-            drop = node._handle_drop_object_replica(protocol.DropObjectReplica(
-                slot.object_id, fixture.id.attempt_id, fixture.values.owner, node.node_id, slot.checksum,
-            ))
-            assert drop.status is protocol.DropObjectReplicaStatus.DROPPED
+    slot = fixture.manifest.value
+    if fixture.id.object_id in node._sealed_metadata:
+        drop = node._handle_drop_object_replica(protocol.DropObjectReplica(fixture.id.object_id, fixture.id.attempt_id, fixture.values.owner, node.node_id, slot.checksum))
+        assert drop.status is protocol.DropObjectReplicaStatus.DROPPED
     return fixture, node, record, complete, request
 
 
@@ -94,7 +92,7 @@ def test_owner_finalize_retires_exact_node_and_worker_custody_once(monkeypatch, 
     assert fixture.adapter.pending_terminal_reports() == ()
     assert node._drive_output_publications()
     assert not node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-        fixture.manifest, fixture.values.payloads,
+        fixture.manifest, (fixture.values.payload),
     )).accepted
     with pytest.raises(ValueError, match="death-fenced"):
         node._handle_complete_worker_lease_inner(complete)
@@ -180,7 +178,7 @@ def test_worker_unavailability_is_not_a_confirmed_custody_cleanup(monkeypatch, o
 
 def test_wrong_partial_write_claim_cannot_authorize_deletion(monkeypatch):
     fixture, node, _record, _complete, request = _fixture(monkeypatch, phase="partial")
-    object_id = fixture.manifest.slots[0].object_id
+    object_id = (fixture.manifest.publication_id).object_id
     claim = node._local_replica_write_claims[object_id]
     wrong_effect = replace(claim.effect)
     object.__setattr__(wrong_effect, "slot_index", 1)

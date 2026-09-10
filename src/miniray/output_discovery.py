@@ -18,7 +18,7 @@ import cloudpickle
 from .contained_edges import ContainedReferenceHold
 from .ids import ObjectID
 from .output_publication import (
-    OutputPublicationHeader, OutputPublicationManifest, OutputSlotManifest,
+    OutputPublicationHeader, OutputPublicationManifest, OutputValue,
 )
 from .protocol import ResultStorage
 from .ref_transfer import (
@@ -29,52 +29,36 @@ from .publication_sources import PreparedContainedTransfer
 from .transport import Address
 
 
-# The first index is the original ObjectID.return_index, including targeted
-# subsets; the second is the reducer-discovery ordinal within that slot.
-OutputTransferTokenFactory = Callable[[int, int], str]
+# Only the child reducer-discovery ordinal varies; the outer index is canonical zero.
+OutputTransferTokenFactory = Callable[[int], str]
 
 
 @dataclass(frozen=True)
-class DiscoveredOutputs:
-    """A complete metadata batch and its ordered, once-serialized streams.
-
-    This is a local/data-plane artifact, not a control-plane message.  It does
-    not retain the original user values or source handles; the discovery
-    session owns those temporary handles until promotion is acknowledged.
-    """
-
+class PreparedOutput:
+    """Once-serialized local output; source handles stay in its session."""
     manifest: OutputPublicationManifest
-    slot_payloads: Tuple[bytes, ...]
+    payload: bytes
 
     def __post_init__(self) -> None:
         if type(self.manifest) is not OutputPublicationManifest:
             raise TypeError("manifest must be an OutputPublicationManifest")
         manifest = replace(self.manifest)
-        if type(self.slot_payloads) not in (tuple, list):
-            raise TypeError("slot_payloads must be an ordered tuple or list")
-        payloads = tuple(self.slot_payloads)
-        if len(payloads) != len(manifest.slots):
-            raise ValueError("slot payloads must exactly cover the selected outputs")
-        for slot, payload in zip(manifest.slots, payloads):
-            if type(payload) is not bytes:
-                raise TypeError("slot payload must be serialized bytes")
-            if (
-                len(payload) != slot.size_bytes
-                or hashlib.sha256(payload).hexdigest() != slot.checksum
-            ):
-                raise ValueError("serialized payload does not match its slot manifest")
+        if type(self.payload) is not bytes:
+            raise TypeError("payload must be serialized bytes")
+        value = manifest.value
+        if len(self.payload) != value.size_bytes or hashlib.sha256(self.payload).hexdigest() != value.checksum:
+            raise ValueError("serialized payload does not match its value manifest")
         object.__setattr__(self, "manifest", manifest)
-        object.__setattr__(self, "slot_payloads", payloads)
 
     def __reduce__(self):
-        return type(self), (self.manifest, self.slot_payloads)
+        return type(self), (self.manifest, self.payload)
 
 
 class OutputDiscoverySession:
     """One-shot Worker-local discovery and source-handle custody.
 
-    ``discover`` returns only after every selected slot has serialized and the
-    complete immutable manifest validates.  Its first error aborts the local
+    ``discover`` returns only after the complete value has serialized and its
+    immutable manifest validates.  Its first error aborts the local
     session, clears all retained handles, and cannot be retried on that session:
     user reducers may have side effects, so serialization is never silently
     rerun.  Publication/RPC retries reuse the returned bytes and manifest.
@@ -103,24 +87,24 @@ class OutputDiscoverySession:
         self._token_factory = token_factory
         self._token_namespace = self.header.publication_id.transaction_id
         self._source_references: list[object] = []
-        self._discovered: Optional[DiscoveredOutputs] = None
+        self._discovered: Optional[PreparedOutput] = None
         self._state = "NEW"
 
     @property
     def source_references(self) -> Tuple[object, ...]:
-        """Strong handles, in output/reducer order, without any new owner pin."""
+        """Strong handles, in reducer order, without any new owner pin."""
 
         return tuple(self._source_references)
 
     @property
-    def discovered(self) -> Optional[DiscoveredOutputs]:
-        """Only a complete validated batch is observable through this property."""
+    def discovered(self) -> Optional[PreparedOutput]:
+        """Only a complete validated output is observable through this property."""
 
         return self._discovered
 
     def _token(self, object_id: ObjectID, transfer_index: int) -> str:
         token = (
-            self._token_factory(object_id.return_index, transfer_index)
+            self._token_factory(transfer_index)
             if self._token_factory is not None
             else "{}:slot:{}:transfer:{}".format(
                 self._token_namespace, object_id.return_index, transfer_index
@@ -156,42 +140,24 @@ class OutputDiscoverySession:
         )
         # Keep the source before returning its reducer tuple.  A temporary
         # ObjectRef produced by user __reduce__ may otherwise disappear before
-        # the following slot or the eventual all-promotions acknowledgement.
+        # the rest of the value or the eventual all-promotions acknowledgement.
         self._source_references.append(reference)
         transfers.append(transfer)
         return child, owner, address, transfer.final_hold
 
-    def discover(self, selected_values: Union[tuple, list]) -> DiscoveredOutputs:
+    def discover(self, value: object) -> PreparedOutput:
         if self._state != "NEW":
-            raise RuntimeError("output discovery is one-shot; reuse the serialized batch")
+            raise RuntimeError("output discovery is one-shot; reuse the serialized output")
         self._state = "DISCOVERING"
         try:
-            if type(selected_values) not in (tuple, list):
-                raise TypeError("selected_values must be an ordered tuple or list")
-            values = tuple(selected_values)
-            output_ids = self.header.publication_id.output_ids
-            if len(values) != len(output_ids):
-                raise ValueError("values must exactly cover the selected output slots")
-            slots = []
-            payloads = []
-            for object_id, value in zip(output_ids, values):
-                transfers: list[PreparedContainedTransfer] = []
-                with exporting_references(
-                    lambda reference: self._export(reference, object_id, transfers)
-                ):
-                    payload = cloudpickle.dumps(value)
-                tier = (
-                    ResultStorage.INLINE
-                    if len(payload) <= self.inline_threshold
-                    else ResultStorage.OBJECT_STORE
-                )
-                slots.append(OutputSlotManifest(
-                    object_id, tier, len(payload), hashlib.sha256(payload).hexdigest(),
-                    tuple(transfers),
-                ))
-                payloads.append(payload)
-            manifest = OutputPublicationManifest.create(self.header, tuple(slots))
-            result = DiscoveredOutputs(manifest, tuple(payloads))
+            object_id = self.header.publication_id.object_id
+            transfers: list[PreparedContainedTransfer] = []
+            with exporting_references(lambda reference: self._export(reference, object_id, transfers)):
+                payload = cloudpickle.dumps(value)
+            tier = ResultStorage.INLINE if len(payload) <= self.inline_threshold else ResultStorage.OBJECT_STORE
+            output = OutputValue(tier, len(payload), hashlib.sha256(payload).hexdigest(), tuple(transfers))
+            manifest = OutputPublicationManifest.create(self.header, output)
+            result = PreparedOutput(manifest, payload)
         except BaseException:
             self._source_references.clear()
             self._discovered = None
@@ -202,12 +168,12 @@ class OutputDiscoverySession:
         return result
 
     def release_sources_after_promotions(self) -> None:
-        """Called only after all selected slots' final holds are ACKed."""
+        """Called only after all child final holds for this output are ACKed."""
 
         if self._state == "RELEASED":
             return
         if self._state != "DISCOVERED":
-            raise RuntimeError("a complete discovered batch is required before release")
+            raise RuntimeError("a complete discovered output is required before release")
         self._source_references.clear()
         self._state = "RELEASED"
 
@@ -227,5 +193,5 @@ class OutputDiscoverySession:
 
 
 __all__ = [
-    "DiscoveredOutputs", "OutputDiscoverySession", "OutputTransferTokenFactory",
+    "PreparedOutput", "OutputDiscoverySession", "OutputTransferTokenFactory",
 ]

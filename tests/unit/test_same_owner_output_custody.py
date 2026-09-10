@@ -91,11 +91,11 @@ class _Fixture:
         self.child_before = self.child_table.snapshot(self.child.object_id)
         self.values = ([self.child, self.child],)
         self.session = OutputDiscoverySession(header, inline_threshold=0 if stored else 4096)
-        self.outputs = self.session.discover(self.values)
-        assert len(self.outputs.slot_payloads) == 1 and len(self.outputs.slot_payloads[0]) < 4096
+        self.outputs = self.session.discover((self.values[0]))
+        assert (type(self.outputs.payload) is bytes) and (0 < len(self.outputs.payload) < 4096)
         self.manifest = self.outputs.manifest
         self.identity = self.manifest.publication_id
-        self.transfers = tuple(slot.transfers[0] for slot in self.manifest.slots)
+        self.transfers = ((self.manifest.value.transfers[0],))
         self.journal = OutputPublicationJournal()
         self.handoffs = OutputHandoffTable()
         self.store = ObjectStore(16 * 1024)
@@ -116,9 +116,7 @@ class _Fixture:
             protocol.FunctionKey(header.job_id, __name__, "same-owner-output", "v1"),
             (), 1, ResourceVector({"CPU": 1}), header.owner_worker_id,
         )
-        self.outer.register_task_outputs(self.spec, local_tokens=tuple(
-            "output-{}".format(output.return_index) for output in self.identity.output_ids
-        ))
+        self.outer.register_task_outputs(self.spec, local_tokens=(('output-{}'.format(self.identity.object_id.return_index),)))
 
     def unbound_storage(self, *_args):
         pytest.fail("Node storage must be bound before publication")
@@ -177,9 +175,9 @@ class _Fixture:
                          ids=("owned-inline", "borrowed-inline", "owned-stored", "borrowed-stored"))
 def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed, stored):
     f = _Fixture(borrowed=borrowed, stored=stored)
-    slot, = f.manifest.slots
+    slot = (f.manifest.value)
     transfer, = f.transfers
-    assert slot.object_id.return_index == 0 and len(slot.transfers) == 1
+    assert (f.identity).object_id.return_index == 0 and len(slot.transfers) == 1
     assert slot.tier is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     assert f.child.object_id.task_id != f.identity.task_id
     assert f.session.source_references == (f.child,)
@@ -199,9 +197,9 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
         return object()
 
     with importing_references(restore):
-        restored = cloudpickle.loads(f.outputs.slot_payloads[0])
+        restored = cloudpickle.loads((f.outputs.payload))
     assert restored[0] is restored[1] and restored_holds == [transfer.final_hold]
-    f.adapter.prepare(f.manifest, f.outputs.slot_payloads)
+    f.adapter.prepare(f.manifest, (f.outputs.payload))
     assert [event[0] for event in f.events] == ["prepare", "promote"]
     assert all(reply.accepted for _stage, _request, reply in f.events)
     active = frozenset((transfer.final_hold,))
@@ -221,12 +219,12 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
     f.handoffs.adopt(proof)
     f.journal.retire_completed(proof)
     assert not f.journal.snapshot(f.identity).retained_result_slots
-    assert f.store.used_bytes == (len(f.outputs.slot_payloads[0]) if stored else 0)
+    assert f.store.used_bytes == (len((f.outputs.payload)) if stored else 0)
     # Node reply retirement must not consume the outer's child lifetime.
     assert f.child_table.snapshot(f.child.object_id).contained_holds == active
-    assert f.outer.begin_output_publication_collection(slot.object_id, collection_id="too-early") is None
-    assert f.outer.release_local_reference(slot.object_id, "output-0")
-    collection = f.outer.begin_output_publication_collection(slot.object_id, collection_id="same-owner-gc")
+    assert f.outer.begin_output_publication_collection((f.identity).object_id, collection_id="too-early") is None
+    assert f.outer.release_local_reference((f.identity).object_id, "output-0")
+    collection = f.outer.begin_output_publication_collection((f.identity).object_id, collection_id="same-owner-gc")
     assert collection is not None
     assert collection.metadata_plan.contained_releases == slot.edges
     release = protocol.ReleaseContainedReference(f.child.object_id, f.child.owner_worker_id, transfer.final_hold)
@@ -234,7 +232,7 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
     assert reply.accepted and reply.released and reply.hold == transfer.final_hold
     assert reply.object_id == f.child.object_id and reply.owner_worker_id == f.child.owner_worker_id
     if stored:
-        drop = protocol.DropObjectReplica(slot.object_id, f.identity.attempt_id, f.header.owner_worker_id,
+        drop = protocol.DropObjectReplica((f.identity).object_id, f.identity.attempt_id, f.header.owner_worker_id,
                                           f.header.node_incarnation.node_id, slot.checksum)
         dropped = f.node._handle_drop_object_replica(drop)
         assert dropped.status is protocol.DropObjectReplicaStatus.DROPPED
@@ -244,7 +242,7 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
     # Current owner collection records the local metadata CAS after actual
     # child release / optional Node Drop above; it takes no fabricated graph ACK.
     assert f.outer.complete_output_publication_collection(collection).collection.collected
-    assert f.outer.collection_state(slot.object_id) is ObjectCollectionState.COLLECTED
+    assert f.outer.collection_state((f.identity).object_id) is ObjectCollectionState.COLLECTED
     assert f.child_table.prepare_stored_contained_reference(transfer, authority_worker_id=f.child.owner_worker_id) is Disposition.ALREADY_PREPARED
     assert f.child_table.promote_stored_contained_reference(transfer, authority_worker_id=f.child.owner_worker_id) is Disposition.ALREADY_PROMOTED
     assert not f.release(f.child.owner_address, release).released
@@ -310,12 +308,12 @@ def test_distinct_owner_discovery_keeps_unchanged_tokens_payloads_and_manifest_d
     f = _Fixture(same_owner=False)
     expected_slots = []
     expected_payloads = []
-    for slot, value, transfer in zip(f.manifest.slots, f.values, f.transfers):
-        token = "{}:slot:{}:transfer:0".format(f.identity.transaction_id, slot.object_id.return_index)
+    for slot, value, transfer in zip(((f.manifest.value,)), f.values, f.transfers):
+        token = "{}:slot:{}:transfer:0".format(f.identity.transaction_id, (f.identity).object_id.return_index)
         expected = PreparedContainedTransfer(
             f.child.object_id, f.child.owner_worker_id, f.child.owner_address, transfer.source,
-            ContainedReferenceHold(slot.object_id, f.header.executor_worker_id, token),
-            ContainedReferenceHold(slot.object_id, f.header.owner_worker_id, token),
+            ContainedReferenceHold((f.identity).object_id, f.header.executor_worker_id, token),
+            ContainedReferenceHold((f.identity).object_id, f.header.owner_worker_id, token),
         )
         assert transfer == expected and transfer.provisional_hold.transfer_token == transfer.final_hold.transfer_token
         expected_slots.append(replace(slot, transfers=(expected,)))
@@ -324,6 +322,6 @@ def test_distinct_owner_discovery_keeps_unchanged_tokens_payloads_and_manifest_d
             return f.child.object_id, f.child.owner_worker_id, f.child.owner_address, expected.final_hold
         with exporting_references(export):
             expected_payloads.append(cloudpickle.dumps(value))
-    assert f.outputs.slot_payloads == tuple(expected_payloads)
-    assert OutputPublicationManifest.create(f.header, tuple(expected_slots)) == f.manifest
+    assert (f.outputs.payload) == (expected_payloads[0])
+    assert OutputPublicationManifest.create(f.header, (expected_slots[0])) == f.manifest
     assert pickle.loads(pickle.dumps(f.manifest)).manifest_digest == f.manifest.manifest_digest

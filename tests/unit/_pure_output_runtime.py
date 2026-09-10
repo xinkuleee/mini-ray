@@ -21,7 +21,7 @@ from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.output_handoff import OutputHandoffPhase
 from miniray.ownership import ObjectCollectionState, OutputOwnerPublicationPlan
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 
 
 def _metadata(value):
@@ -112,24 +112,23 @@ class PureOutputRuntime:
         # The default remains INLINE-only with forbidden store callbacks.
         # A bounded test subclass may set zero and supply a real small store.
         assert type(inline_threshold) is int and inline_threshold in (0, 1024)
-        execution = TaskExecutionKey.from_task_spec(push.spec)
+        execution = TaskExecution.from_task_spec(push.spec)
         identity = OutputPublicationID(push.lease_id, execution)
         previous = self.pushes.get(identity)
         if previous is not None:
             assert previous == push
             return self.replies[identity]
-        assert len(self.pushes) < 4 and len(identity.output_ids) == 1
+        assert len(self.pushes) < 4 and len(values) == 1
         assert push.spec.owner_worker_id == self.core.worker_id
         session = OutputDiscoverySession(OutputPublicationHeader(
             identity, push.spec.job_id, push.worker_id, push.spec.owner_worker_id, self.incarnation,
         ), inline_threshold=inline_threshold)
-        outputs = session.discover(tuple(values))
+        outputs = session.discover((values[0]))
         expected_tier = (protocol.ResultStorage.INLINE if inline_threshold
                          else protocol.ResultStorage.OBJECT_STORE)
-        assert all(slot.tier is expected_tier and not slot.transfers
-                   and slot.size_bytes <= 1024 for slot in outputs.manifest.slots)
+        assert (outputs.manifest.value.tier is expected_tier and (not outputs.manifest.value.transfers) and (outputs.manifest.value.size_bytes <= 1024))
         self.discoveries += 1
-        self.adapter.prepare(outputs.manifest, outputs.slot_payloads)
+        self.adapter.prepare(outputs.manifest, (outputs.payload))
         session.release_sources_after_promotions()
 
         def commit(witness):
@@ -139,14 +138,15 @@ class PureOutputRuntime:
 
         envelope = self.adapter.complete(identity, commit_lease=commit)
         assert envelope.manifest == outputs.manifest
-        assert tuple(result.inline_data for result in envelope.results) == (
-            outputs.slot_payloads if inline_threshold
-            else (None,) * len(outputs.slot_payloads)
+        assert (envelope.result.object_id) == (
+            (execution.object_id)
         )
+        assert type(outputs.payload) is bytes
+        assert envelope.result.inline_data == (outputs.payload if inline_threshold else None)
         self.pushes[identity] = push
         self.replies[identity] = protocol.TaskReply(
             push.spec.task_id, push.spec.attempt_id, push.worker_id,
-            protocol.TaskReplyStatus.SUCCEEDED, envelope.results,
+            protocol.TaskReplyStatus.SUCCEEDED, ((envelope.result,)),
             output_publication=envelope,
         )
         return self.replies[identity]
@@ -181,7 +181,7 @@ class PureOutputRuntime:
             assert snapshot.complete == reply.output_publication.complete
             assert snapshot.adoption is not None
             assert self.core.owner_table.collection_state(
-                identity.output_ids[0]
+                (identity.object_id)
             ) is ObjectCollectionState.COLLECTED
             assert not self.journal.snapshot(identity).retained_result_slots
             if any(item.publication_id == identity for item in self.adapter.pending_terminal_reports()):

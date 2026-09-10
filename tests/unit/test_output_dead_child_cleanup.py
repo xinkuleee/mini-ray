@@ -55,7 +55,7 @@ def _proof(worker_id, *, reason=protocol.WorkerDeathReason.PROCESS_EXIT, node_id
 
 def _release_case(*, foreign=False):
     fixture, node, record, _complete = _node()
-    transfer = fixture.manifest.slots[0].transfers[1 if foreign else 0]
+    transfer = (fixture.manifest.value).transfers[1 if foreign else 0]
     request = protocol.ReleaseContainedReference(
         transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.final_hold,
     )
@@ -288,7 +288,7 @@ def test_dead_executor_child_cleanup_does_not_discharge_remaining_live_child_hol
         assert handler == RELEASE_CONTAINED_REFERENCE_HANDLER
         if message.owner_worker_id == fixture.values.executor:
             raise TransportTimeout("dead executor endpoint")
-        if blocked_live and message.hold.container_object_id == fixture.manifest.slots[0].object_id:
+        if blocked_live and message.hold.container_object_id == (fixture.manifest.publication_id).object_id:
             raise TransportTimeout("live child owner temporarily unavailable")
         return fixture.release_child(address, message)
 
@@ -302,7 +302,7 @@ def test_dead_executor_child_cleanup_does_not_discharge_remaining_live_child_hol
         fixture.adapter.rollback(fixture.id, "dead-child-rollback", max_effects=16)
     next_effect = fixture.journal.next_rollback_effect(fixture.id)
     assert next_effect.stage is Stage.FINAL_RELEASE
-    assert fixture.manifest.slots[next_effect.slot_index].transfers[next_effect.transfer_index].contained_owner_worker_id == fixture.values.foreign_owner
+    assert (fixture.manifest.value).transfers[next_effect.transfer_index].contained_owner_worker_id == fixture.values.foreign_owner
     live_table = fixture.child_owners[fixture.values.foreign_owner]
     assert live_table.snapshot(fixture.values.borrowed_child).contained_holds
     assert fixture.journal.snapshot(fixture.id).rollback_tombstone is None
@@ -327,11 +327,11 @@ def _rollback_at_first_child_effect():
     rollback_id = "child-proof-consumption"
     # The one stored output Drop precedes child release. No child callback
     # runs during setup; both independent child-owner obligations remain.
-    assert len(fixture.manifest.slots) == 1
+    assert len(((fixture.manifest.value,))) == 1
     assert fixture.adapter.rollback(fixture.id, rollback_id, max_effects=1) is None
     effect = fixture.journal.next_rollback_effect(fixture.id)
     assert effect.stage is Stage.FINAL_RELEASE
-    transfer = fixture.manifest.slots[effect.slot_index].transfers[effect.transfer_index]
+    transfer = (fixture.manifest.value).transfers[effect.transfer_index]
     request = protocol.ReleaseContainedReference(
         transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.final_hold,
     )

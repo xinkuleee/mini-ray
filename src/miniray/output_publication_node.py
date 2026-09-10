@@ -31,7 +31,7 @@ from .ids import NodeID, WorkerID
 from .output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationConflictError,
     OutputPublicationEnvelope, OutputPublicationError, OutputPublicationID,
-    OutputPublicationManifest, _opaque, _require_type, _sequence, _uint,
+    OutputPublicationManifest, _opaque, _require_type, _uint,
 )
 from .output_publication_journal import (
     OutputPublicationAck, OutputPublicationAckDisposition,
@@ -133,24 +133,21 @@ class OutputPublicationNodeAdapter:
                 self._tickets.remove(publication_id)
 
     def prepare(
-        self, manifest: OutputPublicationManifest, slot_payloads: Tuple[bytes, ...],
+        self, manifest: OutputPublicationManifest, payload: bytes,
     ) -> None:
-        """Validate the whole batch, then resume its first unfinished effect.
+        """Validate the output, then resume its first unfinished effect.
 
         This method does not serialize user values.  A retry must supply the
-        caller-retained manifest and exact streams.  In particular a bad later
-        payload causes no registration, pin or object-store mutation.
+        caller-retained manifest and exact stream.  A bad payload causes no
+        registration, pin or object-store mutation.
         """
         _require_type(manifest, OutputPublicationManifest, "manifest")
         manifest = replace(manifest)
-        payloads = _sequence(slot_payloads, "slot_payloads")
-        if len(payloads) != len(manifest.slots):
-            raise OutputPublicationConflictError("payloads must cover every selected slot")
-        for slot, payload in zip(manifest.slots, payloads):
-            _require_type(payload, bytes, "slot payload")
-            if (len(payload) != slot.size_bytes
-                    or hashlib.sha256(payload).hexdigest() != slot.checksum):
-                raise OutputPublicationConflictError("payload changed its slot manifest")
+        _require_type(payload, bytes, "payload")
+        value = manifest.value
+        if (len(payload) != value.size_bytes
+                or hashlib.sha256(payload).hexdigest() != value.checksum):
+            raise OutputPublicationConflictError("payload changed its output manifest")
         publication_id = manifest.publication_id
         with self._ticket(publication_id):
             self.journal.open(manifest)
@@ -171,14 +168,12 @@ class OutputPublicationNodeAdapter:
                     and all(item.stage is OutputPublicationStage.OWNER_REGISTER
                             for item in self.journal.snapshot(publication_id).intents)):
                 self._test_checkpoint(replace(manifest), OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK)
-            for slot_index, slot in enumerate(manifest.slots):
-                for transfer_index in range(len(slot.transfers)):
-                    self._prepare_pin(publication_id, slot_index, transfer_index)
-            for slot_index, payload in enumerate(payloads):
-                self._materialize(publication_id, slot_index, payload)
-            for slot_index, slot in enumerate(manifest.slots):
-                for transfer_index in range(len(slot.transfers)):
-                    self._promote_pin(publication_id, slot_index, transfer_index)
+            # The journal retains its effect index; the DTO boundary has one value.
+            for transfer_index in range(len(value.transfers)):
+                self._prepare_pin(publication_id, 0, transfer_index)
+            self._materialize(publication_id, 0, payload)
+            for transfer_index in range(len(value.transfers)):
+                self._promote_pin(publication_id, 0, transfer_index)
             if self._test_checkpoint is not None:
                 self._test_checkpoint(replace(manifest), OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
 
@@ -186,10 +181,10 @@ class OutputPublicationNodeAdapter:
         effect = self.journal.begin_prepare(publication_id, slot_index, transfer_index)
         if self.journal.acknowledged(effect):
             return
-        transfer = self._manifest(publication_id).slots[slot_index].transfers[transfer_index]
+        transfer = self._value(self._manifest(publication_id), slot_index).transfers[transfer_index]
         request = protocol.PrepareStoredContainedPin(transfer, transfer.contained_owner_worker_id)
         reply = self._prepare_child(transfer.contained_owner_address, request)
-        expected = self._manifest(publication_id).slots[slot_index].transfers[transfer_index]
+        expected = self._value(self._manifest(publication_id), slot_index).transfers[transfer_index]
         expected_request = protocol.PrepareStoredContainedPin(expected, expected.contained_owner_worker_id)
         self._require_pin_reply(reply, expected_request)
         replay = reply.disposition is StoredContainedReferenceDisposition.ALREADY_PREPARED
@@ -203,9 +198,9 @@ class OutputPublicationNodeAdapter:
             if self.journal.acknowledged(effect):
                 return
             manifest = self._manifest(publication_id)
-            slot = manifest.slots[slot_index]
+            slot = self._value(manifest, slot_index)
             descriptor = protocol.ResultDescriptor(
-                slot.object_id, slot.tier, slot.size_bytes, manifest.header.owner_worker_id,
+                publication_id.object_id, slot.tier, slot.size_bytes, manifest.header.owner_worker_id,
                 manifest.header.node_incarnation.node_id, slot.checksum,
                 payload if slot.tier is protocol.ResultStorage.INLINE else None,
             )
@@ -217,10 +212,10 @@ class OutputPublicationNodeAdapter:
         effect = self.journal.begin_promote(publication_id, slot_index, transfer_index)
         if self.journal.acknowledged(effect):
             return
-        transfer = self._manifest(publication_id).slots[slot_index].transfers[transfer_index]
+        transfer = self._value(self._manifest(publication_id), slot_index).transfers[transfer_index]
         request = protocol.PromoteStoredContainedPin(transfer, transfer.contained_owner_worker_id)
         reply = self._promote_child(transfer.contained_owner_address, request)
-        expected = self._manifest(publication_id).slots[slot_index].transfers[transfer_index]
+        expected = self._value(self._manifest(publication_id), slot_index).transfers[transfer_index]
         expected_request = protocol.PromoteStoredContainedPin(expected, expected.contained_owner_worker_id)
         self._require_pin_reply(reply, expected_request)
         replay = reply.disposition is StoredContainedReferenceDisposition.ALREADY_PROMOTED
@@ -412,19 +407,18 @@ class OutputPublicationNodeAdapter:
             # exact hold. Unknown effects require releases as well as ACKed ones.
             for stage in (OutputPublicationStage.FINAL_RELEASE,
                           OutputPublicationStage.PROVISIONAL_RELEASE):
-                for slot_index, slot in enumerate(manifest.slots):
-                    for transfer_index in range(len(slot.transfers)):
-                        effect = OutputPublicationEffect(
-                            publication_id, manifest.manifest_digest, stage,
-                            slot_index, transfer_index,
-                        )
-                        with self._lock:
-                            acknowledged = effect in self._owner_cleanup_acks
-                        if acknowledged:
-                            continue
-                        reply = self._release_child_hold(effect)
-                        with self._lock:
-                            self._owner_cleanup_acks[replace(effect)] = reply
+                for transfer_index in range(len(manifest.value.transfers)):
+                    effect = OutputPublicationEffect(
+                        publication_id, manifest.manifest_digest, stage,
+                        0, transfer_index,
+                    )
+                    with self._lock:
+                        acknowledged = effect in self._owner_cleanup_acks
+                    if acknowledged:
+                        continue
+                    reply = self._release_child_hold(effect)
+                    with self._lock:
+                        self._owner_cleanup_acks[replace(effect)] = reply
             if cleanup() is not True:
                 return False
             self.journal.retire_owner_death(publication_id, death)
@@ -448,10 +442,10 @@ class OutputPublicationNodeAdapter:
                 # cannot slip behind an acknowledged physical DROP.
                 if self.journal.next_rollback_effect(publication_id) != effect:
                     raise OutputPublicationJournalStateError("slot DROP lost its rollback turn")
-                slot = manifest.slots[effect.slot_index]
+                slot = self._value(manifest, effect.slot_index)
                 if slot.tier is protocol.ResultStorage.OBJECT_STORE:
                     request = protocol.DropObjectReplica(
-                        slot.object_id, publication_id.attempt_id, manifest.header.owner_worker_id,
+                        publication_id.object_id, publication_id.attempt_id, manifest.header.owner_worker_id,
                         manifest.header.node_incarnation.node_id, slot.checksum,
                     )
                     reply = self._drop_replica(replace(effect), request)
@@ -478,7 +472,7 @@ class OutputPublicationNodeAdapter:
         if effect.stage not in (OutputPublicationStage.FINAL_RELEASE,
                                 OutputPublicationStage.PROVISIONAL_RELEASE):
             raise OutputPublicationJournalStateError("child release requires an exact hold stage")
-        transfer = manifest.slots[effect.slot_index].transfers[effect.transfer_index]
+        transfer = self._value(manifest, effect.slot_index).transfers[effect.transfer_index]
         final = effect.stage is OutputPublicationStage.FINAL_RELEASE
         hold = transfer.final_hold if final else transfer.provisional_hold
         request = protocol.ReleaseContainedReference(
@@ -487,7 +481,7 @@ class OutputPublicationNodeAdapter:
         reply = self._release_child(transfer.contained_owner_address, request)
         # Callback input may have been mutated in-process. Read authority again
         # before accepting a release or an independently queried death record.
-        transfer = self._manifest(publication_id).slots[effect.slot_index].transfers[effect.transfer_index]
+        transfer = self._value(self._manifest(publication_id), effect.slot_index).transfers[effect.transfer_index]
         expected_hold = transfer.final_hold if final else transfer.provisional_hold
         if type(reply) is protocol.GetWorkerStateReply:
             return self._require_child_owner_death(reply, transfer.contained_owner_worker_id)
@@ -538,6 +532,14 @@ class OutputPublicationNodeAdapter:
         return self.journal.snapshot(publication_id).manifest
 
     @staticmethod
+    def _value(manifest, slot_index):
+        """Bind the journal's retained effect index to the sole DTO value."""
+        _uint(slot_index, "slot_index")
+        if slot_index != 0:
+            raise OutputPublicationConflictError("slot_index must name the sole output")
+        return manifest.value
+
+    @staticmethod
     def _journal_ack(effect, *, replay=False):
         return OutputPublicationAck(
             effect, OutputPublicationAckDisposition.ALREADY_APPLIED if replay
@@ -558,8 +560,8 @@ class OutputPublicationNodeAdapter:
     def _require_drop_reply(reply, manifest, slot_index):
         _require_type(reply, protocol.DropObjectReplicaReply, "slot DROP reply")
         reply = replace(reply)
-        slot = manifest.slots[slot_index]
-        if (reply.object_id != slot.object_id
+        slot = OutputPublicationNodeAdapter._value(manifest, slot_index)
+        if (reply.object_id != manifest.publication_id.object_id
                 or reply.producer_attempt_id != manifest.publication_id.attempt_id
                 or reply.owner_worker_id != manifest.header.owner_worker_id
                 or reply.node_id != manifest.header.node_incarnation.node_id

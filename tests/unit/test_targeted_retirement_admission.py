@@ -103,7 +103,7 @@ class _Case:
         return (
             core.owner_table.snapshot(self.lost), dict(core._stored_descriptors),
             tuple((transfer, fixture.child_owners[transfer.contained_owner_worker_id]
-                   .snapshot(transfer.contained_object_id)) for transfer in fixture.manifest.slots[0].transfers),
+                   .snapshot(transfer.contained_object_id)) for transfer in (fixture.manifest.value).transfers),
             fixture.handoffs.query(fixture.id), fixture.journal.snapshot(fixture.id),
             fixture.store.used_bytes,
         )
@@ -156,7 +156,7 @@ class _Case:
         assert not core._object_gc_obligations and not getattr(core, "_output_retirement_work", {})
         assert not core.owner_table.has_active_output_retirements()
         fixture.assert_no_pins_or_bytes()
-        for transfer in fixture.manifest.slots[0].transfers:
+        for transfer in (fixture.manifest.value).transfers:
             assert fixture.child_owners[transfer.contained_owner_worker_id].snapshot(
                 transfer.contained_object_id).local_tokens == frozenset(("source-live",))
         assert not core._foreign_lineage_runtime.has_pending_obligations()

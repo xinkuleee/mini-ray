@@ -78,7 +78,7 @@ class _NodeFixture:
         self.events, self.ledger = self.fixture.events, self.fixture.ledger
 
     def prepare(self):
-        request = wire.PrepareOutputPublication(self.manifest, self.values.payloads)
+        request = wire.PrepareOutputPublication(self.manifest, (self.values.payload))
         assert self.node._handle_prepare_output_publication(request).accepted
 
     def complete(self):
@@ -111,14 +111,14 @@ def test_worker_discovers_once_without_rpc_and_preserves_complete_sources(monkey
 
     discovery = worker.worker._output_discovery_session(worker.push, worker.incarnation)
     values = (Once("owned", owned), Once("borrowed", borrowed))
-    batch = discovery.discover((values,))
+    batch = discovery.discover(values)
     assert reductions == ["owned", "borrowed"]
     assert worker.calls == worker.prepares == worker.executions == []
     assert discovery.source_references == (owned, borrowed)
     assert discovery.discovered is batch
     assert batch.manifest.header.node_incarnation == worker.incarnation
-    slot, = batch.manifest.slots
-    assert slot.object_id.return_index == 0
+    slot = (batch.manifest.value)
+    assert (batch.manifest.publication_id).object_id.return_index == 0
     assert slot.tier is (protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE)
     first, second = slot.transfers
     assert first.source == OwnedContainedSource(worker.worker.worker_id)
@@ -127,10 +127,10 @@ def test_worker_discovers_once_without_rpc_and_preserves_complete_sources(monkey
     for transfer in slot.transfers:
         assert transfer.provisional_hold.container_owner_worker_id == worker.worker.worker_id
         assert transfer.final_hold.container_owner_worker_id == worker.push.spec.owner_worker_id
-        assert transfer.final_hold.container_object_id == slot.object_id
-        assert transfer.final_hold.transfer_token.encode() in batch.slot_payloads[0]
+        assert transfer.final_hold.container_object_id == (batch.manifest.publication_id).object_id
+        assert transfer.final_hold.transfer_token.encode() in (batch.payload)
     with pytest.raises(RuntimeError, match="one-shot"):
-        discovery.discover((values,))
+        discovery.discover(values)
     assert reductions == ["owned", "borrowed"]
     discovery.release_sources_after_promotions()
     discovery.release_sources_after_promotions()
@@ -154,17 +154,17 @@ def test_invalid_borrowed_handle_is_rejected_during_zero_effect_discovery(
     setattr(child, field, True if invalid == "closed" else None)
     discovery = worker.worker._output_discovery_session(worker.push, worker.incarnation)
     with pytest.raises(error, match=detail):
-        discovery.discover((child,))
+        discovery.discover(child)
     assert discovery.discovered is None and discovery.source_references == ()
     assert worker.calls == worker.executions == reductions == []
     with pytest.raises(RuntimeError, match="one-shot"):
-        discovery.discover((child,))
+        discovery.discover(child)
 
 
 @pytest.mark.parametrize("invalid", ("source", "token", "released", "dead-executor"))
 def test_child_owner_rejects_stale_or_rebound_borrowed_capability_without_a_pin(invalid):
     node = _NodeFixture()
-    transfer = node.manifest.slots[0].transfers[1]
+    transfer = (node.manifest.value).transfers[1]
     table = node.child_owners[transfer.contained_owner_worker_id]
     assert isinstance(transfer.source, BorrowedContainedSource)
     if invalid == "source":
@@ -211,7 +211,7 @@ def test_node_owns_owner_prepare_materialize_promote_order(monkeypatch, stored):
     assert node.fixture.handoffs.query(node.id).manifest == node.manifest
     assert node.fixture.handoffs.query(node.id).complete is None
     assert node.record.state is protocol.LeaseExecutionState.RUNNING
-    for transfer in node.manifest.slots[0].transfers:
+    for transfer in (node.manifest.value).transfers:
         holds = node.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
         assert transfer.final_hold in holds and transfer.provisional_hold not in holds
     assert node.complete() == node.values.envelope
@@ -259,7 +259,7 @@ def test_worker_ack_loss_keeps_once_bytes_and_exact_borrower_source(monkeypatch,
     def lose_ack(request):
         lost_requests.append(request)
         assert worker.key not in worker.worker._replies
-        assert worker.pending.outputs.manifest.slots[0].transfers[0].source == source
+        assert (worker.pending.outputs.manifest.value).transfers[0].source == source
         if phase == "prepare":
             assert not child.closed and worker.pending.nested_imports is imports
         else:
@@ -282,7 +282,7 @@ def test_worker_ack_loss_keeps_once_bytes_and_exact_borrower_source(monkeypatch,
     assert worker.executions == reductions == [True]
     assert child.closed and child.closes == 1
     assert all(request == worker.prepares[0] for request in worker.prepares)
-    assert all(request.slot_payloads == batch.slot_payloads for request in worker.prepares)
+    assert all((request.payload) == (batch.payload) for request in worker.prepares)
     handler = wire.PREPARE_OUTPUT_PUBLICATION_HANDLER if phase == "prepare" else COMPLETE_WORKER_LEASE_HANDLER
     assert all(request == lost_requests[0] for called, request in worker.calls if called == handler)
     assert not hasattr(reply, "inline_publication")
@@ -316,7 +316,7 @@ def test_wrong_batch_ack_cannot_advance_to_complete_or_release_sources(monkeypat
 def test_batch_digest_binds_child_source_and_tier_before_any_replay_effect(changed):
     node = _NodeFixture()
     node.prepare()
-    last = node.manifest.slots[0]
+    last = (node.manifest.value)
     if changed == "source":
         transfer = last.transfers[1]
         last = replace(last, transfers=(last.transfers[0], replace(
@@ -324,12 +324,12 @@ def test_batch_digest_binds_child_source_and_tier_before_any_replay_effect(chang
         )))
     else:
         last = replace(last, tier=protocol.ResultStorage.INLINE)
-    changed_manifest = OutputPublicationManifest.create(node.manifest.header, (last,))
+    changed_manifest = OutputPublicationManifest.create(node.manifest.header, last)
     assert changed_manifest.publication_id == node.id
     assert changed_manifest.manifest_digest != node.manifest.manifest_digest
     before = node.journal.snapshot(node.id), tuple(node.events), node.store.used_bytes
     with pytest.raises(OutputPublicationConflictError):
-        node.adapter.prepare(changed_manifest, node.values.payloads)
+        node.adapter.prepare(changed_manifest, (node.values.payload))
     assert (node.journal.snapshot(node.id), tuple(node.events), node.store.used_bytes) == before
     assert node.complete() == node.values.envelope
 

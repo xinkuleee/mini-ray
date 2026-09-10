@@ -18,7 +18,7 @@ from miniray.core import _OutputNodeLossObligation
 from miniray.ids import LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationHeader, OutputPublicationID,
-    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import ObjectOwnerTable, ObjectState
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
@@ -51,14 +51,11 @@ def test_closed_admission_preserves_accepted_output_until_exact_cleanup_and_fini
         ContainedReferenceHold(ref.object_id, core.worker_id, "shutdown-child"),
     )
     identity = OutputPublicationID(_id(LeaseID, 94), pending.execution)
-    slot = OutputSlotManifest(
-        ref.object_id, protocol.ResultStorage.INLINE, 5, hashlib.sha256(b"value").hexdigest(),
-        (transfer,) if refs else (),
-    )
+    slot = (OutputValue(protocol.ResultStorage.INLINE, 5, hashlib.sha256(b'value').hexdigest(), (transfer,) if refs else ()))
     manifest = OutputPublicationManifest.create(OutputPublicationHeader(
         identity, core.job_id, executor, core.worker_id,
         OutputPublicationNodeIncarnation(publisher, 9201, 1),
-    ), (slot,))
+    ), slot)
     complete = OutputPublicationCompleteWitness.for_manifest(manifest)
     request = wire.RegisterOutputHandoff(manifest)
     registered = core.register_output_handoff(request)

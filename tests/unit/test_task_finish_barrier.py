@@ -189,14 +189,14 @@ class _OutputBackend:
             OutputPublicationNodeIncarnation(self.core.node_id, 3001, 1),
         )
         discovery = OutputDiscoverySession(header, inline_threshold=0 if stored else 128)
-        outputs = discovery.discover((value,))
-        assert all(len(payload) <= 128 for payload in outputs.slot_payloads)
-        assert all(not slot.transfers for slot in outputs.manifest.slots)
+        outputs = discovery.discover(value)
+        assert (len(outputs.payload) <= 128)
+        assert (not outputs.manifest.value.transfers)
         _assert_metadata(outputs.manifest)
         assert discovery.source_references == ()
         token = AllocationToken("finish-lease-{}".format(len(self.completed)))
         self.ledger.allocate(ResourceVector({"CPU": 1}), token)
-        self.adapter.prepare(outputs.manifest, outputs.slot_payloads)
+        self.adapter.prepare(outputs.manifest, (outputs.payload))
         discovery.release_sources_after_promotions()
 
         def complete_lease(witness):
@@ -214,7 +214,7 @@ class _OutputBackend:
         _assert_metadata(self.handoff_snapshot(identity))
         reply = protocol.TaskReply(
             pending.task_id, pending.spec.attempt_id, self.executor,
-            protocol.TaskReplyStatus.SUCCEEDED, envelope.results,
+            protocol.TaskReplyStatus.SUCCEEDED, ((envelope.result,)),
             output_publication=envelope,
         )
         assert self.core._publish_reply(
@@ -224,7 +224,7 @@ class _OutputBackend:
         assert not self.journal.snapshot(identity).retained_result_slots
         assert self.handoff_snapshot(identity).adoption.complete == envelope.complete
         assert self.core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
-        return envelope.results
+        return ((envelope.result,))
 
     def lose(self, pending):
         for object_id in pending.output_ids:

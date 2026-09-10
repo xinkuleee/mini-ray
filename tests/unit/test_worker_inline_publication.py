@@ -38,7 +38,7 @@ def test_inline_result_serializes_once_and_orders_prepare_complete_then_cache(mo
         assert f.key not in f.worker._replies and f.key not in f.worker._completion_acked
         assert f.pending.nested_imports is imports and not child.closed
         assert f.pending.outputs.manifest == request.manifest
-        assert f.pending.outputs.slot_payloads == request.slot_payloads
+        assert (f.pending.outputs.payload) == (request.payload)
         prepared_records.append(f.pending)
         return wire.PreparedOutputPublicationReply(request.request_identity, True)
 
@@ -55,7 +55,7 @@ def test_inline_result_serializes_once_and_orders_prepare_complete_then_cache(mo
     assert f.executions == reductions == [True]
     assert reply is f.worker._replies[f.key]
     assert reply.output_publication == f.complete_envelope
-    assert reply.results == f.complete_envelope.results
+    assert reply.results == ((f.complete_envelope.result,))
     assert len(reply.results) == 1 and reply.results[0].storage is protocol.ResultStorage.INLINE
     assert not hasattr(reply, "contained_edges")
     assert not hasattr(reply, "stored_publication") and not hasattr(reply, "inline_publication")
@@ -176,13 +176,13 @@ def test_complete_rejects_same_execution_with_changed_inline_payload_and_manifes
         original = _envelope(f.prepared_request)
         expected.append(original)
         data = original.results[0].inline_data + b"changed"
-        slot = replace(original.manifest.slots[0], size_bytes=len(data),
+        slot = replace((original.manifest.value), size_bytes=len(data),
                        checksum=hashlib.sha256(data).hexdigest())
-        manifest = OutputPublicationManifest.create(original.manifest.header, (slot,))
+        manifest = OutputPublicationManifest.create(original.manifest.header, slot)
         result = replace(original.results[0], size_bytes=slot.size_bytes,
                          checksum=slot.checksum, inline_data=data)
         changed = OutputPublicationEnvelope(
-            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (result,),
+            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (result[0]),
         )
         assert changed.publication_id == original.publication_id
         assert changed.manifest.manifest_digest != original.manifest.manifest_digest
@@ -303,7 +303,7 @@ def test_worker_handler_map_forwards_contained_pin_to_existing_core_only(monkeyp
     name = PREPARE_STORED_CONTAINED_PIN_HANDLER if operation == "prepare" else PROMOTE_STORED_CONTAINED_PIN_HANDLER
     request_type = protocol.PrepareStoredContainedPin if operation == "prepare" else protocol.PromoteStoredContainedPin
     handler = handlers[name]
-    transfer = values.slots[0].transfers[0]
+    transfer = (values.value).transfers[0]
     request = request_type(transfer, values.executor)
     reply = handler(request)
     assert type(reply) is protocol.StoredContainedPinReply
@@ -311,7 +311,7 @@ def test_worker_handler_map_forwards_contained_pin_to_existing_core_only(monkeyp
     assert calls == [request] and server._embedded_core is core
 
     # Fully valid foreign-owner transfer still cannot cross this endpoint.
-    foreign = request_type(values.slots[0].transfers[1], values.foreign_owner)
+    foreign = request_type((values.value).transfers[1], values.foreign_owner)
     assert foreign.authority_worker_id != server.worker_id
     wrong = handler(foreign)
     assert wrong.request == foreign and not wrong.accepted

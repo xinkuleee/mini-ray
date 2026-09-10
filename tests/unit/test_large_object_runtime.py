@@ -95,8 +95,8 @@ def test_worker_large_result_reply_contains_descriptor_not_bytes(monkeypatch) ->
         COMPLETE_WORKER_LEASE_HANDLER,
     ]
     (prepare,) = fixture.prepares
-    assert prepare.slot_payloads == (cloudpickle.dumps(value),)
-    assert backend.store.get(result.object_id) == prepare.slot_payloads[0]
+    assert (prepare.payload) == (cloudpickle.dumps(value))
+    assert backend.store.get(result.object_id) == (prepare.payload)
     assert backend.completions == [reply.output_publication.complete]
     assert backend.ledger.available == ResourceVector({"CPU": 1})
     assert fixture.worker._handle_push_task(fixture.push) is reply

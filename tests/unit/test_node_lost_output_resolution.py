@@ -19,7 +19,7 @@ from miniray.output_handoff import (
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope,
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import (
     ObjectOwnerTable, ObjectState, OutputOwnerPublicationConflictError,
@@ -27,7 +27,7 @@ from miniray.ownership import (
 )
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 
 
 pytestmark = pytest.mark.unit
@@ -51,7 +51,7 @@ class _Fixture:
             protocol.FunctionKey(self.job, __name__, "fixture", "1"),
             (), 1, ResourceVector(), self.owner,
         )
-        self.execution = TaskExecutionKey.from_task_spec(self.spec)
+        self.execution = TaskExecution.from_task_spec(self.spec)
         self.identity = OutputPublicationID(_id(LeaseID, 6), self.execution)
         self.child = ObjectID.for_task(_id(TaskID, 7))
         self.transfer = PreparedContainedTransfer(
@@ -62,23 +62,20 @@ class _Fixture:
         )
         self.payload = b"retained result"
         tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
-        self.slot = OutputSlotManifest(
-            self.output, tier, len(self.payload), hashlib.sha256(self.payload).hexdigest(),
-            (self.transfer,),
-        )
+        (self.value) = (OutputValue(tier, len(self.payload), hashlib.sha256(self.payload).hexdigest(), (self.transfer,)))
         self.manifest = OutputPublicationManifest.create(
             OutputPublicationHeader(
                 self.identity, self.job, self.executor, self.owner,
                 OutputPublicationNodeIncarnation(self.node, 1001, 2),
             ),
-            (self.slot,),
+            (self.value),
         )
         self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
         self.descriptor = protocol.ResultDescriptor(
-            self.output, tier, self.slot.size_bytes, self.owner, self.node,
-            self.slot.checksum, None if stored else self.payload,
+            self.output, tier, (self.manifest.value).size_bytes, self.owner, self.node,
+            (self.manifest.value).checksum, None if stored else self.payload,
         )
-        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (self.descriptor,))
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, (self.descriptor))
         self.plan = OutputOwnerPublicationPlan(self.execution, self.envelope)
         self.death = protocol.NodeDeathRecord(
             "publisher-exit", self.node, 1001, 2, 3, 1,
@@ -209,7 +206,7 @@ def test_stored_survivor_cannot_be_discarded_and_keep_preserves_descriptor_and_h
     assert snapshot.locations == frozenset({survivor})
     assert snapshot.canonical_stored_result == f.descriptor
     assert f.table.output_owner_result(f.output) == f.descriptor
-    assert snapshot.outgoing_contained_edges == frozenset(f.slot.edges)
+    assert snapshot.outgoing_contained_edges == frozenset((f.manifest.value).edges)
     assert f.child_table.snapshot(f.child) == child_before
 
 

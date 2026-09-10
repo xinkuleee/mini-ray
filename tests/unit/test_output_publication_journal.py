@@ -22,7 +22,7 @@ from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, Wor
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationConflictError,
     OutputPublicationEnvelope, OutputPublicationHeader, OutputPublicationID,
-    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.output_publication_journal import (
     OutputPublicationAck, OutputPublicationAckDisposition,
@@ -34,7 +34,7 @@ from miniray.output_publication_journal import (
 from miniray.publication_sources import (
     BorrowedContainedSource, OwnedContainedSource, PreparedContainedTransfer,
 )
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 pytestmark = pytest.mark.unit
 
@@ -71,15 +71,13 @@ class _Fixture:
         self.owner, executor = _id(WorkerID, 6), _id(WorkerID, 5)
         task = _id(TaskID, 2)
         self.id = OutputPublicationID(
-            _id(LeaseID, 4), TaskExecutionKey(
-                TaskOutputManifest.for_task(task, 1), AttemptID(task, 3),
-            ),
+            _id(LeaseID, 4), (TaskExecution(AttemptID(task, 3))),
         )
         header = OutputPublicationHeader(
             self.id, _id(JobID, 1), executor, self.owner,
             OutputPublicationNodeIncarnation(_id(NodeID, 8), 1701, 2),
         )
-        self.object_id = self.id.output_ids[0]
+        self.object_id = (self.id.object_id)
         source_task = _id(TaskID, 11)
         original_source = protocol.TaskHoldSource(protocol.TaskReferenceHold(
             protocol.TaskReferenceHoldKind.RETAINED, executor, source_task,
@@ -103,18 +101,15 @@ class _Fixture:
             )
         self.payload = b"single-result"
         tier = protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE
-        slot = OutputSlotManifest(
-            self.object_id, tier, len(self.payload),
-            hashlib.sha256(self.payload).hexdigest(), transfers,
-        )
-        self.manifest = OutputPublicationManifest.create(header, (slot,))
+        value = (OutputValue(tier, len(self.payload), hashlib.sha256(self.payload).hexdigest(), transfers))
+        self.manifest = OutputPublicationManifest.create(header, value)
         self.witness = OutputPublicationCompleteWitness.for_manifest(self.manifest)
         self.result = protocol.ResultDescriptor(
             self.object_id, tier, len(self.payload), self.owner,
-            header.node_incarnation.node_id, slot.checksum,
+            header.node_incarnation.node_id, value.checksum,
             None if stored else self.payload,
         )
-        self.envelope = OutputPublicationEnvelope(self.manifest, self.witness, (self.result,))
+        self.envelope = OutputPublicationEnvelope(self.manifest, self.witness, (self.result))
         self.journal = OutputPublicationJournal()
         assert self.journal.open(self.manifest)
 
@@ -126,7 +121,7 @@ class _Fixture:
 
     def prepare(self):
         self.register()
-        for index in range(len(self.manifest.slots[0].transfers)):
+        for index in range(len((self.manifest.value).transfers)):
             self.journal.ack_prepared(OutputPublicationAck(self.journal.begin_prepare(self.id, 0, index)))
 
     def materialize(self):
@@ -137,7 +132,7 @@ class _Fixture:
 
     def promote(self):
         self.materialize()
-        for index in range(len(self.manifest.slots[0].transfers)):
+        for index in range(len((self.manifest.value).transfers)):
             self.journal.ack_promoted(OutputPublicationAck(self.journal.begin_promote(self.id, 0, index)))
 
     def complete(self):
@@ -174,7 +169,12 @@ def test_single_output_journal_replays_inline_and_stored_with_or_without_childre
     assert not snapshot.ready_to_complete
     assert journal.materialized_result(f.id, 0) == f.result
     with journal.linearize(f.id):
-        assert journal.complete(f.id, f.witness) == f.envelope
+        replay = journal.complete(f.id, f.witness)
+        assert replay == f.envelope
+        assert replay.result == f.result
+        assert not hasattr(replay, 'results')
+        assert not hasattr(replay.manifest, 'slots')
+        assert not hasattr(replay.publication_id, 'output_ids')
     assert journal.publication_ids() == (f.id,)
     assert {effect.stage for effect in snapshot.intents} == (
         {Stage.OWNER_REGISTER, Stage.PREPARE, Stage.MATERIALIZE, Stage.PROMOTE}
@@ -254,9 +254,16 @@ def test_wrong_manifest_stage_indices_and_descriptor_have_zero_mutation():
         journal.ack_prepared(OutputPublicationAck(replace(effect, manifest_digest="ab" * 32)))
     with pytest.raises(OutputPublicationConflictError, match="another stage"):
         journal.ack_promoted(OutputPublicationAck(effect))
-    for slot, child in ((1, 0), (0, 2), (True, 0), (-1, 0)):
+    for slot, child in ((1, 0), (0, 2), (True, 0), (-1, 0), (None, 0),
+                        (0, True), (0, -1), (0, None), (0, 1 << 64)):
         with pytest.raises((OutputPublicationConflictError, ValueError)):
             journal.begin_prepare(f.id, slot, child)
+    for slot in ((1, True, -1, None, 1 << 64)):
+        for call in (lambda: journal.begin_materialize(f.id, slot),
+                     lambda: journal.begin_promote(f.id, slot, 0),
+                     lambda: journal.materialized_result(f.id, slot)):
+            with pytest.raises((OutputPublicationConflictError, ValueError)):
+                call()
     assert journal.snapshot(f.id) == before
     f.prepare()
     materialize = journal.begin_materialize(f.id, 0)
@@ -476,7 +483,7 @@ def test_open_conflict_unknown_identity_and_mutated_inputs_fail_closed():
     journal = f.journal
     before = journal.snapshot(f.id)
     changed = OutputPublicationManifest.create(
-        f.manifest.header, (replace(f.manifest.slots[0], checksum="ab" * 32),),
+        f.manifest.header, (replace(f.manifest.value, checksum='ab' * 32)),
     )
     with pytest.raises(OutputPublicationConflictError, match="manifest was rebound"):
         journal.open(changed)
@@ -525,8 +532,8 @@ def test_snapshots_and_data_plane_returns_do_not_alias_journal_authority():
     journal = f.journal
     envelope = f.complete()
     snapshot = journal.snapshot(f.id)
-    object.__setattr__(snapshot.manifest.slots[0], "checksum", "ab" * 32)
-    object.__setattr__(envelope.results[0], "inline_data", b"changed")
+    object.__setattr__((snapshot.manifest.value), "checksum", "ab" * 32)
+    object.__setattr__((envelope.result), "inline_data", b"changed")
     cached = journal.materialized_result(f.id, 0)
     object.__setattr__(cached, "inline_data", b"changed-again")
     assert journal.complete(f.id, f.witness) == f.envelope

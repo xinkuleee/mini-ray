@@ -241,7 +241,7 @@ def _node_process_with_adopted_cleanup_observation(*args):
             assert node._output_publications.owner_death_finished(identity)
             assert finalized == {identity: (spawned[0][2], wire.FinalizeOutputOwnerDeath(snapshot.manifest, death))}
             assert node._output_publication_journal._records[identity].owner_death == death
-            assert identity.output_ids[0] not in node._sealed_metadata
+            assert ((identity.object_id,))[0] not in node._sealed_metadata
     finally:
         node_type._spawn_worker_process = actual_spawn
         node_type._handle_ack_output_publication_adopted = actual_ack
@@ -291,7 +291,7 @@ def test_adopted_output_owner_death_cleans_live_executor_and_source_holds():
         assert foreign.owner_worker_id == owner_node.worker_id
         assert foreign.owner_address == owner_node.worker_address
         assert foreign.borrower_token is not None
-        assert publication_id.output_ids == (foreign.object_id,)
+        assert ((publication_id.object_id,)) == (foreign.object_id,)
         assert publication_id.attempt_id == AttemptID(foreign.object_id.task_id, 0)
 
         def adopted():
@@ -307,8 +307,8 @@ def test_adopted_output_owner_death_cleans_live_executor_and_source_holds():
         assert manifest.header.node_incarnation.node_id == producer_node.node_id
         assert manifest.header.node_incarnation.node_pid == producer_node.node_pid
         assert before.adoption.owner_worker_id == owner_node.worker_id
-        assert len(manifest.slots) == 1
-        slot = manifest.slots[0]
+        assert len(((manifest.value,))) == 1
+        slot = (manifest.value)
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE
         assert len(_PADDING) < slot.size_bytes < 32 * 1024
         assert len(slot.transfers) == 1

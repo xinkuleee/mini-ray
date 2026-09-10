@@ -33,8 +33,8 @@ def test_owner_cas_receipt_restores_inline_custody_for_node_loss_after_scratch_c
     try:
         assert not core._publish_reply(pending, reply, expected_node_id=node.node_id, expected_lease_id=identity.lease_id)
         before = core.owner_table.snapshot(pending.object_id)
-        assert before.state is ObjectState.READY_INLINE and before.inline_data == fixture.values.payloads[0]
-        assert core.owner_table.output_owner_result(pending.object_id) == envelope.results[0]
+        assert before.state is ObjectState.READY_INLINE and before.inline_data == (fixture.values.payload)
+        assert core.owner_table.output_owner_result(pending.object_id) == (envelope.result)
         assert core.owner_table.output_owner_publication(pending.object_id).manifest == envelope.manifest
         # Match the original recovery boundary: drop only transient custody,
         # retaining the real CAS receipt, owner bytes, handoff and finish marker.
@@ -74,7 +74,7 @@ def test_actual_complete_envelope_survives_missing_owner_terminal_report(reporte
         monkeypatch.setattr(core, "_retry_system_failure", lambda *_a, **_k: pytest.fail("actual Complete became ordinary retry"))
         assert core._drive_output_node_loss(pending, _OutputNodeLossObligation(identity, death, envelope))
         after = core.owner_table.snapshot(pending.object_id)
-        assert after.state is ObjectState.READY_INLINE and after.inline_data == fixture.values.payloads[0]
+        assert after.state is ObjectState.READY_INLINE and after.inline_data == (fixture.values.payload)
         assert fixture.handoffs.query(identity).complete == envelope.complete
         assert core._recovery.task_record(pending.task_id).retries_started == 0
         assert core._finish_pending_task(pending)

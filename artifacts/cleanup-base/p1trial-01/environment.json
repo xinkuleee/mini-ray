@@ -1,0 +1,70 @@
+{
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-libc",
+  "packages": {
+    "pytest": "8.4.2",
+    "cloudpickle": "3.1.2",
+    "packaging": "26.3",
+    "pluggy": "1.6.0",
+    "iniconfig": "2.3.0",
+    "pygments": "2.21.0"
+  },
+  "source": {
+    "branch": "refs/heads/teaching-base",
+    "head": "42ed62d7231d17d3b7f703670a357c509183e853",
+    "working_tree_status": " M docs/cleanup-progress.md\n M docs/current-status.md\n M docs/project-cleanup-plan.md\n M scripts/baseline_manifest.json\n M src/miniray/core.py\n M src/miniray/foreign_lineage_runtime.py\n M src/miniray/node.py\n M src/miniray/owner_service.py\n M src/miniray/ownership.py\n M src/miniray/worker.py\n M tests/integration/test_core_reconstruction_concurrency.py\n M tests/support/_contained_output.py\n M tests/unit/_pure_core.py\n D tests/unit/_pure_node_output.py\n D tests/unit/_unified_worker_rpc.py\n M tests/unit/test_abandoned_dependency_interleavings.py\n M tests/unit/test_abandoned_dependency_node.py\n M tests/unit/test_abandoned_dependency_protocol.py\n M tests/unit/test_abandoned_replica_owner.py\n M tests/unit/test_cancelled_grant_inventory.py\n M tests/unit/test_common_cleanup_progress.py\n M tests/unit/test_core_late_replica_cleanup.py\n M tests/unit/test_core_lease_locality.py\n M tests/unit/test_core_node_death_recovery.py\n M tests/unit/test_core_output_publication.py\n M tests/unit/test_core_output_surviving_replica.py\n M tests/unit/test_core_owner_integration.py\n M tests/unit/test_core_placement_group_scheduling.py\n M tests/unit/test_core_worker_crash_recovery.py\n M tests/unit/test_core_worker_death_consumer.py\n M tests/unit/test_drop_object_replica.py\n M tests/unit/test_foreign_stored_object_refs.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_foreign_wait_drop.py\n M tests/unit/test_inline_recovery.py\n M tests/unit/test_large_object_runtime.py\n M tests/unit/test_lease_cancellation.py\n M tests/unit/test_lease_completion_handshake.py\n M tests/unit/test_local_reference_lifecycle.py\n M tests/unit/test_local_replica_handoff.py\n M tests/unit/test_multi_owner_location_handoff.py\n M tests/unit/test_node_actor_lifecycle.py\n M tests/unit/test_node_blocking_get_authority.py\n M tests/unit/test_node_dependency_pull.py\n M tests/unit/test_node_lease_execution.py\n M tests/unit/test_node_membership_snapshot.py\n M tests/unit/test_node_placement_group_runtime.py\n M tests/unit/test_node_replica_deletion_fence.py\n M tests/unit/test_node_resource_terminal.py\n M tests/unit/test_node_shutdown_drain.py\n M tests/unit/test_node_worker_death_runtime.py\n M tests/unit/test_owner_reconstruction_completion_race.py\n M tests/unit/test_owner_service.py\n M tests/unit/test_pg_retry_atomicity.py\n M tests/unit/test_pregrant_dependency_custody.py\n M tests/unit/test_put_reference_runtime.py\n M tests/unit/test_put_runtime.py\n M tests/unit/test_spillback_runtime.py\n M tests/unit/test_stored_physical_gc.py\n M tests/unit/test_task_finish_barrier.py\n M tests/unit/test_task_output_seal_cleanup.py\n M tests/unit/test_worker_completion_paths.py\n M tests/unit/test_worker_crash_supervisor.py\n M tests/unit/test_worker_local_dependencies.py\n M tests/unit/test_worker_nested_task_arguments.py\n M tests/unit/test_worker_pool_node.py\n M tests/unit/test_worker_push_obligations.py\n M tests/unit/test_worker_retry_failpoint.py\n M tests/unit/test_worker_side_core_contract.py\n?? artifacts/cleanup-base/k4/\n?? artifacts/cleanup-base/k4a/\n?? artifacts/cleanup-base/k4b/\n?? artifacts/cleanup-base/k4c/\n?? tests/support/_worker_protocol.py\n",
+    "archive_sha256": "c4d43d232b34919af1ba7bf194e9e081f872a8df72b55cfab57e3fbafb7ed450",
+    "file_count": 419,
+    "mode": "isolated P1 trial: raw current K4 base + frozen minimal overlay + static reviewed hash refresh; not applied or tested",
+    "evaluation_root": "C:/Users/t-hdong/Desktop/gao/audit/p1-evaluation",
+    "base_root": "C:/Users/t-hdong/Desktop/gao/mini-ray-base",
+    "base_dirty_patch_sha256": "4b3b7c3c356dd3770a22f5f12dce3ce07e5490b93354b432d937ac2e3c2bb66b",
+    "base_files_tree_sha256": "12aa13dd5683bd27166a375bc48ecb1c6fefb2045d66d42eedd843f48c0f13f7",
+    "p1_patch_sha256": "4abe790ee7c5f3132db60e78f3a0897d78cdd724a54591c4823f723c62716f8f",
+    "p1_file_hashes_sha256": "c7af1bf0c688198f26efbd2eeff666b67028150e42a76cdf737669e79d8523b7",
+    "overlay_file_count": 121,
+    "assembly_record_sha256": "1e2d7db25a5b990dafbbe3fdc4113f65789bf575e05178cb1c9a0c6c5bda49ec",
+    "reviewed_migrations": 311,
+    "delivery_gate": {
+      "pure_files": 26,
+      "smokes": 32
+    },
+    "manifest_gate_and_selector_unchanged": true,
+    "renamed_tests_whole_registered": [
+      {
+        "path": "tests/unit/test_output_discovery.py",
+        "removed_names": [
+          "test_abort_clears_local_custody_without_mutating_the_returned_data_plane_batch",
+          "test_discovered_payload_batch_rejects_partial_or_corrupted_streams",
+          "test_discovery_metadata_and_payloads_are_separate_and_wire_roundtrip_exact",
+          "test_invalid_live_source_fails_before_a_batch_or_remote_effect_exists",
+          "test_wrong_selected_manifest_shape_never_invokes_any_reducer"
+        ],
+        "new_names": [
+          "test_abort_clears_local_custody_without_mutating_the_prepared_output",
+          "test_discovery_metadata_and_payload_are_separate_and_wire_roundtrip_exact",
+          "test_invalid_live_source_fails_before_an_output_or_remote_effect_exists",
+          "test_prepared_output_rejects_payload_containers_without_invoking_reducers",
+          "test_prepared_output_rejects_truncated_corrupted_or_mutable_bytes"
+        ],
+        "whole_registered": true
+      },
+      {
+        "path": "tests/unit/test_output_publication.py",
+        "removed_names": [
+          "test_slot_rejects_malformed_leaf_values",
+          "test_slot_rejects_wrong_container_and_conflicting_duplicate_hold"
+        ],
+        "new_names": [
+          "test_value_rejects_malformed_leaf_values",
+          "test_value_rejects_wrong_container_and_conflicting_duplicate_hold"
+        ],
+        "whole_registered": true
+      }
+    ],
+    "manifest_sha256": "e352b59ac8c23196aabd35ebc97b09d28d7cbce75d269172e82be9ff32d63d81",
+    "retired_helper_absent": true,
+    "pytest_run": false
+  },
+  "selection_mode": "case"
+}

@@ -126,7 +126,7 @@ def test_publication_replay_survives_other_bundle_node_loss_before_dispatch(lost
         assert outputs.journal.snapshot(identity).complete == reply.output_publication.complete
         assert core._output_handoff_table().query(identity).complete is None
         assert outputs.discoveries == len(outputs.completions) == 1
-        assert sum(slot.size_bytes for slot in reply.output_publication.manifest.slots) < 1024
+        assert (reply.output_publication.manifest.value.size_bytes) < 1024
         lost = []
         calls = []
         handoffs = core._output_handoff_table()

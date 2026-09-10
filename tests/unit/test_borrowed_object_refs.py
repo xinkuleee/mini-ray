@@ -178,7 +178,7 @@ def test_worker_plain_result_does_not_require_server_or_embedded_core(monkeypatc
     assert not hasattr(worker, "_server")
     assert result.storage is protocol.ResultStorage.INLINE
     assert reply.output_publication == fixture.complete_envelope
-    assert reply.output_publication.manifest.slots[0].transfers == ()
+    assert (reply.output_publication.manifest.value).transfers == ()
     assert backend.store.used_bytes == 0
     assert backend.completions == [reply.output_publication.complete]
     assert worker._handle_push_task(fixture.push) is reply
@@ -253,7 +253,7 @@ class _BorrowerLoadFixture:
         assert self.owner._finish_pending_task(self.pending)
         assert self.take(self.owner) == ()
         self.payload = self.owner.owner_table.snapshot(self.outer.object_id).inline_data
-        assert self.payload == output.outputs.slot_payloads[0]
+        assert self.payload == (output.outputs.payload)
         assert not self.journal.snapshot(self.envelope.publication_id).retained_result_slots
 
     def borrow_rpc(self, address, handler, message):

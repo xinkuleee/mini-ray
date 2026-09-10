@@ -207,8 +207,8 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         assert (arrival.node_id, arrival.node_pid, arrival.registration_epoch) == (
             victim.node_id, victim.node_pid, runtime.nodes[1].registration_epoch,
         )
-        assert publication.task_id == object_id.task_id and publication.output_ids == (object_id,)
-        assert publication.full_output_ids == (object_id,) and publication.attempt_id == AttemptID(object_id.task_id, 0)
+        assert publication.task_id == object_id.task_id and ((publication.object_id,)) == (object_id,)
+        assert ((publication.object_id,)) == (object_id,) and publication.attempt_id == AttemptID(object_id.task_id, 0)
         _assert_metadata_only(arrival)
         before = _handoff(runtime.owner_service.address, publication, deadline)
         manifest = before.manifest
@@ -221,8 +221,8 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
                 manifest.header.node_incarnation.registration_epoch) == (
             victim.node_id, victim.node_pid, arrival.registration_epoch,
         )
-        slot, = manifest.slots
-        assert slot.object_id == object_id and slot.tier is protocol.ResultStorage.OBJECT_STORE
+        slot = (manifest.value)
+        assert (manifest.publication_id).object_id == object_id and slot.tier is protocol.ResultStorage.OBJECT_STORE
         assert len(_PADDING) < slot.size_bytes < 32 * 1024
         transfer, = slot.transfers
         assert type(transfer.source) is BorrowedContainedSource
@@ -356,7 +356,7 @@ def test_armed_unknown_borrowed_output_releases_old_holds_before_retrying_same_l
         assert next_member.manifest.header.executor_worker_id == survivor.worker_id
         assert next_member.manifest.header.owner_worker_id == core.worker_id
         assert next_member.manifest.header.node_incarnation.node_id == survivor.node_id
-        next_transfer, = next_member.slot.transfers
+        next_transfer, = (next_member.manifest.value).transfers
         assert next_transfer.contained_object_id == source_id
         assert next_transfer.contained_owner_worker_id == core.worker_id
         assert type(next_transfer.source) is BorrowedContainedSource

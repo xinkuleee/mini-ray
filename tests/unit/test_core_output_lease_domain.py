@@ -146,7 +146,7 @@ def test_pre_push_loss_queries_one_output_domain_before_budgeted_retry(phase, mo
         queries.append(identity)
         expected_lease = received_leases[0].lease_id if received_leases else lease
         assert identity == OutputPublicationID(expected_lease, pending.execution)
-        assert identity.output_ids == (ref.object_id,)
+        assert ((identity.object_id,)) == (ref.object_id,)
         assert core.owner_table.snapshot(ref.object_id) == before_owner
         assert core._recovery.task_record(pending.task_id) == before_record
         assert core._task_finish_barriers == {ref.object_id: pending}

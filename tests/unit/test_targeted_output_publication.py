@@ -107,7 +107,7 @@ def test_known_complete_without_bytes_finishes_without_republishing(monkeypatch,
         resolution = core.owner_table._output_loss_receipts[fixture.id]
         assert resolution.complete == reply.output_publication.complete and not resolution.keep
         assert len(resolution.cleanup) == 4
-        for transfer in fixture.manifest.slots[0].transfers:
+        for transfer in (fixture.manifest.value).transfers:
             child = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
             assert transfer.final_hold not in child.contained_holds
             assert transfer.provisional_hold not in child.contained_holds

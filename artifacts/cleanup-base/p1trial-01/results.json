@@ -1,0 +1,66 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 1,
+    "seconds": 10.217,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p1trial-01/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_discovery.py",
+    "exit_code": 0,
+    "seconds": 5.97,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p1trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_discovery.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication.py",
+    "exit_code": 0,
+    "seconds": 7.831,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p1trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_protocol.py",
+    "exit_code": 0,
+    "seconds": 5.769,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p1trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_protocol.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_journal.py",
+    "exit_code": 0,
+    "seconds": 5.609,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p1trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_journal.py"
+    ],
+    "log": "004-case.log"
+  }
+]

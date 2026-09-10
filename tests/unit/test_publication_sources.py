@@ -22,7 +22,7 @@ from miniray import publication_sources as shared
 from miniray.contained_edges import ContainedReferenceEdge, ContainedReferenceHold
 from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 
 pytestmark = pytest.mark.unit
@@ -203,22 +203,20 @@ def test_output_wire_uses_shared_leaf_and_preserves_deep_manifest_validation():
         transfer, provisional_hold=replace(transfer.provisional_hold, container_object_id=outer),
         final_hold=replace(transfer.final_hold, container_object_id=outer),
     )
-    execution = TaskExecutionKey(TaskOutputManifest.for_task(task, 1), AttemptID(task, 0))
+    execution = (TaskExecution(AttemptID(task, 0)))
     header = output_publication.OutputPublicationHeader(
         output_publication.OutputPublicationID(_id(LeaseID, 0x12), execution),
         _id(JobID, 0x13), transfer.source.borrower_worker_id,
         transfer.final_hold.container_owner_worker_id, _incarnation(),
     )
     payload = b"tiny"
-    slot = output_publication.OutputSlotManifest(
-        outer, protocol.ResultStorage.INLINE, len(payload), hashlib.sha256(payload).hexdigest(), (transfer,),
-    )
-    manifest = output_publication.OutputPublicationManifest.create(header, (slot,))
-    request = output_protocol.PrepareOutputPublication(manifest, (payload,))
+    slot = (output_publication.OutputValue(protocol.ResultStorage.INLINE, len(payload), hashlib.sha256(payload).hexdigest(), (transfer,)))
+    manifest = output_publication.OutputPublicationManifest.create(header, slot)
+    request = output_protocol.PrepareOutputPublication(manifest, payload)
     assert pickle.loads(pickle.dumps(request)) == request
     assert type(request.manifest.header.node_incarnation) is shared.PublicationNodeIncarnation
-    assert type(request.manifest.slots[0].transfers[0]) is shared.PreparedContainedTransfer
-    object.__setattr__(request.manifest.slots[0].transfers[0].source, "borrower_token", "")
+    assert type((request.manifest.value).transfers[0]) is shared.PreparedContainedTransfer
+    object.__setattr__((request.manifest.value).transfers[0].source, "borrower_token", "")
     with pytest.raises((TypeError, ValueError, ProtocolError), match="borrower_token"):
         pickle.loads(pickle.dumps(request))
 

@@ -17,7 +17,7 @@ from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, Wor
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope,
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.ownership import (
     ObjectOwnerTable, ObjectState, OutputOwnerPublicationDisposition,
@@ -25,7 +25,7 @@ from miniray.ownership import (
 )
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 
 pytestmark = pytest.mark.unit
 
@@ -53,7 +53,7 @@ class _Fixture:
             job, task, self.attempt, protocol.FunctionKey(job, __name__, "fixture", "1"),
             (), 1, ResourceVector(), self.owner, max_retries=1,
         )
-        execution = TaskExecutionKey.from_task_spec(self.spec)
+        execution = TaskExecution.from_task_spec(self.spec)
         identity = OutputPublicationID(_id(LeaseID, 6), execution)
         self.transfers = tuple(PreparedContainedTransfer(
             ObjectID.for_task(_id(TaskID, number)), self.child_owner, ("child.invalid", 1234),
@@ -66,12 +66,11 @@ class _Fixture:
         manifest = OutputPublicationManifest.create(
             OutputPublicationHeader(identity, job, self.child_owner, self.owner,
                                     OutputPublicationNodeIncarnation(self.node, 1001, 2)),
-            (OutputSlotManifest(self.output, protocol.ResultStorage.OBJECT_STORE,
-                                len(payload), checksum, self.transfers),),
+            (OutputValue(protocol.ResultStorage.OBJECT_STORE, len(payload), checksum, self.transfers)),
         )
         descriptor = protocol.ResultDescriptor(self.output, protocol.ResultStorage.OBJECT_STORE,
             len(payload), self.owner, self.node, checksum)
-        envelope = OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (descriptor,))
+        envelope = OutputPublicationEnvelope(manifest, OutputPublicationCompleteWitness.for_manifest(manifest), descriptor)
         self.owner_table = ObjectOwnerTable()
         self.owner_table.register_task_outputs(self.spec, local_tokens=("live-output",))
         self.owner_table.commit_output_publication(OutputOwnerPublicationPlan(execution, envelope))

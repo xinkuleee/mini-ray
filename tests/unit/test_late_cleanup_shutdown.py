@@ -23,12 +23,12 @@ from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope,
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
-    OutputPublicationNodeIncarnation, OutputSlotManifest,
+    OutputPublicationNodeIncarnation, OutputValue,
 )
 from miniray.output_handoff import NodeLostOutputResolution
 from miniray.ownership import ObjectState, OutputOwnerPublicationPlan
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from tests.unit._pure_core import close_pure_core, make_pure_core
 
 
@@ -65,7 +65,7 @@ def _retired_core():
     core.owner_table.register_task_outputs(spec, local_tokens=("owner-result",))
     core._recovery.register_task(spec)
     core._objects[output] = _ObjectWaiter(threading.Event())
-    execution = TaskExecutionKey.from_task_spec(spec)
+    execution = TaskExecution.from_task_spec(spec)
     identity = OutputPublicationID(LeaseID(bytes((72,)) * 16), execution)
     publisher, secondary = NodeID(bytes((73,)) * 16), NodeID(bytes((74,)) * 16)
     header = OutputPublicationHeader(
@@ -73,14 +73,9 @@ def _retired_core():
         OutputPublicationNodeIncarnation(publisher, 1801, 1),
     )
     checksum = hashlib.sha256(b"x").hexdigest()
-    manifest = OutputPublicationManifest.create(header, (
-        OutputSlotManifest(output, protocol.ResultStorage.OBJECT_STORE, 1, checksum),
-    ))
+    manifest = OutputPublicationManifest.create(header, (OutputValue(protocol.ResultStorage.OBJECT_STORE, 1, checksum)))
     complete = OutputPublicationCompleteWitness.for_manifest(manifest)
-    envelope = OutputPublicationEnvelope(manifest, complete, (
-        protocol.ResultDescriptor(output, protocol.ResultStorage.OBJECT_STORE, 1,
-                                  core.worker_id, publisher, checksum),
-    ))
+    envelope = OutputPublicationEnvelope(manifest, complete, (protocol.ResultDescriptor(output, protocol.ResultStorage.OBJECT_STORE, 1, core.worker_id, publisher, checksum)))
     assert core.owner_table.commit_output_publication(OutputOwnerPublicationPlan(execution, envelope)).committed
     core._recovery.record_task_success(task, attempt)
     publisher_death = protocol.NodeDeathRecord(

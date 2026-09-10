@@ -23,8 +23,8 @@ pytestmark = pytest.mark.unit
 
 def _request():
     values, _owner, secondary = _case()
-    slot = values.manifest.slots[0]
-    return protocol.DropObjectReplica(slot.object_id, values.attempt, values.owner, secondary, slot.checksum)
+    slot = (values.manifest.value)
+    return protocol.DropObjectReplica((values.publication_id).object_id, values.attempt, values.owner, secondary, slot.checksum)
 
 
 def _reply(request, status=protocol.DropObjectReplicaStatus.DROPPED):
@@ -124,8 +124,8 @@ def test_installed_node_death_discharges_only_that_node_without_fake_drop_ack():
 
 
 def _descriptor(values, secondary):
-    slot = values.manifest.slots[0]
-    return protocol.ObjectStoreDescriptor(slot.object_id, values.owner, values.attempt, secondary,
+    slot = (values.manifest.value)
+    return protocol.ObjectStoreDescriptor((values.publication_id).object_id, values.owner, values.attempt, secondary,
                                           slot.size_bytes, slot.checksum)
 
 
@@ -141,7 +141,7 @@ def test_owner_late_replica_requires_latched_or_applied_retirement_not_current_r
     # reduction; real child effects are tested by Core/Node compositions.
     cleanup = tuple(protocol.ReleaseContainedReferenceReply(
         transfer.contained_object_id, transfer.contained_owner_worker_id, hold, True, False,
-    ) for transfer in values.manifest.slots[0].transfers
+    ) for transfer in (values.manifest.value).transfers
       for hold in (transfer.final_hold, transfer.provisional_hold))
     resolution = replace(_resolution(values), keep=False, cleanup=cleanup)
     assert owner.resolve_output_node_loss(values.manifest, resolution, values.envelope)
@@ -162,10 +162,10 @@ def test_mismatched_late_replica_metadata_never_authorizes_a_destructive_request
     changed = (WorkerID.random() if field == "owner_worker_id" else
                descriptor.size_bytes + 1 if field == "size_bytes" else "0" * 64)
     descriptor = replace(descriptor, **{field: changed})
-    before = tuple(owner.snapshot(output) for output in values.publication_id.output_ids)
+    before = ((owner.snapshot(values.publication_id.object_id),))
     with pytest.raises(OutputOwnerPublicationConflictError):
         owner.retired_output_replica(descriptor, rejected_publications=(values.publication_id,))
-    assert tuple(owner.snapshot(output) for output in values.publication_id.output_ids) == before
+    assert ((owner.snapshot(values.publication_id.object_id),)) == before
 
 
 @pytest.mark.parametrize("phase", ("collection", "retirement", "collected"))

@@ -69,15 +69,15 @@ class _SingleOutputRPC:
         assert type(request) is wire.PrepareOutputPublication
         request = replace(request)
         identity, header = request.manifest.publication_id, request.manifest.header
-        slot, = request.manifest.slots
+        slot = (request.manifest.value)
         assert slot.tier is protocol.ResultStorage.INLINE and not slot.transfers
-        assert slot.size_bytes <= 1024 and len(request.slot_payloads) == 1
+        assert (slot.size_bytes == len(request.payload) <= 1024)
         key = identity.lease_id, identity.task_id, identity.attempt_id, header.executor_worker_id
         assert not self.prepared or key in self.prepared
         previous = self.prepared.get(key)
         assert previous is None or previous == request
         assert len(self.prepare_requests) < 3
-        self.adapter.prepare(request.manifest, request.slot_payloads)
+        self.adapter.prepare(request.manifest, (request.payload))
         self.prepared[key] = request
         self.prepare_requests.append(request)
         assert self.journal.snapshot(identity).ready_to_complete

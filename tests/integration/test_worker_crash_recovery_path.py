@@ -48,7 +48,7 @@ from miniray.output_publication import OutputPublicationCompleteWitness, OutputP
 from miniray.ownership import ObjectState
 from miniray.recovery import TaskState
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from miniray.worker import (
     PUSH_TASK_HANDLER,
     WorkerFailpointConfig,
@@ -311,15 +311,15 @@ def test_after_complete_worker_crash_recovers_output_without_reexecution() -> No
         envelope = replace(outcome_reply.output_publication)
         assert type(envelope) is OutputPublicationEnvelope
         assert envelope.publication_id.lease_id == original_request.lease_id
-        assert envelope.publication_id.execution == TaskExecutionKey.from_task_spec(original_push_message.spec)
-        assert envelope.publication_id.output_ids == (original_object_id,)
+        assert envelope.publication_id.execution == TaskExecution.from_task_spec(original_push_message.spec)
+        assert ((envelope.publication_id.object_id,)) == (original_object_id,)
         assert envelope.manifest.header.job_id == core.job_id
         assert envelope.manifest.header.owner_worker_id == core.worker_id
         assert envelope.manifest.header.executor_worker_id == context.worker_id
         incarnation = envelope.manifest.header.node_incarnation
         assert incarnation.node_id == context.node_id and incarnation.node_pid == context.node_pid
         assert envelope.complete == OutputPublicationCompleteWitness.for_manifest(envelope.manifest)
-        result, = envelope.results
+        result = (envelope.result)
         assert result.object_id == original_object_id and result.storage is protocol.ResultStorage.INLINE
         assert result.owner_worker_id == core.worker_id and result.node_id == context.node_id
         assert result.inline_data == snapshot.inline_data and result.inline_data is not None

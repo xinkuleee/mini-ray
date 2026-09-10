@@ -16,21 +16,21 @@ from miniray.output_publication import (
 )
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 
 def prepare_ref_free_output(node, request, grant, *, job_id=None, values=(7,)):
     assert len(values) == len(request.return_ids) == 1
-    identity = OutputPublicationID(request.lease_id, TaskExecutionKey(
-        TaskOutputManifest(request.task_id, request.return_ids), request.attempt_id))
+    identity = OutputPublicationID(request.lease_id, (TaskExecution(request.attempt_id)))
     session = OutputDiscoverySession(OutputPublicationHeader(
         identity, job_id or JobID(b'j' * 16), grant.worker_id, request.requester_worker_id,
         OutputPublicationNodeIncarnation(node.node_id, node._node_pid, node._registration_epoch),
     ), inline_threshold=1024)
-    outputs = session.discover(tuple(values))
+    assert request.return_ids == (identity.object_id,)
+    outputs = session.discover((values[0]))
     manifest = outputs.manifest
-    slot, = manifest.slots
-    assert slot.tier is protocol.ResultStorage.INLINE and not slot.transfers and slot.size_bytes <= 1024
+    value = (manifest.value)
+    assert value.tier is protocol.ResultStorage.INLINE and not value.transfers and value.size_bytes <= 1024
     journal, handoffs, rollback_reports = OutputPublicationJournal(), OutputHandoffTable(), []
 
     def forbidden(*_args, **_kwargs):
@@ -73,7 +73,7 @@ def prepare_ref_free_output(node, request, grant, *, job_id=None, values=(7,)):
     node._dependency_pin_cleanups = getattr(node, '_dependency_pin_cleanups', {})
     before = node.resource_ledger.snapshot()
     prepared = node._handle_prepare_output_publication(
-        wire.PrepareOutputPublication(manifest, outputs.slot_payloads))
+        wire.PrepareOutputPublication(manifest, (outputs.payload)))
     assert prepared.accepted and journal.snapshot(identity).ready_to_complete
     assert handoffs.query(identity).manifest == manifest
     assert handoffs.query(identity).complete is None

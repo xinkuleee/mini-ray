@@ -231,7 +231,7 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node(monkeypatc
         assert arrival.phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK
         assert (arrival.node_id, arrival.node_pid, arrival.registration_epoch) == (node.node_id, node.node_pid, epoch)
         assert publication.task_id == object_id.task_id
-        assert publication.output_ids == publication.full_output_ids == (object_id,)
+        assert ((publication.object_id,)) == ((publication.object_id,)) == (object_id,)
         assert publication.attempt_id == AttemptID(object_id.task_id, 0)
         target.update(task_id=object_id.task_id, publication=publication)
         before = _handoff(runtime.owner_service.address, publication, deadline)
@@ -241,8 +241,8 @@ def test_dead_executor_child_cleanup_precedes_retry_on_same_live_node(monkeypatc
         assert manifest.header.owner_worker_id == core.worker_id
         assert before.phase is OutputHandoffPhase.PENDING and before.complete is None and before.adoption is None
         assert not rollback_reports
-        assert len(manifest.slots) == 1
-        slot = manifest.slots[0]
+        assert len(((manifest.value,))) == 1
+        slot = (manifest.value)
         assert slot.tier is protocol.ResultStorage.OBJECT_STORE
         assert len(_PADDING) < slot.size_bytes <= 64 * 1024
         assert len(slot.transfers) == 1

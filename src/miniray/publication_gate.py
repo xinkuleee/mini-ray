@@ -24,7 +24,7 @@ from .ids import AttemptID, LeaseID, NodeID, TaskID
 from .output_publication import (
     OutputPublicationID, OutputPublicationManifest, _checksum, _opaque, _uint,
 )
-from .task_outputs import TaskExecutionKey, TaskOutputManifest
+from .task_outputs import TaskExecution
 
 
 class OutputPublicationGatePhase(str, Enum):
@@ -113,9 +113,8 @@ class OutputPublicationGateArrival:
         if phase >= len(_PHASES):
             raise ValueError("output gate frame has an invalid phase")
         task_id = TaskID(task)
-        manifest = TaskOutputManifest.for_task(task_id, 1)
         attempt_id = AttemptID(task_id, attempt)
-        execution = TaskExecutionKey(manifest, attempt_id)
+        execution = TaskExecution(attempt_id)
         return cls(NodeID(node), pid, epoch, OutputPublicationID(LeaseID(lease), execution),
                    digest.hex(), _PHASES[phase])
 

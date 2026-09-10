@@ -118,7 +118,7 @@ class _Fixture:
         assert self.adopted_acks == 1 and not core._finish_pending_task(pending)
         assert core.owner_table.snapshot(self.output).state is ObjectState.READY_STORED
         assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
-        result = self.envelope.results[0]
+        result = (self.envelope.result)
         self.descriptor = protocol.ObjectStoreDescriptor(
             self.output, core.worker_id, pending.spec.attempt_id, source.node_id,
             result.size_bytes, result.checksum,
@@ -151,7 +151,7 @@ class _Fixture:
         )
         grant = self.target._handle_request_lease(request)
         assert type(grant) is protocol.GrantWorkerLease
-        assert self.target.object_store.get(self.output) == self.publication.values.payloads[0]
+        assert self.target.object_store.get(self.output) == (self.publication.values.payload)
         self.core._validate_granted_dependencies((self.descriptor,), grant)
         assert self.core._build_location_reports((self.descriptor,), grant) == ()
         with self.core._state_lock:
@@ -178,7 +178,7 @@ class _Fixture:
         return _OutputNodeLossObligation(self.identity, self.death)
 
     def drop_secondary(self):
-        result = self.envelope.results[0]
+        result = (self.envelope.result)
         request = protocol.DropObjectReplica(
             self.output, self.pending.spec.attempt_id, self.core.worker_id,
             self.target.node_id, result.checksum,
@@ -195,14 +195,14 @@ class _Fixture:
         assert resolution.complete == self.envelope.complete
         assert snapshot.state is (ObjectState.READY_STORED if ready else ObjectState.LOST)
         assert snapshot.current_attempt == self.pending.spec.attempt_id
-        assert snapshot.canonical_stored_result == self.envelope.results[0]
+        assert snapshot.canonical_stored_result == (self.envelope.result)
         assert snapshot.output_publication.manifest == self.manifest
         assert snapshot.locations == (frozenset((self.target.node_id,)) if ready else frozenset())
         record = self.core._recovery.task_record(self.pending.task_id)
         assert record.state is TaskState.SUCCEEDED and record.retries_started == 0
         if ready:
-            assert self.core._stored_descriptors[self.output] == replace(self.envelope.results[0], node_id=self.target.node_id)
-            assert self.core._fetch_stored_object(self.output, snapshot) == self.publication.values.payloads[0]
+            assert self.core._stored_descriptors[self.output] == replace((self.envelope.result), node_id=self.target.node_id)
+            assert self.core._fetch_stored_object(self.output, snapshot) == (self.publication.values.payload)
         else:
             assert self.output not in self.core._stored_descriptors
         assert self.core._finish_pending_task(self.pending)
@@ -274,7 +274,7 @@ def test_descriptor_without_a_secondary_remains_drop_after_publisher_loss(monkey
     f = _Fixture(monkeypatch)
     try:
         obligation = f.lose_publisher()
-        assert f.core.owner_table.output_owner_result(f.output) == f.envelope.results[0]
+        assert f.core.owner_table.output_owner_result(f.output) == (f.envelope.result)
         assert f.core._drive_output_node_loss(f.pending, obligation)
         resolved = f.core.owner_table._output_loss_receipts[f.identity]
         assert not resolved.keep and resolved.complete == f.envelope.complete

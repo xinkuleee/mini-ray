@@ -33,7 +33,7 @@ from .ids import AttemptID, NodeID, ObjectID, TaskID, WorkerID
 from .errors import ProtocolError
 from .output_publication import (
     OutputPublicationEnvelope, OutputPublicationID, OutputPublicationManifest,
-    OutputSlotManifest, _attempt, _checksum, _descriptor, _execution, _hold, _object_id, _opaque,
+    _attempt, _checksum, _descriptor, _execution, _hold, _object_id, _opaque,
     _sequence, _string, _uint,
 )
 from .protocol import (
@@ -56,7 +56,7 @@ from .protocol import (
     WorkerDeathReason,
     WorkerDeathRecord,
 )
-from .task_outputs import TaskExecutionKey
+from .task_outputs import TaskExecution
 
 ReferenceToken = Hashable
 ObjectLocation = NodeID
@@ -323,21 +323,21 @@ class NodeLocationRemoval:
 class TaskOutputRegistrationPlan:
     """Validated input for atomically registering one task manifest."""
 
-    execution: TaskExecutionKey
+    execution: TaskExecution
     producer_task_spec: TaskSpec
     local_tokens: tuple[ReferenceToken | None, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.execution, TaskExecutionKey):
-            raise TypeError("execution must be a TaskExecutionKey")
+        if not isinstance(self.execution, TaskExecution):
+            raise TypeError("execution must be a TaskExecution")
         if not isinstance(self.producer_task_spec, TaskSpec):
             raise TypeError("producer_task_spec must be a TaskSpec")
-        if TaskExecutionKey.from_task_spec(self.producer_task_spec) != self.execution:
+        if TaskExecution.from_task_spec(self.producer_task_spec) != self.execution:
             raise ValueError(
                 "producer task spec must exactly match the execution manifest"
             )
         tokens = tuple(self.local_tokens)
-        if len(tokens) != self.execution.num_returns:
+        if len(tokens) != 1:
             raise ValueError(
                 "local tokens must align with the complete output manifest"
             )
@@ -352,8 +352,8 @@ class TaskOutputRegistrationPlan:
         *,
         local_tokens: tuple[ReferenceToken | None, ...] | None = None,
     ) -> "TaskOutputRegistrationPlan":
-        execution = TaskExecutionKey.from_task_spec(task_spec)
-        tokens = (None,) * execution.num_returns if local_tokens is None else tuple(
+        execution = TaskExecution.from_task_spec(task_spec)
+        tokens = (None,) if local_tokens is None else tuple(
             local_tokens
         )
         return cls(execution, task_spec, tokens)
@@ -363,16 +363,16 @@ class TaskOutputRegistrationPlan:
 class TaskOutputPublicationPlan:
     """One complete, ordered Worker result manifest for owner publication."""
 
-    execution: TaskExecutionKey
+    execution: TaskExecution
     results: tuple[ResultDescriptor, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.execution, TaskExecutionKey):
-            raise TypeError("execution must be a TaskExecutionKey")
+        if not isinstance(self.execution, TaskExecution):
+            raise TypeError("execution must be a TaskExecution")
         results = tuple(self.results)
         if any(not isinstance(result, ResultDescriptor) for result in results):
             raise TypeError("results must contain ResultDescriptor values")
-        if tuple(result.object_id for result in results) != self.execution.output_ids:
+        if tuple(result.object_id for result in results) != (self.execution.object_id,):
             raise ValueError(
                 "result descriptors must exactly match the ordered output manifest"
             )
@@ -390,7 +390,7 @@ class OutputOwnerPublicationPlan:
     the typed envelope proves identity, not that those remote effects happened.
     """
 
-    execution: TaskExecutionKey
+    execution: TaskExecution
     envelope: OutputPublicationEnvelope
 
     def __post_init__(self) -> None:
@@ -413,17 +413,12 @@ class OutputOwnerPublicationPlan:
 
     @property
     def output_ids(self) -> tuple[ObjectID, ...]:
-        return self.publication_id.output_ids
+        return (self.publication_id.object_id,)
 
 
 @dataclass(frozen=True)
 class OutputOwnerPublicationMembership:
-    """A slot's byte-free membership in one validated shared manifest.
-
-    Table entry points deeply validate the manifest once per batch. Memberships
-    share that immutable value rather than storing other slots' descriptors or
-    duplicating the publication metadata.
-    """
+    """Byte-free membership in one validated single-output manifest."""
 
     manifest: OutputPublicationManifest
     slot_index: int
@@ -431,16 +426,12 @@ class OutputOwnerPublicationMembership:
     def __post_init__(self) -> None:
         if type(self.manifest) is not OutputPublicationManifest:
             raise TypeError("manifest must be an OutputPublicationManifest")
-        if type(self.slot_index) is not int or not 0 <= self.slot_index < len(self.manifest.slots):
-            raise ValueError("slot_index must select one publication slot")
-
-    @property
-    def slot(self) -> OutputSlotManifest:
-        return self.manifest.slots[self.slot_index]
+        if type(self.slot_index) is not int or self.slot_index != 0:
+            raise ValueError("slot_index must select the only publication output")
 
     @property
     def object_id(self) -> ObjectID:
-        return self.slot.object_id
+        return self.manifest.publication_id.object_id
 
     @property
     def publication_id(self) -> OutputPublicationID:
@@ -484,14 +475,14 @@ class OutputOwnerPublicationCollectionPlan:
         if type(self.metadata_plan) is not ObjectMetadataCollectionPlan:
             raise TypeError("metadata_plan must be an ObjectMetadataCollectionPlan")
         metadata = deepcopy(replace(self.metadata_plan))
-        slot = membership.slot
+        slot = membership.manifest.value
         spec = metadata.producer_task_spec
         if (
-            metadata.object_id != slot.object_id
+            metadata.object_id != membership.object_id
             or metadata.producer_attempt_id != membership.publication_id.attempt_id
             or tuple(metadata.contained_releases) != tuple(sorted(slot.edges))
             or not isinstance(spec, TaskSpec)
-            or tuple(spec.return_ids()) != membership.publication_id.output_ids
+            or tuple(spec.return_ids()) != (membership.publication_id.object_id,)
             or spec.owner_worker_id != membership.manifest.header.owner_worker_id
             or spec.job_id != membership.manifest.header.job_id
         ):
@@ -539,7 +530,7 @@ class OutputOwnerPublicationCollectionReceipt:
             raise ValueError("collection receipt requires a committed disposition")
         if (not self.collection.collected
                 or self.collection.object_id != self.plan.object_id
-                or self.collection.contained_releases != tuple(sorted(self.plan.membership.slot.edges))):
+                or self.collection.contained_releases != tuple(sorted(self.plan.membership.manifest.value.edges))):
             raise OutputOwnerPublicationConflictError(
                 "collection receipt must release this output slot only"
             )
@@ -598,12 +589,12 @@ class OutputOwnerPublicationRetirementPlan:
                 _checksum(value.checksum, "replica checksum"),
             )
             member = by_object.get(value.object_id)
-            if member is None or member.slot.tier is not ResultStorage.OBJECT_STORE:
+            if member is None or member.manifest.value.tier is not ResultStorage.OBJECT_STORE:
                 raise OutputOwnerRetirementConflictError("replica obligation requires the stored output membership")
             node_id = _opaque(value.node_id, NodeID, "replica node_id")
             expected = DropObjectReplica(
                 member.object_id, member.publication_id.attempt_id,
-                member.manifest.header.owner_worker_id, node_id, member.slot.checksum,
+                member.manifest.header.owner_worker_id, node_id, member.manifest.value.checksum,
             )
             if replace(value) != expected:
                 raise OutputOwnerRetirementConflictError("replica obligation changed the old output identity")
@@ -613,7 +604,7 @@ class OutputOwnerPublicationRetirementPlan:
         if keys != tuple(sorted(set(keys))):
             raise OutputOwnerRetirementConflictError("replica obligations must be unique and ordered")
         if any(
-            member.slot.tier is ResultStorage.OBJECT_STORE
+            member.manifest.value.tier is ResultStorage.OBJECT_STORE
             and (member.object_id, member.manifest.header.node_incarnation.node_id) not in keys
             for member in memberships
         ):
@@ -632,7 +623,7 @@ class OutputOwnerPublicationRetirementPlan:
                 transfer.contained_object_id, transfer.contained_owner_worker_id,
                 transfer.final_hold,
             )
-            for member in self.memberships for transfer in member.slot.transfers
+            for member in self.memberships for transfer in member.manifest.value.transfers
         )
 
 
@@ -668,15 +659,15 @@ class OutputOwnerPublicationRetirementReceipt:
 class TaskOutputAttemptAdvancePlan:
     """CAS one whole task manifest from one attempt to the next."""
 
-    expected: TaskExecutionKey
-    next_execution: TaskExecutionKey
+    expected: TaskExecution
+    next_execution: TaskExecution
 
     def __post_init__(self) -> None:
-        if not isinstance(self.expected, TaskExecutionKey) or not isinstance(
-            self.next_execution, TaskExecutionKey
+        if not isinstance(self.expected, TaskExecution) or not isinstance(
+            self.next_execution, TaskExecution
         ):
-            raise TypeError("attempt advance requires TaskExecutionKey values")
-        if self.expected.manifest != self.next_execution.manifest:
+            raise TypeError("attempt advance requires TaskExecution values")
+        if self.expected.object_id != self.next_execution.object_id:
             raise ValueError("attempt advance cannot change the output manifest")
         if (
             self.next_execution.attempt_id.attempt_number
@@ -691,12 +682,12 @@ class TaskOutputAttemptAdvancePlan:
 class TaskOutputErrorPlan:
     """A terminal error applied to every output of one physical attempt."""
 
-    execution: TaskExecutionKey
+    execution: TaskExecution
     error: object
 
     def __post_init__(self) -> None:
-        if not isinstance(self.execution, TaskExecutionKey):
-            raise TypeError("execution must be a TaskExecutionKey")
+        if not isinstance(self.execution, TaskExecution):
+            raise TypeError("execution must be a TaskExecution")
 
 
 @dataclass(frozen=True)
@@ -1014,7 +1005,7 @@ class ObjectOwnerTable:
             existing = self._validate_register_task_outputs_locked(plan)
             if not existing:
                 for object_id, local_token in zip(
-                    plan.execution.output_ids, plan.local_tokens
+                    (plan.execution.object_id,), plan.local_tokens
                 ):
                     entry = _ObjectOwnerEntry(
                         object_id=object_id,
@@ -1029,7 +1020,7 @@ class ObjectOwnerTable:
             # An exact registration replay may attach the caller's handle
             # only after the output identity has been validated.
             for object_id, local_token in zip(
-                plan.execution.output_ids, plan.local_tokens
+                (plan.execution.object_id,), plan.local_tokens
             ):
                 if local_token is not None:
                     self._entries[object_id].local_tokens.add(local_token)
@@ -1071,10 +1062,10 @@ class ObjectOwnerTable:
             )
         with self._lock:
             execution = _execution(plan.execution)
-            if execution.output_ids[0] not in self._entries:
+            if execution.object_id not in self._entries:
                 return False
             if any(
-                edge.producer_object_id not in plan.execution.output_ids
+                edge.producer_object_id not in (plan.execution.object_id,)
                 for edge in expected_edges
             ):
                 raise ValueError(
@@ -1085,10 +1076,10 @@ class ObjectOwnerTable:
                     set() if token is None else {token}
                 )
                 for object_id, token in zip(
-                    plan.execution.output_ids, plan.local_tokens
+                    (plan.execution.object_id,), plan.local_tokens
                 )
             }
-            for object_id in plan.execution.output_ids:
+            for object_id in (plan.execution.object_id,):
                 entry = self._entries[object_id]
                 if (
                     entry.current_attempt != plan.execution.attempt_id
@@ -1112,9 +1103,9 @@ class ObjectOwnerTable:
                     )
             self._abort_task_lineage_edges_locked(
                 plan.execution.task_id, expected_edges,
-                expected_output_ids=plan.execution.output_ids,
+                expected_output_ids=(plan.execution.object_id,),
             )
-            for object_id in plan.execution.output_ids:
+            for object_id in (plan.execution.object_id,):
                 del self._entries[object_id]
             return True
 
@@ -1122,7 +1113,7 @@ class ObjectOwnerTable:
         self, plan: TaskOutputRegistrationPlan
     ) -> bool:
         execution = _execution(plan.execution)
-        object_id = execution.output_ids[0]
+        object_id = execution.object_id
         if object_id in self._collected:
             raise ObjectAlreadyRegisteredError(
                 "task output was already collected: {!r}".format(object_id)
@@ -1130,7 +1121,7 @@ class ObjectOwnerTable:
         if object_id not in self._entries:
             return False
         for object_id, local_token in zip(
-            execution.output_ids, plan.local_tokens
+            (execution.object_id,), plan.local_tokens
         ):
             entry = self._entries[object_id]
             if (
@@ -1405,7 +1396,7 @@ class ObjectOwnerTable:
 
     def validate_advance_task_outputs(
         self,
-        expected: TaskExecutionKey,
+        expected: TaskExecution,
         next_attempt: AttemptID,
     ) -> TaskOutputAttemptAdvancePlan:
         """Preflight a manifest-wide attempt CAS without mutation."""
@@ -1430,7 +1421,7 @@ class ObjectOwnerTable:
                 return False
             if action == "replay":
                 return True
-            for object_id in plan.expected.output_ids:
+            for object_id in (plan.expected.object_id,):
                 entry = self._entries[object_id]
                 entry.current_attempt = plan.next_execution.attempt_id
                 entry.state = ObjectState.PENDING
@@ -1445,12 +1436,12 @@ class ObjectOwnerTable:
         """Apply a caller-held validated plan using assignment only."""
 
         self._require_no_output_retirements_locked(tuple(
-            self._entries[object_id] for object_id in plan.expected.output_ids
+            self._entries[object_id] for object_id in (plan.expected.object_id,)
         ))
         self._require_output_memberships_retired_locked(tuple(
-            self._entries[object_id] for object_id in plan.expected.output_ids
+            self._entries[object_id] for object_id in (plan.expected.object_id,)
         ))
-        for object_id in plan.expected.output_ids:
+        for object_id in (plan.expected.object_id,):
             entry = self._entries[object_id]
             entry.current_attempt = plan.next_execution.attempt_id
             entry.state = ObjectState.PENDING
@@ -1459,7 +1450,7 @@ class ObjectOwnerTable:
             entry.canonical_stored_result = None
 
     def advance_task_outputs(
-        self, expected: TaskExecutionKey, next_attempt: AttemptID
+        self, expected: TaskExecution, next_attempt: AttemptID
     ) -> bool:
         plan = self.validate_advance_task_outputs(expected, next_attempt)
         return self.commit_advance_task_outputs(plan)
@@ -1777,7 +1768,7 @@ class ObjectOwnerTable:
 
     def validate_publish_task_outputs(
         self,
-        execution: TaskExecutionKey,
+        execution: TaskExecution,
         results: tuple[ResultDescriptor, ...],
     ) -> TaskOutputPublicationPlan | None:
         """Preflight a complete success manifest without visible results."""
@@ -1795,7 +1786,7 @@ class ObjectOwnerTable:
         """Apply a caller-held validated success plan without revalidation."""
 
         self._require_no_output_retirements_locked(tuple(
-            self._entries[object_id] for object_id in plan.execution.output_ids
+            self._entries[object_id] for object_id in (plan.execution.object_id,)
         ))
         for descriptor in plan.results:
             entry = self._entries[descriptor.object_id]
@@ -1842,27 +1833,20 @@ class ObjectOwnerTable:
             public_receipt = OutputOwnerPublicationReceipt(
                 replace(plan), OutputOwnerPublicationDisposition.APPLIED
             )
-            updates = tuple(
-                (
-                    self._entries[slot.object_id],
-                    OutputOwnerPublicationMembership(manifest, index),
-                    descriptor, set(slot.edges),
-                    ({descriptor.node_id: plan.execution.attempt_id}
-                     if descriptor.storage is ResultStorage.OBJECT_STORE else {}),
-                )
-                for index, (slot, descriptor) in enumerate(
-                    zip(manifest.slots, plan.envelope.results)
-                )
-            )
-            for entry, membership, descriptor, edges, locations in updates:
-                inline = descriptor.storage is ResultStorage.INLINE
-                entry.state = ObjectState.READY_INLINE if inline else ObjectState.READY_STORED
-                entry.inline_data = descriptor.inline_data if inline else None
-                entry.canonical_stored_result = None if inline else descriptor
-                entry.error = None
-                entry.location_attempts = locations
-                entry.outgoing_contained_edges = edges
-                entry.output_publication = membership
+            entry = self._entries[plan.publication_id.object_id]
+            membership = OutputOwnerPublicationMembership(manifest, 0)
+            descriptor = plan.envelope.result
+            edges = set(manifest.value.edges)
+            locations = ({descriptor.node_id: plan.execution.attempt_id}
+                         if descriptor.storage is ResultStorage.OBJECT_STORE else {})
+            inline = descriptor.storage is ResultStorage.INLINE
+            entry.state = ObjectState.READY_INLINE if inline else ObjectState.READY_STORED
+            entry.inline_data = descriptor.inline_data if inline else None
+            entry.canonical_stored_result = None if inline else descriptor
+            entry.error = None
+            entry.location_attempts = locations
+            entry.outgoing_contained_edges = edges
+            entry.output_publication = membership
             self._output_publication_receipts[plan.publication_id] = manifest
             return public_receipt
 
@@ -1885,7 +1869,7 @@ class ObjectOwnerTable:
             raise OutputOwnerPublicationConflictError(
                 "output publication identity was rebound"
             )
-        object_id = plan.output_ids[0]
+        object_id = plan.publication_id.object_id
         if (object_id in self._collected
                 or (plan.publication_id, object_id) in self._retired_output_slots
                 or (object_id, plan.execution.attempt_id) in self._retired_output_attempts
@@ -1915,8 +1899,8 @@ class ObjectOwnerTable:
         if previous is not None and entry.output_publication is None:
             # A success receipt cannot recreate retired result metadata.
             return OutputOwnerPublicationDisposition.FENCED
-        descriptor = plan.envelope.results[0]
-        slot = manifest.slots[0]
+        descriptor = plan.envelope.result
+        slot = manifest.value
         membership = entry.output_publication
         if membership is not None:
             if membership != OutputOwnerPublicationMembership(manifest, 0):
@@ -1994,9 +1978,9 @@ class ObjectOwnerTable:
             membership = entry.output_publication
             if membership is None:
                 return None
-            slot = membership.slot
+            slot = membership.manifest.value
             descriptor = ResultDescriptor(
-                slot.object_id, slot.tier, slot.size_bytes,
+                membership.object_id, slot.tier, slot.size_bytes,
                 membership.manifest.header.owner_worker_id,
                 membership.manifest.header.node_incarnation.node_id,
                 slot.checksum, entry.inline_data if slot.tier is ResultStorage.INLINE else None,
@@ -2050,7 +2034,7 @@ class ObjectOwnerTable:
                 return None
             for identity, manifest in self._output_publication_receipts.items():
                 if (identity.attempt_id != descriptor.producer_attempt_id
-                        or descriptor.object_id not in identity.output_ids):
+                        or descriptor.object_id not in (identity.object_id,)):
                     continue
                 retired = (identity in rejected
                            or (identity, descriptor.object_id) in self._retired_output_slots
@@ -2060,7 +2044,7 @@ class ObjectOwnerTable:
                            or descriptor.object_id in self._collected)
                 if not retired:
                     continue
-                slot = next(slot for slot in manifest.slots if slot.object_id == descriptor.object_id)
+                slot = manifest.value
                 if (slot.tier is not ResultStorage.OBJECT_STORE
                         or descriptor.owner_worker_id != manifest.header.owner_worker_id
                         or descriptor.size_bytes != slot.size_bytes or descriptor.checksum != slot.checksum):
@@ -2153,28 +2137,28 @@ class ObjectOwnerTable:
             raise TypeError("survivor selection requires a publication manifest")
         manifest = replace(manifest)
         _uint(slot_index, "slot_index")
-        if slot_index >= len(manifest.slots):
+        if slot_index != 0:
             raise OutputOwnerPublicationConflictError("survivor slot is outside the manifest")
         unavailable = {_opaque(node, NodeID, "unavailable Node")
                        for node in _sequence(unavailable_nodes, "unavailable_nodes")}
         unavailable.add(manifest.header.node_incarnation.node_id)
-        slot = manifest.slots[slot_index]
+        slot = manifest.value
         if slot.tier is not ResultStorage.OBJECT_STORE:
             return ()
         identity = manifest.publication_id
         with self._lock:
-            entry = self._entries.get(slot.object_id)
+            entry = self._entries.get(identity.object_id)
             if (entry is None or entry.state is not ObjectState.READY_STORED
                     or entry.current_attempt != identity.attempt_id
                     or entry.collection_pending or entry.collection_plan is not None
                     or entry.output_retirement_id is not None
-                    or (identity, slot.object_id) in self._retired_output_slots
-                    or (slot.object_id, identity.attempt_id) in self._retired_output_attempts
+                    or (identity, identity.object_id) in self._retired_output_slots
+                    or (identity.object_id, identity.attempt_id) in self._retired_output_attempts
                     or self._output_publication_receipts.get(identity) != manifest
                     or entry.output_publication != OutputOwnerPublicationMembership(manifest, slot_index)):
                 return ()
             canonical = ResultDescriptor(
-                slot.object_id, slot.tier, slot.size_bytes, manifest.header.owner_worker_id,
+                identity.object_id, slot.tier, slot.size_bytes, manifest.header.owner_worker_id,
                 manifest.header.node_incarnation.node_id, slot.checksum,
             )
             if (entry.canonical_stored_result != canonical or entry.inline_data is not None
@@ -2217,7 +2201,7 @@ class ObjectOwnerTable:
             envelope = replace(envelope)
             if envelope.manifest != manifest or envelope.complete != resolution.complete:
                 raise OutputOwnerPublicationConflictError("retained envelope changed resolution")
-        if resolution.keep and envelope is None and manifest.slots[0].tier is ResultStorage.INLINE:
+        if resolution.keep and envelope is None and manifest.value.tier is ResultStorage.INLINE:
             raise OutputOwnerPublicationConflictError("KEEP requires locally retained output bytes")
         with self._lock:
             prior = self._output_loss_receipts.get(manifest.publication_id)
@@ -2227,91 +2211,90 @@ class ObjectOwnerTable:
                 return False
             header = manifest.header
             identity = manifest.publication_id
-            entries = tuple(self._entry(slot.object_id) for slot in manifest.slots)
-            spec = entries[0].producer_task_spec
+            entry = self._entry(identity.object_id)
+            slot = manifest.value
+            spec = entry.producer_task_spec
             if (not isinstance(spec, TaskSpec)
-                    or tuple(spec.return_ids()) != identity.output_ids
+                    or tuple(spec.return_ids()) != (identity.object_id,)
                     or spec.job_id != header.job_id or spec.owner_worker_id != header.owner_worker_id):
                 raise OutputOwnerPublicationConflictError("Node-loss resolution requires exact producer lineage")
             previous_manifest = self._output_publication_receipts.get(identity)
             if previous_manifest is not None and previous_manifest != manifest:
                 raise OutputOwnerPublicationConflictError("Node-loss publication changed its committed manifest")
-            for index, (entry, slot) in enumerate(zip(entries, manifest.slots)):
-                self._require_no_output_retirement_locked(entry)
-                if (entry.current_attempt != manifest.publication_id.attempt_id
-                        or entry.collection_pending or entry.collection_plan is not None
-                        or entry.output_retirement_id is not None
-                        or (entry.object_id, identity.attempt_id) in self._retired_output_attempts
-                        or (identity, entry.object_id) in self._retired_output_slots):
-                    raise OutputOwnerPublicationConflictError("Node-loss owner slot is fenced")
-                membership = entry.output_publication
-                if membership is not None and membership != OutputOwnerPublicationMembership(manifest, index):
-                    raise OutputOwnerPublicationConflictError("Node-loss slot belongs to another publication")
-                if membership is None:
-                    # An unreceived result may replace only a pristine pending
-                    # slot. Metadata cleanup is never authority to erase an
-                    # unrelated partial publication, payload, or child hold.
-                    if (entry.state is not ObjectState.PENDING or entry.inline_data is not None
-                            or entry.error is not None or entry.location_attempts
-                            or entry.canonical_stored_result is not None or entry.outgoing_contained_edges):
-                        raise OutputOwnerPublicationConflictError("unreceived Node-loss slot contains partial result metadata")
+            self._require_no_output_retirement_locked(entry)
+            if (entry.current_attempt != manifest.publication_id.attempt_id
+                    or entry.collection_pending or entry.collection_plan is not None
+                    or entry.output_retirement_id is not None
+                    or (entry.object_id, identity.attempt_id) in self._retired_output_attempts
+                    or (identity, entry.object_id) in self._retired_output_slots):
+                raise OutputOwnerPublicationConflictError("Node-loss owner slot is fenced")
+            membership = entry.output_publication
+            if membership is not None and membership != OutputOwnerPublicationMembership(manifest, 0):
+                raise OutputOwnerPublicationConflictError("Node-loss slot belongs to another publication")
+            if membership is None:
+                # An unreceived result may replace only a pristine pending
+                # slot. Metadata cleanup is never authority to erase an
+                # unrelated partial publication, payload, or child hold.
+                if (entry.state is not ObjectState.PENDING or entry.inline_data is not None
+                        or entry.error is not None or entry.location_attempts
+                        or entry.canonical_stored_result is not None or entry.outgoing_contained_edges):
+                    raise OutputOwnerPublicationConflictError("unreceived Node-loss slot contains partial result metadata")
+            else:
+                if (previous_manifest != manifest or resolution.complete is None
+                        or entry.error is not None or entry.outgoing_contained_edges != set(slot.edges)):
+                    raise OutputOwnerPublicationConflictError("published Node-loss slot lost its Complete identity")
+                if slot.tier is ResultStorage.INLINE:
+                    valid = (entry.state is ObjectState.READY_INLINE
+                             and entry.inline_data is not None
+                             and len(entry.inline_data) == slot.size_bytes
+                             and hashlib.sha256(entry.inline_data).hexdigest() == slot.checksum
+                             and entry.canonical_stored_result is None and not entry.location_attempts)
                 else:
-                    if (previous_manifest != manifest or resolution.complete is None
-                            or entry.error is not None or entry.outgoing_contained_edges != set(slot.edges)):
-                        raise OutputOwnerPublicationConflictError("published Node-loss slot lost its Complete identity")
-                    if slot.tier is ResultStorage.INLINE:
-                        valid = (entry.state is ObjectState.READY_INLINE
-                                 and entry.inline_data is not None
-                                 and len(entry.inline_data) == slot.size_bytes
-                                 and hashlib.sha256(entry.inline_data).hexdigest() == slot.checksum
-                                 and entry.canonical_stored_result is None and not entry.location_attempts)
-                    else:
-                        expected = ResultDescriptor(slot.object_id, slot.tier, slot.size_bytes,
-                            header.owner_worker_id, header.node_incarnation.node_id, slot.checksum)
-                        valid = (entry.state in (ObjectState.READY_STORED, ObjectState.LOST)
-                                 and entry.inline_data is None and entry.canonical_stored_result == expected
-                                 and all(epoch == identity.attempt_id for epoch in entry.location_attempts.values())
-                                 and ((entry.state is ObjectState.READY_STORED and bool(entry.location_attempts))
-                                      or (entry.state is ObjectState.LOST and not entry.location_attempts)))
-                    if not valid:
-                        raise OutputOwnerPublicationConflictError("published Node-loss slot changed canonical result metadata")
-                if resolution.keep and slot.tier is ResultStorage.OBJECT_STORE and membership is None:
-                    raise OutputOwnerPublicationConflictError("STORED KEEP requires an already-adopted output membership")
-                if (not resolution.keep and slot.tier is ResultStorage.OBJECT_STORE
-                        and any(node not in unavailable for node in entry.location_attempts)):
-                    raise OutputOwnerPublicationConflictError(
-                        "discard requires surviving replicas to be dropped before owner cleanup"
-                    )
-            for index, (entry, slot) in enumerate(zip(entries, manifest.slots)):
-                entry.error = None
-                if resolution.keep:
-                    if slot.tier is ResultStorage.INLINE:
-                        entry.inline_data = envelope.results[index].inline_data
-                        entry.state = ObjectState.READY_INLINE
-                        entry.location_attempts = {}
-                        entry.canonical_stored_result = None
-                    else:
-                        # Keep canonical identity at the original publisher;
-                        # only the current live replica set is a fetch route.
-                        entry.location_attempts = {
-                            node: epoch for node, epoch in entry.location_attempts.items()
-                            if node not in unavailable
-                        }
-                        entry.inline_data = None
-                        entry.state = (ObjectState.READY_STORED if entry.location_attempts
-                                       else ObjectState.LOST)
-                    entry.output_publication = OutputOwnerPublicationMembership(manifest, index)
-                    entry.outgoing_contained_edges = set(slot.edges)
-                else:
-                    entry.inline_data = None
+                    expected = ResultDescriptor(identity.object_id, slot.tier, slot.size_bytes,
+                        header.owner_worker_id, header.node_incarnation.node_id, slot.checksum)
+                    valid = (entry.state in (ObjectState.READY_STORED, ObjectState.LOST)
+                             and entry.inline_data is None and entry.canonical_stored_result == expected
+                             and all(epoch == identity.attempt_id for epoch in entry.location_attempts.values())
+                             and ((entry.state is ObjectState.READY_STORED and bool(entry.location_attempts))
+                                  or (entry.state is ObjectState.LOST and not entry.location_attempts)))
+                if not valid:
+                    raise OutputOwnerPublicationConflictError("published Node-loss slot changed canonical result metadata")
+            if resolution.keep and slot.tier is ResultStorage.OBJECT_STORE and membership is None:
+                raise OutputOwnerPublicationConflictError("STORED KEEP requires an already-adopted output membership")
+            if (not resolution.keep and slot.tier is ResultStorage.OBJECT_STORE
+                    and any(node not in unavailable for node in entry.location_attempts)):
+                raise OutputOwnerPublicationConflictError(
+                    "discard requires surviving replicas to be dropped before owner cleanup"
+                )
+            entry.error = None
+            if resolution.keep:
+                if slot.tier is ResultStorage.INLINE:
+                    entry.inline_data = envelope.result.inline_data
+                    entry.state = ObjectState.READY_INLINE
                     entry.location_attempts = {}
                     entry.canonical_stored_result = None
-                    entry.state = ObjectState.LOST if resolution.complete is not None else ObjectState.PENDING
-                    entry.output_publication = None
-                    entry.outgoing_contained_edges.clear()
-                    self._retired_output_slots.add((manifest.publication_id, slot.object_id))
-                    if resolution.complete is not None:
-                        self._retired_output_attempts.add((slot.object_id, manifest.publication_id.attempt_id))
+                else:
+                    # Keep canonical identity at the original publisher;
+                    # only the current live replica set is a fetch route.
+                    entry.location_attempts = {
+                        node: epoch for node, epoch in entry.location_attempts.items()
+                        if node not in unavailable
+                    }
+                    entry.inline_data = None
+                    entry.state = (ObjectState.READY_STORED if entry.location_attempts
+                                   else ObjectState.LOST)
+                entry.output_publication = OutputOwnerPublicationMembership(manifest, 0)
+                entry.outgoing_contained_edges = set(slot.edges)
+            else:
+                entry.inline_data = None
+                entry.location_attempts = {}
+                entry.canonical_stored_result = None
+                entry.state = ObjectState.LOST if resolution.complete is not None else ObjectState.PENDING
+                entry.output_publication = None
+                entry.outgoing_contained_edges.clear()
+                self._retired_output_slots.add((manifest.publication_id, identity.object_id))
+                if resolution.complete is not None:
+                    self._retired_output_attempts.add((identity.object_id, manifest.publication_id.attempt_id))
             if resolution.complete is not None:
                 self._output_publication_receipts[manifest.publication_id] = manifest
             self._output_loss_receipts[manifest.publication_id] = resolution
@@ -2347,11 +2330,11 @@ class ObjectOwnerTable:
             )
             if len(locations) != len(set(locations)):
                 raise OutputOwnerRetirementConflictError("replica inventory repeats a Node")
-            if member.slot.tier is ResultStorage.INLINE and locations:
+            if member.manifest.value.tier is ResultStorage.INLINE and locations:
                 raise OutputOwnerRetirementConflictError("inline retirement cannot drop physical replicas")
             drops.extend(DropObjectReplica(
                 member.object_id, member.publication_id.attempt_id,
-                member.manifest.header.owner_worker_id, node, member.slot.checksum,
+                member.manifest.header.owner_worker_id, node, member.manifest.value.checksum,
             ) for node in sorted(locations))
         plan = OutputOwnerPublicationRetirementPlan(retirement_id, tuple(values), tuple(drops))
         with self._lock:
@@ -2387,17 +2370,17 @@ class ObjectOwnerTable:
                 or entry.current_attempt != member.publication_id.attempt_id
                 or entry.state is not ObjectState.LOST or entry.location_attempts
                 or entry.error is not None or entry.collection_plan is not None
-                or entry.outgoing_contained_edges != set(member.slot.edges)
+                or entry.outgoing_contained_edges != set(member.manifest.value.edges)
                 or not isinstance(spec, TaskSpec)
-                or tuple(spec.return_ids()) != member.publication_id.output_ids
+                or tuple(spec.return_ids()) != (member.publication_id.object_id,)
                 or spec.owner_worker_id != manifest.header.owner_worker_id
                 or spec.job_id != manifest.header.job_id):
             raise OutputOwnerRetirementConflictError("retirement requires the exact published LOST slot and lineage")
-        if member.slot.tier is ResultStorage.OBJECT_STORE:
+        if member.manifest.value.tier is ResultStorage.OBJECT_STORE:
             expected = ResultDescriptor(
-                member.object_id, member.slot.tier, member.slot.size_bytes,
+                member.object_id, member.manifest.value.tier, member.manifest.value.size_bytes,
                 manifest.header.owner_worker_id, manifest.header.node_incarnation.node_id,
-                member.slot.checksum,
+                member.manifest.value.checksum,
             )
             valid = entry.inline_data is None and entry.canonical_stored_result == expected
         else:
@@ -2533,7 +2516,7 @@ class ObjectOwnerTable:
         return True
 
     def validate_publish_task_error(
-        self, execution: TaskExecutionKey, error: object
+        self, execution: TaskExecution, error: object
     ) -> TaskOutputErrorPlan | None:
         """Preflight one terminal error for the complete output manifest."""
 
@@ -2551,11 +2534,11 @@ class ObjectOwnerTable:
         with self._lock:
             self._require_no_output_retirements_locked(tuple(
                 self._entries[object_id]
-                for object_id in plan.execution.output_ids
+                for object_id in (plan.execution.object_id,)
             ))
             if not self._validate_publish_task_error_locked(plan):
                 return False
-            for object_id in plan.execution.output_ids:
+            for object_id in (plan.execution.object_id,):
                 entry = self._entries[object_id]
                 entry.state = ObjectState.ERROR
                 entry.error = plan.error
@@ -2569,9 +2552,9 @@ class ObjectOwnerTable:
         """Apply a caller-held validated error plan without revalidation."""
 
         self._require_no_output_retirements_locked(tuple(
-            self._entries[object_id] for object_id in plan.execution.output_ids
+            self._entries[object_id] for object_id in (plan.execution.object_id,)
         ))
-        for object_id in plan.execution.output_ids:
+        for object_id in (plan.execution.object_id,):
             entry = self._entries[object_id]
             entry.state = ObjectState.ERROR
             entry.error = plan.error
@@ -2579,7 +2562,7 @@ class ObjectOwnerTable:
             entry.canonical_stored_result = None
 
     def publish_task_error(
-        self, execution: TaskExecutionKey, error: object
+        self, execution: TaskExecution, error: object
     ) -> bool:
         plan = self.validate_publish_task_error(execution, error)
         return False if plan is None else self.commit_publish_task_error(plan)
@@ -2606,13 +2589,14 @@ class ObjectOwnerTable:
         return True
 
     def _task_output_entries_locked(
-        self, execution: TaskExecutionKey
+        self, execution: TaskExecution
     ) -> tuple[tuple[_ObjectOwnerEntry, ...], TaskSpec | None]:
         """Bind the single-output operation to its registered lineage."""
 
         execution = _execution(execution)
-        entries = tuple(self._entry(value) for value in execution.output_ids)
-        task_spec = entries[0].producer_task_spec
+        entry = self._entry(execution.object_id)
+        entries = (entry,)
+        task_spec = entry.producer_task_spec
         if task_spec is None:
             # Actor calls and a few deliberately lineage-free singleton
             # control paths still use the same atomic owner transition.
@@ -2622,8 +2606,8 @@ class ObjectOwnerTable:
                 "task output requires valid producer lineage"
             )
         if (
-            TaskExecutionKey.from_task_spec(task_spec).manifest
-            != execution.manifest
+            TaskExecution.from_task_spec(task_spec).object_id
+            != execution.object_id
         ):
             raise InvalidObjectTransitionError(
                 "registered producer lineage changed its output manifest"
@@ -3647,7 +3631,7 @@ class ObjectOwnerTable:
                 )
             descriptor = self.output_owner_result(object_id)
             assert descriptor is not None
-            slot = membership.slot
+            slot = membership.manifest.value
             # Check the complete frozen identity before begin_collection makes
             # a COLLECTING claim. An inconsistent slot cannot freeze partial GC.
             if entry.outgoing_contained_edges != set(slot.edges):

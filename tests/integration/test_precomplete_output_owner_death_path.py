@@ -378,8 +378,8 @@ def _run_precomplete_owner_death(phase):
         )
         publication = arrival.publication_id
         assert publication.attempt_id == AttemptID(publication.task_id, 0)
-        assert len(publication.output_ids) == 1 and publication.output_ids == publication.full_output_ids
-        (output_id,) = publication.output_ids
+        assert len(((publication.object_id,))) == 1 and ((publication.object_id,)) == ((publication.object_id,))
+        output_id = (publication.object_id)
         assert output_id != factory.object_id and output_id != source.object_id
         before = _handoff(owner_node.worker_address, publication, deadline)
         manifest = before.manifest
@@ -388,8 +388,8 @@ def _run_precomplete_owner_death(phase):
         assert manifest.header.executor_worker_id == executor_node.worker_id
         assert before.phase is OutputHandoffPhase.PENDING
         assert before.complete is before.adoption is before.abort_reason is None
-        (slot,) = manifest.slots
-        assert slot.tier is protocol.ResultStorage.OBJECT_STORE and slot.object_id == output_id
+        slot = (manifest.value)
+        assert slot.tier is protocol.ResultStorage.OBJECT_STORE and (manifest.publication_id).object_id == output_id
         assert len(_PADDING) < slot.size_bytes < 32 * 1024
         (transfer,) = slot.transfers
         assert transfer.contained_object_id == source.object_id and transfer.contained_owner_worker_id == core.worker_id

@@ -42,7 +42,7 @@ from miniray.output_handoff import OutputHandoffPhase
 from miniray.core import CoreWorker
 from miniray.output_publication_journal import OutputPublicationJournalState, OutputPublicationStage
 from miniray.ownership import ObjectCollectionState, ObjectState
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 from miniray.transport import request as rpc_request
 from miniray.worker import PUSH_TASK_HANDLER
 from tests.integration.test_task_path import _close_reference as _close_local
@@ -323,7 +323,7 @@ def test_publication_rollback_receipt_replays_after_same_object_retry_seals(monk
         # Use the first Push identity and the actual owner rollback request.
         # ABORTED alone is not cleanup proof: the request carries the exact
         # Node journal tombstone and the original owner handler validates it.
-        old_id = OutputPublicationID(first_push.lease_id, TaskExecutionKey.from_task_spec(first_push.spec))
+        old_id = OutputPublicationID(first_push.lease_id, TaskExecution.from_task_spec(first_push.spec))
         rolled_back = _handoff(runtime.owner_service.address, old_id, deadline)
         old_reports = [(request, response) for request, response in rollback_reports
                        if request.manifest.publication_id == old_id]
@@ -338,8 +338,8 @@ def test_publication_rollback_receipt_replays_after_same_object_retry_seals(monk
         assert tombstone.plan.manifest_digest == old_manifest.manifest_digest
         assert tuple((effect.stage, effect.slot_index) for effect in tombstone.plan.effects) == ((OutputPublicationStage.SLOT_DROP, 0),)
         assert tuple(ack.effect for ack in tombstone.acknowledgements) == tombstone.plan.effects
-        (old_slot,) = old_manifest.slots
-        assert old_slot.object_id == reference.object_id and old_slot.tier is protocol.ResultStorage.OBJECT_STORE
+        old_slot = (old_manifest.value)
+        assert (old_manifest.publication_id).object_id == reference.object_id and old_slot.tier is protocol.ResultStorage.OBJECT_STORE
         assert not old_slot.transfers and len(_PAYLOAD) < old_slot.size_bytes < 16 * 1024
         assert old_manifest.header.owner_worker_id == core.worker_id and old_manifest.header.executor_worker_id == node.worker_id
 
@@ -347,8 +347,8 @@ def test_publication_rollback_receipt_replays_after_same_object_retry_seals(monk
         assert owned.state is ObjectState.READY_STORED and owned.current_attempt == retry_push.spec.attempt_id
         assert reference.owner_worker_id == core.worker_id and reference.borrower_token is None
         member = owned.output_publication
-        assert member is not None and member.slot == old_slot
-        assert member.publication_id == OutputPublicationID(retry_push.lease_id, TaskExecutionKey.from_task_spec(retry_push.spec))
+        assert member is not None and (member.manifest.value) == old_slot
+        assert member.publication_id == OutputPublicationID(retry_push.lease_id, TaskExecution.from_task_spec(retry_push.spec))
         assert member.manifest.header.node_incarnation == old_manifest.header.node_incarnation
         adopted = _handoff(runtime.owner_service.address, member.publication_id, deadline)
         assert adopted.complete is not None and adopted.adoption is not None and adopted.phase is OutputHandoffPhase.ADOPTED
@@ -364,7 +364,7 @@ def test_publication_rollback_receipt_replays_after_same_object_retry_seals(monk
         assert before.owner_worker_id == core.worker_id and before.size_bytes == old_slot.size_bytes
         assert before.checksum == old_slot.checksum and len(before.data) == old_slot.size_bytes
         assert hashlib.sha256(before.data).hexdigest() == old_slot.checksum
-        old_drop = protocol.DropObjectReplica(old_slot.object_id, old_id.attempt_id,
+        old_drop = protocol.DropObjectReplica((old_manifest.publication_id).object_id, old_id.attempt_id,
                     old_manifest.header.owner_worker_id, node.node_id, old_slot.checksum)
         reply = _rpc(node.node_address, node_module.DROP_OBJECT_REPLICA_HANDLER, old_drop, deadline)
         assert type(reply) is protocol.DropObjectReplicaReply

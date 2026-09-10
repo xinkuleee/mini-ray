@@ -70,8 +70,9 @@ def test_adopted_stored_outer_collects_exact_child_holds_after_publisher_death(m
     fixture, node, core, pending, reply, _calls, _rpc = _output_fixture(refs=True, stored=True)
     stored_id = pending.object_id
     manifest = reply.output_publication.manifest
-    stored_slot = manifest.slots[0]
+    stored_value = (manifest.value)
     identity = manifest.publication_id
+    assert stored_id == identity.object_id == reply.output_publication.result.object_id
     scheduled, releases, commits = [], [], []
     original_release = core._borrow_rpc
     original_commit = core.owner_table.complete_output_publication_collection
@@ -110,8 +111,8 @@ def test_adopted_stored_outer_collects_exact_child_holds_after_publisher_death(m
         assert not fixture.journal.snapshot(identity).retained_result_slots
         before = core.owner_table.snapshot(stored_id)
         descriptor = core._stored_descriptors[stored_id]
-        assert before.canonical_stored_result == descriptor == reply.output_publication.results[0]
-        assert fixture.store.get(stored_id) == fixture.values.payloads[0]
+        assert before.canonical_stored_result == descriptor == (reply.output_publication.result)
+        assert fixture.store.get(stored_id) == (fixture.values.payload)
         incarnation = manifest.header.node_incarnation
         death = _node_death(incarnation.node_id, node_pid=incarnation.node_pid,
                             registration_epoch=incarnation.registration_epoch)
@@ -141,8 +142,8 @@ def test_adopted_stored_outer_collects_exact_child_holds_after_publisher_death(m
         assert len(obligation.pending_edges) == 1 and commits == []
         assert core.owner_table.collection_state(stored_id) is ObjectCollectionState.COLLECTING
         assert core._recovery.lineage_for_object(stored_id) is not None
-        assert len(releases) == len(stored_slot.transfers) == 2
-        for transfer in stored_slot.transfers:
+        assert len(releases) == len(stored_value.transfers) == 2
+        for transfer in stored_value.transfers:
             child = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
             assert transfer.final_hold not in child.contained_holds
             assert transfer.provisional_hold not in child.contained_holds
@@ -159,7 +160,7 @@ def test_adopted_stored_outer_collects_exact_child_holds_after_publisher_death(m
         _assert_metadata(terminal)
         # Exact Node death discharges its inaccessible private replica; no
         # fabricated Drop ACK and no read/mutation of this detached store.
-        assert fixture.store.get(stored_id) == fixture.values.payloads[0]
+        assert fixture.store.get(stored_id) == (fixture.values.payload)
     finally:
         _close(core)
 

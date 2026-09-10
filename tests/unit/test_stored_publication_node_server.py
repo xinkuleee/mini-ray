@@ -57,7 +57,7 @@ def _no_unreviewed_runtime(request, monkeypatch):
 
 
 def _prepare(fixture, node):
-    request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+    request = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     reply = node._handle_prepare_output_publication(request)
     assert reply.accepted and reply.request_identity == request.request_identity
     return request, reply
@@ -71,7 +71,7 @@ def _outcome_request(fixture, record):
     values = fixture.values
     return protocol.GetWorkerLeaseOutcome(
         values.lease, values.task, values.attempt, values.executor, values.owner,
-        fixture.id.output_ids,
+        ((fixture.id.object_id,)),
         scheduling_key=record.request.scheduling_key,
     )
 
@@ -173,8 +173,8 @@ def test_prepare_fences_executor_owner_node_attempt_and_return_manifest(field):
         header = replace(header, publication_id=replace(fixture.id, execution=fixture.id.execution.for_attempt(fixture.values.attempt.next())))
     else:
         record.request = replace(record.request, return_ids=())
-    manifest = OutputPublicationManifest.create(header, fixture.manifest.slots)
-    request = wire.PrepareOutputPublication(manifest, fixture.values.payloads)
+    manifest = OutputPublicationManifest.create(header, (fixture.manifest.value))
+    request = wire.PrepareOutputPublication(manifest, (fixture.values.payload))
     reply = node._handle_prepare_output_publication(request)
     assert not reply.accepted and reply.request_identity == request.request_identity
     assert fixture.journal.publication_ids() == () and fixture.events == []
@@ -201,9 +201,9 @@ def test_one_prepare_orders_owner_child_materialize_and_promotion_effects(monkey
     assert reply.request_identity.publication_id == fixture.id
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.ready_to_complete and snapshot.complete is None
-    assert snapshot.manifest.ordered_edges == fixture.manifest.slots[0].edges
-    assert (fixture.journal.materialized_result(fixture.id, 0),) == fixture.values.results
-    assert fixture.store.get(fixture.id.output_ids[0]) == fixture.values.payloads[0]
+    assert (snapshot.manifest.value.edges) == (fixture.manifest.value).edges
+    assert (fixture.journal.materialized_result(fixture.id, 0)) == (fixture.values.result)
+    assert fixture.store.get((fixture.id.object_id)) == (fixture.values.payload)
     assert record.completion is None
     before = tuple(fixture.events)
     assert node._handle_prepare_output_publication(request).accepted
@@ -242,7 +242,7 @@ def test_failed_complete_records_rollback_when_owner_registration_was_not_applie
 
     monkeypatch.setattr(fixture.adapter, "_register_owner", unavailable)
     monkeypatch.setattr(fixture.adapter, "_report_rollback", report)
-    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
+    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     assert not prepared.accepted and record.output_publication_id == fixture.id
     assert fixture.handoffs.query(fixture.id) is None
     releases = _track_releases(node, monkeypatch)
@@ -281,7 +281,7 @@ def test_failed_complete_after_lost_owner_registration_ack_retains_cleanup_histo
 
     monkeypatch.setattr(fixture.adapter, "_register_owner", applied_without_ack)
     with pytest.raises(TimeoutError, match="intent ACK lost"):
-        node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads))
+        node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
     assert fixture.events == ["owner-register"]
     failed = replace(complete, status=protocol.TaskReplyStatus.SYSTEM_ERROR)
@@ -311,7 +311,7 @@ def test_prepare_exactly_replays_owner_registration_after_applied_ack_was_lost(m
         return acknowledgement
 
     monkeypatch.setattr(fixture.adapter, "_register_owner", report)
-    request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+    request = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     with pytest.raises(TimeoutError, match="intent ACK lost"):
         node._handle_prepare_output_publication(request)
     assert fixture.events == ["owner-register"] and fixture.store.used_bytes == 0
@@ -385,6 +385,8 @@ def test_complete_gate_runs_after_node_commit_before_reply(monkeypatch):
     replay = node._handle_complete_worker_lease(request)
     assert first.accepted and first.released and replay.accepted and not replay.released
     assert first.output_publication == replay.output_publication == fixture.values.envelope
+    assert (first.output_publication.result) == (fixture.values.result)
+    assert first.output_publication.result.inline_data is None
     assert len(sent) == 1
     arrival = gates.OutputPublicationGateArrival.from_bytes(sent[0])
     assert arrival.publication_id == fixture.id
@@ -632,7 +634,7 @@ def _cleanliness_snapshot(fixture, record):
         fixture.ledger.snapshot(), replace(record), tuple(fixture.events),
         fixture.adapter.pending_terminal_reports(), fixture.adapter.pending_lease_completions(),
         fixture.adapter.pending_rollbacks(), frozenset(fixture.adapter._tickets),
-        fixture.store.get(fixture.id.output_ids[0]),
+        fixture.store.get((fixture.id.object_id)),
     )
 
 
@@ -736,18 +738,18 @@ def test_adoption_fences_complete_execution_owner_and_digest(field):
 def test_promotion_transport_ambiguity_propagates_and_exact_prepare_resumes():
     fixture, node, record, _complete = _node()
     fixture.fault = "promote"
-    request = wire.PrepareOutputPublication(fixture.manifest, fixture.values.payloads)
+    request = wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))
     with pytest.raises(TimeoutError, match="lost-ACK"):
         node._handle_prepare_output_publication(request)
     snapshot = fixture.journal.snapshot(fixture.id)
     assert not snapshot.ready_to_complete and snapshot.complete is None
     assert record.state is protocol.LeaseExecutionState.RUNNING and record.completion is None
     assert not any(ack.effect.stage is OutputPublicationStage.PROMOTE for ack in snapshot.acknowledgements)
-    stored_bytes = fixture.store.get(fixture.id.output_ids[0])
+    stored_bytes = fixture.store.get((fixture.id.object_id))
     assert node._handle_prepare_output_publication(request).accepted
     assert fixture.journal.snapshot(fixture.id).ready_to_complete
     assert fixture.events.count("prepare") == 2 and fixture.events.count("promote") == 3
-    assert fixture.store.get(fixture.id.output_ids[0]) == stored_bytes
+    assert fixture.store.get((fixture.id.object_id)) == stored_bytes
 
 
 @pytest.mark.unit

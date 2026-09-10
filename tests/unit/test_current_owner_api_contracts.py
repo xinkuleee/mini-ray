@@ -16,7 +16,7 @@ from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, Wor
 from miniray.output_publication import (
     OutputPublicationCompleteWitness, OutputPublicationEnvelope, OutputPublicationHeader,
     OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation,
-    OutputSlotManifest,
+    OutputValue,
 )
 from miniray.ownership import (
     ConflictingObjectResultError, InvalidObjectTransitionError,
@@ -26,7 +26,7 @@ from miniray.ownership import (
 )
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey
+from miniray.task_outputs import TaskExecution
 
 pytestmark = pytest.mark.unit
 
@@ -43,7 +43,7 @@ class _Fixture:
         self.spec = protocol.TaskSpec(job, task_id, self.attempt,
             protocol.FunctionKey(job, __name__, 'fixture', '1'),
             (), 1, ResourceVector(), self.owner)
-        self.execution = TaskExecutionKey.from_task_spec(self.spec)
+        self.execution = TaskExecution.from_task_spec(self.spec)
         payload = b'one whole result'
         self.descriptor = protocol.ResultDescriptor(
             self.output, protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE,
@@ -73,10 +73,9 @@ class _Fixture:
         manifest = OutputPublicationManifest.create(
             OutputPublicationHeader(identity, self.spec.job_id, self.child_owner, self.owner,
                 OutputPublicationNodeIncarnation(self.node, 1001, 1)),
-            (OutputSlotManifest(self.output, self.descriptor.storage, self.descriptor.size_bytes,
-                self.descriptor.checksum, self.transfers if transfers is None else transfers),))
+            (OutputValue(self.descriptor.storage, self.descriptor.size_bytes, self.descriptor.checksum, self.transfers if transfers is None else transfers)))
         return OutputOwnerPublicationPlan(self.execution, OutputPublicationEnvelope(
-            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (self.descriptor,)))
+            manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (self.descriptor)))
 
 
 def test_atomic_put_edges_freeze_until_exact_plan_completes_after_child_release():

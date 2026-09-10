@@ -122,8 +122,8 @@ def test_real_borrowed_driver_child_survives_container_gc_and_exact_handoff_repl
         snapshot = core.owner_table.snapshot(outer.object_id)
         membership = snapshot.output_publication
         assert snapshot.state is ObjectState.READY_INLINE and membership is not None
-        assert len(membership.slot.transfers) == 1
-        transfer = membership.slot.transfers[0]
+        assert len((membership.manifest.value).transfers) == 1
+        transfer = (membership.manifest.value).transfers[0]
         assert isinstance(transfer.source, BorrowedContainedSource)
         assert transfer.contained_object_id == source.object_id and transfer.contained_owner_worker_id == core.worker_id
         child_before = core.owner_table.snapshot(source.object_id)
@@ -147,7 +147,7 @@ def test_real_borrowed_driver_child_survives_container_gc_and_exact_handoff_repl
         assert ray.get(source, timeout=_remaining(cleanup_deadline)) == ("cycle-control-live-child", 42)
         terminal = core.owner_table._output_collection_receipts[outer.object_id]
         assert terminal.publication_id == membership.publication_id
-        assert terminal.collection.contained_releases == membership.slot.edges
+        assert terminal.collection.contained_releases == (membership.manifest.value).edges
         assert _handoff(runtime.owner_service.address, membership.publication_id, cleanup_deadline) == history
         replay = _rpc(node.node_address, wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, adoption, cleanup_deadline)
         assert replay == reply

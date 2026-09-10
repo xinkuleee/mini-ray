@@ -1,0 +1,475 @@
+{
+  "source_counts": [
+    {
+      "path": "src/miniray/core.py",
+      "physical_before": 12763,
+      "physical_after": 12756,
+      "code_before": 10794,
+      "code_after": 10787
+    },
+    {
+      "path": "src/miniray/node.py",
+      "physical_before": 7257,
+      "physical_after": 7256,
+      "code_before": 6274,
+      "code_after": 6272
+    },
+    {
+      "path": "src/miniray/output_discovery.py",
+      "physical_before": 231,
+      "physical_after": 197,
+      "code_before": 162,
+      "code_after": 135
+    },
+    {
+      "path": "src/miniray/output_handoff.py",
+      "physical_before": 359,
+      "physical_after": 359,
+      "code_before": 277,
+      "code_after": 277
+    },
+    {
+      "path": "src/miniray/output_protocol.py",
+      "physical_before": 302,
+      "physical_after": 295,
+      "code_before": 202,
+      "code_after": 196
+    },
+    {
+      "path": "src/miniray/output_publication.py",
+      "physical_before": 492,
+      "physical_after": 420,
+      "code_before": 374,
+      "code_after": 309
+    },
+    {
+      "path": "src/miniray/output_publication_journal.py",
+      "physical_before": 674,
+      "physical_after": 673,
+      "code_before": 521,
+      "code_after": 519
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "physical_before": 575,
+      "physical_after": 577,
+      "code_before": 434,
+      "code_after": 433
+    },
+    {
+      "path": "src/miniray/ownership.py",
+      "physical_before": 4178,
+      "physical_after": 4162,
+      "code_before": 3334,
+      "code_after": 3324
+    },
+    {
+      "path": "src/miniray/protocol.py",
+      "physical_before": 6653,
+      "physical_after": 6654,
+      "code_before": 5510,
+      "code_after": 5511
+    },
+    {
+      "path": "src/miniray/publication_gate.py",
+      "physical_before": 215,
+      "physical_after": 214,
+      "code_before": 176,
+      "code_after": 175
+    },
+    {
+      "path": "src/miniray/reconstruction_runtime.py",
+      "physical_before": 981,
+      "physical_after": 984,
+      "code_before": 765,
+      "code_after": 769
+    },
+    {
+      "path": "src/miniray/task_outputs.py",
+      "physical_before": 111,
+      "physical_after": 60,
+      "code_before": 75,
+      "code_after": 49
+    },
+    {
+      "path": "src/miniray/worker.py",
+      "physical_before": 2195,
+      "physical_after": 2196,
+      "code_before": 1840,
+      "code_after": 1841
+    }
+  ],
+  "total": {
+    "physical_before": 36986,
+    "physical_after": 36803,
+    "code_before": 30738,
+    "code_after": 30597
+  },
+  "code_line_definition": "physical lines containing non-comment/non-layout Python tokens, excluding docstring spans; not logical statement count",
+  "dto_fields": [
+    {
+      "path": "src/miniray/task_outputs.py",
+      "before": {
+        "TaskOutputManifest": [
+          {
+            "name": "task_id",
+            "type": "TaskID"
+          },
+          {
+            "name": "output_ids",
+            "type": "Tuple[ObjectID, ...]"
+          }
+        ],
+        "TaskExecutionKey": [
+          {
+            "name": "manifest",
+            "type": "TaskOutputManifest"
+          },
+          {
+            "name": "attempt_id",
+            "type": "AttemptID"
+          }
+        ]
+      },
+      "after": {
+        "TaskExecution": [
+          {
+            "name": "attempt_id",
+            "type": "AttemptID"
+          }
+        ]
+      }
+    },
+    {
+      "path": "src/miniray/output_publication.py",
+      "before": {
+        "OutputSlotManifest": [
+          {
+            "name": "object_id",
+            "type": "ObjectID"
+          },
+          {
+            "name": "tier",
+            "type": "ResultStorage"
+          },
+          {
+            "name": "size_bytes",
+            "type": "int"
+          },
+          {
+            "name": "checksum",
+            "type": "str"
+          },
+          {
+            "name": "transfers",
+            "type": "Tuple[PreparedContainedTransfer, ...]"
+          }
+        ]
+      },
+      "after": {
+        "OutputValue": [
+          {
+            "name": "tier",
+            "type": "ResultStorage"
+          },
+          {
+            "name": "size_bytes",
+            "type": "int"
+          },
+          {
+            "name": "checksum",
+            "type": "str"
+          },
+          {
+            "name": "transfers",
+            "type": "Tuple[PreparedContainedTransfer, ...]"
+          }
+        ]
+      }
+    },
+    {
+      "path": "src/miniray/output_publication.py",
+      "before": {
+        "OutputPublicationManifest": [
+          {
+            "name": "header",
+            "type": "OutputPublicationHeader"
+          },
+          {
+            "name": "slots",
+            "type": "Tuple[OutputSlotManifest, ...]"
+          },
+          {
+            "name": "manifest_digest",
+            "type": "str"
+          }
+        ]
+      },
+      "after": {
+        "OutputPublicationManifest": [
+          {
+            "name": "header",
+            "type": "OutputPublicationHeader"
+          },
+          {
+            "name": "value",
+            "type": "OutputValue"
+          },
+          {
+            "name": "manifest_digest",
+            "type": "str"
+          }
+        ]
+      }
+    },
+    {
+      "path": "src/miniray/output_publication.py",
+      "before": {
+        "OutputPublicationEnvelope": [
+          {
+            "name": "manifest",
+            "type": "OutputPublicationManifest"
+          },
+          {
+            "name": "complete",
+            "type": "OutputPublicationCompleteWitness"
+          },
+          {
+            "name": "results",
+            "type": "Tuple[ResultDescriptor, ...]"
+          }
+        ]
+      },
+      "after": {
+        "OutputPublicationEnvelope": [
+          {
+            "name": "manifest",
+            "type": "OutputPublicationManifest"
+          },
+          {
+            "name": "complete",
+            "type": "OutputPublicationCompleteWitness"
+          },
+          {
+            "name": "result",
+            "type": "ResultDescriptor"
+          }
+        ]
+      }
+    },
+    {
+      "path": "src/miniray/output_discovery.py",
+      "before": {
+        "DiscoveredOutputs": [
+          {
+            "name": "manifest",
+            "type": "OutputPublicationManifest"
+          },
+          {
+            "name": "slot_payloads",
+            "type": "Tuple[bytes, ...]"
+          }
+        ]
+      },
+      "after": {
+        "PreparedOutput": [
+          {
+            "name": "manifest",
+            "type": "OutputPublicationManifest"
+          },
+          {
+            "name": "payload",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "path": "src/miniray/output_protocol.py",
+      "before": {
+        "PrepareOutputPublication": [
+          {
+            "name": "manifest",
+            "type": "'OutputPublicationManifest'"
+          },
+          {
+            "name": "slot_payloads",
+            "type": "Tuple[bytes, ...]"
+          }
+        ]
+      },
+      "after": {
+        "PrepareOutputPublication": [
+          {
+            "name": "manifest",
+            "type": "'OutputPublicationManifest'"
+          },
+          {
+            "name": "payload",
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "path": "src/miniray/ownership.py",
+      "before": {
+        "OutputOwnerPublicationMembership": [
+          {
+            "name": "manifest",
+            "type": "OutputPublicationManifest"
+          },
+          {
+            "name": "slot_index",
+            "type": "int"
+          }
+        ]
+      },
+      "after": {
+        "OutputOwnerPublicationMembership": [
+          {
+            "name": "manifest",
+            "type": "OutputPublicationManifest"
+          },
+          {
+            "name": "slot_index",
+            "type": "int"
+          }
+        ]
+      }
+    }
+  ],
+  "current_production_pickle_measurements": null,
+  "pickle_status": "Current production DTOs were not measured by this static packaging task. Historical prototype numbers below are actual recorded measurements, not final P1 wire savings.",
+  "historical_prototype_measurements": {
+    "path": "C:/Users/t-hdong/Desktop/gao/audit/two-version-cleanup/k4-structure-staging/boundary-experiment-results.json",
+    "sha256": "d42c0e7154f212264967e6fc0ba33dfbbb24ed0c48affa2aecea3ef6e7eefe3d",
+    "data": [
+      {
+        "child_count": 0,
+        "old_prepared": {
+          "reachable_dataclasses": 20,
+          "dataclass_fields": 39,
+          "containers": 4,
+          "estimated_deep_bytes": 4780,
+          "pickle_bytes": 1090
+        },
+        "scalar_prepared": {
+          "reachable_dataclasses": 14,
+          "dataclass_fields": 28,
+          "containers": 1,
+          "estimated_deep_bytes": 3192,
+          "pickle_bytes": 805
+        },
+        "old_envelope": {
+          "reachable_dataclasses": 35,
+          "dataclass_fields": 69,
+          "containers": 5,
+          "estimated_deep_bytes": 7872,
+          "pickle_bytes": 1572
+        },
+        "scalar_envelope": {
+          "reachable_dataclasses": 25,
+          "dataclass_fields": 51,
+          "containers": 1,
+          "estimated_deep_bytes": 5296,
+          "pickle_bytes": 1240
+        },
+        "preserved_digest_and_transaction_id": true,
+        "rejections": {
+          "wrong_payload": true,
+          "wrong_complete_digest": true,
+          "wrong_result_owner": true,
+          "wrong_attempt_task": true,
+          "old_wrapper_rejected": true
+        }
+      },
+      {
+        "child_count": 1,
+        "old_prepared": {
+          "reachable_dataclasses": 34,
+          "dataclass_fields": 65,
+          "containers": 5,
+          "estimated_deep_bytes": 6525,
+          "pickle_bytes": 1647
+        },
+        "scalar_prepared": {
+          "reachable_dataclasses": 28,
+          "dataclass_fields": 54,
+          "containers": 2,
+          "estimated_deep_bytes": 5045,
+          "pickle_bytes": 1388
+        },
+        "old_envelope": {
+          "reachable_dataclasses": 49,
+          "dataclass_fields": 95,
+          "containers": 6,
+          "estimated_deep_bytes": 9281,
+          "pickle_bytes": 2113
+        },
+        "scalar_envelope": {
+          "reachable_dataclasses": 39,
+          "dataclass_fields": 77,
+          "containers": 2,
+          "estimated_deep_bytes": 7017,
+          "pickle_bytes": 1781
+        },
+        "preserved_digest_and_transaction_id": true,
+        "rejections": {
+          "wrong_payload": true,
+          "wrong_complete_digest": true,
+          "wrong_result_owner": true,
+          "wrong_attempt_task": true,
+          "old_wrapper_rejected": true,
+          "wrong_child_owner_custody": true,
+          "wrong_outer_identity": true,
+          "duplicate_hold": true,
+          "deep_frozen_tamper": true
+        }
+      },
+      {
+        "child_count": 2,
+        "old_prepared": {
+          "reachable_dataclasses": 48,
+          "dataclass_fields": 91,
+          "containers": 6,
+          "estimated_deep_bytes": 8378,
+          "pickle_bytes": 1895
+        },
+        "scalar_prepared": {
+          "reachable_dataclasses": 42,
+          "dataclass_fields": 80,
+          "containers": 3,
+          "estimated_deep_bytes": 7114,
+          "pickle_bytes": 1636
+        },
+        "old_envelope": {
+          "reachable_dataclasses": 63,
+          "dataclass_fields": 121,
+          "containers": 7,
+          "estimated_deep_bytes": 10934,
+          "pickle_bytes": 2361
+        },
+        "scalar_envelope": {
+          "reachable_dataclasses": 53,
+          "dataclass_fields": 103,
+          "containers": 3,
+          "estimated_deep_bytes": 8998,
+          "pickle_bytes": 2029
+        },
+        "preserved_digest_and_transaction_id": true,
+        "rejections": {
+          "wrong_payload": true,
+          "wrong_complete_digest": true,
+          "wrong_result_owner": true,
+          "wrong_attempt_task": true,
+          "old_wrapper_rejected": true,
+          "wrong_child_owner_custody": true,
+          "wrong_outer_identity": true,
+          "duplicate_hold": true,
+          "deep_frozen_tamper": true
+        }
+      }
+    ]
+  }
+}

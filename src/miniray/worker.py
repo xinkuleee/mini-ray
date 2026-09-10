@@ -31,7 +31,7 @@ from .owner_service import (
     REPLACE_RETAINED_OBJECT_FOR_TASK_HANDLER,
 )
 from .dependency import NestedReferenceImportSession, decode_inline_argument
-from .output_discovery import DiscoveredOutputs, OutputDiscoverySession
+from .output_discovery import OutputDiscoverySession, PreparedOutput
 from .output_protocol import (
     PREPARE_OUTPUT_PUBLICATION_HANDLER, PrepareOutputPublication,
     PreparedOutputPublicationReply,
@@ -42,7 +42,7 @@ from .output_publication import (
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
     OutputPublicationNodeIncarnation,
 )
-from .task_outputs import TaskExecutionKey
+from .task_outputs import TaskExecution
 from .ref_transfer import importing_references
 from .runtime_binding import ExecutionContext, bind_runtime
 from .blocking import (
@@ -96,7 +96,7 @@ class WorkerFailpointMode(str, Enum):
 
 
 class _OutputCompletionPending(RuntimeError):
-    """A discovered output batch must resume, never execute or serialize again."""
+    """A discovered output must resume, never execute or serialize again."""
 
 
 class _CompletionRejected(RuntimeError):
@@ -114,7 +114,7 @@ class _PreparedOutputReply:
 
     request: protocol.PushTask
     discovery: OutputDiscoverySession
-    outputs: DiscoveredOutputs
+    outputs: PreparedOutput
     nested_imports: Optional[NestedReferenceImportSession] = None
     prepare_acked: bool = False
     complete_envelope: Optional[OutputPublicationEnvelope] = None
@@ -689,7 +689,7 @@ class WorkerServer:
                             discovery = self._output_discovery_session(
                                 request, node_incarnation
                             )
-                            outputs = discovery.discover((value,))
+                            outputs = discovery.discover(value)
                             prepared = _PreparedOutputReply(
                                 request, discovery, outputs, nested_imports
                             )
@@ -924,7 +924,7 @@ class WorkerServer:
             or node_incarnation.node_id != self.node_id
         ):
             raise RuntimeError("output discovery has no exact accepted Node incarnation")
-        execution = TaskExecutionKey.from_task_spec(
+        execution = TaskExecution.from_task_spec(
             request.spec
         )
         header = OutputPublicationHeader(
@@ -1123,7 +1123,7 @@ class WorkerServer:
                 return self._complete_aborted_outputs(prepared, key)
             if not prepared.prepare_acked and prepared.complete_envelope is None:
                 prepare = PrepareOutputPublication(
-                    prepared.outputs.manifest, prepared.outputs.slot_payloads,
+                    prepared.outputs.manifest, prepared.outputs.payload,
                 )
                 acknowledgement = self._prepare_output_publication(prepare)
                 if not acknowledgement.accepted:
@@ -1154,7 +1154,7 @@ class WorkerServer:
     def _prepare_output_publication(
         self, request: PrepareOutputPublication,
     ) -> PreparedOutputPublicationReply:
-        """Retry only transport ambiguity, preserving the entire exact batch."""
+        """Retry only transport ambiguity, preserving the exact output bytes."""
 
         reply = self._output_rpc(PREPARE_OUTPUT_PUBLICATION_HANDLER, request)
         if type(reply) is not PreparedOutputPublicationReply:
@@ -1218,7 +1218,7 @@ class WorkerServer:
         query = protocol.GetWorkerLeaseOutcome(
             request.lease_id, request.spec.task_id, request.spec.attempt_id,
             self.worker_id, request.spec.owner_worker_id,
-            prepared.outputs.manifest.publication_id.output_ids,
+            (prepared.outputs.manifest.publication_id.object_id,),
             request.spec.scheduling_key,
         )
         outcome = self._output_rpc(GET_WORKER_LEASE_OUTCOME_HANDLER, query, attempts=1)
@@ -1267,28 +1267,29 @@ class WorkerServer:
             witness = replace(witness)
             # Metadata does not manufacture bytes: this branch requires the
             # entire original Worker data-plane cache and revalidates it.
-            if type(prepared.outputs) is not DiscoveredOutputs:
+            if type(prepared.outputs) is not PreparedOutput:
                 raise RuntimeError("metadata Complete requires retained local output bytes")
             outputs = replace(prepared.outputs)
             if witness != OutputPublicationCompleteWitness.for_manifest(outputs.manifest):
                 raise RuntimeError("Node output completion witness changed the retained publication")
             header = outputs.manifest.header
-            results = tuple(
-                protocol.ResultDescriptor(
-                    slot.object_id, slot.tier, slot.size_bytes, header.owner_worker_id,
-                    header.node_incarnation.node_id, slot.checksum,
-                    payload if slot.tier is protocol.ResultStorage.INLINE else None,
-                ) for slot, payload in zip(outputs.manifest.slots, outputs.slot_payloads)
+            value = outputs.manifest.value
+            result = protocol.ResultDescriptor(
+                outputs.manifest.publication_id.object_id,
+                value.tier, value.size_bytes, header.owner_worker_id,
+                header.node_incarnation.node_id, value.checksum,
+                outputs.payload if value.tier is protocol.ResultStorage.INLINE else None,
             )
-            envelope = OutputPublicationEnvelope(outputs.manifest, witness, results)
+            envelope = OutputPublicationEnvelope(outputs.manifest, witness, result)
         if type(envelope) is not OutputPublicationEnvelope:
             raise RuntimeError("Node successful output completion lacks its unified envelope")
         envelope = replace(envelope)
         if envelope.manifest != prepared.outputs.manifest:
             raise RuntimeError("Node output completion changed the discovered manifest")
-        for result, payload in zip(envelope.results, prepared.outputs.slot_payloads):
-            if result.storage is protocol.ResultStorage.INLINE and result.inline_data != payload:
-                raise RuntimeError("Node output completion changed retained INLINE bytes")
+        result = envelope.result
+        if (result.storage is protocol.ResultStorage.INLINE
+                and result.inline_data != prepared.outputs.payload):
+            raise RuntimeError("Node output completion changed retained INLINE bytes")
         if prepared.complete_envelope is not None and envelope != prepared.complete_envelope:
             raise RuntimeError("Node output completion changed its previous Complete envelope")
         return envelope
@@ -1309,7 +1310,7 @@ class WorkerServer:
             attempt_id=request.spec.attempt_id,
             worker_id=self.worker_id,
             status=protocol.TaskReplyStatus.SUCCEEDED,
-            results=envelope.results,
+            results=(envelope.result,),
             error=None,
             output_publication=envelope,
         )
@@ -1825,7 +1826,7 @@ class WorkerServer:
             for push in pushes:
                 if push is None:
                     continue
-                execution = TaskExecutionKey.from_task_spec(push.spec)
+                execution = TaskExecution.from_task_spec(push.spec)
                 if (_attempt_key(push) != key or push.worker_id != self.worker_id
                         or push.spec.job_id != manifest.header.job_id
                         or push.spec.owner_worker_id != manifest.header.owner_worker_id

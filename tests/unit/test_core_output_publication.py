@@ -109,7 +109,7 @@ def _fixture(*, refs=True, stored=True, report_complete=True):
     node._background_rpc = background_rpc
     node._output_publications = fixture.adapter = node._make_output_publication_adapter()
     fixture.handoffs, fixture.owner_calls = core._output_handoff_table(), owner_calls
-    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, values.payloads))
+    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (values.payload)))
     assert prepared.accepted
     assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
     completed = node._handle_complete_worker_lease_inner(complete)
@@ -122,7 +122,7 @@ def _fixture(*, refs=True, stored=True, report_complete=True):
     else:
         assert fixture.handoffs.query(fixture.id).complete is None
     reply = protocol.TaskReply(spec.task_id, spec.attempt_id, values.executor, protocol.TaskReplyStatus.SUCCEEDED,
-                               envelope.results, output_publication=envelope)
+                               ((envelope.result,)), output_publication=envelope)
     return fixture, node, core, pending, reply, calls, rpc
 
 
@@ -160,8 +160,8 @@ def test_core_adopts_single_output_and_gc_releases_exact_children(refs, stored):
         assert snapshot.output_publication.manifest == fixture.manifest
         assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ADOPTED
         assert not fixture.journal.snapshot(fixture.id).retained_result_slots
-        assert fixture.store.used_bytes == (len(fixture.values.payloads[0]) if stored else 0)
-        for transfer in fixture.manifest.slots[0].transfers:
+        assert fixture.store.used_bytes == (len((fixture.values.payload)) if stored else 0)
+        for transfer in (fixture.manifest.value).transfers:
             child = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
             assert transfer.final_hold in child.contained_holds
             assert transfer.provisional_hold not in child.contained_holds
@@ -173,7 +173,7 @@ def test_core_adopts_single_output_and_gc_releases_exact_children(refs, stored):
         assert not core.owner_table.contains(pending.object_id)
         assert core._recovery.lineage_for_object(pending.object_id) is None
         fixture.assert_no_pins_or_bytes()
-        for transfer in fixture.manifest.slots[0].transfers:
+        for transfer in (fixture.manifest.value).transfers:
             assert fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).local_tokens == frozenset(("source-live",))
         assert not core._objects and not core._stored_descriptors and not core._object_gc_obligations
         assert sum(handler == "drop_object_replica" for handler, _ in calls) == int(stored)
@@ -285,9 +285,9 @@ def test_metadata_only_successful_outcome_never_falls_back_to_system_retry(monke
             assert result.state is (ObjectState.READY_STORED if stored else ObjectState.READY_INLINE)
             if stored:
                 assert core._stored_descriptors[pending.object_id] == reply.results[0]
-                assert fixture.store.get(pending.object_id) == fixture.values.payloads[0]
+                assert fixture.store.get(pending.object_id) == (fixture.values.payload)
             else:
-                assert result.inline_data == fixture.values.payloads[0]
+                assert result.inline_data == (fixture.values.payload)
             assert core._finish_pending_task(pending)
     finally:
         _close(core)

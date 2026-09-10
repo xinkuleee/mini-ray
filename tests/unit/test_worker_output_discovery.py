@@ -56,7 +56,7 @@ def test_plain_shapes_discover_every_slot_once_before_first_prepare(monkeypatch,
     def prepare(request):
         assert reductions == list(range(count))
         assert f.pending.outputs.manifest == request.manifest
-        assert f.pending.outputs.slot_payloads == request.slot_payloads
+        assert (f.pending.outputs.payload) == (request.payload)
         assert request.manifest.header.node_incarnation == f.incarnation
         return wire.PreparedOutputPublicationReply(request.request_identity, True)
 
@@ -98,8 +98,8 @@ def test_multi_contained_outputs_publish_once_after_all_selected_slots_discover(
         assert reductions == [0, 1]
         assert f.pending.discovery.source_references == (child,)
         assert f.pending.outputs.manifest == request.manifest
-        slot, = request.manifest.slots
-        assert slot.object_id.return_index == 0
+        slot = (request.manifest.value)
+        assert (request.manifest.publication_id).object_id.return_index == 0
         transfer, = slot.transfers
         assert transfer.contained_object_id == child.object_id
         return actual.prepare(request)
@@ -405,7 +405,7 @@ def test_node_failed_complete_withholds_ack_after_release_effect_until_exact_ret
     fixture.fault = "prepare"
     with pytest.raises(TimeoutError, match="lost-ACK"):
         node._handle_prepare_output_publication(wire.PrepareOutputPublication(
-            fixture.manifest, fixture.values.payloads,
+            fixture.manifest, (fixture.values.payload),
         ))
     journal = fixture.journal
     before = journal.snapshot(fixture.id)

@@ -1,14 +1,15 @@
 """Single-output wire and Worker contracts, with no sockets or background work."""
 
-from dataclasses import replace
+from dataclasses import fields, replace
 import hashlib
 import importlib.util
 import inspect
 
+from types import SimpleNamespace
 import cloudpickle
 import pytest
 
-from miniray import dependency, protocol, worker
+from miniray import dependency, protocol, task_outputs, worker
 from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, PlacementGroupID, TaskID, WorkerID
 from miniray.output_discovery import OutputDiscoverySession
@@ -19,7 +20,7 @@ from miniray.output_publication import (
     OutputPublicationManifest, OutputPublicationNodeIncarnation,
 )
 from miniray.resources import ResourceVector
-from miniray.task_outputs import TaskExecutionKey, TaskOutputManifest
+from miniray.task_outputs import TaskExecution
 
 
 pytestmark = pytest.mark.unit
@@ -41,20 +42,20 @@ def _spec(value=None):
 def _header(spec=None):
     spec = spec or _spec()
     return OutputPublicationHeader(
-        OutputPublicationID(LeaseID(b"l" * 16), TaskExecutionKey.from_task_spec(spec)),
+        OutputPublicationID(LeaseID(b"l" * 16), TaskExecution.from_task_spec(spec)),
         spec.job_id, WorkerID(b"w" * 16), spec.owner_worker_id,
         OutputPublicationNodeIncarnation(NodeID(b"n" * 16), 1234, 1),
     )
 
 
 def _envelope(manifest, payload):
-    slot = manifest.slots[0]
+    value = (manifest.value)
     result = protocol.ResultDescriptor(
-        slot.object_id, slot.tier, slot.size_bytes, manifest.header.owner_worker_id,
-        manifest.header.node_incarnation.node_id, slot.checksum, payload,
+        (manifest.publication_id).object_id, value.tier, value.size_bytes, manifest.header.owner_worker_id,
+        manifest.header.node_incarnation.node_id, value.checksum, payload,
     )
     return OutputPublicationEnvelope(
-        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (result,),
+        manifest, OutputPublicationCompleteWitness.for_manifest(manifest), result,
     )
 
 
@@ -69,41 +70,64 @@ def test_task_spec_has_one_stable_output_across_attempts():
 
 def test_task_manifest_rejects_empty_multiple_and_nonzero_outputs():
     spec = _spec()
-    manifest = TaskOutputManifest.from_task_spec(spec)
-    execution = TaskExecutionKey(manifest, spec.attempt_id)
-    assert execution.for_attempt(spec.attempt_id.next()).output_ids == spec.return_ids()
+    execution = (TaskExecution.from_task_spec(spec))
+    assert (tuple(field.name for field in fields(execution))) == (("attempt_id",))
+    assert execution == TaskExecution(spec.attempt_id)
+    assert execution.task_id == spec.task_id
+    assert execution.for_attempt(spec.attempt_id.next()).object_id == spec.return_ids()[0]
+    assert not hasattr(task_outputs, "TaskOutputManifest")
+    assert not hasattr(task_outputs, "TaskExecutionKey")
+    for name in (("manifest"), ("output_ids"),
+                    ("num_returns")):
+        assert not hasattr(execution, name)
+    class EqualTaskID:
+        def __eq__(self, other):
+            return True
+
+    invalid_task = SimpleNamespace(
+        task_id=EqualTaskID(), attempt_id=spec.attempt_id,
+        return_ids=spec.return_ids,
+    )
+    with pytest.raises(TypeError, match="task_spec.task_id"):
+        TaskExecution.from_task_spec(invalid_task)
     for outputs in ((), (ObjectID(spec.task_id, 1),),
                     (ObjectID(spec.task_id, 0), ObjectID(spec.task_id, 1))):
-        with pytest.raises(ValueError):
-            TaskOutputManifest(spec.task_id, outputs)
+        invalid = SimpleNamespace(
+            task_id=spec.task_id, attempt_id=spec.attempt_id,
+            return_ids=lambda: outputs,
+        )
+        with pytest.raises(ValueError, match="canonical return index zero"):
+            TaskExecution.from_task_spec(invalid)
 
 
 def test_publication_revalidates_a_mutated_multislot_execution():
     header = _header()
     execution = header.publication_id.execution
-    object.__setattr__(execution.manifest, "output_ids", (
-        ObjectID(execution.task_id, 0), ObjectID(execution.task_id, 1),
-    ))
-    with pytest.raises(ValueError, match="exactly 1"):
+    object.__setattr__((execution.attempt_id), ("attempt_number"), (-1))
+    with pytest.raises(ValueError, match=("attempt_number")):
         OutputPublicationID(header.publication_id.lease_id, execution)
 
 
 def test_success_envelope_requires_its_single_output_and_exact_complete():
     header = _header()
     discovery = OutputDiscoverySession(header, inline_threshold=10000)
-    outputs = discovery.discover((("left", "right"),))
-    envelope = _envelope(outputs.manifest, outputs.slot_payloads[0])
+    output = discovery.discover((("left", "right")))
+    envelope = _envelope(output.manifest, (output.payload))
     reply = protocol.TaskReply(
         header.publication_id.task_id, header.publication_id.attempt_id,
         header.executor_worker_id, protocol.TaskReplyStatus.SUCCEEDED,
-        envelope.results, output_publication=envelope,
+        ((envelope.result,)), output_publication=envelope,
     )
     assert cloudpickle.loads(reply.results[0].inline_data) == ("left", "right")
     assert reply.output_publication.complete == envelope.complete
-    for slots in ((), outputs.manifest.slots * 2,
-                  (replace(outputs.manifest.slots[0], object_id=ObjectID(reply.task_id, 1)),)):
-        with pytest.raises(OutputPublicationConflictError):
-            OutputPublicationManifest.create(header, slots)
+    for values in ((), ((output.manifest.value,)),
+                  ((output.manifest.value,) * 2)):
+        with (pytest.raises(TypeError, match="OutputValue")):
+            OutputPublicationManifest.create(header, values)
+    with pytest.raises(TypeError, match="unexpected keyword argument.*object_id"):
+        replace(output.manifest.value, object_id=ObjectID(reply.task_id, 1))
+    with pytest.raises(OutputPublicationConflictError, match="descriptor"):
+        replace(envelope, result=replace(envelope.result, object_id=ObjectID(reply.task_id, 1)))
     for results in ((), reply.results * 2):
         with pytest.raises(ProtocolError, match="single return"):
             replace(reply, results=results, output_publication=None)
@@ -224,7 +248,7 @@ def test_worker_executes_and_serializes_sequence_as_one_result(monkeypatch, valu
         return protocol.CompleteWorkerLeaseReply(
             request.lease_id, request.task_id, request.attempt_id, request.worker_id,
             request.status, protocol.LeaseExecutionState.COMPLETED, True, True,
-            output_publication=_envelope(publication.manifest, publication.slot_payloads[0]),
+            output_publication=_envelope(publication.manifest, (publication.payload)),
         )
 
     monkeypatch.setattr(worker, "rpc_request", node_request)
@@ -236,7 +260,8 @@ def test_worker_executes_and_serializes_sequence_as_one_result(monkeypatch, valu
     push = protocol.PushTask(header.publication_id.lease_id, server.worker_id, spec)
     reply = server._handle_push_task(push)
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
-    assert len(reply.results) == len(prepared[0].slot_payloads) == 1
+    assert (len(reply.results) == 1)
+    assert type(prepared[0].payload) is bytes
     restored = cloudpickle.loads(reply.results[0].inline_data)
     assert type(restored) is type(value) and restored == value
     assert server._handle_push_task(push) == reply
