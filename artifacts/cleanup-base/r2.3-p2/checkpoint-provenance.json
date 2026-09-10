@@ -1,0 +1,11 @@
+{
+  "edition": "base",
+  "branch_ref": "refs/heads/teaching-base",
+  "parent_commit": "ab4cfb317fd786a286359d8f4e971ff195739375",
+  "tested_snapshot": "r23-base-after-02",
+  "input_identity": "Previously tested uncommitted snapshot; staged source/test/tools/config inputs verified unchanged. Git text EOL normalization is checked separately from raw hashes.",
+  "verification": "final-state-verification.json retained in the R2.3 evidence directory",
+  "prior_artifacts_unchanged": true,
+  "operation": "User-requested local checkpoint; no remote push or CI",
+  "commit_identity_rule": "The containing commit provides checkpoint identity; resolved SHA saved by parent after commit, without changing historical acceptance.json."
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "plan_revision": "R2.2",
-  "status": "PLAN_ONLY_NOT_IMPLEMENTED",
+  "plan_revision": "R2.3",
+  "status": "P2_REMEDIATION_COMPLETE_LOCAL_CHECKPOINT",
   "date": "2026-09-09",
   "versions": {
     "base": "69106772567a4131f5ec76e898a3c4bf3bb6dbe6",
@@ -92663,5 +92663,217 @@
     "k7": "Base branch exists with independent accepted source/HEAD/evidence mapping; enhanced availability is not required.",
     "k9": "Resolve both branch refs; require both heads with their own accepted source/evidence mappings and recorded fork point. No unexplained HEAD drift; base remains recommended and main clearly identifies old source.",
     "remote_publication": "When publishing, verify both remote heads equal local delivery heads. Never substitute tag push. Report local delivery and remote-unverified status separately until publication. No publication in this revision."
+  },
+  "historical_appendix": {
+    "revision": "R2.2",
+    "status_at_creation": "PLAN_ONLY_NOT_IMPLEMENTED",
+    "note": "Existing versions/file_actions/structural packages/branch_delivery retain original R2.2 inputs and planned actions, not current completion state. Section11/p2_remediation is current; original PLANNED_NOT_CREATED is historical."
+  },
+  "p2_remediation": {
+    "revision": "R2.3",
+    "status": "COMPLETE_LOCAL_CHECKPOINT",
+    "authority_section": "docs/project-cleanup-plan.md section11; detailed target states, request facts, bounds and reasoning are specified there",
+    "priority_meaning": "P2 review severity, not the earlier P2 journal/progress structural package",
+    "inputs": {
+      "base": "ab4cfb317fd786a286359d8f4e971ff195739375",
+      "enhanced": "fd40a407a46ada3d4941c034a73355f45355b270"
+    },
+    "historical_tested_commits": {
+      "base": "0a340b792c89667e493f7e7313935e45e29071bf",
+      "enhanced": "3f5b725fb26390b86c78f085486fb73d897d3e42"
+    },
+    "enhanced_original_fork_point": "f9a9b35015f114afda9c87e653b6fedcda2eb0b2",
+    "scope": "All four confirmed P2 findings; shared test migration in B then E, enhanced ACK evaluation and two enhanced documentation fixes",
+    "excluded_p3": [
+      "unused lost_reconstruction_core",
+      "full_output_ids alias",
+      "surviving_output_locations zero parameter",
+      "general legacy fixture state population",
+      "Actor/reconstruction spelling aliases",
+      "raw-string protocol comments"
+    ],
+    "coupled_small_edits": [
+      "remove unused slot parameter and two-slot wording within the P2 test",
+      "remove current candidate wording from enhanced docs/design.md introduction"
+    ],
+    "items": [
+      {
+        "id": "R23-01",
+        "priority": "P2",
+        "status": "IMPLEMENTED_AND_VALIDATED",
+        "editions": [
+          "base",
+          "enhanced"
+        ],
+        "section": "11.2",
+        "finding": "Retained owner-finalization tests mix the only STORED output with an old INLINE sibling and misuse result_retained before MATERIALIZE ACK",
+        "paths": [
+          "tests/unit/test_owner_finalize_replica_receipts.py",
+          "scripts/baseline_manifest.json"
+        ],
+        "conditional_paths": [
+          "Only an actually necessary shared fixture adapter, with caller closure identified; no runtime change presumed"
+        ],
+        "target": "Separate STORED intent-only and independently prepared INLINE output; preserve original physical/manager/Worker faults and exact request/claim/receipt checks",
+        "state_contract": {
+          "stored_pre_materialize_ack": "ACTIVE, MATERIALIZE intent present, no ACK/result/Complete; actual bytes/claim depend on interruption",
+          "stored_worker_ack_unknown": "Physical receipt may exist but cleanup unfinished and ticket released; result_retained false does not discharge cleanup; exact retry skips completed storage effects",
+          "inline_prepared_no_complete": "Actual Prepare ACK retains exact inline result without Node physical replica; first Worker ACK unknown retains result, exact ACK retires it without physical Drop receipt",
+          "enhanced_node_vs_graph": "Actual INTENT/PREPARED and optionally ARMED, then FENCED; Node finalization returns exact empty closed holds, authority stays graph_active with closed_holds=None and no RETIRED receipt",
+          "responsibility": "Result custody, Complete, bytes, resources, Worker ACK, journal retirement and graph retirement remain separate"
+        },
+        "case_mapping": "7 functions/14 instances to8 functions/15 by splitting one obsolete two-tier case; actual runner output decides observed count",
+        "registration": "Reviewed migration whole-file unit, not new delivery gate; branch-specific input hashes",
+        "validation": [
+          "Pre-fix candidate: original source/test bytes plus newly reviewed registry; record dirty hash and actual first failure, not old clean HEAD execution",
+          "Repaired full file via run_baseline --case separately in B and E",
+          "Existing registered tests/unit/test_output_owner_death_node.py",
+          "Existing registered tests/integration/test_output_owner_death_path.py::test_adopted_output_owner_death_cleans_live_executor_and_source_holds"
+        ],
+        "reason": "Repair test binding/observation; do not restore multireturn or delete valid cleanup invariants",
+        "closure": "Retained assertions mapped and bounded before/after/adjacent evidence in each branch; real newly exposed runtime failures remain unresolved rather than weaken tests",
+        "edition_status": {
+          "base": "IMPLEMENTED_AND_VALIDATED",
+          "enhanced": "IMPLEMENTED_AND_VALIDATED"
+        }
+      },
+      {
+        "id": "R23-02",
+        "priority": "P2",
+        "status": "IMPLEMENTED_AND_VALIDATED",
+        "editions": [
+          "enhanced"
+        ],
+        "section": "11.3",
+        "finding": "Original enhanced P5 GCS StageAck/copy scope lacks a locatable independent evaluation or evidence-backed retain disposition",
+        "prerequisite": "R23-01 validated/adapted in E and exact comparison input frozen",
+        "paths": [
+          "src/miniray/enhanced_publication.py",
+          "src/miniray/enhanced_publication_client.py",
+          "src/miniray/enhanced_publication_control.py",
+          "src/miniray/output_publication_node.py",
+          "src/miniray/output_publication_journal.py",
+          "src/miniray/control.py",
+          "src/miniray/node.py"
+        ],
+        "conditional_paths": [
+          "src/miniray/core.py",
+          "src/miniray/publication_gate.py",
+          "Directly affected tests/helpers and reviewed hashes"
+        ],
+        "candidate": "One isolated successful-mutation StageAck candidate; preserve complete request echo, exact receipt and typed accepted facts/owner/forward context; query retains complete detached history or ABSENT; rejection retains existing typed error and optional snapshot",
+        "unchanged": [
+          "single authority and full record",
+          "8 mutation stages plus GetPublication",
+          "fallible return construction before commit",
+          "deep boundary isolation",
+          "real ARM preparation",
+          "late Complete/adoption history",
+          "first fence exception on later owner death",
+          "exact closed-hold history",
+          "no network query for trace",
+          "no adjacent RPC merge or base placeholder"
+        ],
+        "consumer_inventory": [
+          "authority mutation/query",
+          "GCS before/after membership composition",
+          "trace owner context",
+          "owner client forward/receipts",
+          "Node adapter/journal actual preparation",
+          "terminal failpoint exact Complete",
+          "Core Node-loss query",
+          "death/GC full history",
+          "test bridge observation timing"
+        ],
+        "measurements": [
+          "same serializer request/reply and whole-lifecycle bytes",
+          "copy/validation counts by boundary",
+          "normal/unknown-ACK RPC and query count",
+          "types/fields/state/branches/read-path/source diff",
+          "fixed finite same-environment samples and repeats, raw results, no invented speedup/LOC threshold"
+        ],
+        "validation": "Affected exact contracts and actual plain/contained Task, put and whole replacement; if adopted, formal same-version pure/37smoke gate plus affected migrations and new-source frozen install/import",
+        "allowed_dispositions": [
+          "implemented_and_validated_with_measured_net_benefit",
+          "retain_current_design_with_actual_trial_and_cost_or_reproducible_semantic_counterexample"
+        ],
+        "insufficient": [
+          "pure prose rationale",
+          "B Complete ACK evidence",
+          "standalone DTO pickle size",
+          "bad fixture/no effective baseline",
+          "weakened protocol validation"
+        ],
+        "reason": "Missing design evaluation is not proof that defensive copy is wrong; actual trial evidence supports implementation or an honest retain choice",
+        "closure": "Nine-request/consumer dispositions, bounded actual trial/costs/failures if any and independent review; no candidate instrumentation or dual compatibility in formal runtime",
+        "disposition": "ADOPTED_SINGLE_STAGE_ACK_AFTER_ACTUAL_TRIAL_AND_FINAL_VALIDATION"
+      },
+      {
+        "id": "R23-03",
+        "priority": "P2",
+        "status": "IMPLEMENTED_STATICALLY_VERIFIED",
+        "editions": [
+          "enhanced"
+        ],
+        "section": "11.4.1",
+        "finding": "Ray mapping describes B without ordinary publication gate but links current enhanced gated source",
+        "paths": [
+          "docs/production-ray-mapping.md"
+        ],
+        "conditional_paths": [
+          "README.md only if navigation remains inconsistent"
+        ],
+        "target": "Current E relative links explain common mechanisms plus two custom guarantees; B-only descriptions link fixed B source and accurately named documentation HEAD",
+        "fixed_comparisons": {
+          "ray": "c3162dce8d064824293875c5d0bbfd76a54e04ce",
+          "base_source": "0a340b792c89667e493f7e7313935e45e29071bf",
+          "base_documentation": "ab4cfb317fd786a286359d8f4e971ff195739375"
+        },
+        "validation": "Paragraph semantics against E source, B/E status/acceptance and local links/anchors/Git objects; no runtime tests for prose",
+        "reason": "Resolving links may still describe another edition; fix the entire reading path",
+        "evidence": "E actual docs match audit/r23-execution/docs-candidate manifest; source/links statically reviewed. Current lifecycle status will be finalized after remaining implementation."
+      },
+      {
+        "id": "R23-04",
+        "priority": "P2",
+        "status": "IMPLEMENTED_STATICALLY_VERIFIED",
+        "editions": [
+          "enhanced"
+        ],
+        "section": "11.4.2",
+        "finding": "Testing guide still labels accepted E as incomplete392-case candidate",
+        "paths": [
+          "docs/testing.md",
+          "docs/design.md introduction"
+        ],
+        "progress_paths": [
+          "Each branch docs/current-status.md and docs/cleanup-progress.md as actual work changes"
+        ],
+        "target": "R2.2 saved405/37 identity remains historical; actual R2.3 candidate/selections/later evidence separate; file and selector counts differ from cases",
+        "validation": "Actual manifest/acceptance/source state and wording/link checks; no manufactured failing test or relabeled old installation",
+        "reason": "Evidence-bound wording remains correct while follow-up inputs advance HEAD",
+        "evidence": "E actual docs match audit/r23-execution/docs-candidate manifest; source/links statically reviewed. Current lifecycle status will be finalized after remaining implementation."
+      }
+    ],
+    "execution_order": [
+      "Record inputs and4 findings",
+      "R23-01 B then E",
+      "R23-03/04 docs can run independently",
+      "R23-02 one E candidate on corrected tests",
+      "Adopt or evidence-backed retain and required validation",
+      "Independent4-P2 review and final B/E identities"
+    ],
+    "future_evidence_paths": {
+      "base": "artifacts/cleanup-base/r2.3-p2/",
+      "enhanced": "artifacts/cleanup-enhanced/r2.3-p2/"
+    },
+    "evidence_rules": "Tests: before/after logs. ACK: trial/cost/contracts and actual failures if any, not required baseline failure. Docs: incorrect passages/static before-after checks. Old evidence immutable.",
+    "bounds": "Existing runner and exact reviewed migrations, original 5-second startup and 30-second test bounds; no directory collection, skip/xfail, blanket338-selector gate or erased failures",
+    "completion": "All4 reviewP2 findings closed by specified evidence; excludedP3 and all historical burdens are not claimed resolved",
+    "completion_evidence": {
+      "base": "artifacts/cleanup-base/r2.3-p2/acceptance.json",
+      "enhanced": "artifacts/cleanup-enhanced/r2.3-p2/final/acceptance.json",
+      "scope_note": "Four P2 complete; P3 excluded. Current results bind uncommitted frozen snapshots, not unchanged Git HEAD."
+    }
   }
 }

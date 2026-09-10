@@ -1,0 +1,19 @@
+{
+  "item": "R23-01",
+  "edition": "base",
+  "status": "implemented_and_validated",
+  "branch_ref": "refs/heads/teaching-base",
+  "head": "ab4cfb317fd786a286359d8f4e971ff195739375",
+  "input_kind": "uncommitted working-tree candidate; exact snapshot binds changed test and single registry entry",
+  "accepted_candidate": "r23-base-after-02",
+  "archive_sha256": "98fa2fbf0eb921b87b13b9a335d7247d2a6f7ee69dab8080d1e2f8e1690ba5f3",
+  "target_test_sha256": "d3051956feb52ea44d954cafc4f8e80560eb57b4d5b5d90237abf134917d948b",
+  "results": "15 target cases;10 adjacent Node owner-death cases;1 actual adopted-owner-death process case all passed",
+  "failures_preserved": "Original test14 fail at pre-MATERIALIZE retained-result expectation. First repaired candidate14 passed/1 failed before Node because deepcopy revalidated deliberate malformed effect. Valid observation is now cloned before separate independent corruption; second candidate15 pass.",
+  "runtime_source_unchanged": true,
+  "shared_helpers_unchanged": true,
+  "historical_gate": "R2.2 343/32 belongs only to0a340b7, not re-executed or relabeled; runtime/package and existing gate test inputs unchanged. New file is reviewed migration, not gate promotion.",
+  "environment": "Python3.12.13 WSL Linux, same checked-hash source cache, original30-second runner/5-second startup bounds",
+  "enhanced": "must adapt and validate separately; B completion does not wait for E ACK experiment",
+  "git": "No commit or push"
+}

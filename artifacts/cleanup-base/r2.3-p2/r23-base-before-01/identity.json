@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "ab4cfb317fd786a286359d8f4e971ff195739375",
+  "working_tree_status": " M docs/project-cleanup-plan.json\n M docs/project-cleanup-plan.md\n M scripts/baseline_manifest.json\n",
+  "archive_sha256": "594c5bcb7dc3e60e11a7ba9b29667645d055d44e7848168713032026a3c1ef36",
+  "file_count": 422,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}

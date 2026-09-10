@@ -1,0 +1,66 @@
+..............F                                                          [100%]
+=================================== FAILURES ===================================
+_ test_corrupt_bytes_or_another_write_claim_never_authorize_finalization[claim] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7b25fd739e50>
+corruption = 'claim'
+
+    @pytest.mark.parametrize("corruption", ("bytes", "claim"))
+    def test_corrupt_bytes_or_another_write_claim_never_authorize_finalization(monkeypatch, corruption):
+        fixture, node, record, request = _case(monkeypatch, "corrupt-sealed" if corruption == "bytes" else "partial")
+        stored_id = (fixture.manifest.publication_id).object_id
+        if corruption == "claim":
+            original = node._local_replica_write_claims[stored_id]
+            wrong_effect = replace(original.effect)
+            object.__setattr__(wrong_effect, "transfer_index", 0)
+            node._local_replica_write_claims[stored_id] = replace(original, effect=wrong_effect)
+>       before_claims = deepcopy(node._local_replica_write_claims)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_owner_finalize_replica_receipts.py:531: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:136: in deepcopy
+    y = copier(x, memo)
+        ^^^^^^^^^^^^^^^
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:221: in _deepcopy_dict
+    y[deepcopy(key, memo)] = deepcopy(value, memo)
+                             ^^^^^^^^^^^^^^^^^^^^^
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:162: in deepcopy
+    y = _reconstruct(x, memo, *rv)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:259: in _reconstruct
+    state = deepcopy(state, memo)
+            ^^^^^^^^^^^^^^^^^^^^^
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:136: in deepcopy
+    y = copier(x, memo)
+        ^^^^^^^^^^^^^^^
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:221: in _deepcopy_dict
+    y[deepcopy(key, memo)] = deepcopy(value, memo)
+                             ^^^^^^^^^^^^^^^^^^^^^
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:162: in deepcopy
+    y = _reconstruct(x, memo, *rv)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../mini-ray-cleanup-runtime/python/lib/python3.12/copy.py:253: in _reconstruct
+    y = func(*args)
+        ^^^^^^^^^^^
+<string>:7: in __init__
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = OutputPublicationEffect(publication_id=OutputPublicationID(lease_id=LeaseID('04040404040404040404040404040404'), execu...4d9a54e26af56241463a8393cc92d8f922cb86fa', stage=<OutputPublicationStage.MATERIALIZE: 'MATERIALIZE'>, transfer_index=0)
+
+    def __post_init__(self) -> None:
+        _require_type(self.publication_id, OutputPublicationID, "publication_id")
+        _require_type(self.stage, OutputPublicationStage, "stage")
+        object.__setattr__(self, "publication_id", replace(self.publication_id))
+        object.__setattr__(self, "manifest_digest", _checksum(self.manifest_digest, "manifest_digest"))
+        if self.stage in _TRANSFER_STAGES:
+            _uint(self.transfer_index, "transfer_index")
+        elif self.transfer_index is not None:
+>           raise OutputPublicationConflictError("non-transfer effect cannot carry a transfer_index")
+E           miniray.output_publication.OutputPublicationConflictError: non-transfer effect cannot carry a transfer_index
+
+src/miniray/output_publication_journal.py:107: OutputPublicationConflictError
+=========================== short test summary info ============================
+FAILED tests/unit/test_owner_finalize_replica_receipts.py::test_corrupt_bytes_or_another_write_claim_never_authorize_finalization[claim]
+1 failed, 14 passed in 2.56s
