@@ -6936,11 +6936,11 @@ class CoreWorker:
                     return False
                 member = snapshot.output_publication
                 plan = self._owner_table.begin_output_publication_retirement(
-                    (member,), retirement_id="retire-output:{}".format(uuid.uuid4().hex),
-                    replica_locations={member.object_id: (
+                    member, retirement_id="retire-output:{}".format(uuid.uuid4().hex),
+                    replica_locations=(
                         (member.manifest.header.node_incarnation.node_id,)
                         if member.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE else ()
-                    )},
+                    ),
                 )
                 current = {"plan": plan, "child": {}, "replica": {}}
                 work[object_id] = current
@@ -6955,7 +6955,7 @@ class CoreWorker:
         try:
             routes = {
                 (transfer.contained_object_id, transfer.final_hold): transfer.contained_owner_address
-                for member in plan.memberships for transfer in member.manifest.value.transfers
+                for transfer in plan.membership.manifest.value.transfers
             }
             for request in plan.contained_releases:
                 if request not in current["child"]:
@@ -6985,7 +6985,7 @@ class CoreWorker:
                     raise SystemTaskError("output retirement replica ACK mismatch")
                 current["replica"][request] = reply
             with self._state_lock:
-                if any(self._has_late_replica_cleanup_locked(member.object_id) for member in plan.memberships):
+                if self._has_late_replica_cleanup_locked(plan.object_id):
                     self._schedule_late_replica_cleanup_locked()
                     return False
                 self._owner_table.complete_output_publication_retirement(

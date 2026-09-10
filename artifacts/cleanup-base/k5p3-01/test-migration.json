@@ -1,0 +1,125 @@
+[
+  {
+    "path": "tests/integration/test_core_reconstruction_concurrency.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 1,
+    "changed_function_selectors": [],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/integration/test_inline_node_loss_path.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 2,
+    "changed_function_selectors": [],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_core_output_receipt_loss.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 5,
+    "changed_function_selectors": [
+      "tests/unit/test_core_output_receipt_loss.py::test_owner_retirement_is_an_independent_shutdown_fence_without_protocol_marker"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_core_worker_crash_recovery.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 12,
+    "changed_function_selectors": [
+      "tests/unit/test_core_worker_crash_recovery.py::test_completed_stored_result_publishes_while_worker_remains_alive"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_current_owner_api_contracts.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 9,
+    "changed_function_selectors": [
+      "tests/unit/test_current_owner_api_contracts.py::test_plain_result_cannot_revive_an_exact_retired_output_attempt"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_foreign_reconstruction_runtime.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 5,
+    "changed_function_selectors": [],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_location_report_custody.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 10,
+    "changed_function_selectors": [
+      "tests/unit/test_location_report_custody.py::test_retired_or_frozen_publication_keeps_exact_cleanup_not_custody_location"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_output_owner_publication.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 25,
+    "changed_function_selectors": [
+      "tests/unit/test_output_owner_publication.py::test_single_output_publishes_once_with_metadata_only_owner_history",
+      "tests/unit/test_output_owner_publication.py::test_tampered_manifest_and_membership_cannot_bypass_single_output_identity",
+      "tests/unit/test_output_owner_publication.py::test_publication_does_not_mutate_an_unrelated_object",
+      "tests/unit/test_output_owner_publication.py::test_collection_rejects_changed_manifest_membership_and_frozen_metadata"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_output_owner_retirement.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 15,
+    "changed_function_selectors": [
+      "tests/unit/test_output_owner_retirement.py::test_retirement_preserves_stable_id_incoming_holds_and_task_lineage",
+      "tests/unit/test_output_owner_retirement.py::test_retirement_rejects_ready_slot_or_missing_replica_inventory_atomically",
+      "tests/unit/test_output_owner_retirement.py::test_public_plans_proofs_and_terminal_getters_cannot_mutate_owner_history"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_output_owner_terminal_metadata.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 2,
+    "changed_function_selectors": [
+      "tests/unit/test_output_owner_terminal_metadata.py::test_terminal_owner_rejects_changed_payload_or_collection_identity"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_owner_retirement.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 6,
+    "changed_function_selectors": [],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_replica_cleanup.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 8,
+    "changed_function_selectors": [
+      "tests/unit/test_replica_cleanup.py::test_active_or_completed_collection_still_admits_only_exact_physical_cleanup"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/unit/test_targeted_owner_defer.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 3,
+    "changed_function_selectors": [
+      "tests/unit/test_targeted_owner_defer.py::test_owner_retirement_drop_ack_loss_defers_then_exact_request_starts"
+    ],
+    "helpers_migrated_without_reformatting": true
+  },
+  {
+    "path": "tests/integration/test_stored_outer_publication_path.py",
+    "test_names_and_decorators_preserved": true,
+    "test_count": 1,
+    "changed_function_selectors": [
+      "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects"
+    ],
+    "helpers_migrated_without_reformatting": true
+  }
+]

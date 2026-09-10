@@ -145,7 +145,7 @@ def test_single_output_publishes_once_with_metadata_only_owner_history(stored):
         snapshot = table.snapshot(descriptor.object_id)
         membership = snapshot.output_publication
         memberships.append(membership)
-        assert membership == OutputOwnerPublicationMembership(fixture.manifest, index)
+        assert membership == OutputOwnerPublicationMembership(fixture.manifest)
         assert table.output_owner_publication(descriptor.object_id) == membership
         assert table.output_owner_result(descriptor.object_id) == descriptor
         assert snapshot.outgoing_contained_edges == frozenset((fixture.manifest.value).edges)
@@ -303,9 +303,10 @@ def test_tampered_manifest_and_membership_cannot_bypass_single_output_identity()
     with pytest.raises(ValueError, match="manifest_digest"):
         table.commit_output_publication(forged)
     assert _snapshots(table, fixture) == before
-    for invalid in (-1, True, (1)):
-        with pytest.raises(ValueError, match="slot_index"):
-            OutputOwnerPublicationMembership(fixture.manifest, invalid)
+    for invalid in (-1, True, 1, None, (), (fixture.manifest,), (fixture.manifest, fixture.manifest)):
+        with pytest.raises(TypeError, match="OutputPublicationManifest"):
+            OutputOwnerPublicationMembership(invalid)
+    assert tuple(item.name for item in fields(OutputOwnerPublicationMembership)) == ("manifest",)
 
 
 def test_publication_does_not_mutate_an_unrelated_object():
@@ -318,8 +319,9 @@ def test_publication_does_not_mutate_an_unrelated_object():
     receipt = table.commit_output_publication(fixture.plan)
     assert receipt.committed
     assert table.snapshot(unrelated) == before
-    assert tuple(table.snapshot(object_id).output_publication.slot_index
-                 for object_id in ((fixture.publication_id.object_id,))) == (0,)
+    assert table.snapshot(fixture.publication_id.object_id).output_publication == (
+        OutputOwnerPublicationMembership(fixture.manifest)
+    )
     assert tuple(object_id.return_index for object_id in ((fixture.publication_id.object_id,))) == (0,)
     for object_id in ((fixture.publication_id.object_id,)):
         assert table.snapshot(object_id).current_attempt == fixture.execution.attempt_id
@@ -473,7 +475,7 @@ def test_collection_rejects_changed_manifest_membership_and_frozen_metadata():
     before = table.snapshot(first)
     changed_header = replace(fixture.header, publication_id=replace(fixture.publication_id, lease_id=LeaseID.random()))
     changed_manifest = OutputPublicationManifest.create(changed_header, (fixture.manifest.value))
-    changed_member = OutputOwnerPublicationMembership(changed_manifest, 0)
+    changed_member = OutputOwnerPublicationMembership(changed_manifest)
     with pytest.raises(OutputOwnerPublicationConflictError):
         table.complete_output_publication_collection(replace(plan, membership=changed_member))
     altered = replace(plan, metadata_plan=replace(plan.metadata_plan, collection_id="other-gc"))

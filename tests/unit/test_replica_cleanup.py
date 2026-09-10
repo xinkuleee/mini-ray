@@ -192,8 +192,8 @@ def test_active_or_completed_collection_still_admits_only_exact_physical_cleanup
     else:
         owner.mark_lost(output, values.attempt)
         member = owner.output_owner_publication(output)
-        owner.begin_output_publication_retirement((member,), retirement_id="late-report-retirement",
-                                                  replica_locations={output: (values.node,)})
+        owner.begin_output_publication_retirement(member, retirement_id="late-report-retirement",
+                                                  replica_locations=(values.node,))
     before = deepcopy(owner._output_publication_receipts)
     request = owner.retired_output_replica(descriptor)
     assert request == protocol.DropObjectReplica(output, values.attempt, values.owner, secondary, descriptor.checksum)

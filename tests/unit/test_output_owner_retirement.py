@@ -7,7 +7,7 @@ No runtime constructor, transport, process, thread, wait or user code runs.
 """
 
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import pytest
 
@@ -22,6 +22,7 @@ from miniray.ownership import (
     InvalidObjectTransitionError, ObjectCollectionInProgressError,
     ObjectCollectionState, ObjectOwnerTable, ObjectState,
     OutputOwnerPublicationDisposition, OutputOwnerPublicationPlan,
+    OutputOwnerPublicationRetirementPlan, OutputOwnerPublicationRetirementReceipt,
     OutputOwnerRetirementConflictError, OutputOwnerRetirementInProgressError,
     TaskOutputAttemptAdvancePlan,
 )
@@ -63,7 +64,7 @@ def _begin(table, fixture, *, identity="retire:output", extra_nodes=()):
     member = table.output_owner_publication(fixture.output)
     locations = ((fixture.node,) + extra_nodes if (member.manifest.value).tier is protocol.ResultStorage.OBJECT_STORE else ())
     return table.begin_output_publication_retirement(
-        (member,), retirement_id=identity, replica_locations={member.object_id: locations},
+        member, retirement_id=identity, replica_locations=locations,
     )
 
 
@@ -117,6 +118,12 @@ def test_retirement_preserves_stable_id_incoming_holds_and_task_lineage():
     untouched = table.snapshot(unrelated)
     before = table.snapshot(target)
     plan = _begin(table, fixture)
+    assert plan.membership == before.output_publication and plan.object_id == target
+    assert tuple(item.name for item in fields(OutputOwnerPublicationRetirementPlan)) == (
+        "retirement_id", "membership", "replica_drops",
+    )
+    assert type(table._output_retirements[plan.retirement_id]) is OutputOwnerPublicationRetirementPlan
+    assert table.output_publication_retirement_receipt(plan) is None
     assert table.has_active_output_retirements() and table.collection_state(target) is ObjectCollectionState.ACTIVE
     assert table.snapshot(target).output_retirement_id == plan.retirement_id
     assert _begin(table, fixture) == plan
@@ -124,6 +131,11 @@ def test_retirement_preserves_stable_id_incoming_holds_and_task_lineage():
     assert table.release_local_reference(target, "new-live-handle")
     proofs = _proofs(fixture, plan)
     receipt = table.complete_output_publication_retirement(plan, **proofs)
+    assert set(table._output_retirements) == {plan.retirement_id}
+    assert type(table._output_retirements[plan.retirement_id]) is OutputOwnerPublicationRetirementReceipt
+    assert table._output_retirements[plan.retirement_id].plan == plan
+    assert not hasattr(table, "_output_retirement_plans")
+    assert not hasattr(table, "_output_retirement_receipts")
     assert receipt.disposition is OutputOwnerPublicationDisposition.APPLIED
     assert not table.has_active_output_retirements()
     after = table.snapshot(target)
@@ -134,6 +146,20 @@ def test_retirement_preserves_stable_id_incoming_holds_and_task_lineage():
     assert table.task_lineage_edges(fixture.task)
     _assert_metadata_only(plan)
     _assert_metadata_only(receipt)
+    before_replay = _state(table)
+    replayed_plan = table.begin_output_publication_retirement(
+        plan.membership, retirement_id=plan.retirement_id,
+        replica_locations=tuple(drop.node_id for drop in plan.replica_drops),
+    )
+    assert replayed_plan == plan and replayed_plan is not plan
+    assert _state(table) == before_replay
+    assert not table.has_active_output_retirements()
+    with pytest.raises(OutputOwnerRetirementConflictError, match="retirement_id"):
+        table.begin_output_publication_retirement(
+            plan.membership, retirement_id=plan.retirement_id,
+            replica_locations=(fixture.node, NodeID.random()),
+        )
+    assert _state(table) == before_replay
     assert table.complete_output_publication_retirement(plan, **proofs).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
 
 
@@ -173,10 +199,34 @@ def test_retirement_rejects_ready_slot_or_missing_replica_inventory_atomically()
     assert table.mark_lost(fixture.output, fixture.attempt)
     member = table.output_owner_publication(fixture.output)
     before = _state(table)
-    for inventory, message in (({fixture.output: ()}, "publishing Node"), ({}, "exactly")):
-        with pytest.raises(OutputOwnerRetirementConflictError, match=message):
-            table.begin_output_publication_retirement((member,), retirement_id="missing-inventory", replica_locations=inventory)
+    for inventory in ((), (NodeID.random(),)):
+        with pytest.raises(OutputOwnerRetirementConflictError, match="publishing Node"):
+            table.begin_output_publication_retirement(member, retirement_id="missing-inventory", replica_locations=inventory)
         assert _state(table) == before
+    for invalid in (None, (), (member,), (member, member)):
+        with pytest.raises(TypeError, match="OutputOwnerPublicationMembership"):
+            table.begin_output_publication_retirement(
+                invalid, retirement_id="wrong-membership", replica_locations=(fixture.node,),
+            )
+        with pytest.raises(TypeError, match="OutputOwnerPublicationMembership"):
+            OutputOwnerPublicationRetirementPlan("wrong-membership", invalid, ())
+        assert _state(table) == before
+    for invalid in ({fixture.output: ()}, {}, {fixture.output: (fixture.node,)}, fixture.node, (fixture.owner,)):
+        with pytest.raises(TypeError):
+            table.begin_output_publication_retirement(member, retirement_id="wrong-inventory", replica_locations=invalid)
+        assert _state(table) == before
+    with pytest.raises(OutputOwnerRetirementConflictError, match="repeats"):
+        table.begin_output_publication_retirement(
+            member, retirement_id="repeated-node", replica_locations=(fixture.node, fixture.node),
+        )
+    assert _state(table) == before
+    changed_header = replace(fixture.header, publication_id=replace(fixture.publication_id, lease_id=LeaseID.random()))
+    changed_manifest = OutputPublicationManifest.create(changed_header, fixture.manifest.value)
+    with pytest.raises(OutputOwnerRetirementConflictError):
+        table.begin_output_publication_retirement(
+            replace(member, manifest=changed_manifest), retirement_id="wrong-publication", replica_locations=(fixture.node,),
+        )
+    assert _state(table) == before
 
 
 def test_retirement_rejects_overlapping_claim_and_rebound_identity():
@@ -351,20 +401,20 @@ def test_public_plans_proofs_and_terminal_getters_cannot_mutate_owner_history():
     fixture, table = _lost_fixture()
     plan = _begin(table, fixture)
     saved_plan = deepcopy(plan)
-    object.__setattr__(plan.memberships[0].manifest.header.owner_worker_id, "value", b"x" * 16)
+    object.__setattr__(plan.membership.manifest.header.owner_worker_id, "value", b"x" * 16)
     plan = _begin(table, fixture)
     assert plan == saved_plan
     proofs = _proofs(fixture, plan)
     saved_proofs = deepcopy(proofs)
     receipt = table.complete_output_publication_retirement(plan, **proofs)
-    object.__setattr__(receipt.plan.memberships[0].manifest, "manifest_digest", "f" * 64)
+    object.__setattr__(receipt.plan.membership.manifest, "manifest_digest", "f" * 64)
     object.__setattr__(proofs["dropped_replicas"][0].node_id, "value", b"y" * 16)
     readback = table.output_publication_retirement_receipt(saved_plan)
     assert readback.plan == saved_plan
     object.__setattr__(readback.plan.replica_drops[0].object_id, "return_index", 99)
     assert table.output_publication_retirement_receipt(saved_plan).plan == saved_plan
     assert table.complete_output_publication_retirement(saved_plan, **saved_proofs).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
-    for value in (table._output_retirement_plans, table._output_retirement_receipts, table._retired_output_slots,
+    for value in (table._output_retirements, table._retired_output_slots,
                   table._retired_output_attempts, table._output_publication_receipts):
         _assert_metadata_only(value)
 

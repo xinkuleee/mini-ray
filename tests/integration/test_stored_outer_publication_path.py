@@ -256,7 +256,7 @@ def test_stored_outer_publication_adopts_owner_handoff_and_collects(
         descriptor = snapshot.canonical_stored_result
         assert descriptor == core.owner_table.output_owner_result(outer_id)
         output_manifest = publication.manifest
-        assert publication.slot_index == 0
+        assert publication.publication_id.object_id == outer_id
         assert not hasattr(output_manifest, "to_graph_manifest")
         assert descriptor == core._stored_descriptors[outer_id]
         assert descriptor.storage is protocol.ResultStorage.OBJECT_STORE
@@ -422,7 +422,7 @@ def test_stored_outer_publication_adopts_owner_handoff_and_collects(
         terminal = core.owner_table._output_collection_receipts[outer_id]
         assert terminal.publication_id == publication_id
         assert terminal.manifest_digest == output_manifest.manifest_digest
-        assert terminal.slot_index == 0
+        assert terminal.publication_id.object_id == outer_id
         assert terminal.collection.object_id == outer_id and terminal.collection.collected
         assert terminal.collection.contained_releases == edges
         _assert_metadata_only(terminal)

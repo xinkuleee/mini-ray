@@ -282,7 +282,7 @@ def test_owner_retirement_drop_ack_loss_defers_then_exact_request_starts():
         assert len(drop_requests) == 1
         work = core._output_retirement_work[values.lost]
         assert work["plan"].retirement_id == target.output_retirement_id
-        assert work["plan"].memberships == (old_target.output_publication,)
+        assert work["plan"].membership == old_target.output_publication
         assert not work["replica"]  # effect is real, its ACK is still missing
         assert core.owner_table.snapshot(values.lost).output_publication == old_target.output_publication
         accepted = core.request_owned_object_reconstruction(values.request)

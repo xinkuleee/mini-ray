@@ -50,7 +50,7 @@ from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_handoff import OutputHandoffPhase
 from miniray.output_publication import OutputPublicationHeader, OutputPublicationID
 from miniray.output_publication_journal import OutputPublicationJournal
-from miniray.ownership import ObjectCollectionState, ObjectState
+from miniray.ownership import ObjectCollectionState, ObjectState, OutputOwnerPublicationRetirementReceipt
 from miniray.reconstruction_runtime import ReconstructionDisposition
 from miniray.recovery import TaskState, UnknownTaskError
 from miniray.resources import NodeSnapshot, ResourceLedger, ResourceVector
@@ -297,7 +297,7 @@ class _Case:
                    for object_id in pending.output_ids)
         handoff = core._output_handoff_table().query(self.identity)
         assert handoff.phase is OutputHandoffPhase.ADOPTED and handoff.complete == self.reply.output_publication.complete
-        assert not core.owner_table._output_retirement_receipts
+        assert not core.owner_table._output_retirements
         assert not getattr(core, "_output_retirement_work", {})
         assert core._accepted_task_count == 0 and not core._task_finish_barriers
         self.drain_submissions()
@@ -492,10 +492,10 @@ def _concurrent_reconstruction(case, object_ids, allowed_threads):
                 assert request.producer_attempt_id == case.pending.spec.attempt_id
                 assert request.owner_worker_id == core.worker_id and request.node_id == node.node_id
                 assert reply.error is None
-        receipts = tuple(core.owner_table._output_retirement_receipts.values())
+        receipts = tuple(value for value in core.owner_table._output_retirements.values() if isinstance(value, OutputOwnerPublicationRetirementReceipt))
         assert len(receipts) == 1
         receipt, = receipts
-        assert tuple(member.object_id for member in receipt.plan.memberships) == case.pending.output_ids
+        assert receipt.plan.object_id == receipt.plan.membership.object_id == case.pending.object_id
         assert receipt.released_edges == ()
         assert receipt.dropped_replicas == tuple(reply for _, _, reply in drops[count:])
         assert core.owner_table.output_publication_retirement_receipt(receipt.plan).plan == receipt.plan

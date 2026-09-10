@@ -365,7 +365,7 @@ def test_retired_or_frozen_publication_keeps_exact_cleanup_not_custody_location(
             f.lose_source()
             membership = core.owner_table.output_owner_publication(f.output)
             core.owner_table.begin_output_publication_retirement(
-                (membership,), retirement_id="retire-before-report", replica_locations={f.output: (f.source,)},
+                membership, retirement_id="retire-before-report", replica_locations=(f.source,),
             )
         before = core.owner_table.snapshot(f.output)
         routes = dict(core._stored_descriptors)

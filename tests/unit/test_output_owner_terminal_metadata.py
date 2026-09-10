@@ -216,7 +216,7 @@ def test_terminal_owner_rejects_changed_payload_or_collection_identity(changed_f
             owner.commit_output_publication(changed_publication)
         # Rebuild a self-consistent manifest/witness/descriptor. Rejection must
         # bind terminal identity rather than an unrelated malformed envelope.
-        membership = OutputOwnerPublicationMembership(changed_publication.envelope.manifest, 0)
+        membership = OutputOwnerPublicationMembership(changed_publication.envelope.manifest)
     else:
         metadata = replace(metadata, collection_id="different-gc")
         with pytest.raises(OutputOwnerPublicationConflictError, match="identity changed"):

@@ -501,7 +501,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
             assert settled.inline_data == (received_envelope.result).inline_data
             assert settled.output_publication is not None
             assert settled.output_publication.publication_id == publication
-            assert settled.output_publication.slot_index == 0
+            assert settled.output_publication.publication_id.object_id == outer_id
             assert settled.output_publication.manifest == prepared.manifest
             assert settled.outgoing_contained_edges == frozenset({edge})
         else:
@@ -594,7 +594,7 @@ def _run_inline_node_loss(monkeypatch, *, keep_received: bool) -> None:
         assert final_task.current_attempt == after.current_attempt
         assert final_task.retries_started == expected_attempt
         assert after.output_publication is not None
-        assert after.output_publication.slot_index == 0
+        assert after.output_publication.publication_id.object_id == outer_id
         assert after.canonical_stored_result is None and not after.locations
         assert after.output_retirement_id is None
         final_publication = after.output_publication.publication_id

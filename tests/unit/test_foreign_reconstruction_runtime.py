@@ -245,7 +245,7 @@ class _ForeignReconstruction:
         assert snapshot.state is ObjectState.LOST and not snapshot.locations
         assert snapshot.current_attempt == pending.spec.attempt_id
         assert snapshot.output_publication.manifest == self.publications[0].output_publication.manifest
-        assert snapshot.output_publication.slot_index == 0
+        assert snapshot.output_publication.publication_id.object_id == pending.object_id
         assert snapshot.canonical_stored_result == self.publications[0].results[0]
         assert self.output.store.used_bytes == 0 and not self.output.replicas
         assert not owner.drop_object(local)  # Already LOST, no extra physical send.

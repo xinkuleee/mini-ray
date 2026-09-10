@@ -255,7 +255,7 @@ def test_plain_result_cannot_revive_an_exact_retired_output_attempt():
     assert f.table.mark_lost(f.output, f.attempt)
     membership = f.table.output_owner_publication(f.output)
     retirement = f.table.begin_output_publication_retirement(
-        (membership,), retirement_id='old-result', replica_locations={f.output: (f.node,)})
+        membership, retirement_id='old-result', replica_locations=(f.node,))
     releases = []
     for request in retirement.contained_releases:
         released = children.release_contained_reference(request.object_id, request.hold)

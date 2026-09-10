@@ -1,0 +1,66 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 12.785,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p3trial-01/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_owner_retirement.py",
+    "exit_code": 0,
+    "seconds": 6.519,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p3trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_owner_retirement.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_core_reconstruction_concurrency.py::test_concurrent_lost_requests_merge_and_old_attempt_is_fenced",
+    "exit_code": 0,
+    "seconds": 9.453,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p3trial-01/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_core_reconstruction_concurrency.py::test_concurrent_lost_requests_merge_and_old_attempt_is_fenced"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+    "exit_code": 0,
+    "seconds": 15.159,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p3trial-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects"
+    ],
+    "log": "003-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+    "exit_code": 0,
+    "seconds": 16.93,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-p3trial-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution"
+    ],
+    "log": "004-smoke.log"
+  }
+]

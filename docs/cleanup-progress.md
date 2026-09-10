@@ -69,3 +69,5 @@ K4/P1完成：TaskExecution(attempt_id)、manifest.value、PreparedOutput.payloa
 K5/P2部分完成：journal内部result/retirement各改一个可空值，纯gate343/1deselected、journal23/retirement3及普通/含Ref实际发布GC均通过。另实际试做adapter八表合一，Node35/ownerdeath2及同两真实场景通过，但pending查询从O(未决)退化到O(全部历史)，还增加record/getter与锁查询；据此不采纳该合并，保当前分阶段outbox。P2恒零effect与公开snapshot边界仍在独立试做，不能把部分决定写成全P2完成。
 
 K5/P2 effect子项完成：实际退出effect恒零slot_index和prepare/materialize/promote/read参数，保child ordinal和所有claim/epoch/digest/owner物理检查；4源码/16测试闭合。纯343/1deselected、journal23/replica22/ownerDeath10和普通、含Ref stored实际发布GC全部通过，应用20文件与受测文本精确一致。净减33物理行，无新RPC/权威。退休tombstone与公开snapshot最后单元素投影仍在独立试做，P2全包尚未关闭。
+
+K5/P3记录子项完成：owner membership/retirement改为单值，退休id只对应pending plan或完整completed receipt，移除owner恒零index。P3独立pure343/retirement26/Core真实双caller1/containedrecon1/adoptionACK1通过；与已采P2effect合并后再验pure343/retirement26/containedrecon1通过，原1deselected标记不变。净减30物理行，保精确child死亡/副本/attempt屏障。重复prevalidate的一行试做另行验收，未删除最终ownercommit校验；P2snapshot仍独立推进。

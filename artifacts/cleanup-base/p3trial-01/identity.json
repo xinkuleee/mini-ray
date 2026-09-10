@@ -1,0 +1,103 @@
+{
+  "branch": "refs/heads/teaching-base",
+  "head": "ac3cee8f9454b0b03b3b99e48870237cfd7685c2",
+  "mode": "isolated P3 scalar+retirement record trial from validated journal archive; no P2 effects candidate, no base adoption, tests not run",
+  "evaluation_root": "C:/Users/t-hdong/Desktop/gao/audit/p3-evaluation",
+  "previous_candidate": "base-k5journal-01",
+  "previous_archive_sha256": "6b94f0f778ece5a1193b278d83fc8f421d4c118654db9292f106bfaad6a1a6b6",
+  "archive_sha256": "eb1c4987f79ce3d123889d056b956a9ed6165de20243b44093e7996d73aa83d4",
+  "file_count": 419,
+  "p3_patch_sha256": "3bf2c75ab64e6dcb7fde84e23f97ed4c669562622105ccb0d2101ebf3e78286d",
+  "delta_from_previous": {
+    "scripts/baseline_manifest.json": {
+      "before_sha256": "5cf7716d25ed798bdfe27e1143019e538318b5989821c1c30c43f02c0ba1892e",
+      "after_sha256": "6b3cb282e72d9ba42d5936e46ad5d9f1d4d526a109d2109520f7b49d7e13a5a1"
+    },
+    "src/miniray/core.py": {
+      "before_sha256": "457b38f276b1c87ab2149a72c81eebd78027a22909e61beec299558c09b75059",
+      "after_sha256": "62789790856f160ee22d5cab558fd4a07e784bdde80c8e8b6e676286c0f77113"
+    },
+    "src/miniray/ownership.py": {
+      "before_sha256": "dc441cfa76a15a3b50cb7c638769ae40fcb9e4ef01c678aad37548fbda2e41f1",
+      "after_sha256": "86619f97fa7718df3b3ad7ca698d37940c68702b4c2b780862f173225a5b4e37"
+    },
+    "tests/integration/test_core_reconstruction_concurrency.py": {
+      "before_sha256": "ed63f1703cd47f65c1e49aff8a4b409c4dd61e5425278a7ad469b60f2d1ba4de",
+      "after_sha256": "4276ae956f29b708b7897f5233f9feba264e14f1a9dffd9a069dd790f4b964c4"
+    },
+    "tests/integration/test_inline_node_loss_path.py": {
+      "before_sha256": "4954fda5a3b64995b11958bb11f3237b25841d62bdebc4a0d998adb8423fc30e",
+      "after_sha256": "363b95d9c7e03b6c5a2fce252722ae9f39de20f8d71927bddd694839d04c9abf"
+    },
+    "tests/integration/test_stored_outer_publication_path.py": {
+      "before_sha256": "c9aa986210f2baefa30f6a9d026c90901807a00ec859c70952787b11e49f04be",
+      "after_sha256": "4c6b2980004170b3bcbfe257ec395b500851fe69220b01e39deffac0dca6c2f4"
+    },
+    "tests/unit/test_core_output_receipt_loss.py": {
+      "before_sha256": "e6250b3fab83dcf40c4b928ce81747ebecb13310583c81602254d84026fd0e21",
+      "after_sha256": "8b07581502c1595f14122897021777905782517b5423f770c3b14b124a96f224"
+    },
+    "tests/unit/test_core_worker_crash_recovery.py": {
+      "before_sha256": "7b021e0e3c9be4f68653c0b4527bf0f8bae97afba726e7cf514f4043c978805e",
+      "after_sha256": "a3bde4cc60c28859dcaa12eda51da5be8fb0afb76009d7386ca4703754b2d7e5"
+    },
+    "tests/unit/test_current_owner_api_contracts.py": {
+      "before_sha256": "fb6308b384d38747c2a4a7f1abb1cb4b87b5ed149599e9b27ff09785aba428dc",
+      "after_sha256": "926f66cc83a0061a38c0554bb0eb2874a0f17bd406c907ff23d58cb3b1b455b6"
+    },
+    "tests/unit/test_foreign_reconstruction_runtime.py": {
+      "before_sha256": "ea03cebe67429fbd41622bdcac87e6a5dcfb9d6495222bccf6288dcb41ea117b",
+      "after_sha256": "465f3dc9decd181c3ed89ab9caf70ee3b72919e4fa60708d64bb2821dc0b608d"
+    },
+    "tests/unit/test_location_report_custody.py": {
+      "before_sha256": "4b5f6b098aadc33160e75d863ec0a314db15ee9a23856c3ee19fdefbf1e1e1d8",
+      "after_sha256": "53714c9216fe7c8e68f7caf71fe73c717e4dd39340cc6ddc946d7fb604ef097e"
+    },
+    "tests/unit/test_output_owner_publication.py": {
+      "before_sha256": "b61d7ec37702bc3285fe9c0705a024f14a4deae6f65b664b4c0f35b2850495ab",
+      "after_sha256": "715ad8ab0ad8309d283484115273c8bd80e02090a41a47427658ab575d2ef02c"
+    },
+    "tests/unit/test_output_owner_retirement.py": {
+      "before_sha256": "0f1383b0217838da7ef7da637b9f873e0f1805b2895009d7365b172dca3e97f3",
+      "after_sha256": "23b43b378a12aedd40277cbfb0c9f20596eb294c6ebfa348bf822bc623c62cd2"
+    },
+    "tests/unit/test_output_owner_terminal_metadata.py": {
+      "before_sha256": "fac442e32d1bffbccb4f8ef0a5001d2f0526f862ec8a31fc6784783148ba3c39",
+      "after_sha256": "67f9c3306ef8fa04855df61a58e32e4396b80bd32c507ce61badbfe6bb68cbb5"
+    },
+    "tests/unit/test_owner_retirement.py": {
+      "before_sha256": "c60a83e330f42c6affd3b4468b7ba690a77426645de1b5bacc41be64a039e88e",
+      "after_sha256": "b638d16d72f7e03ad09c970453fc765493592477f8d715f993b302dafebf1048"
+    },
+    "tests/unit/test_replica_cleanup.py": {
+      "before_sha256": "1ffb014a890da8ee8c37aee239b960b4883d91b91a528f0d5dc48b3676a20827",
+      "after_sha256": "e9ed83b686642ea1d451cff8bd52ec273de5b646b64e2744b03af90bdafe800d"
+    },
+    "tests/unit/test_targeted_owner_defer.py": {
+      "before_sha256": "07f0ad20be79dc3171d296f79af1a6d04e1ddbfcd16e195e6e5dd69753ed4b0f",
+      "after_sha256": "fc70b3c968946c2ca7a240dfa3d543a733a2c6fbbfdee37332ebe6eaa5b10826"
+    }
+  },
+  "source_tree_sha256": "704141cd14ecca5998fcbad37566e04edcd56a14527416fdc94130cc2644fbd9",
+  "manifest_gate_and_selectors_unchanged": true,
+  "manifest_sha256": "6b3cb282e72d9ba42d5936e46ad5d9f1d4d526a109d2109520f7b49d7e13a5a1",
+  "reviewed_migrations": 311,
+  "delivery_gate": {
+    "pure_files": 26,
+    "smokes": 32
+  },
+  "latest_docstrings_preserved": true,
+  "pytest_run": false,
+  "tests_executed": false,
+  "base_modified": false,
+  "previous_evidence_sha256": {
+    "identity.json": "344eed96c61daacc95eb5543018943cb87ec4766486c0f2e2469ef6b5ea8976a",
+    "snapshot.json": "bdf90bd813796f4050329842b05b4c03eccfb67933dd3b7d9f42e0e56b81e4b3",
+    "results.json": "e7fcb4afdd70c4618149a9dda7b341a77b8ab8f6914ef03354422617a3dec4e7",
+    "project.tar": "6b94f0f778ece5a1193b278d83fc8f421d4c118654db9292f106bfaad6a1a6b6"
+  },
+  "unregistered_requested_selectors": [
+    "tests/integration/test_lineage_reconstruction_path.py::test_stored_task_output_reconstructs_with_same_object_id"
+  ],
+  "selector_coverage_path": "C:/Users/t-hdong/Desktop/gao/audit/p3-evaluation-tools/patch-assembly.json"
+}

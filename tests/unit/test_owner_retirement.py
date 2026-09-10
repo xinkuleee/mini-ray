@@ -77,7 +77,7 @@ class _Fixture:
         self.owner_table.mark_lost(self.output, self.attempt)
         member = self.owner_table.output_owner_publication(self.output)
         self.plan = self.owner_table.begin_output_publication_retirement(
-            (member,), retirement_id="retire:old-result", replica_locations={self.output: (self.node,)},
+            member, retirement_id="retire:old-result", replica_locations=(self.node,),
         )
         request, = self.plan.replica_drops
         self.drops = (protocol.DropObjectReplicaReply(

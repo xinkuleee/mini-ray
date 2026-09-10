@@ -1,0 +1,759 @@
+--- a/src/miniray/ownership.py
++++ b/src/miniray/ownership.py
+@@ -421,13 +421,10 @@
+     """Byte-free membership in one validated single-output manifest."""
+ 
+     manifest: OutputPublicationManifest
+-    slot_index: int
+ 
+     def __post_init__(self) -> None:
+         if type(self.manifest) is not OutputPublicationManifest:
+             raise TypeError("manifest must be an OutputPublicationManifest")
+-        if type(self.slot_index) is not int or self.slot_index != 0:
+-            raise ValueError("slot_index must select the only publication output")
+ 
+     @property
+     def object_id(self) -> ObjectID:
+@@ -470,7 +467,7 @@
+         if type(self.membership) is not OutputOwnerPublicationMembership:
+             raise TypeError("membership must be an OutputOwnerPublicationMembership")
+         membership = OutputOwnerPublicationMembership(
+-            replace(self.membership.manifest), self.membership.slot_index
++            replace(self.membership.manifest)
+         )
+         if type(self.metadata_plan) is not ObjectMetadataCollectionPlan:
+             raise TypeError("metadata_plan must be an ObjectMetadataCollectionPlan")
+@@ -542,7 +539,6 @@
+ 
+     publication_id: OutputPublicationID
+     manifest_digest: str
+-    slot_index: int
+     collection_id: str
+     metadata_digest: str
+     collection: ObjectMetadataCollection
+@@ -551,7 +547,6 @@
+         return (
+             self.publication_id == plan.membership.publication_id
+             and self.manifest_digest == plan.membership.manifest.manifest_digest
+-            and self.slot_index == plan.membership.slot_index
+             and self.collection_id == plan.collection_id
+             and self.metadata_digest == _collection_metadata_digest(plan.metadata_plan)
+         )
+@@ -562,23 +557,15 @@
+     """Metadata-only cleanup claim; incoming references and lineage survive."""
+ 
+     retirement_id: str
+-    memberships: tuple[OutputOwnerPublicationMembership, ...]
++    membership: OutputOwnerPublicationMembership
+     replica_drops: tuple[DropObjectReplica, ...]
+ 
+     def __post_init__(self) -> None:
+         _string(self.retirement_id, "retirement_id")
+-        memberships = []
+-        for value in _sequence(self.memberships, "memberships"):
+-            if type(value) is not OutputOwnerPublicationMembership:
+-                raise TypeError("retirement requires typed output memberships")
+-            memberships.append(OutputOwnerPublicationMembership(
+-                replace(value.manifest), value.slot_index
+-            ))
+-        memberships = tuple(memberships)
+-        if len(memberships) != 1:
+-            raise ValueError("retirement requires exactly one output membership")
++        if type(self.membership) is not OutputOwnerPublicationMembership:
++            raise TypeError("retirement requires an OutputOwnerPublicationMembership")
++        member = OutputOwnerPublicationMembership(replace(self.membership.manifest))
+         drops = []
+-        by_object = {value.object_id: value for value in memberships}
+         for value in _sequence(self.replica_drops, "replica_drops"):
+             if type(value) is not DropObjectReplica:
+                 raise TypeError("retirement replica obligations must be DropObjectReplica")
+@@ -588,8 +575,7 @@
+                 _opaque(value.node_id, NodeID, "replica node_id"),
+                 _checksum(value.checksum, "replica checksum"),
+             )
+-            member = by_object.get(value.object_id)
+-            if member is None or member.manifest.value.tier is not ResultStorage.OBJECT_STORE:
++            if value.object_id != member.object_id or member.manifest.value.tier is not ResultStorage.OBJECT_STORE:
+                 raise OutputOwnerRetirementConflictError("replica obligation requires the stored output membership")
+             node_id = _opaque(value.node_id, NodeID, "replica node_id")
+             expected = DropObjectReplica(
+@@ -600,21 +586,18 @@
+                 raise OutputOwnerRetirementConflictError("replica obligation changed the old output identity")
+             drops.append(expected)
+         drops = tuple(drops)
+-        keys = tuple((value.object_id, value.node_id) for value in drops)
++        keys = tuple(value.node_id for value in drops)
+         if keys != tuple(sorted(set(keys))):
+             raise OutputOwnerRetirementConflictError("replica obligations must be unique and ordered")
+-        if any(
+-            member.manifest.value.tier is ResultStorage.OBJECT_STORE
+-            and (member.object_id, member.manifest.header.node_incarnation.node_id) not in keys
+-            for member in memberships
+-        ):
++        if (member.manifest.value.tier is ResultStorage.OBJECT_STORE
++                and member.manifest.header.node_incarnation.node_id not in keys):
+             raise OutputOwnerRetirementConflictError("stored retirement must include its publishing Node")
+-        object.__setattr__(self, "memberships", memberships)
++        object.__setattr__(self, "membership", member)
+         object.__setattr__(self, "replica_drops", drops)
+ 
+     @property
+-    def output_ids(self) -> tuple[ObjectID, ...]:
+-        return tuple(value.object_id for value in self.memberships)
++    def object_id(self) -> ObjectID:
++        return self.membership.object_id
+ 
+     @property
+     def contained_releases(self) -> tuple[ReleaseContainedReference, ...]:
+@@ -623,7 +606,7 @@
+                 transfer.contained_object_id, transfer.contained_owner_worker_id,
+                 transfer.final_hold,
+             )
+-            for member in self.memberships for transfer in member.manifest.value.transfers
++            for transfer in self.membership.manifest.value.transfers
+         )
+ 
+ 
+@@ -912,11 +895,10 @@
+         self._output_collection_receipts: dict[
+             ObjectID, _OutputOwnerCollectionTombstone
+         ] = {}
+-        self._output_retirement_plans: dict[
+-            str, OutputOwnerPublicationRetirementPlan
+-        ] = {}
+-        self._output_retirement_receipts: dict[
+-            str, OutputOwnerPublicationRetirementReceipt
++        # Each retirement owns one lifecycle record: its pending plan becomes
++        # the exact completed receipt, which already contains that plan.
++        self._output_retirements: dict[
++            str, OutputOwnerPublicationRetirementPlan | OutputOwnerPublicationRetirementReceipt
+         ] = {}
+         # These facts fence late replica reports and old publication replay.
+         # They contain no envelopes, descriptors or producer TaskSpecs.
+@@ -1834,7 +1816,7 @@
+                 replace(plan), OutputOwnerPublicationDisposition.APPLIED
+             )
+             entry = self._entries[plan.publication_id.object_id]
+-            membership = OutputOwnerPublicationMembership(manifest, 0)
++            membership = OutputOwnerPublicationMembership(manifest)
+             descriptor = plan.envelope.result
+             edges = set(manifest.value.edges)
+             locations = ({descriptor.node_id: plan.execution.attempt_id}
+@@ -1903,7 +1885,7 @@
+         slot = manifest.value
+         membership = entry.output_publication
+         if membership is not None:
+-            if membership != OutputOwnerPublicationMembership(manifest, 0):
++            if membership != OutputOwnerPublicationMembership(manifest):
+                 raise OutputOwnerPublicationCollectionRequiredError(
+                     "output still belongs to an unretired publication"
+                 )
+@@ -1960,7 +1942,7 @@
+             if membership is None:
+                 return None
+             return OutputOwnerPublicationMembership(
+-                replace(membership.manifest), membership.slot_index
++                replace(membership.manifest)
+             )
+ 
+     def output_owner_result(self, object_id: ObjectID) -> ResultDescriptor | None:
+@@ -2155,7 +2137,7 @@
+                     or (identity, identity.object_id) in self._retired_output_slots
+                     or (identity.object_id, identity.attempt_id) in self._retired_output_attempts
+                     or self._output_publication_receipts.get(identity) != manifest
+-                    or entry.output_publication != OutputOwnerPublicationMembership(manifest, slot_index)):
++                    or entry.output_publication != OutputOwnerPublicationMembership(manifest)):
+                 return ()
+             canonical = ResultDescriptor(
+                 identity.object_id, slot.tier, slot.size_bytes, manifest.header.owner_worker_id,
+@@ -2229,7 +2211,7 @@
+                     or (identity, entry.object_id) in self._retired_output_slots):
+                 raise OutputOwnerPublicationConflictError("Node-loss owner slot is fenced")
+             membership = entry.output_publication
+-            if membership is not None and membership != OutputOwnerPublicationMembership(manifest, 0):
++            if membership is not None and membership != OutputOwnerPublicationMembership(manifest):
+                 raise OutputOwnerPublicationConflictError("Node-loss slot belongs to another publication")
+             if membership is None:
+                 # An unreceived result may replace only a pristine pending
+@@ -2283,7 +2265,7 @@
+                     entry.inline_data = None
+                     entry.state = (ObjectState.READY_STORED if entry.location_attempts
+                                    else ObjectState.LOST)
+-                entry.output_publication = OutputOwnerPublicationMembership(manifest, 0)
++                entry.output_publication = OutputOwnerPublicationMembership(manifest)
+                 entry.outgoing_contained_edges = set(slot.edges)
+             else:
+                 entry.inline_data = None
+@@ -2301,8 +2283,8 @@
+             return True
+ 
+     def begin_output_publication_retirement(
+-        self, memberships: tuple[OutputOwnerPublicationMembership, ...], *,
+-        retirement_id: str, replica_locations: Mapping[ObjectID, tuple[NodeID, ...]],
++        self, membership: OutputOwnerPublicationMembership, *,
++        retirement_id: str, replica_locations: tuple[NodeID, ...],
+     ) -> OutputOwnerPublicationRetirementPlan:
+         """Freeze exact old LOST slots, without collecting their logical IDs.
+ 
+@@ -2311,48 +2293,37 @@
+         completed cleanup. No external effect is performed by this owner CAS.
+         """
+ 
+-        values = []
+-        for member in _sequence(memberships, "memberships"):
+-            if type(member) is not OutputOwnerPublicationMembership:
+-                raise TypeError("retirement requires typed output memberships")
+-            values.append(OutputOwnerPublicationMembership(
+-                replace(member.manifest), member.slot_index
+-            ))
+-        if not isinstance(replica_locations, Mapping):
+-            raise TypeError("replica_locations must be a mapping")
+-        if set(replica_locations) != {member.object_id for member in values}:
+-            raise OutputOwnerRetirementConflictError("replica inventory must cover exactly the retiring output")
+-        drops = []
+-        for member in values:
+-            locations = tuple(
+-                _opaque(node, NodeID, "replica node_id")
+-                for node in _sequence(replica_locations[member.object_id], "replica locations")
+-            )
+-            if len(locations) != len(set(locations)):
+-                raise OutputOwnerRetirementConflictError("replica inventory repeats a Node")
+-            if member.manifest.value.tier is ResultStorage.INLINE and locations:
+-                raise OutputOwnerRetirementConflictError("inline retirement cannot drop physical replicas")
+-            drops.extend(DropObjectReplica(
+-                member.object_id, member.publication_id.attempt_id,
+-                member.manifest.header.owner_worker_id, node, member.manifest.value.checksum,
+-            ) for node in sorted(locations))
+-        plan = OutputOwnerPublicationRetirementPlan(retirement_id, tuple(values), tuple(drops))
+-        with self._lock:
+-            previous = self._output_retirement_plans.get(retirement_id)
++        if type(membership) is not OutputOwnerPublicationMembership:
++            raise TypeError("retirement requires an OutputOwnerPublicationMembership")
++        member = OutputOwnerPublicationMembership(replace(membership.manifest))
++        locations = tuple(
++            _opaque(node, NodeID, "replica node_id")
++            for node in _sequence(replica_locations, "replica locations")
++        )
++        if len(locations) != len(set(locations)):
++            raise OutputOwnerRetirementConflictError("replica inventory repeats a Node")
++        if member.manifest.value.tier is ResultStorage.INLINE and locations:
++            raise OutputOwnerRetirementConflictError("inline retirement cannot drop physical replicas")
++        drops = tuple(DropObjectReplica(
++            member.object_id, member.publication_id.attempt_id,
++            member.manifest.header.owner_worker_id, node, member.manifest.value.checksum,
++        ) for node in sorted(locations))
++        plan = OutputOwnerPublicationRetirementPlan(retirement_id, member, drops)
++        with self._lock:
++            previous = self._output_retirements.get(retirement_id)
+             if previous is not None:
+-                if previous != plan:
++                previous_plan = previous.plan if type(previous) is OutputOwnerPublicationRetirementReceipt else previous
++                if previous_plan != plan:
+                     raise OutputOwnerRetirementConflictError("retirement_id changed its exact cleanup plan")
+-                return replace(previous)
+-            entries = tuple(self._entry(member.object_id) for member in plan.memberships)
+-            for entry, member in zip(entries, plan.memberships):
+-                self._validate_output_retirement_entry_locked(entry, member)
++                return replace(previous_plan)
++            entry = self._entry(plan.object_id)
++            self._validate_output_retirement_entry_locked(entry, plan.membership)
+             # Complete all validation/copy allocation before freezing any slot.
+             public_plan = replace(plan)
+-            plans = dict(self._output_retirement_plans)
+-            plans[retirement_id] = plan
+-            for entry in entries:
+-                entry.output_retirement_id = retirement_id
+-            self._output_retirement_plans = plans
++            retirements = dict(self._output_retirements)
++            retirements[retirement_id] = plan
++            entry.output_retirement_id = retirement_id
++            self._output_retirements = retirements
+             return public_plan
+ 
+     def _validate_output_retirement_entry_locked(
+@@ -2419,36 +2390,35 @@
+                         raise OutputOwnerRetirementConflictError(
+                             "child death must match the installed immutable owner fence"
+                         )
+-            previous = self._output_retirement_receipts.get(plan.retirement_id)
+-            if previous is not None:
++            previous = self._output_retirements.get(plan.retirement_id)
++            if type(previous) is OutputOwnerPublicationRetirementReceipt:
+                 if previous != receipt:
+                     raise OutputOwnerRetirementConflictError("retirement completion changed its exact plan or proofs")
+                 return replace(previous, disposition=OutputOwnerPublicationDisposition.ALREADY_APPLIED)
+-            if self._output_retirement_plans.get(plan.retirement_id) != plan:
++            if previous != plan:
+                 raise OutputOwnerRetirementConflictError("retirement was not admitted with this exact cleanup plan")
+-            entries = tuple(self._entry(member.object_id) for member in plan.memberships)
+-            for entry, member in zip(entries, plan.memberships):
+-                self._validate_output_retirement_entry_locked(entry, member, plan.retirement_id)
++            member = plan.membership
++            entry = self._entry(plan.object_id)
++            self._validate_output_retirement_entry_locked(entry, member, plan.retirement_id)
+             public_receipt = replace(receipt)
+             retired_slots = self._retired_output_slots | {
+-                (member.publication_id, member.object_id) for member in plan.memberships
++                (member.publication_id, member.object_id)
+             }
+             retired_attempts = self._retired_output_attempts | {
+-                (member.object_id, member.publication_id.attempt_id) for member in plan.memberships
++                (member.object_id, member.publication_id.attempt_id)
+             }
+-            receipts = dict(self._output_retirement_receipts)
+-            receipts[plan.retirement_id] = receipt
+-            for entry in entries:
+-                entry.inline_data = None
+-                entry.error = None
+-                entry.canonical_stored_result = None
+-                entry.location_attempts.clear()
+-                entry.outgoing_contained_edges.clear()
+-                entry.output_publication = None
+-                entry.output_retirement_id = None
++            retirements = dict(self._output_retirements)
++            retirements[plan.retirement_id] = receipt
++            entry.inline_data = None
++            entry.error = None
++            entry.canonical_stored_result = None
++            entry.location_attempts.clear()
++            entry.outgoing_contained_edges.clear()
++            entry.output_publication = None
++            entry.output_retirement_id = None
+             self._retired_output_slots = retired_slots
+             self._retired_output_attempts = retired_attempts
+-            self._output_retirement_receipts = receipts
++            self._output_retirements = retirements
+             return public_receipt
+ 
+     def output_publication_retirement_receipt(
+@@ -2460,8 +2430,8 @@
+             raise TypeError("plan must be an OutputOwnerPublicationRetirementPlan")
+         plan = replace(plan)
+         with self._lock:
+-            previous = self._output_retirement_receipts.get(plan.retirement_id)
+-            if previous is None:
++            previous = self._output_retirements.get(plan.retirement_id)
++            if type(previous) is not OutputOwnerPublicationRetirementReceipt:
+                 return None
+             if previous.plan != plan:
+                 raise OutputOwnerRetirementConflictError("retirement terminal plan identity changed")
+@@ -3694,7 +3664,7 @@
+             self._output_collection_receipts[deepcopy(plan.object_id)] = _OutputOwnerCollectionTombstone(
+                 replace(plan.membership.publication_id),
+                 plan.membership.manifest.manifest_digest,
+-                plan.membership.slot_index, plan.collection_id,
++                plan.collection_id,
+                 metadata_digest, deepcopy(collection),
+             )
+             return OutputOwnerPublicationCollectionReceipt(
+@@ -3947,7 +3917,7 @@
+     replies = _sequence(dropped_replicas, "dropped_replicas")
+     if len(replies) != len(plan.replica_drops):
+         raise OutputOwnerRetirementConflictError("retirement requires every replica cleanup ACK")
+-    members = {member.object_id: member for member in plan.memberships}
++    member = plan.membership
+     replicas = []
+     for reply, expected in zip(replies, plan.replica_drops):
+         if type(reply) is DropObjectReplicaReply:
+@@ -3973,7 +3943,7 @@
+                 _uint(getattr(reply, name), name, positive=True)
+             if type(reply.exit_code) is not int:
+                 raise TypeError("node death exit_code must be an int")
+-            incarnation = members[expected.object_id].manifest.header.node_incarnation
++            incarnation = member.manifest.header.node_incarnation
+             if (node != expected.node_id or reply.reason is not NodeDeathReason.PROCESS_EXIT
+                     or node == incarnation.node_id and (
+                         reply.node_pid != incarnation.node_pid
+--- a/src/miniray/core.py
++++ b/src/miniray/core.py
+@@ -6938,11 +6938,11 @@
+                     return False
+                 member = snapshot.output_publication
+                 plan = self._owner_table.begin_output_publication_retirement(
+-                    (member,), retirement_id="retire-output:{}".format(uuid.uuid4().hex),
+-                    replica_locations={member.object_id: (
++                    member, retirement_id="retire-output:{}".format(uuid.uuid4().hex),
++                    replica_locations=(
+                         (member.manifest.header.node_incarnation.node_id,)
+                         if member.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE else ()
+-                    )},
++                    ),
+                 )
+                 current = {"plan": plan, "child": {}, "replica": {}}
+                 work[object_id] = current
+@@ -6957,7 +6957,7 @@
+         try:
+             routes = {
+                 (transfer.contained_object_id, transfer.final_hold): transfer.contained_owner_address
+-                for member in plan.memberships for transfer in member.manifest.value.transfers
++                for transfer in plan.membership.manifest.value.transfers
+             }
+             for request in plan.contained_releases:
+                 if request not in current["child"]:
+@@ -6987,7 +6987,7 @@
+                     raise SystemTaskError("output retirement replica ACK mismatch")
+                 current["replica"][request] = reply
+             with self._state_lock:
+-                if any(self._has_late_replica_cleanup_locked(member.object_id) for member in plan.memberships):
++                if self._has_late_replica_cleanup_locked(plan.object_id):
+                     self._schedule_late_replica_cleanup_locked()
+                     return False
+                 self._owner_table.complete_output_publication_retirement(
+--- a/tests/integration/test_core_reconstruction_concurrency.py
++++ b/tests/integration/test_core_reconstruction_concurrency.py
+@@ -50,7 +50,7 @@
+ from miniray.output_handoff import OutputHandoffPhase
+ from miniray.output_publication import OutputPublicationHeader, OutputPublicationID
+ from miniray.output_publication_journal import OutputPublicationJournal
+-from miniray.ownership import ObjectCollectionState, ObjectState
++from miniray.ownership import ObjectCollectionState, ObjectState, OutputOwnerPublicationRetirementReceipt
+ from miniray.reconstruction_runtime import ReconstructionDisposition
+ from miniray.recovery import TaskState, UnknownTaskError
+ from miniray.resources import NodeSnapshot, ResourceLedger, ResourceVector
+@@ -297,7 +297,7 @@
+                    for object_id in pending.output_ids)
+         handoff = core._output_handoff_table().query(self.identity)
+         assert handoff.phase is OutputHandoffPhase.ADOPTED and handoff.complete == self.reply.output_publication.complete
+-        assert not core.owner_table._output_retirement_receipts
++        assert not core.owner_table._output_retirements
+         assert not getattr(core, "_output_retirement_work", {})
+         assert core._accepted_task_count == 0 and not core._task_finish_barriers
+         self.drain_submissions()
+@@ -492,10 +492,10 @@
+                 assert request.producer_attempt_id == case.pending.spec.attempt_id
+                 assert request.owner_worker_id == core.worker_id and request.node_id == node.node_id
+                 assert reply.error is None
+-        receipts = tuple(core.owner_table._output_retirement_receipts.values())
++        receipts = tuple(value for value in core.owner_table._output_retirements.values() if isinstance(value, OutputOwnerPublicationRetirementReceipt))
+         assert len(receipts) == 1
+         receipt, = receipts
+-        assert tuple(member.object_id for member in receipt.plan.memberships) == case.pending.output_ids
++        assert receipt.plan.object_id == receipt.plan.membership.object_id == case.pending.object_id
+         assert receipt.released_edges == ()
+         assert receipt.dropped_replicas == tuple(reply for _, _, reply in drops[count:])
+         assert core.owner_table.output_publication_retirement_receipt(receipt.plan).plan == receipt.plan
+--- a/tests/integration/test_inline_node_loss_path.py
++++ b/tests/integration/test_inline_node_loss_path.py
+@@ -501,7 +501,7 @@
+             assert settled.inline_data == (received_envelope.result).inline_data
+             assert settled.output_publication is not None
+             assert settled.output_publication.publication_id == publication
+-            assert settled.output_publication.slot_index == 0
++            assert settled.output_publication.publication_id.object_id == outer_id
+             assert settled.output_publication.manifest == prepared.manifest
+             assert settled.outgoing_contained_edges == frozenset({edge})
+         else:
+@@ -594,7 +594,7 @@
+         assert final_task.current_attempt == after.current_attempt
+         assert final_task.retries_started == expected_attempt
+         assert after.output_publication is not None
+-        assert after.output_publication.slot_index == 0
++        assert after.output_publication.publication_id.object_id == outer_id
+         assert after.canonical_stored_result is None and not after.locations
+         assert after.output_retirement_id is None
+         final_publication = after.output_publication.publication_id
+--- a/tests/unit/test_core_output_receipt_loss.py
++++ b/tests/unit/test_core_output_receipt_loss.py
+@@ -122,8 +122,8 @@
+         core.owner_table.mark_lost(pending.object_id, pending.spec.attempt_id)
+         member = core.owner_table.output_owner_publication(pending.object_id)
+         core.owner_table.begin_output_publication_retirement(
+-            (member,), retirement_id="independent-owner-retirement",
+-            replica_locations={member.object_id: (node.node_id,)},
++            member, retirement_id="independent-owner-retirement",
++            replica_locations=(node.node_id,),
+         )
+         assert core.owner_table.has_active_output_retirements()
+         assert not core.can_finalize_shutdown(require_distributed_clean=True)
+--- a/tests/unit/test_core_worker_crash_recovery.py
++++ b/tests/unit/test_core_worker_crash_recovery.py
+@@ -526,7 +526,7 @@
+     assert snapshot.locations == frozenset({core.node_id})
+     assert snapshot.output_publication is not None
+     assert snapshot.output_publication.manifest == publication.outputs.manifest
+-    assert snapshot.output_publication.slot_index == 0
++    assert snapshot.output_publication.publication_id.object_id == pending.object_id
+     assert snapshot.output_retirement_id is None
+     assert snapshot.canonical_stored_result == (publication.envelope.result)
+     assert not snapshot.outgoing_contained_edges
+--- a/tests/unit/test_current_owner_api_contracts.py
++++ b/tests/unit/test_current_owner_api_contracts.py
+@@ -255,7 +255,7 @@
+     assert f.table.mark_lost(f.output, f.attempt)
+     membership = f.table.output_owner_publication(f.output)
+     retirement = f.table.begin_output_publication_retirement(
+-        (membership,), retirement_id='old-result', replica_locations={f.output: (f.node,)})
++        membership, retirement_id='old-result', replica_locations=(f.node,))
+     releases = []
+     for request in retirement.contained_releases:
+         released = children.release_contained_reference(request.object_id, request.hold)
+--- a/tests/unit/test_foreign_reconstruction_runtime.py
++++ b/tests/unit/test_foreign_reconstruction_runtime.py
+@@ -245,7 +245,7 @@
+         assert snapshot.state is ObjectState.LOST and not snapshot.locations
+         assert snapshot.current_attempt == pending.spec.attempt_id
+         assert snapshot.output_publication.manifest == self.publications[0].output_publication.manifest
+-        assert snapshot.output_publication.slot_index == 0
++        assert snapshot.output_publication.publication_id.object_id == pending.object_id
+         assert snapshot.canonical_stored_result == self.publications[0].results[0]
+         assert self.output.store.used_bytes == 0 and not self.output.replicas
+         assert not owner.drop_object(local)  # Already LOST, no extra physical send.
+--- a/tests/unit/test_location_report_custody.py
++++ b/tests/unit/test_location_report_custody.py
+@@ -365,7 +365,7 @@
+             f.lose_source()
+             membership = core.owner_table.output_owner_publication(f.output)
+             core.owner_table.begin_output_publication_retirement(
+-                (membership,), retirement_id="retire-before-report", replica_locations={f.output: (f.source,)},
++                membership, retirement_id="retire-before-report", replica_locations=(f.source,),
+             )
+         before = core.owner_table.snapshot(f.output)
+         routes = dict(core._stored_descriptors)
+--- a/tests/unit/test_output_owner_publication.py
++++ b/tests/unit/test_output_owner_publication.py
+@@ -145,7 +145,7 @@
+         snapshot = table.snapshot(descriptor.object_id)
+         membership = snapshot.output_publication
+         memberships.append(membership)
+-        assert membership == OutputOwnerPublicationMembership(fixture.manifest, index)
++        assert membership == OutputOwnerPublicationMembership(fixture.manifest)
+         assert table.output_owner_publication(descriptor.object_id) == membership
+         assert table.output_owner_result(descriptor.object_id) == descriptor
+         assert snapshot.outgoing_contained_edges == frozenset((fixture.manifest.value).edges)
+@@ -303,9 +303,10 @@
+     with pytest.raises(ValueError, match="manifest_digest"):
+         table.commit_output_publication(forged)
+     assert _snapshots(table, fixture) == before
+-    for invalid in (-1, True, (1)):
+-        with pytest.raises(ValueError, match="slot_index"):
+-            OutputOwnerPublicationMembership(fixture.manifest, invalid)
++    for invalid in (-1, True, 1, None, (), (fixture.manifest,), (fixture.manifest, fixture.manifest)):
++        with pytest.raises(TypeError, match="OutputPublicationManifest"):
++            OutputOwnerPublicationMembership(invalid)
++    assert tuple(item.name for item in fields(OutputOwnerPublicationMembership)) == ("manifest",)
+ 
+ 
+ def test_publication_does_not_mutate_an_unrelated_object():
+@@ -318,8 +319,9 @@
+     receipt = table.commit_output_publication(fixture.plan)
+     assert receipt.committed
+     assert table.snapshot(unrelated) == before
+-    assert tuple(table.snapshot(object_id).output_publication.slot_index
+-                 for object_id in ((fixture.publication_id.object_id,))) == (0,)
++    assert table.snapshot(fixture.publication_id.object_id).output_publication == (
++        OutputOwnerPublicationMembership(fixture.manifest)
++    )
+     assert tuple(object_id.return_index for object_id in ((fixture.publication_id.object_id,))) == (0,)
+     for object_id in ((fixture.publication_id.object_id,)):
+         assert table.snapshot(object_id).current_attempt == fixture.execution.attempt_id
+@@ -473,7 +475,7 @@
+     before = table.snapshot(first)
+     changed_header = replace(fixture.header, publication_id=replace(fixture.publication_id, lease_id=LeaseID.random()))
+     changed_manifest = OutputPublicationManifest.create(changed_header, (fixture.manifest.value))
+-    changed_member = OutputOwnerPublicationMembership(changed_manifest, 0)
++    changed_member = OutputOwnerPublicationMembership(changed_manifest)
+     with pytest.raises(OutputOwnerPublicationConflictError):
+         table.complete_output_publication_collection(replace(plan, membership=changed_member))
+     altered = replace(plan, metadata_plan=replace(plan.metadata_plan, collection_id="other-gc"))
+--- a/tests/unit/test_output_owner_retirement.py
++++ b/tests/unit/test_output_owner_retirement.py
+@@ -7,7 +7,7 @@
+ """
+ 
+ from copy import deepcopy
+-from dataclasses import replace
++from dataclasses import fields, replace
+ 
+ import pytest
+ 
+@@ -22,6 +22,7 @@
+     InvalidObjectTransitionError, ObjectCollectionInProgressError,
+     ObjectCollectionState, ObjectOwnerTable, ObjectState,
+     OutputOwnerPublicationDisposition, OutputOwnerPublicationPlan,
++    OutputOwnerPublicationRetirementPlan, OutputOwnerPublicationRetirementReceipt,
+     OutputOwnerRetirementConflictError, OutputOwnerRetirementInProgressError,
+     TaskOutputAttemptAdvancePlan,
+ )
+@@ -63,7 +64,7 @@
+     member = table.output_owner_publication(fixture.output)
+     locations = ((fixture.node,) + extra_nodes if (member.manifest.value).tier is protocol.ResultStorage.OBJECT_STORE else ())
+     return table.begin_output_publication_retirement(
+-        (member,), retirement_id=identity, replica_locations={member.object_id: locations},
++        member, retirement_id=identity, replica_locations=locations,
+     )
+ 
+ 
+@@ -117,6 +118,12 @@
+     untouched = table.snapshot(unrelated)
+     before = table.snapshot(target)
+     plan = _begin(table, fixture)
++    assert plan.membership == before.output_publication and plan.object_id == target
++    assert tuple(item.name for item in fields(OutputOwnerPublicationRetirementPlan)) == (
++        "retirement_id", "membership", "replica_drops",
++    )
++    assert type(table._output_retirements[plan.retirement_id]) is OutputOwnerPublicationRetirementPlan
++    assert table.output_publication_retirement_receipt(plan) is None
+     assert table.has_active_output_retirements() and table.collection_state(target) is ObjectCollectionState.ACTIVE
+     assert table.snapshot(target).output_retirement_id == plan.retirement_id
+     assert _begin(table, fixture) == plan
+@@ -124,6 +131,11 @@
+     assert table.release_local_reference(target, "new-live-handle")
+     proofs = _proofs(fixture, plan)
+     receipt = table.complete_output_publication_retirement(plan, **proofs)
++    assert set(table._output_retirements) == {plan.retirement_id}
++    assert type(table._output_retirements[plan.retirement_id]) is OutputOwnerPublicationRetirementReceipt
++    assert table._output_retirements[plan.retirement_id].plan == plan
++    assert not hasattr(table, "_output_retirement_plans")
++    assert not hasattr(table, "_output_retirement_receipts")
+     assert receipt.disposition is OutputOwnerPublicationDisposition.APPLIED
+     assert not table.has_active_output_retirements()
+     after = table.snapshot(target)
+@@ -134,6 +146,20 @@
+     assert table.task_lineage_edges(fixture.task)
+     _assert_metadata_only(plan)
+     _assert_metadata_only(receipt)
++    before_replay = _state(table)
++    replayed_plan = table.begin_output_publication_retirement(
++        plan.membership, retirement_id=plan.retirement_id,
++        replica_locations=tuple(drop.node_id for drop in plan.replica_drops),
++    )
++    assert replayed_plan == plan and replayed_plan is not plan
++    assert _state(table) == before_replay
++    assert not table.has_active_output_retirements()
++    with pytest.raises(OutputOwnerRetirementConflictError, match="retirement_id"):
++        table.begin_output_publication_retirement(
++            plan.membership, retirement_id=plan.retirement_id,
++            replica_locations=(fixture.node, NodeID.random()),
++        )
++    assert _state(table) == before_replay
+     assert table.complete_output_publication_retirement(plan, **proofs).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
+ 
+ 
+@@ -173,10 +199,34 @@
+     assert table.mark_lost(fixture.output, fixture.attempt)
+     member = table.output_owner_publication(fixture.output)
+     before = _state(table)
+-    for inventory, message in (({fixture.output: ()}, "publishing Node"), ({}, "exactly")):
+-        with pytest.raises(OutputOwnerRetirementConflictError, match=message):
+-            table.begin_output_publication_retirement((member,), retirement_id="missing-inventory", replica_locations=inventory)
++    for inventory in ((), (NodeID.random(),)):
++        with pytest.raises(OutputOwnerRetirementConflictError, match="publishing Node"):
++            table.begin_output_publication_retirement(member, retirement_id="missing-inventory", replica_locations=inventory)
+         assert _state(table) == before
++    for invalid in (None, (), (member,), (member, member)):
++        with pytest.raises(TypeError, match="OutputOwnerPublicationMembership"):
++            table.begin_output_publication_retirement(
++                invalid, retirement_id="wrong-membership", replica_locations=(fixture.node,),
++            )
++        with pytest.raises(TypeError, match="OutputOwnerPublicationMembership"):
++            OutputOwnerPublicationRetirementPlan("wrong-membership", invalid, ())
++        assert _state(table) == before
++    for invalid in ({fixture.output: ()}, {}, {fixture.output: (fixture.node,)}, fixture.node, (fixture.owner,)):
++        with pytest.raises(TypeError):
++            table.begin_output_publication_retirement(member, retirement_id="wrong-inventory", replica_locations=invalid)
++        assert _state(table) == before
++    with pytest.raises(OutputOwnerRetirementConflictError, match="repeats"):
++        table.begin_output_publication_retirement(
++            member, retirement_id="repeated-node", replica_locations=(fixture.node, fixture.node),
++        )
++    assert _state(table) == before
++    changed_header = replace(fixture.header, publication_id=replace(fixture.publication_id, lease_id=LeaseID.random()))
++    changed_manifest = OutputPublicationManifest.create(changed_header, fixture.manifest.value)
++    with pytest.raises(OutputOwnerRetirementConflictError):
++        table.begin_output_publication_retirement(
++            replace(member, manifest=changed_manifest), retirement_id="wrong-publication", replica_locations=(fixture.node,),
++        )
++    assert _state(table) == before
+ 
+ 
+ def test_retirement_rejects_overlapping_claim_and_rebound_identity():
+@@ -351,20 +401,20 @@
+     fixture, table = _lost_fixture()
+     plan = _begin(table, fixture)
+     saved_plan = deepcopy(plan)
+-    object.__setattr__(plan.memberships[0].manifest.header.owner_worker_id, "value", b"x" * 16)
++    object.__setattr__(plan.membership.manifest.header.owner_worker_id, "value", b"x" * 16)
+     plan = _begin(table, fixture)
+     assert plan == saved_plan
+     proofs = _proofs(fixture, plan)
+     saved_proofs = deepcopy(proofs)
+     receipt = table.complete_output_publication_retirement(plan, **proofs)
+-    object.__setattr__(receipt.plan.memberships[0].manifest, "manifest_digest", "f" * 64)
++    object.__setattr__(receipt.plan.membership.manifest, "manifest_digest", "f" * 64)
+     object.__setattr__(proofs["dropped_replicas"][0].node_id, "value", b"y" * 16)
+     readback = table.output_publication_retirement_receipt(saved_plan)
+     assert readback.plan == saved_plan
+     object.__setattr__(readback.plan.replica_drops[0].object_id, "return_index", 99)
+     assert table.output_publication_retirement_receipt(saved_plan).plan == saved_plan
+     assert table.complete_output_publication_retirement(saved_plan, **saved_proofs).disposition is OutputOwnerPublicationDisposition.ALREADY_APPLIED
+-    for value in (table._output_retirement_plans, table._output_retirement_receipts, table._retired_output_slots,
++    for value in (table._output_retirements, table._retired_output_slots,
+                   table._retired_output_attempts, table._output_publication_receipts):
+         _assert_metadata_only(value)
+ 
+--- a/tests/unit/test_output_owner_terminal_metadata.py
++++ b/tests/unit/test_output_owner_terminal_metadata.py
+@@ -216,7 +216,7 @@
+             owner.commit_output_publication(changed_publication)
+         # Rebuild a self-consistent manifest/witness/descriptor. Rejection must
+         # bind terminal identity rather than an unrelated malformed envelope.
+-        membership = OutputOwnerPublicationMembership(changed_publication.envelope.manifest, 0)
++        membership = OutputOwnerPublicationMembership(changed_publication.envelope.manifest)
+     else:
+         metadata = replace(metadata, collection_id="different-gc")
+         with pytest.raises(OutputOwnerPublicationConflictError, match="identity changed"):
+--- a/tests/unit/test_owner_retirement.py
++++ b/tests/unit/test_owner_retirement.py
+@@ -77,7 +77,7 @@
+         self.owner_table.mark_lost(self.output, self.attempt)
+         member = self.owner_table.output_owner_publication(self.output)
+         self.plan = self.owner_table.begin_output_publication_retirement(
+-            (member,), retirement_id="retire:old-result", replica_locations={self.output: (self.node,)},
++            member, retirement_id="retire:old-result", replica_locations=(self.node,),
+         )
+         request, = self.plan.replica_drops
+         self.drops = (protocol.DropObjectReplicaReply(
+--- a/tests/unit/test_replica_cleanup.py
++++ b/tests/unit/test_replica_cleanup.py
+@@ -192,8 +192,8 @@
+     else:
+         owner.mark_lost(output, values.attempt)
+         member = owner.output_owner_publication(output)
+-        owner.begin_output_publication_retirement((member,), retirement_id="late-report-retirement",
+-                                                  replica_locations={output: (values.node,)})
++        owner.begin_output_publication_retirement(member, retirement_id="late-report-retirement",
++                                                  replica_locations=(values.node,))
+     before = deepcopy(owner._output_publication_receipts)
+     request = owner.retired_output_replica(descriptor)
+     assert request == protocol.DropObjectReplica(output, values.attempt, values.owner, secondary, descriptor.checksum)
+--- a/tests/unit/test_targeted_owner_defer.py
++++ b/tests/unit/test_targeted_owner_defer.py
+@@ -282,7 +282,7 @@
+         assert len(drop_requests) == 1
+         work = core._output_retirement_work[values.lost]
+         assert work["plan"].retirement_id == target.output_retirement_id
+-        assert work["plan"].memberships == (old_target.output_publication,)
++        assert work["plan"].membership == old_target.output_publication
+         assert not work["replica"]  # effect is real, its ACK is still missing
+         assert core.owner_table.snapshot(values.lost).output_publication == old_target.output_publication
+         accepted = core.request_owned_object_reconstruction(values.request)
+--- a/tests/integration/test_stored_outer_publication_path.py
++++ b/tests/integration/test_stored_outer_publication_path.py
+@@ -256,7 +256,7 @@
+         descriptor = snapshot.canonical_stored_result
+         assert descriptor == core.owner_table.output_owner_result(outer_id)
+         output_manifest = publication.manifest
+-        assert publication.slot_index == 0
++        assert publication.publication_id.object_id == outer_id
+         assert not hasattr(output_manifest, "to_graph_manifest")
+         assert descriptor == core._stored_descriptors[outer_id]
+         assert descriptor.storage is protocol.ResultStorage.OBJECT_STORE
+@@ -422,7 +422,7 @@
+         terminal = core.owner_table._output_collection_receipts[outer_id]
+         assert terminal.publication_id == publication_id
+         assert terminal.manifest_digest == output_manifest.manifest_digest
+-        assert terminal.slot_index == 0
++        assert terminal.publication_id.object_id == outer_id
+         assert terminal.collection.object_id == outer_id and terminal.collection.collected
+         assert terminal.collection.contained_releases == edges
+         _assert_metadata_only(terminal)

@@ -1,0 +1,44 @@
+{
+  "src/miniray/ownership.py": {
+    "changed_symbols": [
+      "OutputOwnerPublicationMembership",
+      "OutputOwnerPublicationMembership.__post_init__",
+      "OutputOwnerPublicationCollectionPlan",
+      "OutputOwnerPublicationCollectionPlan.__post_init__",
+      "_OutputOwnerCollectionTombstone",
+      "_OutputOwnerCollectionTombstone.matches",
+      "OutputOwnerPublicationRetirementPlan",
+      "OutputOwnerPublicationRetirementPlan.__post_init__",
+      "OutputOwnerPublicationRetirementPlan.contained_releases",
+      "ObjectOwnerTable",
+      "ObjectOwnerTable.__init__",
+      "ObjectOwnerTable.commit_output_publication",
+      "ObjectOwnerTable._validate_output_publication_locked",
+      "ObjectOwnerTable.output_owner_publication",
+      "ObjectOwnerTable.surviving_output_locations",
+      "ObjectOwnerTable.resolve_output_node_loss",
+      "ObjectOwnerTable.begin_output_publication_retirement",
+      "ObjectOwnerTable.complete_output_publication_retirement",
+      "ObjectOwnerTable.output_publication_retirement_receipt",
+      "ObjectOwnerTable.complete_output_publication_collection",
+      "_validate_output_retirement_replica_proofs"
+    ],
+    "protected_methods_unchanged": {
+      "ObjectOwnerTable.validate_output_publication": true,
+      "ObjectOwnerTable._validated_output_publication_plan": true,
+      "ObjectOwnerTable.output_owner_publication_receipt": true,
+      "ObjectOwnerTable._validate_output_retirement_entry_locked": true,
+      "_validate_output_retirement_proofs": true,
+      "_retirement_child_death_id": true,
+      "ObjectOwnerTable.has_active_output_retirements": true,
+      "ObjectOwnerTable.retired_output_replica": true,
+      "ObjectOwnerTable._require_no_output_retirement_locked": true
+    }
+  },
+  "src/miniray/core.py": {
+    "changed_symbols": [
+      "CoreWorker",
+      "CoreWorker._retire_lost_output_memberships"
+    ]
+  }
+}

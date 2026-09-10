@@ -1,0 +1,8 @@
+{
+  "package": "P3.owner_records",
+  "disposition": "implemented_and_validated",
+  "change": "Single membership and retirement plan; redundant owner zero index removed; one retirement ID maps to pending plan or completed receipt.",
+  "evidence": "P3 trial pure343/1deselected, owner retirement26, two actual Core callers1, contained reconstruction1, retirement ACK loss1; applied P2effect+P3 pure343/1deselected, retirement26 and contained reconstruction1",
+  "cost": "Thirty physical source lines removed; fewer singleton maps/loops. Completing a retirement shallow-copies pending plus terminal records; no speed claim.",
+  "remaining": "Separate one-line prevalidation removal trial not yet accepted; final owner commit validation remains mandatory. P2 snapshot is independent and still pending."
+}

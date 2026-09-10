@@ -526,7 +526,7 @@ def test_completed_stored_result_publishes_while_worker_remains_alive(
     assert snapshot.locations == frozenset({core.node_id})
     assert snapshot.output_publication is not None
     assert snapshot.output_publication.manifest == publication.outputs.manifest
-    assert snapshot.output_publication.slot_index == 0
+    assert snapshot.output_publication.publication_id.object_id == pending.object_id
     assert snapshot.output_retirement_id is None
     assert snapshot.canonical_stored_result == (publication.envelope.result)
     assert not snapshot.outgoing_contained_edges

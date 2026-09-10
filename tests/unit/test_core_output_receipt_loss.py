@@ -122,8 +122,8 @@ def test_owner_retirement_is_an_independent_shutdown_fence_without_protocol_mark
         core.owner_table.mark_lost(pending.object_id, pending.spec.attempt_id)
         member = core.owner_table.output_owner_publication(pending.object_id)
         core.owner_table.begin_output_publication_retirement(
-            (member,), retirement_id="independent-owner-retirement",
-            replica_locations={member.object_id: (node.node_id,)},
+            member, retirement_id="independent-owner-retirement",
+            replica_locations=(node.node_id,),
         )
         assert core.owner_table.has_active_output_retirements()
         assert not core.can_finalize_shutdown(require_distributed_clean=True)

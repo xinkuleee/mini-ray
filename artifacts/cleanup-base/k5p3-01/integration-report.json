@@ -1,0 +1,483 @@
+{
+  "status": "INTEGRATED_P3_STATIC_ONLY_READY_FOR_ROOT_SEQUENTIAL_EVALUATION_AFTER_P2",
+  "input_identity": {
+    "status": "P3_INTEGRATION_TRIAL_NOT_EXECUTED",
+    "source": "audit/p1-evaluation",
+    "source_label": "current 02 source per root; no validation relabeling",
+    "files": {
+      "src/miniray/ownership.py": {
+        "sha256": "ea431f1d167138d42a624f2c96cf2693d026b13bcd3c6b163e47bdbbf41a2e34",
+        "bytes": 188690
+      },
+      "src/miniray/core.py": {
+        "sha256": "cf38a034f22fb79ff8e202b327f3d4d19a99c6afd344ce1c4045cee6475961ca",
+        "bytes": 597396
+      },
+      "tests/integration/test_core_reconstruction_concurrency.py": {
+        "sha256": "ed63f1703cd47f65c1e49aff8a4b409c4dd61e5425278a7ad469b60f2d1ba4de",
+        "bytes": 29495
+      },
+      "tests/integration/test_inline_node_loss_path.py": {
+        "sha256": "29eaeb7889f13f042b18ce44bcbfe4fb956b17f2316e59802e97cff7ef0d5b50",
+        "bytes": 34399
+      },
+      "tests/unit/test_core_output_receipt_loss.py": {
+        "sha256": "46e1f7609e3ef3ba1421182e627a822a6c06e30dcc071bd6c4287418debbc17c",
+        "bytes": 9164
+      },
+      "tests/unit/test_core_worker_crash_recovery.py": {
+        "sha256": "7b021e0e3c9be4f68653c0b4527bf0f8bae97afba726e7cf514f4043c978805e",
+        "bytes": 53589
+      },
+      "tests/unit/test_current_owner_api_contracts.py": {
+        "sha256": "fb6308b384d38747c2a4a7f1abb1cb4b87b5ed149599e9b27ff09785aba428dc",
+        "bytes": 15378
+      },
+      "tests/unit/test_foreign_reconstruction_runtime.py": {
+        "sha256": "ea03cebe67429fbd41622bdcac87e6a5dcfb9d6495222bccf6288dcb41ea117b",
+        "bytes": 27742
+      },
+      "tests/unit/test_location_report_custody.py": {
+        "sha256": "f95580d0463e4ce7ffd8f9072afe99770fb47039eb1c6eb85b5fddfaa53a2744",
+        "bytes": 20289
+      },
+      "tests/unit/test_output_owner_publication.py": {
+        "sha256": "5312b09007e5f10921bb8152d35e695661c0bf25df6359052dfb0f2ff7416215",
+        "bytes": 32731
+      },
+      "tests/unit/test_output_owner_retirement.py": {
+        "sha256": "396fd4375c5916587142538e64c6545f9108518fd87da2372974a3124cc6504a",
+        "bytes": 21497
+      },
+      "tests/unit/test_output_owner_terminal_metadata.py": {
+        "sha256": "c31b6e9b779860dfc9d1444dfd808bb55bd9ef92afadfab657f4e94fdb979fd6",
+        "bytes": 12605
+      },
+      "tests/unit/test_owner_retirement.py": {
+        "sha256": "fc60ab5e65171370c3bbe7b2aa108de0d9a903b4e947f9641701126329c19b2c",
+        "bytes": 9663
+      },
+      "tests/unit/test_replica_cleanup.py": {
+        "sha256": "1237e4b2381707577be81e81cdc81fcb97594a58c394cc97a6b02836faed8b9b",
+        "bytes": 9893
+      },
+      "tests/unit/test_targeted_owner_defer.py": {
+        "sha256": "07f0ad20be79dc3171d296f79af1a6d04e1ddbfcd16e195e6e5dd69753ed4b0f",
+        "bytes": 17389
+      },
+      "tests/integration/test_stored_outer_publication_path.py": {
+        "sha256": "1da78d6f1886dca5017d1419c3f5c89d9944e6fba4e982dbb7768a6f96d742a2",
+        "bytes": 21696
+      }
+    },
+    "no_base_copy": true,
+    "no_enhanced_copy": true,
+    "no_pytest": true
+  },
+  "metrics": {
+    "src/miniray/ownership.py": {
+      "input_sha256": "ea431f1d167138d42a624f2c96cf2693d026b13bcd3c6b163e47bdbbf41a2e34",
+      "candidate_sha256": "7e94bb24d9f05fb4c4f24ccea2555c3c10b9215e7a70c9fa67a3829700ad6db7",
+      "before_lines": 4162,
+      "after_lines": 4132,
+      "added": 75,
+      "removed": 105
+    },
+    "src/miniray/core.py": {
+      "input_sha256": "cf38a034f22fb79ff8e202b327f3d4d19a99c6afd344ce1c4045cee6475961ca",
+      "candidate_sha256": "62789790856f160ee22d5cab558fd4a07e784bdde80c8e8b6e676286c0f77113",
+      "before_lines": 12756,
+      "after_lines": 12756,
+      "added": 5,
+      "removed": 5
+    },
+    "tests/integration/test_core_reconstruction_concurrency.py": {
+      "input_sha256": "ed63f1703cd47f65c1e49aff8a4b409c4dd61e5425278a7ad469b60f2d1ba4de",
+      "candidate_sha256": "4276ae956f29b708b7897f5233f9feba264e14f1a9dffd9a069dd790f4b964c4",
+      "before_lines": 560,
+      "after_lines": 560,
+      "added": 4,
+      "removed": 4
+    },
+    "tests/integration/test_inline_node_loss_path.py": {
+      "input_sha256": "29eaeb7889f13f042b18ce44bcbfe4fb956b17f2316e59802e97cff7ef0d5b50",
+      "candidate_sha256": "4ed3c7704faa7abf7f2bb11f26cadf654d39fa0a78593ce409c12633048543dd",
+      "before_lines": 688,
+      "after_lines": 688,
+      "added": 2,
+      "removed": 2
+    },
+    "tests/unit/test_core_output_receipt_loss.py": {
+      "input_sha256": "46e1f7609e3ef3ba1421182e627a822a6c06e30dcc071bd6c4287418debbc17c",
+      "candidate_sha256": "8a7232b6ca851cdaa376a1834f99e5184f53a257d2b4cd4ad62cc00bf939fffc",
+      "before_lines": 158,
+      "after_lines": 158,
+      "added": 2,
+      "removed": 2
+    },
+    "tests/unit/test_core_worker_crash_recovery.py": {
+      "input_sha256": "7b021e0e3c9be4f68653c0b4527bf0f8bae97afba726e7cf514f4043c978805e",
+      "candidate_sha256": "a3bde4cc60c28859dcaa12eda51da5be8fb0afb76009d7386ca4703754b2d7e5",
+      "before_lines": 1085,
+      "after_lines": 1085,
+      "added": 1,
+      "removed": 1
+    },
+    "tests/unit/test_current_owner_api_contracts.py": {
+      "input_sha256": "fb6308b384d38747c2a4a7f1abb1cb4b87b5ed149599e9b27ff09785aba428dc",
+      "candidate_sha256": "926f66cc83a0061a38c0554bb0eb2874a0f17bd406c907ff23d58cb3b1b455b6",
+      "before_lines": 275,
+      "after_lines": 275,
+      "added": 1,
+      "removed": 1
+    },
+    "tests/unit/test_foreign_reconstruction_runtime.py": {
+      "input_sha256": "ea03cebe67429fbd41622bdcac87e6a5dcfb9d6495222bccf6288dcb41ea117b",
+      "candidate_sha256": "a05338b1bb75c2eab70bbcd6d244d89d50cedb7d3a4b59303485edefdb2ad862",
+      "before_lines": 598,
+      "after_lines": 598,
+      "added": 1,
+      "removed": 1
+    },
+    "tests/unit/test_location_report_custody.py": {
+      "input_sha256": "f95580d0463e4ce7ffd8f9072afe99770fb47039eb1c6eb85b5fddfaa53a2744",
+      "candidate_sha256": "599f613ef0cd96b7dc8142854aaa2b67dfe3c4ef6d23f4d4329372e98896e596",
+      "before_lines": 402,
+      "after_lines": 402,
+      "added": 1,
+      "removed": 1
+    },
+    "tests/unit/test_output_owner_publication.py": {
+      "input_sha256": "5312b09007e5f10921bb8152d35e695661c0bf25df6359052dfb0f2ff7416215",
+      "candidate_sha256": "dd2fb3a35c576bed6fef77b121756498cfb7c9325fb78afbb7ef27aeaa98cb30",
+      "before_lines": 616,
+      "after_lines": 618,
+      "added": 9,
+      "removed": 7
+    },
+    "tests/unit/test_output_owner_retirement.py": {
+      "input_sha256": "396fd4375c5916587142538e64c6545f9108518fd87da2372974a3124cc6504a",
+      "candidate_sha256": "6a8f1c602d04bed372165bd741c1f3bfcafaeab8dc5e84259428baff6b6cc137",
+      "before_lines": 392,
+      "after_lines": 442,
+      "added": 58,
+      "removed": 8
+    },
+    "tests/unit/test_output_owner_terminal_metadata.py": {
+      "input_sha256": "c31b6e9b779860dfc9d1444dfd808bb55bd9ef92afadfab657f4e94fdb979fd6",
+      "candidate_sha256": "88df698490a769cda3551f965f97044e1293e166f855434d01b18f53c0db80d4",
+      "before_lines": 233,
+      "after_lines": 233,
+      "added": 1,
+      "removed": 1
+    },
+    "tests/unit/test_owner_retirement.py": {
+      "input_sha256": "fc60ab5e65171370c3bbe7b2aa108de0d9a903b4e947f9641701126329c19b2c",
+      "candidate_sha256": "81e0e954b0f302a65347dd79b8f20fef0594c724b4eab1a56f5a084897b8250b",
+      "before_lines": 198,
+      "after_lines": 198,
+      "added": 1,
+      "removed": 1
+    },
+    "tests/unit/test_replica_cleanup.py": {
+      "input_sha256": "1237e4b2381707577be81e81cdc81fcb97594a58c394cc97a6b02836faed8b9b",
+      "candidate_sha256": "cd9b112a5d27c9c44e3392c22782ce38a0e798c0d0ef0462448e2a9fca91314e",
+      "before_lines": 200,
+      "after_lines": 200,
+      "added": 2,
+      "removed": 2
+    },
+    "tests/unit/test_targeted_owner_defer.py": {
+      "input_sha256": "07f0ad20be79dc3171d296f79af1a6d04e1ddbfcd16e195e6e5dd69753ed4b0f",
+      "candidate_sha256": "fc70b3c968946c2ca7a240dfa3d543a733a2c6fbbfdee37332ebe6eaa5b10826",
+      "before_lines": 345,
+      "after_lines": 345,
+      "added": 1,
+      "removed": 1
+    },
+    "tests/integration/test_stored_outer_publication_path.py": {
+      "input_sha256": "1da78d6f1886dca5017d1419c3f5c89d9944e6fba4e982dbb7768a6f96d742a2",
+      "candidate_sha256": "37f66a0cd050d8101a59f1e43eab7848a8f002561edf5675623f35a8c823b1ea",
+      "before_lines": 481,
+      "after_lines": 481,
+      "added": 2,
+      "removed": 2
+    }
+  },
+  "source_total": {
+    "added": 80,
+    "removed": 110,
+    "before_lines": 16918,
+    "after_lines": 16888
+  },
+  "test_total": {
+    "added": 86,
+    "removed": 34,
+    "before_lines": 6231,
+    "after_lines": 6283
+  },
+  "test_files": 14,
+  "test_count": 104,
+  "test_migration": [
+    {
+      "path": "tests/integration/test_core_reconstruction_concurrency.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 1,
+      "changed_function_selectors": [],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/integration/test_inline_node_loss_path.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 2,
+      "changed_function_selectors": [],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_core_output_receipt_loss.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 5,
+      "changed_function_selectors": [
+        "tests/unit/test_core_output_receipt_loss.py::test_owner_retirement_is_an_independent_shutdown_fence_without_protocol_marker"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_core_worker_crash_recovery.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 12,
+      "changed_function_selectors": [
+        "tests/unit/test_core_worker_crash_recovery.py::test_completed_stored_result_publishes_while_worker_remains_alive"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_current_owner_api_contracts.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 9,
+      "changed_function_selectors": [
+        "tests/unit/test_current_owner_api_contracts.py::test_plain_result_cannot_revive_an_exact_retired_output_attempt"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_foreign_reconstruction_runtime.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 5,
+      "changed_function_selectors": [],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_location_report_custody.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 10,
+      "changed_function_selectors": [
+        "tests/unit/test_location_report_custody.py::test_retired_or_frozen_publication_keeps_exact_cleanup_not_custody_location"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_output_owner_publication.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 25,
+      "changed_function_selectors": [
+        "tests/unit/test_output_owner_publication.py::test_single_output_publishes_once_with_metadata_only_owner_history",
+        "tests/unit/test_output_owner_publication.py::test_tampered_manifest_and_membership_cannot_bypass_single_output_identity",
+        "tests/unit/test_output_owner_publication.py::test_publication_does_not_mutate_an_unrelated_object",
+        "tests/unit/test_output_owner_publication.py::test_collection_rejects_changed_manifest_membership_and_frozen_metadata"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_output_owner_retirement.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 15,
+      "changed_function_selectors": [
+        "tests/unit/test_output_owner_retirement.py::test_retirement_preserves_stable_id_incoming_holds_and_task_lineage",
+        "tests/unit/test_output_owner_retirement.py::test_retirement_rejects_ready_slot_or_missing_replica_inventory_atomically",
+        "tests/unit/test_output_owner_retirement.py::test_public_plans_proofs_and_terminal_getters_cannot_mutate_owner_history"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_output_owner_terminal_metadata.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 2,
+      "changed_function_selectors": [
+        "tests/unit/test_output_owner_terminal_metadata.py::test_terminal_owner_rejects_changed_payload_or_collection_identity"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_owner_retirement.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 6,
+      "changed_function_selectors": [],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_replica_cleanup.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 8,
+      "changed_function_selectors": [
+        "tests/unit/test_replica_cleanup.py::test_active_or_completed_collection_still_admits_only_exact_physical_cleanup"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/unit/test_targeted_owner_defer.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 3,
+      "changed_function_selectors": [
+        "tests/unit/test_targeted_owner_defer.py::test_owner_retirement_drop_ack_loss_defers_then_exact_request_starts"
+      ],
+      "helpers_migrated_without_reformatting": true
+    },
+    {
+      "path": "tests/integration/test_stored_outer_publication_path.py",
+      "test_names_and_decorators_preserved": true,
+      "test_count": 1,
+      "changed_function_selectors": [
+        "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects"
+      ],
+      "helpers_migrated_without_reformatting": true
+    }
+  ],
+  "patch_sha256": "3bf2c75ab64e6dcb7fde84e23f97ed4c669562622105ccb0d2101ebf3e78286d",
+  "source_review": {
+    "src/miniray/ownership.py": {
+      "changed_symbols": [
+        "OutputOwnerPublicationMembership",
+        "OutputOwnerPublicationMembership.__post_init__",
+        "OutputOwnerPublicationCollectionPlan",
+        "OutputOwnerPublicationCollectionPlan.__post_init__",
+        "_OutputOwnerCollectionTombstone",
+        "_OutputOwnerCollectionTombstone.matches",
+        "OutputOwnerPublicationRetirementPlan",
+        "OutputOwnerPublicationRetirementPlan.__post_init__",
+        "OutputOwnerPublicationRetirementPlan.contained_releases",
+        "ObjectOwnerTable",
+        "ObjectOwnerTable.__init__",
+        "ObjectOwnerTable.commit_output_publication",
+        "ObjectOwnerTable._validate_output_publication_locked",
+        "ObjectOwnerTable.output_owner_publication",
+        "ObjectOwnerTable.surviving_output_locations",
+        "ObjectOwnerTable.resolve_output_node_loss",
+        "ObjectOwnerTable.begin_output_publication_retirement",
+        "ObjectOwnerTable.complete_output_publication_retirement",
+        "ObjectOwnerTable.output_publication_retirement_receipt",
+        "ObjectOwnerTable.complete_output_publication_collection",
+        "_validate_output_retirement_replica_proofs"
+      ],
+      "protected_methods_unchanged": {
+        "ObjectOwnerTable.validate_output_publication": true,
+        "ObjectOwnerTable._validated_output_publication_plan": true,
+        "ObjectOwnerTable.output_owner_publication_receipt": true,
+        "ObjectOwnerTable._validate_output_retirement_entry_locked": true,
+        "_validate_output_retirement_proofs": true,
+        "_retirement_child_death_id": true,
+        "ObjectOwnerTable.has_active_output_retirements": true,
+        "ObjectOwnerTable.retired_output_replica": true,
+        "ObjectOwnerTable._require_no_output_retirement_locked": true
+      }
+    },
+    "src/miniray/core.py": {
+      "changed_symbols": [
+        "CoreWorker",
+        "CoreWorker._retire_lost_output_memberships"
+      ]
+    }
+  },
+  "planned_runtime_selectors": {
+    "tests/unit/test_output_owner_retirement.py": [
+      "tests/unit/test_output_owner_retirement.py::test_retirement_preserves_stable_id_incoming_holds_and_task_lineage",
+      "tests/unit/test_output_owner_retirement.py::test_retirement_gates_publish_advance_and_gc_but_not_reference_release",
+      "tests/unit/test_output_owner_retirement.py::test_retirement_rejects_ready_slot_or_missing_replica_inventory_atomically",
+      "tests/unit/test_output_owner_retirement.py::test_retirement_rejects_overlapping_claim_and_rebound_identity",
+      "tests/unit/test_output_owner_retirement.py::test_completion_requires_every_cleanup_proof_and_never_partially_clears",
+      "tests/unit/test_output_owner_retirement.py::test_replica_nonterminal_status_is_not_cleanup_proof",
+      "tests/unit/test_output_owner_retirement.py::test_cleanup_proofs_cannot_substitute_another_hold_slot_or_epoch",
+      "tests/unit/test_output_owner_retirement.py::test_dead_publishing_node_requires_its_exact_frozen_incarnation",
+      "tests/unit/test_output_owner_retirement.py::test_additional_replica_obligations_require_every_exact_ack",
+      "tests/unit/test_output_owner_retirement.py::test_retired_slot_can_reconstruct_with_original_index_and_old_replays_are_fenced",
+      "tests/unit/test_output_owner_retirement.py::test_empty_edge_slot_retires_without_graph_or_child_operations",
+      "tests/unit/test_output_owner_retirement.py::test_post_retirement_gc_collects_metadata_only_and_releases_final_task_lineage",
+      "tests/unit/test_output_owner_retirement.py::test_normal_collection_and_reconstruction_retirement_cannot_overlap",
+      "tests/unit/test_output_owner_retirement.py::test_public_plans_proofs_and_terminal_getters_cannot_mutate_owner_history",
+      "tests/unit/test_output_owner_retirement.py::test_canonical_result_is_revalidated_before_retirement_claim_and_completion"
+    ],
+    "tests/unit/test_owner_retirement.py": [
+      "tests/unit/test_owner_retirement.py::test_mixed_release_and_exact_installed_child_death_retire_without_fabricated_ack",
+      "tests/unit/test_owner_retirement.py::test_one_actual_owner_death_can_cover_each_of_its_distinct_final_holds",
+      "tests/unit/test_owner_retirement.py::test_unproven_or_wrong_child_death_never_partially_retires",
+      "tests/unit/test_owner_retirement.py::test_death_coverage_is_not_a_reason_to_skip_an_unsettled_final_hold",
+      "tests/unit/test_owner_retirement.py::test_death_receipt_replay_cannot_change_a_proof_after_retirement",
+      "tests/unit/test_owner_retirement.py::test_mutating_nested_death_input_cannot_change_retained_receipt"
+    ],
+    "integration": [
+      "tests/integration/test_core_reconstruction_concurrency.py::test_concurrent_lost_requests_merge_and_old_attempt_is_fenced",
+      "tests/integration/test_lineage_reconstruction_path.py::test_stored_task_output_reconstructs_with_same_object_id",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+      "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution"
+    ],
+    "original_examples": [
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example01]",
+      "tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example06]"
+    ],
+    "current_required_smoke": [
+      "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects"
+    ],
+    "original_examples_provenance": "Read-only exact selector match from current mini-ray-base/scripts/baseline_manifest.json smoke registry; no registry change."
+  },
+  "expected_runtime_outcomes": {
+    "ordinary": "Same one-result publication, READY owner transition and stable ObjectID reconstruction; no changes to user tuple/list serialization or TaskReply result boundary.",
+    "contained": "Retirement still releases every exact final hold in manifest order; installed immutable child death and exact Drop/Node-death proof checks remain. Multiple children and replica nodes stay sequences.",
+    "gc": "Owner collection tombstone keeps publication identity, manifest digest, collection ID, metadata digest and collection receipt; only redundant zero index disappears. Changed manifest/collection/metadata replays still reject; terminal metadata stays byte-free.",
+    "replay": "Retirement exact plan/proof replay, overlap rejection, detached public getters and old attempt/lease fences preserved. Map representation unchanged in this candidate.",
+    "validation": "All static only; execute listed existing bounded selectors on a merged candidate before acceptance."
+  },
+  "complexity": {
+    "retirement_maps": "2 -> 1; no duplicate terminal plan graph outside receipt",
+    "membership_fields": "manifest + slot_index -> manifest",
+    "retirement_plan": "one exact membership rather than singleton tuple; object_id derived",
+    "owner_collection_tombstone": "remove redundant zero slot_index; keep publication/manifest/collection/metadata identity",
+    "public_detachment": "all existing deep reconstruct/replace/deepcopy boundaries preserved",
+    "state_separation": "current owner state, collection receipt, retirement lifecycle and publication/attempt fences remain separate facts",
+    "sequence_boundaries": "child proof sequence and replica node/proof sequence remain exact and ordered; Node journal slot0 unchanged",
+    "copy_tradeoff": "completed record replacement shallow-copies pending+completed map instead of only completed map; no performance claim",
+    "validate_commit": "Core adoption/query and owner public validation/query bodies unchanged; no unchecked cross-lock token added"
+  },
+  "format_preservation": "Source scalar hunks applied only after byte-identical source input proof. Tests patched by exact text spans against current p1-evaluation formatting, not wholesale old candidate files.",
+  "checks": {
+    "all_16_ast_valid": true,
+    "all_104_test_names_and_decorators_preserved": true,
+    "no_legacy_owner_scalar_or_map_attribute_calls": true,
+    "no_trailing_whitespace": true,
+    "no_tests_imported": true,
+    "no_pytest": true,
+    "no_manifest_change": true,
+    "no_commit": true,
+    "runtime_not_executed": true,
+    "patch_check_applies_to_input": true,
+    "evaluation_input_unchanged": true,
+    "evaluation_drift": {
+      "src/miniray/ownership.py": false,
+      "src/miniray/core.py": false,
+      "tests/integration/test_core_reconstruction_concurrency.py": false,
+      "tests/integration/test_inline_node_loss_path.py": false,
+      "tests/unit/test_core_output_receipt_loss.py": false,
+      "tests/unit/test_core_worker_crash_recovery.py": false,
+      "tests/unit/test_current_owner_api_contracts.py": false,
+      "tests/unit/test_foreign_reconstruction_runtime.py": false,
+      "tests/unit/test_location_report_custody.py": false,
+      "tests/unit/test_output_owner_publication.py": false,
+      "tests/unit/test_output_owner_retirement.py": false,
+      "tests/unit/test_output_owner_terminal_metadata.py": false,
+      "tests/unit/test_owner_retirement.py": false,
+      "tests/unit/test_replica_cleanup.py": false,
+      "tests/unit/test_targeted_owner_defer.py": false,
+      "tests/integration/test_stored_outer_publication_path.py": false
+    }
+  }
+}
