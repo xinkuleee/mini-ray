@@ -1,0 +1,11 @@
+{
+  "status": "All seventeen retained heavy functions migrated and validated; K7 final gate/install pending",
+  "functions": 17,
+  "unit": 10,
+  "bounded_loopback": 7,
+  "fault_matrix": "Original selector and parameter sets retained. GC uses actual owner/Node/Store; races retain real threads and finally joins.",
+  "first_failures": "Actor/PG guard targeted nonexistent transport.rpc_request, corrected to transport.request. Supervisor race retained two old snapshot spellings, corrected to result_retained. Original failures retained.",
+  "evidence_scope": "GC eight original unit selectors and supervisor retry passed at heavy01; Actor seven selectors and supervisor race plus PG three functions/four cases passed at heavy02. No historical snapshot presence counted as execution.",
+  "P2": "Closed represented boundaries. Optional Node one-value loop remains to avoid deeper guards for no protocol gain; not an extra state or second authority.",
+  "K7_residual": "Six legacy-binding files and two reconstruction files have own new finite results; all prior audit blockers now implemented or registered. Final gate, dependencies and source-HEAD mapping still required."
+}

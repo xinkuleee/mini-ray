@@ -274,7 +274,7 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     publication = prepare_ref_free_output(node, request, grant, values=(7,))
     identity = publication.manifest.publication_id
     prepared = publication.journal.snapshot(identity)
-    assert prepared.ready_to_complete and prepared.retained_result_slots == (0,)
+    assert prepared.ready_to_complete and prepared.result_retained is True
     assert prepared.complete is None and publication.handoffs.query(identity).manifest == publication.manifest
     assert (publication.manifest.value).size_bytes <= 32
     assert node.object_store.capacity_bytes == 1024 and node.object_store.used_bytes == 0
@@ -346,7 +346,7 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     assert node._drive_output_publications()
     cleaned = publication.journal.snapshot(identity)
     assert cleaned.state is OutputPublicationJournalState.RETIRED
-    assert cleaned.complete is None and cleaned.retained_result_slots == ()
+    assert cleaned.complete is None and cleaned.result_retained is False
     assert cleaned.rollback.rollback_id == "output-worker-lost:{}".format(request.lease_id)
     assert len(cleaned.rollback.effects) == 1
     assert cleaned.rollback.effects[0].stage is OutputPublicationStage.SLOT_DROP

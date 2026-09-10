@@ -108,7 +108,7 @@ def test_adopted_stored_outer_collects_exact_child_holds_after_publisher_death(m
         assert core._accepted_task_count == 0 and not core._task_finish_barriers
         assert not core._protocol_unresolved and not core._output_result_custody
         assert fixture.handoffs.query(identity).adoption is not None
-        assert not fixture.journal.snapshot(identity).retained_result_slots
+        assert not fixture.journal.snapshot(identity).result_retained
         before = core.owner_table.snapshot(stored_id)
         descriptor = core._stored_descriptors[stored_id]
         assert before.canonical_stored_result == descriptor == (reply.output_publication.result)

@@ -394,7 +394,7 @@ class _WaitDrop:
             snapshot = self.backend.handoff_snapshot(identity)
             assert snapshot.complete is not None and snapshot.adoption is not None
             assert self.owner.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
-            assert not self.backend.journal.snapshot(identity).retained_result_slots
+            assert not self.backend.journal.snapshot(identity).result_retained
         assert not self.backend.adapter.pending_terminal_reports()
         for core in self.cores:
             assert core._reference_mailbox.pending.empty()

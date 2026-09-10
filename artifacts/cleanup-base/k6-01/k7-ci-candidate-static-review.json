@@ -1,0 +1,36 @@
+{
+  "status": "isolated CI config/tool candidate; no remote CI or pytest executed",
+  "changes": [
+    {
+      "path": ".github/workflows/baseline.yml",
+      "before_sha256": "0a9f70c19de9179e2fb28ffcb145821b900f7434d78997de330f0905eeec98fa",
+      "after_sha256": "a2e5fc7248f40a039c636e5ade4b6918686ad79cb06a25959e0f821b6021fa79"
+    },
+    {
+      "path": "scripts/_ci_baseline.py",
+      "before_sha256": "6c315e94d23639d78b243507ff28e982d5c10e44167c6ff50e15d8e3da0d9b7d",
+      "after_sha256": "a411171c0f253e384665e225c1186e9462b17500fad09732d5a122734b934501"
+    }
+  ],
+  "patch_sha256": "cfb9dc8e8c05ccc3fd5507c311bc6a64ae38f511266864985b03347aa93ebe9c",
+  "yaml_validation": {
+    "yaml_1_2_parse": "passed",
+    "parser": "existing Red Hat vscode-yaml 1.24.0 bundled yaml parse",
+    "parser_bundle_sha256": "34026a0e66e6e86b68052ffa39c08978e7798b828055f99c122bee907970160d",
+    "lsp_started": false,
+    "network_used": false,
+    "checks": "jobs, events, pins, SHA checkout, evidence ordering, no cross-needs/matrix"
+  },
+  "python_AST_parse": "passed",
+  "gate_loop": "one serial pure then exact smoke loop; no added child timeout; original fail-fast remains",
+  "new_tests_or_gate_requirements": false,
+  "identity_only_dry_run": {
+    "identity_only_fake_environment": "passed",
+    "candidate_source_vs_merge": "distinct",
+    "tested_source_commit_before_gate": null,
+    "subprocess_or_pytest_execution": false,
+    "source_hash_scan": "outside selection loop; once per invocation, never per smoke"
+  },
+  "apply_check": "git apply --check --ignore-space-change against raw CRLF baseline: passed",
+  "source_scan_frequency": "once identity-only, once gate-start; never inside smoke loop"
+}

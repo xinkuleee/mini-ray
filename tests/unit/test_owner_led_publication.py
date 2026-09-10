@@ -108,7 +108,8 @@ class _Publication:
         request = wire.ReportOutputHandoffComplete(witness)
         snapshot = self.handoffs.record_complete(request.witness)
         self.lose_reply("complete-report")
-        assert self.validate_reply(request, snapshot).complete == witness
+        reply = replace(wire.OutputHandoffCompleteAck(snapshot.complete, True))
+        assert reply.accepted and reply.witness == witness
 
     def report_rollback(self, tombstone, *, manifest):
         self.events.append("owner-rollback")

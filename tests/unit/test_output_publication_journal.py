@@ -165,7 +165,7 @@ def test_single_output_journal_replays_inline_and_stored_with_or_without_childre
     snapshot = journal.snapshot(f.id)
     assert snapshot.state is OutputPublicationJournalState.COMPLETED
     assert snapshot.complete == f.witness
-    assert snapshot.materialized_slots == snapshot.retained_result_slots == (0,)
+    assert snapshot.materialized is True and snapshot.result_retained is True
     assert not snapshot.ready_to_complete
     assert journal.materialized_result(f.id) == f.result
     with journal.linearize(f.id):
@@ -298,7 +298,7 @@ def test_materialize_intent_without_ack_is_compensated_before_reverse_child_rele
     assert f.rollback() == plan.effects
     terminal = journal.snapshot(f.id)
     assert terminal.state is OutputPublicationJournalState.RETIRED
-    assert terminal.retained_result_slots == ()
+    assert terminal.result_retained is False
     assert terminal.rollback_tombstone.plan == plan
     assert not journal.open(f.manifest)
     assert journal.next_rollback_effect(f.id) is None
@@ -405,16 +405,17 @@ def test_owner_adoption_retires_one_payload_and_preserves_exact_complete_metadat
     journal = f.journal
     f.complete()
     proof = f.adoption()
-    tombstones = journal.retire_completed(proof)
-    assert tuple(t.object_id for t in tombstones) == (f.object_id,)
-    assert journal.retire_completed(proof) == tombstones
+    tombstone = journal.retire_completed(proof)
+    assert tombstone.object_id == f.object_id and tombstone.publication_id == f.id
+    assert journal.retire_completed(proof) == tombstone
     snapshot = journal.snapshot(f.id)
     assert snapshot.state is OutputPublicationJournalState.RETIRED
-    assert snapshot.complete == f.witness and snapshot.retained_result_slots == ()
+    assert snapshot.complete == f.witness and snapshot.result_retained is False
+    assert snapshot.materialized is True and snapshot.retirement == tombstone
     assert journal.materialized_result(f.id) is None
     with pytest.raises(OutputPublicationPayloadRetired) as caught:
         journal.complete(f.id, f.witness)
-    assert caught.value.tombstones == tombstones
+    assert caught.value.tombstone == tombstone
     with pytest.raises(OutputPublicationConflictError, match="owner commit"):
         journal.retire_completed(replace(proof, owner_commit_id="different-cas"))
     assert journal.snapshot(f.id) == snapshot
@@ -440,17 +441,19 @@ def test_payload_tombstones_and_diagnostics_do_not_alias_terminal_authority():
     journal = f.journal
     f.complete()
     proof = f.adoption("frozen-owner-cas")
-    returned, = journal.retire_completed(proof)
+    returned = journal.retire_completed(proof)
     before = journal.snapshot(f.id)
     object.__setattr__(returned.proof, "owner_commit_id", "tampered-return")
     object.__setattr__(proof, "owner_commit_id", "tampered-input")
     assert journal.snapshot(f.id) == before
     exact = f.adoption("frozen-owner-cas")
-    assert journal.retire_completed(exact) == before.retired_slots
+    assert journal.retire_completed(exact) == before.retirement
     with pytest.raises(OutputPublicationPayloadRetired) as caught:
         journal.complete(f.id, f.witness)
-    assert tuple(t.slot_index for t in caught.value.tombstones) == (0,)
-    object.__setattr__(caught.value.tombstones[0].proof, "owner_commit_id", "tampered-exception")
+    assert caught.value.tombstone.object_id == f.object_id
+    assert caught.value.tombstone.publication_id == f.id
+    assert caught.value.tombstone.manifest_digest == f.manifest.manifest_digest
+    object.__setattr__(caught.value.tombstone.proof, "owner_commit_id", "tampered-exception")
     assert journal.snapshot(f.id) == before
     _metadata(journal._records)
 

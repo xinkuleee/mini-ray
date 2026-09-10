@@ -248,7 +248,7 @@ def _publish(core: CoreWorker, outputs: PureOutputRuntime, pending: _PendingTask
         pending, reply, expected_node_id=core.node_id, expected_lease_id=push.lease_id,
     )
     assert core.owner_table.snapshot(pending.object_id).output_publication is not None
-    assert not outputs.journal.snapshot(reply.output_publication.publication_id).retained_result_slots
+    assert not outputs.journal.snapshot(reply.output_publication.publication_id).result_retained
     assert core._finish_pending_task(pending)
     record = core._recovery.task_record(pending.task_id)
     assert record.state is TaskState.SUCCEEDED and record.retries_started == 0

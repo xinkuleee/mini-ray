@@ -68,7 +68,7 @@ def test_node_finalize_installs_independent_terminal_and_exact_replay(monkeypatc
     assert node._workers[record.grant.worker_id].active_lease_id is None
     terminal = fixture.journal.snapshot(fixture.id)
     assert terminal.state is OutputPublicationJournalState.RETIRED
-    assert not terminal.retained_result_slots
+    assert not terminal.result_retained
     assert (terminal.complete == fixture.values.witness) is (phase == "complete")
     assert terminal.rollback_tombstone is None
     assert fixture.adapter.owner_death_finished(fixture.id)
@@ -139,7 +139,7 @@ def test_finalize_fences_late_adoption_without_rewriting_success_history(monkeyp
     with pytest.raises(ValueError, match="death-fenced"):
         node._handle_ack_output_publication_adopted(wire.AckOutputPublicationAdopted(proof))
     assert fixture.journal.snapshot(fixture.id).complete == fixture.values.witness
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
     assert record.completion == complete and record.state is protocol.LeaseExecutionState.COMPLETED
     assert node._handle_finalize_output_owner_death(request).cleaned and calls == [request]
 

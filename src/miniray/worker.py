@@ -1452,9 +1452,11 @@ class WorkerServer:
             return self._embedded_core
 
     def _handle_output_handoff(self, method, request):
-        from .output_protocol import OutputHandoffReply
+        from .output_protocol import OutputHandoffReply, OutputHandoffCompleteAck, ReportOutputHandoffComplete
         core = self._borrow_owner_core()
         if core is None:
+            if type(request) is ReportOutputHandoffComplete:
+                return OutputHandoffCompleteAck(request.witness, False, error="object owner CoreWorker is not available")
             return OutputHandoffReply(request, False, error="object owner CoreWorker is not available")
         return getattr(core, method)(request)
 

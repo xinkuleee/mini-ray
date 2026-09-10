@@ -137,7 +137,7 @@ def _case(monkeypatch, phase):
     expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
     snapshot = fixture.journal.snapshot(fixture.id)
     assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
-    assert snapshot.retained_result_slots == (0,) and snapshot.complete is None
+    assert snapshot.result_retained is True and snapshot.complete is None
     assert record.output_publication_id == fixture.id and record.state is protocol.LeaseExecutionState.RUNNING
     assert fixture.store.capacity_bytes == 1024 and not node._sealed_metadata
     assert not _receipts(node) and not node._dropped_metadata
@@ -191,7 +191,7 @@ def _assert_not_finalized(fixture, node, record, request):
     assert not fixture.adapter.owner_death_finished(fixture.id) and not fixture.adapter._tickets
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.state is OutputPublicationJournalState.ACTIVE
-    assert snapshot.retained_result_slots == (0,)
+    assert snapshot.result_retained is True
     assert record.state is protocol.LeaseExecutionState.ABANDONED
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
 
@@ -235,7 +235,7 @@ def _assert_finalized(fixture, node, record, request, monkeypatch):
     assert type(reply) is wire.FinalizeOutputOwnerDeathReply and reply.request == request and reply.cleaned
     assert fixture.adapter.owner_death_finished(fixture.id) and not fixture.adapter._tickets
     snapshot = fixture.journal.snapshot(fixture.id)
-    assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.retained_result_slots
+    assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.result_retained
     assert snapshot.complete is None and snapshot.rollback_tombstone is None
     assert record.state is protocol.LeaseExecutionState.ABANDONED
     assert fixture.ledger.available == ResourceVector({"CPU": 1})
@@ -348,7 +348,7 @@ def test_worker_ack_loss_preserves_physical_receipt_and_finalize_replay_skips_st
         node._handle_finalize_output_owner_death(request)
     assert calls == [request]
     assert not fixture.adapter.owner_death_finished(fixture.id) and not fixture.adapter._tickets
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
+    assert fixture.journal.snapshot(fixture.id).result_retained is True
     _assert_physical_receipt(fixture, node, monkeypatch)
     before = deepcopy((node._dropped_metadata, _receipts(node)))
     with monkeypatch.context() as guard:
@@ -360,7 +360,7 @@ def test_worker_ack_loss_preserves_physical_receipt_and_finalize_replay_skips_st
     assert (node._dropped_metadata, _receipts(node)) == before
     assert fixture.adapter.owner_death_finished(fixture.id)
     assert fixture.journal.snapshot(fixture.id).state is OutputPublicationJournalState.RETIRED
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
     assert record.state is protocol.LeaseExecutionState.ABANDONED
 
 

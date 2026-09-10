@@ -171,7 +171,7 @@ class _OutputBackend(PureOutputRuntime):
         assert self.core._publish_reply(
             pending, reply, expected_node_id=self.core.node_id, expected_lease_id=lease_id,
         )
-        assert not self.journal.snapshot(identity).retained_result_slots
+        assert not self.journal.snapshot(identity).result_retained
         assert self.handoff_snapshot(identity).adoption.complete == reply.output_publication.complete
         return reply.results
 

@@ -1,0 +1,8 @@
+{
+  "package": "P2.snapshot_and_tombstone",
+  "disposition": "implemented_and_validated",
+  "evidence": "Trial pure343/1deselected, journal23, single retirement3, trace6, actual ordinary+contained publication/GC; integrated P3/P4 version pure343/1deselected and all twelve spillback exact selectors",
+  "change": "Read-only snapshot exposes materialized, result_retained and optional exact retirement; single tombstone and scalar retirement return, no constant outer index.",
+  "authority": "Flags are derived from real materialization ACK and result custody; no independently mutable status added. GC, local Complete, actual receipt retirement and owner death remain distinct.",
+  "remaining": "Only P2 optional local one-value loop/prose review pending; all specified journal/effect/snapshot/retirement shapes are scalar. Adapter progress merge has its recorded retain decision."
+}

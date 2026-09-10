@@ -37,6 +37,10 @@ jobs:
           version: "0.11.26"
           enable-cache: false
 
+      - name: Record candidate identity before dependency installation
+        shell: bash
+        run: python -c 'from scripts._ci_baseline import main; raise SystemExit(main(identity_only=True))'
+
       - name: Install frozen baseline dependencies
         shell: bash
         run: |
@@ -120,6 +124,10 @@ jobs:
         with:
           version: "0.11.26"
           enable-cache: false
+
+      - name: Record candidate identity before dependency installation
+        shell: bash
+        run: python -c 'from scripts._ci_baseline import main; raise SystemExit(main(identity_only=True))'
 
       - name: Install frozen baseline dependencies
         shell: bash

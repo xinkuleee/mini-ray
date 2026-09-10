@@ -3,8 +3,9 @@
 Unit cases use unstarted fixtures, synchronous RPC boundaries and finite replay
 sequences. Four admission cases use real Node/bundle reducers, explicit
 FIFO/finish and public close on a synchronous mailbox; the three execution
-cases also publish real selected outputs. Three remaining live functions
-(four expanded cases) still start runtime work and remain heavy.
+cases also publish real selected outputs. Three live functions (four expanded
+cases) preserve their original bounded races as loopback_smoke; each owns at
+most one caller and three Core threads, with finite gates and verified teardown.
 """
 
 from __future__ import annotations
@@ -53,7 +54,9 @@ from miniray.worker import (
     COMPLETE_WORKER_LEASE_HANDLER, START_WORKER_LEASE_HANDLER, WorkerServer,
 )
 from tests.unit._core_test_utils import add_core_thread_finalizer
-from tests.unit._pure_core import close_pure_core, make_pure_core
+from tests.unit._pure_core import (
+    SynchronousReferenceMailbox, close_pure_core, make_pure_core,
+)
 from tests.unit.test_node_placement_group_runtime import _node as _pure_pg_node
 
 
@@ -220,8 +223,9 @@ class _PurePgAdmission:
         assert snapshot.manifest == manifest and snapshot.complete is None
 
     def report_complete(self, witness):
-        snapshot = self.owner_call(output_wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete)
-        assert snapshot.complete == witness
+        reply = self.core.report_output_handoff_complete(output_wire.ReportOutputHandoffComplete(witness))
+        assert type(reply) is output_wire.OutputHandoffCompleteAck and reply.accepted, reply.error
+        assert reply.witness == witness
 
     def report_rollback(self, tombstone, *, manifest):
         snapshot = self.owner_call(output_wire.ReportOutputHandoffRollback(manifest, tombstone),
@@ -384,7 +388,7 @@ class _PurePgAdmission:
                 snapshot = self.handoff(identity)
                 assert snapshot.adoption is not None
                 assert core.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
-                assert not self.journal.snapshot(identity).retained_result_slots
+                assert not self.journal.snapshot(identity).result_retained
                 assert self.adapter.report_terminal(identity)
             assert not self.adapter.pending_terminal_reports()
             assert self.node.object_store.used_bytes == 0 and not self.node._sealed_metadata
@@ -830,7 +834,7 @@ def test_pg_key_survives_system_retry_and_reconstruction() -> None:
         assert core._recovery.task_record(pending.task_id).retries_remaining == 0
         assert core._recovery.active_recovery(pending.task_id) == reconstructed.spec.attempt_id
         assert scenario.handoff(old_envelope.publication_id).adoption is not None
-        assert not scenario.journal.snapshot(old_envelope.publication_id).retained_result_slots
+        assert not scenario.journal.snapshot(old_envelope.publication_id).result_retained
         assert [reply.status for _, reply in scenario.drops] == [
             protocol.DropObjectReplicaStatus.DROPPED, protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
         ]
@@ -1127,17 +1131,87 @@ def test_core_and_gcs_adapter_raise_only_after_reject_abort_is_removed(
     assert len({request.placement_group_id for request in create_requests}) == 1
 
 
-@pytest.mark.heavy
-def test_pg_create_is_a_shutdown_visible_inflight_operation(monkeypatch) -> None:
+@pytest.fixture
+def _pg_l1_runtime(monkeypatch):
+    """Own only the three reviewed PG races, including failed assertions."""
+    cores = []
+    threads = []
+    violations = []
+    real_start = threading.Thread.start
+    real_join = threading.Thread.join
+
+    def forbidden(*_args, **_kwargs):
+        violations.append("unexpected runtime boundary")
+        pytest.fail("bounded PG race attempted unmodelled runtime work")
+
+    def start(thread):
+        if len(threads) >= 4 or thread.name not in (
+            "miniray-core-reference-events", "miniray-core-worker-coordinator",
+            "miniray-core-worker-dispatch-0", "miniray-pg-test-caller",
+        ):
+            forbidden()
+        threads.append(thread)
+        return real_start(thread)
+
+    def join(thread, timeout=None):
+        if thread not in threads or timeout is None or not 0 <= timeout <= 1.0:
+            forbidden()
+        return real_join(thread, timeout)
+
+    def initial_rpc(_self, _address, handler, request):
+        # Install before Core startup: a coordinator poll cannot reach a real
+        # GCS between constructor return and the case's RPC replacement.
+        if handler != "get_worker_deaths" or not isinstance(request, protocol.GetWorkerDeaths):
+            forbidden()
+        return protocol.GetWorkerDeathsReply(request.after_epoch, request.after_epoch, ())
+
+    monkeypatch.setattr(CoreWorker, "_rpc", initial_rpc)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Thread, "join", join)
+    for owner, name in (
+        (threading.Timer, "start"), (subprocess, "Popen"),
+        (multiprocessing.process.BaseProcess, "start"),
+        (multiprocessing.process.BaseProcess, "join"), (time, "sleep"),
+        (core_module, "rpc_request"), (transport_module, "request"),
+    ):
+        monkeypatch.setattr(owner, name, forbidden)
+    for name in ("socket", "socketpair", "create_connection"):
+        monkeypatch.setattr(socket, name, forbidden)
+    try:
+        yield cores
+    finally:
+        clean = []
+        try:
+            for core in cores:
+                try:
+                    clean.append(core.shutdown(timeout=1.0))
+                finally:
+                    # Hygiene on a failed semantic assertion never resets a
+                    # counter, forges an ACK, or claims clean shutdown.
+                    core._stop_reference_events(time.monotonic() + 1.0)
+        finally:
+            deadline = time.monotonic() + 1.0
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(max(0.0, deadline - time.monotonic()))
+            assert not any(thread.is_alive() for thread in threads)
+            assert not violations
+        assert all(clean), "PG fixture did not semantically drain"
+
+
+@pytest.mark.loopback_smoke
+def test_pg_create_is_a_shutdown_visible_inflight_operation(monkeypatch, _pg_l1_runtime) -> None:
     core = CoreWorker(
         ("127.0.0.1", 21001), NodeID.random(),
         gcs_address=("127.0.0.1", 21000), event_sink=EventSink(),
         dispatch_lanes=1,
     )
+    _pg_l1_runtime.append(core)
     entered = threading.Event()
     release = threading.Event()
     created = []
     errors = []
+    create_requests = []
     monkeypatch.setattr(core, "_wait_for_placement_group_retry", lambda _: None)
 
     def rpc(_address, handler, request):
@@ -1147,6 +1221,8 @@ def test_pg_create_is_a_shutdown_visible_inflight_operation(monkeypatch) -> None
                 request.after_epoch, request.after_epoch, ()
             )
         assert handler == "create_placement_group"
+        assert len(create_requests) < 2, "PG create exceeded its finite replay budget"
+        create_requests.append(request)
         if not entered.is_set():
             entered.set()
             assert release.wait(1.0)
@@ -1174,7 +1250,7 @@ def test_pg_create_is_a_shutdown_visible_inflight_operation(monkeypatch) -> None
         except BaseException as exc:
             errors.append(exc)
 
-    thread = threading.Thread(target=create)
+    thread = threading.Thread(target=create, name="miniray-pg-test-caller")
     thread.start()
     try:
         assert entered.wait(1.0)
@@ -1395,11 +1471,13 @@ def test_core_replays_accepted_created_with_incomplete_manifest(
     assert len(requests) == 2 and requests[0] is requests[1]
 
 
-@pytest.mark.heavy
+@pytest.mark.loopback_smoke
 def test_pg_submission_final_publication_fences_removal_and_rolls_back_hold(
-    monkeypatch, request: pytest.FixtureRequest,
+    monkeypatch, request: pytest.FixtureRequest, _pg_l1_runtime,
 ) -> None:
     core = _core()
+    core._reference_mailbox = SynchronousReferenceMailbox(core)
+    core._reference_index = 0
     add_core_thread_finalizer(request, core)
     source_pending, source = core._register_submission(
         RemoteFunctionDefinition.from_callable(lambda: 1, core.job_id),
@@ -1433,7 +1511,7 @@ def test_pg_submission_final_publication_fences_removal_and_rolls_back_hold(
         except BaseException as exc:
             errors.append(exc)
 
-    thread = threading.Thread(target=submit)
+    thread = threading.Thread(target=submit, name="miniray-pg-test-caller")
     thread.start()
     try:
         assert encoded.wait(1.0)
@@ -1464,19 +1542,25 @@ def test_pg_submission_final_publication_fences_removal_and_rolls_back_hold(
     finally:
         release.set()
         thread.join(1.0)
-        source.close()
+        source.close(timeout=0)
+        assert source._release_done.is_set()
+        assert not core.owner_table.snapshot(source_pending.object_id).local_tokens
+        core._reference_mailbox.drain()
+        core._reference_mailbox.close_admission()
+        assert core._reference_mailbox.pending.empty()
 
 
-@pytest.mark.heavy
+@pytest.mark.loopback_smoke
 @pytest.mark.parametrize("operation", ("create", "remove"))
 def test_pg_control_timeout_hands_off_at_shutdown_fence(
-    monkeypatch, operation
+    monkeypatch, operation, _pg_l1_runtime,
 ) -> None:
     core = CoreWorker(
         ("127.0.0.1", 25001), NodeID.random(),
         gcs_address=("127.0.0.1", 25000), event_sink=EventSink(),
         dispatch_lanes=1,
     )
+    _pg_l1_runtime.append(core)
     entered_retry = threading.Event()
     release_retry = threading.Event()
     errors = []
@@ -1497,6 +1581,7 @@ def test_pg_control_timeout_hands_off_at_shutdown_fence(
     core._rpc = rpc
 
     def block_retry(_round):
+        assert _round == 1, "PG control retried after the shutdown handoff"
         entered_retry.set()
         assert release_retry.wait(1.0)
 
@@ -1513,7 +1598,7 @@ def test_pg_control_timeout_hands_off_at_shutdown_fence(
         except BaseException as exc:
             errors.append(exc)
 
-    thread = threading.Thread(target=invoke)
+    thread = threading.Thread(target=invoke, name="miniray-pg-test-caller")
     thread.start()
     try:
         assert entered_retry.wait(1.0)

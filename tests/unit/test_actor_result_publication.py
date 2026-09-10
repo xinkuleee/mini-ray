@@ -114,7 +114,6 @@ class _Fixture:
 
         def publish_actor(pending, reply, *, expected_node_id=None):
             self.published.append((pending, reply, expected_node_id))
-            assert pending.target_execution is None
             assert pending.output_ids == (pending.object_id,)
             assert pending.task_id == reply.task_id
             assert pending.spec.attempt_id == reply.attempt_id
@@ -349,7 +348,7 @@ def test_actor_rejects_task_publication_authority_without_graph_side_effects(ext
             )
             manifest = OutputPublicationManifest.create(header, (OutputValue(descriptor.storage, descriptor.size_bytes, descriptor.checksum)))
             envelope = OutputPublicationEnvelope(
-                manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (descriptor[0]),
+                manifest, OutputPublicationCompleteWitness.for_manifest(manifest), descriptor,
             )
             task_reply = replace(reply.task_reply, output_publication=envelope)
         else:

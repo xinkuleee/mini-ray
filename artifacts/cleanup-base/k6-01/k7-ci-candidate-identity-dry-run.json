@@ -1,0 +1,7 @@
+{
+  "identity_only_fake_environment": "passed",
+  "candidate_source_vs_merge": "distinct",
+  "tested_source_commit_before_gate": null,
+  "subprocess_or_pytest_execution": false,
+  "source_hash_scan": "outside selection loop; once per invocation, never per smoke"
+}

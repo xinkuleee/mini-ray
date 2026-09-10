@@ -1,0 +1,31 @@
+{
+  "status": "CANDIDATE_NOT_RUNTIME_TESTED",
+  "candidate": "audit/p2-snapshot-scalar-trial/candidate",
+  "patch": "audit/p2-snapshot-scalar-trial/snapshot-scalar.patch",
+  "minimum_pure": [
+    "tests/unit/test_output_publication_journal.py",
+    "tests/unit/test_single_output_journal_retirement.py",
+    "tests/unit/test_inline_publication_node_server.py::test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_custody",
+    "tests/unit/test_publication_trace_observation.py",
+    "tests/unit/test_spillback_runtime.py"
+  ],
+  "additional_existing": [
+    "tests/unit/test_output_publication_node_server.py",
+    "tests/unit/test_output_owner_death_node.py",
+    "tests/unit/test_node_publication_owner_death_finalize.py",
+    "tests/unit/test_node_lease_execution.py",
+    "tests/unit/test_publication_owner_death_control.py",
+    "tests/unit/test_node_blocking_get_authority.py"
+  ],
+  "minimum_actual": [
+    "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+    "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects"
+  ],
+  "additional_actual": [
+    "tests/integration/test_output_retirement_ack_path.py::test_lost_actual_adoption_ack_replays_retirement_without_reexecution",
+    "tests/integration/test_output_owner_death_path.py::test_adopted_output_owner_death_cleans_live_executor_and_source_holds",
+    "tests/integration/test_precomplete_output_owner_death_path.py::test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds"
+  ],
+  "manifest": "No changes here; input still has accepted effect candidate registry. Root must refresh actual closure hashes during candidate freeze. Existing selector/marker budgets remain; no new scenarios.",
+  "cost": "Use current exact approved marker and unchanged 30 second tree bound; public mutable state not added; 39 test files migrated mechanically plus four structural retirement/probe assertions."
+}

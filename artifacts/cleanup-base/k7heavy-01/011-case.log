@@ -1,0 +1,57 @@
+E                                                                        [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_create_actor_binds_restart_policy_to_driver_owner_endpoint _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x75226de8dbb0>
+request = <SubRequest '_runtime_bounds' for <Function test_create_actor_binds_restart_policy_to_driver_owner_endpoint>>
+
+    @pytest.fixture(autouse=True)
+    def _runtime_bounds(monkeypatch, request):
+        threads = []
+        violations = []
+        real_start = threading.Thread.start
+        real_join = threading.Thread.join
+        real_wait = threading.Event.wait
+        concurrent = request.node.get_closest_marker("loopback_smoke") is not None
+    
+        def forbidden(*_args, **_kwargs):
+            violations.append("unexpected runtime boundary")
+            pytest.fail("Actor restart fixture attempted unmodelled runtime work")
+    
+        def start(thread):
+            if (not concurrent or not thread.name.startswith("miniray-actor-call-")
+                    or len(threads) >= 2):
+                forbidden()
+            # Record ownership before a partially successful Thread.start.
+            threads.append(thread)
+            return real_start(thread)
+    
+        def join(thread, timeout=None):
+            if thread not in threads or timeout is None or not 0 <= timeout <= 1.0:
+                forbidden()
+            return real_join(thread, timeout)
+    
+        def wait(event, timeout=None):
+            if event.is_set():
+                return True
+            # CPython Thread.start waits for its own bootstrap receipt. All
+            # scenario waits have explicit deadlines; no arbitrary infinite wait.
+            bootstrap = any(event is thread._started for thread in threads)
+            if not concurrent or (not bootstrap and (timeout is None or not 0 <= timeout <= 1.0)):
+                forbidden()
+            return real_wait(event, timeout)
+    
+        for owner, name in (
+            (CoreWorker, "__init__"), (threading.Timer, "start"),
+            (multiprocessing.process.BaseProcess, "start"),
+            (multiprocessing.process.BaseProcess, "join"),
+            (subprocess, "Popen"), (time, "sleep"),
+            (core_module, "rpc_request"), (transport_module, "rpc_request"),
+        ):
+>           monkeypatch.setattr(owner, name, forbidden)
+E           AttributeError: <module 'miniray.transport' from '/dev/shm/mini-ray-cleanup-candidates/base-k7heavy-01/src/miniray/transport.py'> has no attribute 'rpc_request'
+
+tests/unit/test_core_actor_restart.py:104: AttributeError
+=========================== short test summary info ============================
+ERROR tests/unit/test_core_actor_restart.py::test_create_actor_binds_restart_policy_to_driver_owner_endpoint
+1 error in 1.30s

@@ -156,8 +156,8 @@ class _Fixture:
     def report_complete(self, witness):
         request = wire.ReportOutputHandoffComplete(witness)
         snapshot = self.handoffs.record_complete(request.witness)
-        reply = wire.OutputHandoffReply(request, True, snapshot)
-        assert reply.request == request and reply.snapshot.complete == witness
+        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        assert reply.accepted and reply.witness == request.witness
 
     def report_rollback(self, tombstone, *, manifest):
         request = wire.ReportOutputHandoffRollback(manifest, tombstone)
@@ -218,7 +218,7 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
     proof = OutputPublicationAdoptionProof(envelope.complete, f.header.owner_worker_id, "same-owner-cas")
     f.handoffs.adopt(proof)
     f.journal.retire_completed(proof)
-    assert not f.journal.snapshot(f.identity).retained_result_slots
+    assert not f.journal.snapshot(f.identity).result_retained
     assert f.store.used_bytes == (len((f.outputs.payload)) if stored else 0)
     # Node reply retirement must not consume the outer's child lifetime.
     assert f.child_table.snapshot(f.child.object_id).contained_holds == active

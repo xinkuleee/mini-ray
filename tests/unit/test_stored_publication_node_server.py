@@ -413,7 +413,7 @@ def test_complete_gate_failure_is_sticky_and_never_rolls_back(monkeypatch):
     assert record.completion == request and record.output_complete_inflight is None
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.complete == fixture.values.witness and snapshot.rollback is None
-    assert snapshot.retained_result_slots == (0,) and fixture.ledger.available == fixture.ledger.total
+    assert snapshot.result_retained is True and fixture.ledger.available == fixture.ledger.total
 
 
 @pytest.mark.unit
@@ -497,7 +497,7 @@ def test_local_completed_outcome_reconciles_lease_before_adoption(monkeypatch, w
     assert node._handle_ack_output_publication_adopted(wire.AckOutputPublicationAdopted(proof)).accepted
     node._drive_output_publications()
     assert fixture.adapter.pending_lease_completions() == () and len(releases) == 1
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
 
 
 @pytest.mark.loopback_smoke
@@ -576,7 +576,7 @@ def test_successful_unclaimed_publication_is_retained_but_blocks_finalize(monkey
     node._drive_output_publications()
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.state is OutputPublicationJournalState.COMPLETED
-    assert snapshot.retained_result_slots == (0,) and snapshot.rollback is None
+    assert snapshot.result_retained is True and snapshot.rollback is None
     assert fixture.adapter.pending_terminal_reports() == ()
     assert not node._output_publications_clean_locked()
     request = protocol.BeginDrain("retained-output-drain", "pure publication boundary")
@@ -611,7 +611,7 @@ def test_adopted_ack_is_exact_idempotent_and_does_not_repeat_child_effects():
     replay = node._handle_ack_output_publication_adopted(request)
     assert first == replay and first.request == request and first.accepted
     assert tuple(fixture.events) == before
-    assert record.completion == complete and fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert record.completion == complete and fixture.journal.snapshot(fixture.id).result_retained is False
     assert fixture.store.used_bytes > 0
     assert not node._output_publications_clean_locked()  # terminal outbox is independent
     assert node._drive_output_publications() and node._output_publications_clean_locked()

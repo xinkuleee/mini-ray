@@ -163,7 +163,7 @@ def test_adoption_orders_complete_atomic_owner_ready_and_payload_ack(monkeypatch
         assert _publish(core, pending, reply, node, fixture)
         assert events == ["complete", "owner", "wake", "adopted", "node-retired"]
         assert not core._protocol_unresolved
-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
+        assert not fixture.journal.snapshot(fixture.id).result_retained
         assert fixture.store.used_bytes > 0
         assert core._finish_pending_task(pending) and core._accepted_task_count == 0
 
@@ -224,7 +224,7 @@ def test_effect_then_error_replays_exact_output_without_second_owner_cas(monkeyp
         assert not core._finish_pending_task(pending)
         assert core.owner_table.snapshot(pending.object_id).state is not ObjectState.ERROR
         if lost_effect == "node-retired":
-            assert not fixture.journal.snapshot(fixture.id).retained_result_slots
+            assert not fixture.journal.snapshot(fixture.id).result_retained
         assert core._execute(pending, pending.spec, output_adoption=_take_adoption(core))
         _assert_published(fixture, core, pending)
         assert dispositions == [OutputOwnerPublicationDisposition.APPLIED]
@@ -258,7 +258,7 @@ def test_rebound_payload_ack_preserves_finish_obligation(monkeypatch, wrong_kind
         assert pending.task_key in core._protocol_unresolved
         assert not core._finish_pending_task(pending)
         _assert_published(fixture, core, pending)
-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
+        assert not fixture.journal.snapshot(fixture.id).result_retained
         assert core._execute(pending, pending.spec, output_adoption=_take_adoption(core))
         assert requests == [requests[0]] * 2
         assert core._finish_pending_task(pending)

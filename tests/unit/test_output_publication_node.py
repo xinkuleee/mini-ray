@@ -175,7 +175,7 @@ class _Fixture:
 
     def assert_no_pins_or_bytes(self):
         assert self.store.used_bytes == 0
-        assert self.journal.snapshot(self.id).retained_result_slots == ()
+        assert self.journal.snapshot(self.id).result_retained is False
         for transfer in (self.manifest.value.transfers):
             snapshot = self.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
             assert transfer.provisional_hold not in snapshot.contained_holds
@@ -331,7 +331,7 @@ def test_supervisor_converges_lease_after_payload_retirement_and_terminal_report
     fixture.adapter.converge_completed(fixture.id, commit_lease=fixture.commit)
     assert fixture.adapter.pending_lease_completions() == ()
     assert fixture.releases == 1
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
 
 
 @pytest.mark.parametrize("stage", ("owner-register", "prepare", "seal", "promote"))
@@ -453,7 +453,7 @@ def test_aborted_owner_handoff_does_not_authorize_any_new_effect():
         fixture.prepare()
     assert set(fixture.events) == {"owner-register"}
     assert fixture.store.used_bytes == 0
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
 
 
 def test_drop_callback_cannot_mutate_the_expected_slot_identity():
@@ -504,7 +504,7 @@ def test_owner_adoption_then_gc_releases_single_output_and_each_child_hold():
     fixture.handoffs.record_complete(values.witness)
     fixture.handoffs.adopt(proof)
     fixture.journal.retire_completed(proof)
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
     assert fixture.store.used_bytes > 0  # reply retirement is not physical GC
     assert fixture.adapter.report_terminal(fixture.id)
     for transfer in (fixture.manifest.value).transfers:

@@ -81,7 +81,7 @@ def test_owner_finalize_retires_exact_node_and_worker_custody_once(monkeypatch, 
     assert calls == [request]
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.state is OutputPublicationJournalState.RETIRED
-    assert snapshot.retained_result_slots == ()
+    assert snapshot.result_retained is False
     assert (snapshot.complete is not None) == (phase == "complete")
     assert snapshot.rollback_tombstone is None
     assert record.state is (protocol.LeaseExecutionState.COMPLETED if phase == "complete"
@@ -111,12 +111,12 @@ def test_worker_cleanup_ack_loss_retains_node_payload_and_replays_exact_request(
     node._background_rpc = rpc
     with pytest.raises(TimeoutError, match="ACK lost"):
         node._handle_finalize_output_owner_death(request)
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
+    assert fixture.journal.snapshot(fixture.id).result_retained is True
     assert not fixture.adapter.owner_death_finished(fixture.id)
     assert not fixture.adapter._tickets
     assert node._handle_finalize_output_owner_death(request).cleaned
     assert calls == [request, request]
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
 
 
 def test_inflight_publication_makes_finalize_nonblocking_without_mutation(monkeypatch):
@@ -152,7 +152,7 @@ def test_worker_finalize_reply_is_revalidated_before_node_retirement(monkeypatch
             node._handle_finalize_output_owner_death(request)
     else:
         assert not node._handle_finalize_output_owner_death(request).cleaned
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots
+    assert fixture.journal.snapshot(fixture.id).result_retained
     assert not fixture.adapter.owner_death_finished(fixture.id)
     node._background_rpc = lambda _a, _h, message: wire.FinalizeOutputOwnerDeathReply(message, True)
     assert node._handle_finalize_output_owner_death(request).cleaned

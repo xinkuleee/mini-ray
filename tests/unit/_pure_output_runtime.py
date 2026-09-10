@@ -83,10 +83,13 @@ class PureOutputRuntime:
 
     def _report_complete(self, witness):
         assert self.journal.snapshot(witness.publication_id).complete == witness
-        snapshot = self._owner_rpc(
-            wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete,
-        )
-        assert snapshot.complete == witness
+        request = wire.ReportOutputHandoffComplete(witness)
+        _metadata(request)
+        self.calls.append((type(request).__name__, request))
+        reply = self.core.report_output_handoff_complete(request)
+        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted, reply.error
+        assert reply.witness == witness
+        _metadata(reply)
 
     def _report_rollback(self, tombstone, *, manifest):
         assert self.journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
@@ -183,7 +186,7 @@ class PureOutputRuntime:
             assert self.core.owner_table.collection_state(
                 (identity.object_id)
             ) is ObjectCollectionState.COLLECTED
-            assert not self.journal.snapshot(identity).retained_result_slots
+            assert not self.journal.snapshot(identity).result_retained
             if any(item.publication_id == identity for item in self.adapter.pending_terminal_reports()):
                 assert self.adapter.report_terminal(identity)
         assert not self.adapter.pending_terminal_reports()

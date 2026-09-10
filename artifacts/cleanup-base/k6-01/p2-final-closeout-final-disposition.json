@@ -1,0 +1,64 @@
+{
+  "status": "P2_B_REPRESENTATION_CLOSED_PENDING_ROOT_MERGED_VALIDATION",
+  "read_only": true,
+  "base_root": "C:/Users/t-hdong/Desktop/gao/mini-ray-base",
+  "source_files": [
+    "src/miniray/output_publication_journal.py",
+    "src/miniray/output_publication_node.py",
+    "src/miniray/node.py",
+    "src/miniray/worker.py"
+  ],
+  "dispositions": [
+    {
+      "item": "journal_result_retirement",
+      "status": "implemented_and_candidate_validated",
+      "refs": [
+        "src/miniray/output_publication_journal.py:242",
+        "src/miniray/output_publication_journal.py:246"
+      ]
+    },
+    {
+      "item": "effect_constant_zero_dimension",
+      "status": "implemented_and_candidate_validated",
+      "evidence": "audit/two-version-cleanup/execution/base-p2effect-01/results.json"
+    },
+    {
+      "item": "snapshot_and_tombstone_scalar",
+      "status": "implemented_and_candidate_validated",
+      "evidence": "audit/two-version-cleanup/execution/base-p2snapshot-01/results.json"
+    },
+    {
+      "item": "progress_eight_maps_to_one",
+      "status": "retain_current_design_with_recorded_evidence",
+      "reason": "Trial real methods and 35+2 pure plus ordinary+contained actual passed, but O(P) pending scans became O(H) history scans and added record/getter cost.",
+      "evidence": "audit/two-version-cleanup/execution/base-p2progress-01/results.json"
+    }
+  ],
+  "optional_local_residue": [
+    {
+      "path": "src/miniray/node.py",
+      "lines": [
+        1431,
+        1505
+      ],
+      "patch": "audit/p2-final-closeout/optional-node-plumbing.patch",
+      "status": "static_only_not_applied_not_tested"
+    }
+  ],
+  "legitimate_dimensions": [
+    "multi_child_transfers",
+    "final_and_provisional_effects",
+    "multi_replica_locations",
+    "Worker_pool_indices",
+    "multiple_publications_outboxes",
+    "TaskReply.results_singleton_boundary",
+    "GetWorkerLeaseOutcomeReply.descriptors_tuple_boundary"
+  ],
+  "remaining_mandatory_implementation": [],
+  "remaining_root_steps": [
+    "final merged-checkout validation and final P2 disposition recording",
+    "E adaptation in K8"
+  ],
+  "pytest_run": false,
+  "base_modified": false
+}

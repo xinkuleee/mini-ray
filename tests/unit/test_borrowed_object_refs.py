@@ -254,7 +254,7 @@ class _BorrowerLoadFixture:
         assert self.take(self.owner) == ()
         self.payload = self.owner.owner_table.snapshot(self.outer.object_id).inline_data
         assert self.payload == (output.outputs.payload)
-        assert not self.journal.snapshot(self.envelope.publication_id).retained_result_slots
+        assert not self.journal.snapshot(self.envelope.publication_id).result_retained
 
     def borrow_rpc(self, address, handler, message):
         assert address == self.owner.owner_address and len(self.calls) < 10

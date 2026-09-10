@@ -107,7 +107,7 @@ def test_remote_call_error_then_exact_replay_success(monkeypatch: pytest.MonkeyP
     assert core.owner_table.snapshot(pending.object_id).state is ObjectState.READY_INLINE
     assert len(core._test_outcome_queries) == core._test_outputs.discoveries == 1
     assert core._test_outputs.recovery.snapshot(reply.output_publication.publication_id).adopted is not None
-    assert not core._test_outputs.journal.snapshot(reply.output_publication.publication_id).retained_result_slots
+    assert not core._test_outputs.journal.snapshot(reply.output_publication.publication_id).result_retained
 
 
 @pytest.mark.unit

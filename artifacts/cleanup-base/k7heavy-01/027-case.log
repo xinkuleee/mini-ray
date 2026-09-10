@@ -1,0 +1,94 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________ test_concurrent_complete_and_detector_release_once ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x726782b9a660>
+_bounded_race_threads = ({<Thread(complete-race, stopped daemon 125788893662008)>, <Thread(detector-race, stopped daemon 125788892101432)>}, {<threading.Barrier at 0x726782cb1340: broken>})
+
+    @pytest.mark.loopback_smoke
+    def test_concurrent_complete_and_detector_release_once(
+        monkeypatch: pytest.MonkeyPatch, _bounded_race_threads,
+    ) -> None:
+        node, request, grant, object_id = _node_fixture()
+        publication = _attach_output_publication(node)
+        assert node._handle_start_worker_lease(_start(request, grant)).accepted
+        payload = b"concurrent"
+        manifest = _prepare_one_output(node, request, grant, publication, payload, stored=False)
+        identity = manifest.publication_id
+        process = node._workers[grant.worker_id].process
+        assert process is not None
+        process.alive = False
+        process.exitcode = 23
+        node._shutdown_request_id = "fence"
+        monkeypatch.setattr(
+            node, "_spawn_worker_process",
+            lambda _worker: (_ for _ in ()).throw(AssertionError("no replacement")),
+        )
+        gate = threading.Barrier(3, timeout=1.0)
+        complete_replies: list[protocol.CompleteWorkerLeaseReply] = []
+        errors: list[BaseException] = []
+        detections: list[bool] = []
+    
+        def complete() -> None:
+            try:
+                gate.wait(timeout=1.0)
+                complete_replies.append(
+                    node._handle_complete_worker_lease(_complete(request, grant))
+                )
+            except BaseException as exc:
+                errors.append(exc)
+    
+        def detect() -> None:
+            try:
+                gate.wait(timeout=1.0)
+                detections.append(node._handle_unexpected_worker_exit(grant.worker_id, process))
+            except BaseException as exc:
+                errors.append(exc)
+    
+        threads = (threading.Thread(target=complete, name="complete-race", daemon=True),
+                   threading.Thread(target=detect, name="detector-race", daemon=True))
+        allowed_threads, allowed_barriers = _bounded_race_threads
+        allowed_threads.update(threads)
+        allowed_barriers.add(gate)
+        try:
+            for thread in threads:
+                thread.start()
+            gate.wait(timeout=1.0)
+            for thread in threads:
+                thread.join(1.0)
+            assert not any(thread.is_alive() for thread in threads)
+        finally:
+            gate.abort()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(1.0)
+            assert not any(thread.is_alive() for thread in threads), "bounded supervisor race leaked a thread"
+        assert not errors and detections == [True] and len(complete_replies) == 1
+        for _ in range(2):
+            node._drive_output_publications()
+        state = node._leases[request.lease_id].state
+        assert state in (
+            protocol.LeaseExecutionState.COMPLETED,
+            protocol.LeaseExecutionState.WORKER_LOST,
+        )
+        assert node._ledger.release_calls == 1
+        assert node.resource_ledger.available == node.resource_ledger.total
+        assert complete_replies[0].accepted is (
+            state is protocol.LeaseExecutionState.COMPLETED
+        )
+        assert complete_replies[0].released is complete_replies[0].accepted
+        snapshot = publication.journal.snapshot(identity)
+        outcome = node._handle_get_worker_lease_outcome(_query(request, grant, object_id))
+        assert outcome.state is state and not outcome.worker_alive and not outcome.cleanup_pending
+        if state is protocol.LeaseExecutionState.COMPLETED:
+            envelope = complete_replies[0].output_publication
+            assert envelope.manifest == manifest and envelope.result.inline_data == payload
+            assert envelope.complete == OutputPublicationCompleteWitness.for_manifest(manifest)
+>           assert snapshot.complete == envelope.complete and snapshot.retained_result_slots == (0,)
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'OutputPublicationJournalSnapshot' object has no attribute 'retained_result_slots'
+
+tests/unit/test_worker_crash_supervisor.py:878: AttributeError
+=========================== short test summary info ============================
+FAILED tests/unit/test_worker_crash_supervisor.py::test_concurrent_complete_and_detector_release_once
+1 failed in 1.11s

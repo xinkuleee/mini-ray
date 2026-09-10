@@ -1,0 +1,118 @@
+--- a/src/miniray/core.py
++++ b/src/miniray/core.py
+@@ -11433,7 +11433,6 @@
+                     raise SystemTaskError("output publication needs Node-loss resolution")
+                 previous = self._owner_table.output_owner_publication_receipt(plan)
+                 if previous is None:
+-                    self._owner_table.validate_output_publication(plan)
+                     recovery = self._recovery_manager()
+                     success = recovery.validate_task_success(pending.task_id, pending.spec.attempt_id)
+                     if success.decision.action is not RecoveryAction.ACCEPT_SUCCESS:
+--- a/tests/unit/test_core_output_publication.py
++++ b/tests/unit/test_core_output_publication.py
+@@ -5,6 +5,7 @@
+ constructors, sockets, threads, sleeps, blocking waits, or user execution.
+ """
+ 
++from copy import deepcopy
+ from dataclasses import replace
+ import socket
+ import threading
+@@ -15,7 +16,7 @@
+ from miniray import output_protocol as wire, protocol
+ from miniray.core import _HomeRoute
+ from miniray.core import CoreWorker, _DelayedReadyTask, _ObjectWaiter, _PendingTask, _PushRequestState, _WAKE_COORDINATOR
+-from miniray.errors import SystemTaskError
++from miniray.errors import ProtocolError, SystemTaskError
+ from miniray.output_handoff import OutputHandoffPhase
+ from miniray.ownership import ObjectCollectionState, ObjectState, OutputOwnerPublicationPlan
+ from miniray.resources import ResourceVector
+@@ -182,6 +183,77 @@
+         _close(core)
+ 
+ 
++@pytest.mark.parametrize("refs", (False, True))
++@pytest.mark.parametrize("fault", ("recovery-preflight", "owner-final-tamper"))
++def test_final_owner_validation_fences_failures_without_early_recovery_commit(monkeypatch, refs, fault):
++    fixture, node, core, pending, reply, calls, _rpc = _fixture(refs=refs, stored=False)
++    try:
++        owner_before = core.owner_table.snapshot(pending.object_id)
++        recovery_before = replace(core._recovery.task_record(pending.task_id))
++        active_before = core._recovery.active_recovery(pending.task_id)
++        physical_before = fixture.journal.snapshot(fixture.id), fixture.store.used_bytes
++        child_before = {
++            transfer.contained_object_id: fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
++            for transfer in fixture.manifest.value.transfers
++        }
++        original_reply = deepcopy(reply)
++        validate = core._recovery.validate_task_success
++        commit = core.owner_table.commit_output_publication
++        events = []
++
++        def recovery_preflight(task_id, attempt_id):
++            transition = validate(task_id, attempt_id)
++            events.append("recovery-preflight")
++            assert transition.decision.action.value == "ACCEPT_SUCCESS"
++            assert core.owner_table.snapshot(pending.object_id) == owner_before
++            assert core._recovery.task_record(pending.task_id) == recovery_before
++            if fault == "recovery-preflight":
++                raise RuntimeError("recovery copy preflight failed before owner commit")
++            return transition
++
++        def owner_final(plan):
++            assert events == ["recovery-preflight"]
++            assert core._recovery.task_record(pending.task_id) == recovery_before
++            payload = plan.envelope.result.inline_data
++            assert payload
++            changed = bytes((payload[0] ^ 1,)) + payload[1:]
++            object.__setattr__(plan.envelope.result, "inline_data", changed)
++            with pytest.raises(ProtocolError):
++                commit(plan)
++            events.append("owner-final-rejected")
++            raise RuntimeError("owner final validation rejected same-size corrupted payload")
++
++        with monkeypatch.context() as patch:
++            patch.setattr(core._recovery, "validate_task_success", recovery_preflight)
++            patch.setattr(core._recovery, "commit_validated_transition", lambda *_: pytest.fail("recovery committed before owner success"))
++            patch.setattr(core.owner_table, "validate_output_publication", lambda *_: pytest.fail("redundant owner preflight still called"))
++            patch.setattr(core.owner_table, "commit_output_publication", owner_final if fault == "owner-final-tamper" else lambda *_: pytest.fail("owner commit ran after recovery preflight failure"))
++            assert not core._publish_reply(pending, reply, expected_node_id=node.node_id, expected_lease_id=fixture.id.lease_id)
++        assert events == (["recovery-preflight"] if fault == "recovery-preflight" else ["recovery-preflight", "owner-final-rejected"])
++        assert core.owner_table.snapshot(pending.object_id) == owner_before
++        assert core._recovery.task_record(pending.task_id) == recovery_before
++        assert core._recovery.active_recovery(pending.task_id) == active_before
++        assert not core._stored_descriptors and not core.owner_table._output_publication_receipts
++        assert (fixture.journal.snapshot(fixture.id), fixture.store.used_bytes) == physical_before
++        assert {
++            transfer.contained_object_id: fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
++            for transfer in fixture.manifest.value.transfers
++        } == child_before
++        assert reply == original_reply and not calls
++        assert not core._objects[pending.object_id].event.is_set()
++        assert not core._finish_pending_task(pending)
++        obligation = _take_adoption(core)
++        assert obligation.envelope == original_reply.output_publication
++        assert core._execute(pending, pending.spec, output_adoption=obligation)
++        assert core._recovery.task_record(pending.task_id).state.value == "SUCCEEDED"
++        assert core._finish_pending_task(pending)
++        assert core.owner_table.release_local_reference(pending.object_id, "outer0")
++        core._reference_released(pending.object_id)
++        fixture.assert_no_pins_or_bytes()
++    finally:
++        _close(core)
++
++
+ def test_lost_adoption_ack_keeps_finish_barrier_and_replays_without_second_cas(monkeypatch):
+     fixture, node, core, pending, reply, calls, rpc = _fixture()
+     original_commit = core.owner_table.commit_output_publication
+--- a/tests/unit/test_public_multi_return_runtime.py
++++ b/tests/unit/test_public_multi_return_runtime.py
+@@ -373,7 +373,7 @@
+                 preflights.append(actual(plan))
+                 raise RuntimeError("owner preflight")
+             with monkeypatch.context() as patch:
+-                patch.setattr(core.owner_table, "validate_output_publication", fail)
++                patch.setattr(core.owner_table, "commit_output_publication", fail)
+                 assert not core._publish_reply(pending, reply, expected_node_id=node.node_id)
+             assert len(preflights) == 1 and not calls
+             assert (core.owner_table.snapshot(pending.object_id), replace(core._recovery.task_record(pending.task_id)), dict(core._stored_descriptors)) == before

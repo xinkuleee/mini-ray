@@ -271,7 +271,7 @@ class _LostFixture:
             snapshot = self.backend.handoff_snapshot(identity)
             assert snapshot.complete is not None and snapshot.adoption is not None
             assert self.core.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
-            assert not self.backend.journal.snapshot(identity).retained_result_slots
+            assert not self.backend.journal.snapshot(identity).result_retained
         assert not self.core._objects and not self.core._stored_descriptors
         assert not self.core._object_gc_obligations and self.backend.store.used_bytes == 0
         assert self.take() == ()

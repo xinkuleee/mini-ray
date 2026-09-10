@@ -196,7 +196,7 @@ def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(er
     assert adapter.pending_terminal_reports() == (fixture.values.witness,)
     assert adapter.pending_lease_completions() == ()
     assert fixture.handoffs.query(fixture.id).complete is None
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
+    assert fixture.journal.snapshot(fixture.id).result_retained is True
     assert [sample[2] for sample in sink.samples] == [
         dict(_identity_fields(fixture), released=released, status="SUCCEEDED", state="COMPLETED")
         for released in (True, False)
@@ -230,7 +230,7 @@ def test_core_observation_preserves_ready_adoption_payload_retirement_and_gc(err
                 node._state_lock._is_owned(), fixture.journal._lock._is_owned(),
                 core.owner_table.snapshot(stored_id).state, core._objects[stored_id].event.is_set(),
                 fixture.handoffs.query(fixture.id).adoption is not None,
-                fixture.journal.snapshot(fixture.id).retained_result_slots, fixture.store.get(stored_id))
+                fixture.journal.snapshot(fixture.id).result_retained, fixture.store.get(stored_id))
     sink = _ObservedSink(probe, error_type)
     core.event_sink = sink
     def rpc(address, handler, request):
@@ -253,9 +253,9 @@ def test_core_observation_preserves_ready_adoption_payload_retirement_and_gc(err
         ready, retired = sink.samples
         assert ready[2] == dict(_identity_fields(fixture), return_count=1)
         assert retired[2] == _identity_fields(fixture)
-        ready_facts = (False, False, False, False, ObjectState.READY_STORED, True, True, (0,), (fixture.values.payload))
+        ready_facts = (False, False, False, False, ObjectState.READY_STORED, True, True, True, (fixture.values.payload))
         assert ready[4] == ready_facts
-        assert retired[4] == (*ready_facts[:7], (), (fixture.values.payload))
+        assert retired[4] == (*ready_facts[:7], False, (fixture.values.payload))
         assert retired[3] == boundaries[0][3].event_id
         if error_type is None:
             actual = tuple(event for event in sink.events if event.name in _OBSERVATIONS)

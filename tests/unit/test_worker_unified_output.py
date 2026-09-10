@@ -205,8 +205,8 @@ class _ActualNodePublication:
     def report_complete(self, witness):
         assert self.journal.snapshot(witness.publication_id).complete == witness
         snapshot = self.handoffs.record_complete(witness)
-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
-        assert reply.snapshot.complete == witness
+        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        assert reply.accepted and reply.witness == witness
 
     def report_rollback(self, tombstone, *, manifest):
         assert self.journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone

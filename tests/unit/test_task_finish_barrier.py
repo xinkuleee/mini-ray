@@ -150,8 +150,12 @@ class _OutputBackend:
 
     def _report_complete(self, witness):
         assert self.journal.snapshot(witness.publication_id).complete == witness
-        snapshot = self._owner_call(wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete)
-        assert snapshot.complete == witness
+        request = wire.ReportOutputHandoffComplete(witness)
+        _assert_metadata(request)
+        reply = self.core.report_output_handoff_complete(request)
+        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted, reply.error
+        assert reply.witness == witness
+        _assert_metadata(reply)
 
     def _report_rollback(self, tombstone, *, manifest):
         snapshot = self._owner_call(wire.ReportOutputHandoffRollback(manifest, tombstone),
@@ -221,7 +225,7 @@ class _OutputBackend:
             pending, reply, expected_node_id=self.core.node_id,
             expected_lease_id=identity.lease_id,
         )
-        assert not self.journal.snapshot(identity).retained_result_slots
+        assert not self.journal.snapshot(identity).result_retained
         assert self.handoff_snapshot(identity).adoption.complete == envelope.complete
         assert self.core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
         return ((envelope.result,))

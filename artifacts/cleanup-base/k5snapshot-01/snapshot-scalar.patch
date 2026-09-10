@@ -1,0 +1,975 @@
+--- a/src/miniray/node.py
++++ b/src/miniray/node.py
+@@ -2152,7 +2152,7 @@
+                                 protocol.LeaseExecutionState.ABANDONED,
+                             )
+                             or snapshot.state is not OutputPublicationJournalState.RETIRED
+-                            or snapshot.retained_result_slots):
++                            or snapshot.result_retained):
+                         return False
+                     if adapter.owner_death_finished(identity):
+                         continue
+@@ -2168,8 +2168,7 @@
+                         if (record.state is not protocol.LeaseExecutionState.COMPLETED
+                                 or record.completion is None
+                                 or record.completion.status is not protocol.TaskReplyStatus.SUCCEEDED
+-                                or tuple(item.slot_index for item in snapshot.retired_slots)
+-                                != (0,)):
++                                or snapshot.retirement is None):
+                             return False
+                     elif (snapshot.rollback_tombstone is None
+                           or not adapter.rollback_reported(identity)):
+--- a/src/miniray/output_publication_journal.py
++++ b/src/miniray/output_publication_journal.py
+@@ -44,10 +44,10 @@
+ class OutputPublicationPayloadRetired(OutputPublicationJournalStateError):
+     """Complete is known but the Node no longer owns all reply payloads."""
+ 
+-    def __init__(self, publication_id, tombstones):
++    def __init__(self, publication_id, tombstone):
+         self.publication_id = replace(publication_id)
+-        self.tombstones = tuple(replace(value) for value in tombstones)
+-        super().__init__("publication payload was retired; consult its typed tombstones")
++        self.tombstone = replace(tombstone)
++        super().__init__("publication payload was retired; consult its typed tombstone")
+ 
+ 
+ class OutputPublicationJournalState(str, Enum):
+@@ -182,10 +182,9 @@
+ 
+ 
+ @dataclass(frozen=True)
+-class OutputPublicationSlotTombstone(_WireValue):
++class OutputPublicationTombstone(_WireValue):
+     publication_id: OutputPublicationID
+     manifest_digest: str
+-    slot_index: int
+     object_id: ObjectID
+     proof: OutputPublicationRetirementProof
+ 
+@@ -193,16 +192,14 @@
+         _require_type(self.publication_id, OutputPublicationID, "publication_id")
+         publication_id = replace(self.publication_id)
+         digest = _checksum(self.manifest_digest, "manifest_digest")
+-        _uint(self.slot_index, "slot_index")
+         object_id = _object_id(self.object_id)
+         proof = _retirement_proof(self.proof)
+         if (
+             proof.complete.publication_id != publication_id
+             or proof.complete.manifest_digest != digest
+-            or self.slot_index != 0
+             or publication_id.object_id != object_id
+         ):
+-            raise OutputPublicationConflictError("slot retirement proof changed its identity")
++            raise OutputPublicationConflictError("retirement proof changed its identity")
+         object.__setattr__(self, "publication_id", publication_id)
+         object.__setattr__(self, "manifest_digest", digest)
+         object.__setattr__(self, "object_id", object_id)
+@@ -223,12 +220,12 @@
+     state: OutputPublicationJournalState
+     intents: Tuple[OutputPublicationEffect, ...]
+     acknowledgements: Tuple[OutputPublicationAck, ...]
+-    materialized_slots: Tuple[int, ...]
+-    retained_result_slots: Tuple[int, ...]
++    materialized: bool
++    result_retained: bool
+     complete: Optional[OutputPublicationCompleteWitness]
+     rollback: Optional[OutputPublicationRollbackPlan]
+     rollback_tombstone: Optional[OutputPublicationRollbackTombstone]
+-    retired_slots: Tuple[OutputPublicationSlotTombstone, ...]
++    retirement: Optional[OutputPublicationTombstone]
+     ready_to_complete: bool
+ 
+     @property
+@@ -246,7 +243,7 @@
+     complete: Optional[OutputPublicationCompleteWitness] = None
+     rollback: Optional[OutputPublicationRollbackPlan] = None
+     rollback_tombstone: Optional[OutputPublicationRollbackTombstone] = None
+-    retirement: Optional[OutputPublicationSlotTombstone] = None
++    retirement: Optional[OutputPublicationTombstone] = None
+     adoption_proof: Optional[OutputPublicationAdoptionProof] = None
+     owner_death: object = None
+ 
+@@ -345,7 +342,7 @@
+             if record.retirement is not None:
+                 raise OutputPublicationPayloadRetired(
+                     record.manifest.publication_id,
+-                    (record.retirement,),
++                    record.retirement,
+                 )
+             if record.result is None:
+                 raise OutputPublicationJournalStateError("Complete requires all local results")
+@@ -416,15 +413,15 @@
+             self._finish_rollback_if_ready(record)
+             return True
+ 
+-    def retire_completed(self, proof: OutputPublicationAdoptionProof) -> Tuple[OutputPublicationSlotTombstone, ...]:
++    def retire_completed(self, proof: OutputPublicationAdoptionProof) -> OutputPublicationTombstone:
+         """Retire the single payload after validating its exact adoption proof."""
+         _require_type(proof, OutputPublicationAdoptionProof, "proof")
+         proof = replace(proof)
+         with self._lock:
+             record = self._record(proof.complete.publication_id)
+-            terminal = self._prepare_retirement(record, 0, proof)
++            terminal = self._prepare_retirement(record, proof)
+             self._commit_retirement(record, terminal)
+-            return (replace(terminal),)
++            return replace(terminal)
+ 
+     def retire_owner_death(self, publication_id: OutputPublicationID, death: object) -> None:
+         """Forget reply custody only after exact owner-death cleanup.
+@@ -462,12 +459,12 @@
+                 replace(record.manifest), record.state,
+                 tuple(replace(value) for value in intents),
+                 tuple(replace(value) for value in acknowledgements),
+-                (0,) if self._acked(record, OutputPublicationStage.MATERIALIZE) else (),
+-                () if record.result is None else (0,),
++                self._acked(record, OutputPublicationStage.MATERIALIZE),
++                record.result is not None,
+                 None if record.complete is None else replace(record.complete),
+                 None if record.rollback is None else replace(record.rollback),
+                 None if record.rollback_tombstone is None else replace(record.rollback_tombstone),
+-                () if record.retirement is None else (replace(record.retirement),),
++                None if record.retirement is None else replace(record.retirement),
+                 active and self._ready_to_complete(record),
+             )
+ 
+@@ -600,10 +597,7 @@
+         record.state = OutputPublicationJournalState.RETIRED
+ 
+     @staticmethod
+-    def _prepare_retirement(record, slot_index, proof):
+-        _uint(slot_index, "slot_index")
+-        if slot_index != 0:
+-            raise OutputPublicationConflictError("retirement slot is outside its manifest")
++    def _prepare_retirement(record, proof):
+         if record.complete is None:
+             raise OutputPublicationJournalStateError("payload retirement requires local Complete")
+         if (proof.complete != record.complete or proof.owner_worker_id != record.manifest.header.owner_worker_id):
+@@ -612,13 +606,13 @@
+             record.adoption_proof is not None and record.adoption_proof != proof
+         ):
+             raise OutputPublicationConflictError("whole-batch owner commit identity was rebound")
+-        terminal = OutputPublicationSlotTombstone(
+-            record.manifest.publication_id, record.manifest.manifest_digest, slot_index,
++        terminal = OutputPublicationTombstone(
++            record.manifest.publication_id, record.manifest.manifest_digest,
+             record.manifest.publication_id.object_id, proof,
+         )
+         previous = record.retirement
+         if previous is not None and previous != terminal:
+-            raise OutputPublicationConflictError("slot retirement proof was rebound")
++            raise OutputPublicationConflictError("retirement proof was rebound")
+         return previous if previous is not None else terminal
+ 
+     @staticmethod
+@@ -642,6 +636,6 @@
+     "OutputPublicationEffect", "OutputPublicationAck",
+     "OutputPublicationAckDisposition", "OutputPublicationRollbackPlan",
+     "OutputPublicationRollbackTombstone", "OutputPublicationAdoptionProof",
+-    "OutputPublicationSlotTombstone",
++    "OutputPublicationTombstone",
+     "OutputPublicationJournalSnapshot",
+ ]
+--- a/tests/integration/test_core_reconstruction_concurrency.py
++++ b/tests/integration/test_core_reconstruction_concurrency.py
+@@ -285,7 +285,7 @@
+         node._flush_pending_resource_report()
+         assert node.resource_ledger.available == node.resource_ledger.total
+         assert node._leases[request.lease_id].state is protocol.LeaseExecutionState.COMPLETED
+-        assert not node._output_publication_journal.snapshot(self.identity).retained_result_slots
++        assert not node._output_publication_journal.snapshot(self.identity).result_retained
+         for ref, descriptor in zip(self.refs, self.reply.results):
+             ready = core.owner_table.snapshot(ref.object_id)
+             assert ready.state is ObjectState.READY_STORED and ready.canonical_stored_result == descriptor
+--- a/tests/integration/test_output_owner_death_path.py
++++ b/tests/integration/test_output_owner_death_path.py
+@@ -237,7 +237,7 @@
+             death = node._owner_death_fences[proof.owner_worker_id]
+             assert snapshot.complete == proof.complete and snapshot.rollback is None
+             assert snapshot.state is OutputPublicationJournalState.RETIRED
+-            assert snapshot.retained_result_slots == ()
++            assert snapshot.result_retained is False
+             assert node._output_publications.owner_death_finished(identity)
+             assert finalized == {identity: (spawned[0][2], wire.FinalizeOutputOwnerDeath(snapshot.manifest, death))}
+             assert node._output_publication_journal._records[identity].owner_death == death
+--- a/tests/integration/test_precomplete_output_owner_death_path.py
++++ b/tests/integration/test_precomplete_output_owner_death_path.py
+@@ -240,7 +240,7 @@
+                 manifest, node._owner_death_fences[manifest.header.owner_worker_id],
+             ))
+             snapshot = node._output_publication_journal.snapshot(identity)
+-            assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.retained_result_slots
++            assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.result_retained
+             assert snapshot.complete is None and snapshot.rollback_tombstone is None
+             assert node._output_publication_journal._records[identity].owner_death == node._owner_death_fences[manifest.header.owner_worker_id]
+             assert any(effect.stage is OutputPublicationStage.OWNER_REGISTER for effect in snapshot.intents)
+--- a/tests/unit/_pure_output_runtime.py
++++ b/tests/unit/_pure_output_runtime.py
+@@ -183,7 +183,7 @@
+             assert self.core.owner_table.collection_state(
+                 (identity.object_id)
+             ) is ObjectCollectionState.COLLECTED
+-            assert not self.journal.snapshot(identity).retained_result_slots
++            assert not self.journal.snapshot(identity).result_retained
+             if any(item.publication_id == identity for item in self.adapter.pending_terminal_reports()):
+                 assert self.adapter.report_terminal(identity)
+         assert not self.adapter.pending_terminal_reports()
+--- a/tests/unit/test_borrowed_object_refs.py
++++ b/tests/unit/test_borrowed_object_refs.py
+@@ -254,7 +254,7 @@
+         assert self.take(self.owner) == ()
+         self.payload = self.owner.owner_table.snapshot(self.outer.object_id).inline_data
+         assert self.payload == (output.outputs.payload)
+-        assert not self.journal.snapshot(self.envelope.publication_id).retained_result_slots
++        assert not self.journal.snapshot(self.envelope.publication_id).result_retained
+ 
+     def borrow_rpc(self, address, handler, message):
+         assert address == self.owner.owner_address and len(self.calls) < 10
+--- a/tests/unit/test_core_blocking_get_notifications.py
++++ b/tests/unit/test_core_blocking_get_notifications.py
+@@ -248,7 +248,7 @@
+         pending, reply, expected_node_id=core.node_id, expected_lease_id=push.lease_id,
+     )
+     assert core.owner_table.snapshot(pending.object_id).output_publication is not None
+-    assert not outputs.journal.snapshot(reply.output_publication.publication_id).retained_result_slots
++    assert not outputs.journal.snapshot(reply.output_publication.publication_id).result_retained
+     assert core._finish_pending_task(pending)
+     record = core._recovery.task_record(pending.task_id)
+     assert record.state is TaskState.SUCCEEDED and record.retries_started == 0
+--- a/tests/unit/test_core_lineage_holds.py
++++ b/tests/unit/test_core_lineage_holds.py
+@@ -61,7 +61,7 @@
+     assert core._publish_reply(pending, reply, expected_lease_id=push.lease_id,
+                                expected_node_id=core.node_id)
+     assert core.owner_table.snapshot(pending.object_id).output_publication is not None
+-    assert not outputs.journal.snapshot(reply.output_publication.publication_id).retained_result_slots
++    assert not outputs.journal.snapshot(reply.output_publication.publication_id).result_retained
+ 
+ 
+ @pytest.mark.unit
+--- a/tests/unit/test_core_lost_blocking_lock_order.py
++++ b/tests/unit/test_core_lost_blocking_lock_order.py
+@@ -271,7 +271,7 @@
+             snapshot = self.backend.handoff_snapshot(identity)
+             assert snapshot.complete is not None and snapshot.adoption is not None
+             assert self.core.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
+-            assert not self.backend.journal.snapshot(identity).retained_result_slots
++            assert not self.backend.journal.snapshot(identity).result_retained
+         assert not self.core._objects and not self.core._stored_descriptors
+         assert not self.core._object_gc_obligations and self.backend.store.used_bytes == 0
+         assert self.take() == ()
+--- a/tests/unit/test_core_output_publication.py
++++ b/tests/unit/test_core_output_publication.py
+@@ -159,7 +159,7 @@
+         assert snapshot.state is (ObjectState.READY_STORED if stored else ObjectState.READY_INLINE)
+         assert snapshot.output_publication.manifest == fixture.manifest
+         assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ADOPTED
+-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
++        assert not fixture.journal.snapshot(fixture.id).result_retained
+         assert fixture.store.used_bytes == (len((fixture.values.payload)) if stored else 0)
+         for transfer in (fixture.manifest.value).transfers:
+             child = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
+@@ -204,7 +204,7 @@
+     try:
+         assert not core._publish_reply(pending, reply, expected_node_id=node.node_id, expected_lease_id=fixture.id.lease_id)
+         assert core.owner_table.snapshot(pending.object_id).state is ObjectState.READY_STORED
+-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
++        assert not fixture.journal.snapshot(fixture.id).result_retained
+         assert not core._finish_pending_task(pending)
+         assert core._task_finish_barriers == {pending.object_id: pending}
+         assert core._accepted_task_count == 1 and len(commits) == 1
+--- a/tests/unit/test_core_placement_group_scheduling.py
++++ b/tests/unit/test_core_placement_group_scheduling.py
+@@ -384,7 +384,7 @@
+                 snapshot = self.handoff(identity)
+                 assert snapshot.adoption is not None
+                 assert core.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
+-                assert not self.journal.snapshot(identity).retained_result_slots
++                assert not self.journal.snapshot(identity).result_retained
+                 assert self.adapter.report_terminal(identity)
+             assert not self.adapter.pending_terminal_reports()
+             assert self.node.object_store.used_bytes == 0 and not self.node._sealed_metadata
+@@ -830,7 +830,7 @@
+         assert core._recovery.task_record(pending.task_id).retries_remaining == 0
+         assert core._recovery.active_recovery(pending.task_id) == reconstructed.spec.attempt_id
+         assert scenario.handoff(old_envelope.publication_id).adoption is not None
+-        assert not scenario.journal.snapshot(old_envelope.publication_id).retained_result_slots
++        assert not scenario.journal.snapshot(old_envelope.publication_id).result_retained
+         assert [reply.status for _, reply in scenario.drops] == [
+             protocol.DropObjectReplicaStatus.DROPPED, protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
+         ]
+--- a/tests/unit/test_core_stored_publication_adoption.py
++++ b/tests/unit/test_core_stored_publication_adoption.py
+@@ -163,7 +163,7 @@
+         assert _publish(core, pending, reply, node, fixture)
+         assert events == ["complete", "owner", "wake", "adopted", "node-retired"]
+         assert not core._protocol_unresolved
+-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
++        assert not fixture.journal.snapshot(fixture.id).result_retained
+         assert fixture.store.used_bytes > 0
+         assert core._finish_pending_task(pending) and core._accepted_task_count == 0
+ 
+@@ -224,7 +224,7 @@
+         assert not core._finish_pending_task(pending)
+         assert core.owner_table.snapshot(pending.object_id).state is not ObjectState.ERROR
+         if lost_effect == "node-retired":
+-            assert not fixture.journal.snapshot(fixture.id).retained_result_slots
++            assert not fixture.journal.snapshot(fixture.id).result_retained
+         assert core._execute(pending, pending.spec, output_adoption=_take_adoption(core))
+         _assert_published(fixture, core, pending)
+         assert dispositions == [OutputOwnerPublicationDisposition.APPLIED]
+@@ -258,7 +258,7 @@
+         assert pending.task_key in core._protocol_unresolved
+         assert not core._finish_pending_task(pending)
+         _assert_published(fixture, core, pending)
+-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
++        assert not fixture.journal.snapshot(fixture.id).result_retained
+         assert core._execute(pending, pending.spec, output_adoption=_take_adoption(core))
+         assert requests == [requests[0]] * 2
+         assert core._finish_pending_task(pending)
+--- a/tests/unit/test_core_task_retry.py
++++ b/tests/unit/test_core_task_retry.py
+@@ -449,7 +449,7 @@
+     old_handoff = runtime.handoff_snapshot(current_reply.output_publication.publication_id)
+     assert old_handoff.adoption is not None
+     assert core.owner_table.snapshot(original.object_id).output_publication is None
+-    assert runtime.journal.snapshot(current_reply.output_publication.publication_id).retained_result_slots == ()
++    assert runtime.journal.snapshot(current_reply.output_publication.publication_id).result_retained is False
+ 
+ 
+ @pytest.mark.unit
+--- a/tests/unit/test_core_worker_crash_recovery.py
++++ b/tests/unit/test_core_worker_crash_recovery.py
+@@ -538,7 +538,7 @@
+     assert publication.reductions == [True] and len(publication.seals) == 1
+     assert publication.completions == [publication.envelope.complete]
+     assert publication.ledger.available == ResourceVector({"CPU": 1})
+-    assert publication.journal.snapshot(publication.envelope.publication_id).retained_result_slots == ()
++    assert publication.journal.snapshot(publication.envelope.publication_id).result_retained is False
+     assert publication.handoffs.query(publication.envelope.publication_id).adoption is not None
+     assert core._recovery.task_record(pending.task_id).retries_started == 0
+     assert not core._protocol_unresolved
+@@ -1078,7 +1078,7 @@
+         for identity, reply in f.replies.items():
+             record = f.handoffs.query(identity)
+             assert record.complete == reply.output_publication.complete and record.adoption is not None
+-            assert not f.journal.snapshot(identity).retained_result_slots
++            assert not f.journal.snapshot(identity).result_retained
+             assert f.adapter.report_terminal(identity)
+         assert not f.adapter.pending_terminal_reports()
+     finally:
+--- a/tests/unit/test_foreign_stored_task_dependencies.py
++++ b/tests/unit/test_foreign_stored_task_dependencies.py
+@@ -903,7 +903,7 @@
+             snapshot = self.publication.handoff_snapshot(identity)
+             assert snapshot.phase is OutputHandoffPhase.ADOPTED and snapshot.adoption is not None
+             assert snapshot.complete == self.envelope.complete
+-            assert not self.publication.journal.snapshot(identity).retained_result_slots
++            assert not self.publication.journal.snapshot(identity).result_retained
+             assert not self.publication.adapter.pending_terminal_reports()
+         # The live owner's own input handle keeps both reported replicas alive
+         # until normal owner GC; consumer failure is not deletion authority.
+--- a/tests/unit/test_foreign_wait_drop.py
++++ b/tests/unit/test_foreign_wait_drop.py
+@@ -394,7 +394,7 @@
+             snapshot = self.backend.handoff_snapshot(identity)
+             assert snapshot.complete is not None and snapshot.adoption is not None
+             assert self.owner.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
+-            assert not self.backend.journal.snapshot(identity).retained_result_slots
++            assert not self.backend.journal.snapshot(identity).result_retained
+         assert not self.backend.adapter.pending_terminal_reports()
+         for core in self.cores:
+             assert core._reference_mailbox.pending.empty()
+--- a/tests/unit/test_inline_publication_gate.py
++++ b/tests/unit/test_inline_publication_gate.py
+@@ -323,9 +323,9 @@
+         assert record.state is protocol.LeaseExecutionState.RUNNING
+         assert snapshot.complete is None and fixture.ledger.available != fixture.ledger.total
+         if phase is gates.OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK:
+-            assert snapshot.materialized_slots == () and not snapshot.ready_to_complete
++            assert snapshot.materialized is False and not snapshot.ready_to_complete
+         else:
+-            assert snapshot.ready_to_complete and snapshot.materialized_slots == (0,)
++            assert snapshot.ready_to_complete and snapshot.materialized is True
+         assert handoff.manifest == fixture.manifest and handoff.complete is None
+         return _Connection(events)
+ 
+--- a/tests/unit/test_inline_publication_node_server.py
++++ b/tests/unit/test_inline_publication_node_server.py
+@@ -92,7 +92,7 @@
+     ]
+     snapshot = fixture.journal.snapshot(fixture.id)
+     assert snapshot.ready_to_complete and snapshot.complete is None
+-    assert snapshot.materialized_slots == (0,)
++    assert snapshot.materialized is True
+     assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
+     assert fixture.handoffs.query(fixture.id).complete is None
+     assert fixture.store.used_bytes == 0
+@@ -107,7 +107,7 @@
+         _prepare(fixture, node)
+     assert record.output_publication_id == fixture.id
+     assert fixture.events == ["owner-register"]
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+     assert _prepare(fixture, node).accepted
+     assert fixture.events[:2] == ["owner-register", "owner-register"]
+     assert fixture.events.count("prepare") == 2
+@@ -478,13 +478,13 @@
+         node._handle_get_output_worker_lease_outcome(_query(fixture, record), fixture.id)
+     if finish_cleanup:
+         assert snapshot.state is OutputPublicationJournalState.RETIRED
+-        assert not snapshot.retained_result_slots
++        assert not snapshot.result_retained
+         assert worker_acks == [cleanup]
+         assert node._handle_finalize_output_owner_death(cleanup).cleaned
+         assert _clean(node)
+         assert node._drive_output_publications()
+     else:
+-        assert snapshot.retained_result_slots == (0,)
++        assert snapshot.result_retained is True
+         assert not fixture.adapter.owner_death_finished(fixture.id)
+         assert not _clean(node)
+         # Progress completion is not clean-shutdown/custody completion.  The
+--- a/tests/unit/test_inline_recovery.py
++++ b/tests/unit/test_inline_recovery.py
+@@ -195,7 +195,7 @@
+                 assert f.core.owner_table.snapshot(f.pending.object_id) == owner_before
+                 journal = f.f.journal.snapshot(f.identity)
+                 assert len(journal.intents) == 1 and journal.intents[0].stage is OutputPublicationStage.OWNER_REGISTER
+-                assert journal.acknowledgements == () and journal.retained_result_slots == ()
++                assert journal.acknowledgements == () and journal.result_retained is False
+                 _metadata((reply, journal))
+                 if len(receipts) == 1:
+                     raise TimeoutError("owner registration applied before ACK loss")
+@@ -287,7 +287,7 @@
+             assert f.node._handle_finalize_output_owner_death(f.finalize).cleaned
+             retired = f.f.journal.snapshot(f.identity)
+             assert retired.complete is None and retired.state is OutputPublicationJournalState.RETIRED
+-            assert retired.rollback_tombstone is None and retired.retained_result_slots == ()
++            assert retired.rollback_tombstone is None and retired.result_retained is False
+             assert f.record.state is protocol.LeaseExecutionState.ABANDONED
+             assert f.f.ledger.available == ResourceVector({"CPU": 1})
+             assert f.handoffs.query(f.identity) == historical
+--- a/tests/unit/test_large_object_runtime.py
++++ b/tests/unit/test_large_object_runtime.py
+@@ -228,7 +228,7 @@
+             wire.ReportOutputPublicationAdopted,
+             wire.AckOutputPublicationAdopted,
+         ]
+-        assert not backend.journal.snapshot(envelope.publication_id).retained_result_slots
++        assert not backend.journal.snapshot(envelope.publication_id).result_retained
+         assert backend.store.get(object_id) == payload
+ 
+         # Adoption retires Node reply custody, not the physical replica. The
+--- a/tests/unit/test_node_blocking_get_authority.py
++++ b/tests/unit/test_node_blocking_get_authority.py
+@@ -486,7 +486,7 @@
+         # delivery custody; it cannot authorize retirement or physical GC.
+         snapshot = journal.snapshot(identity)
+         assert snapshot.state is OutputPublicationJournalState.COMPLETED
+-        assert snapshot.retained_result_slots == (0,) and snapshot.retired_slots == ()
++        assert snapshot.result_retained is True and snapshot.retirement is None
+         assert snapshot.rollback is None and snapshot.rollback_tombstone is None
+         stored = (envelope.result)
+         assert stored.inline_data is None
+--- a/tests/unit/test_node_lease_execution.py
++++ b/tests/unit/test_node_lease_execution.py
+@@ -274,7 +274,7 @@
+     publication = prepare_ref_free_output(node, request, grant, values=(7,))
+     identity = publication.manifest.publication_id
+     prepared = publication.journal.snapshot(identity)
+-    assert prepared.ready_to_complete and prepared.retained_result_slots == (0,)
++    assert prepared.ready_to_complete and prepared.result_retained is True
+     assert prepared.complete is None and publication.handoffs.query(identity).manifest == publication.manifest
+     assert (publication.manifest.value).size_bytes <= 32
+     assert node.object_store.capacity_bytes == 1024 and node.object_store.used_bytes == 0
+@@ -346,7 +346,7 @@
+     assert node._drive_output_publications()
+     cleaned = publication.journal.snapshot(identity)
+     assert cleaned.state is OutputPublicationJournalState.RETIRED
+-    assert cleaned.complete is None and cleaned.retained_result_slots == ()
++    assert cleaned.complete is None and cleaned.result_retained is False
+     assert cleaned.rollback.rollback_id == "output-worker-lost:{}".format(request.lease_id)
+     assert len(cleaned.rollback.effects) == 1
+     assert cleaned.rollback.effects[0].stage is OutputPublicationStage.SLOT_DROP
+--- a/tests/unit/test_node_publication_owner_death_finalize.py
++++ b/tests/unit/test_node_publication_owner_death_finalize.py
+@@ -68,7 +68,7 @@
+     assert node._workers[record.grant.worker_id].active_lease_id is None
+     terminal = fixture.journal.snapshot(fixture.id)
+     assert terminal.state is OutputPublicationJournalState.RETIRED
+-    assert not terminal.retained_result_slots
++    assert not terminal.result_retained
+     assert (terminal.complete == fixture.values.witness) is (phase == "complete")
+     assert terminal.rollback_tombstone is None
+     assert fixture.adapter.owner_death_finished(fixture.id)
+@@ -139,7 +139,7 @@
+     with pytest.raises(ValueError, match="death-fenced"):
+         node._handle_ack_output_publication_adopted(wire.AckOutputPublicationAdopted(proof))
+     assert fixture.journal.snapshot(fixture.id).complete == fixture.values.witness
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+     assert record.completion == complete and record.state is protocol.LeaseExecutionState.COMPLETED
+     assert node._handle_finalize_output_owner_death(request).cleaned and calls == [request]
+ 
+--- a/tests/unit/test_output_owner_death_node.py
++++ b/tests/unit/test_output_owner_death_node.py
+@@ -81,7 +81,7 @@
+     assert calls == [request]
+     snapshot = fixture.journal.snapshot(fixture.id)
+     assert snapshot.state is OutputPublicationJournalState.RETIRED
+-    assert snapshot.retained_result_slots == ()
++    assert snapshot.result_retained is False
+     assert (snapshot.complete is not None) == (phase == "complete")
+     assert snapshot.rollback_tombstone is None
+     assert record.state is (protocol.LeaseExecutionState.COMPLETED if phase == "complete"
+@@ -111,12 +111,12 @@
+     node._background_rpc = rpc
+     with pytest.raises(TimeoutError, match="ACK lost"):
+         node._handle_finalize_output_owner_death(request)
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
++    assert fixture.journal.snapshot(fixture.id).result_retained is True
+     assert not fixture.adapter.owner_death_finished(fixture.id)
+     assert not fixture.adapter._tickets
+     assert node._handle_finalize_output_owner_death(request).cleaned
+     assert calls == [request, request]
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+ 
+ 
+ def test_inflight_publication_makes_finalize_nonblocking_without_mutation(monkeypatch):
+@@ -152,7 +152,7 @@
+             node._handle_finalize_output_owner_death(request)
+     else:
+         assert not node._handle_finalize_output_owner_death(request).cleaned
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots
++    assert fixture.journal.snapshot(fixture.id).result_retained
+     assert not fixture.adapter.owner_death_finished(fixture.id)
+     node._background_rpc = lambda _a, _h, message: wire.FinalizeOutputOwnerDeathReply(message, True)
+     assert node._handle_finalize_output_owner_death(request).cleaned
+--- a/tests/unit/test_output_publication_journal.py
++++ b/tests/unit/test_output_publication_journal.py
+@@ -165,7 +165,7 @@
+     snapshot = journal.snapshot(f.id)
+     assert snapshot.state is OutputPublicationJournalState.COMPLETED
+     assert snapshot.complete == f.witness
+-    assert snapshot.materialized_slots == snapshot.retained_result_slots == (0,)
++    assert snapshot.materialized is True and snapshot.result_retained is True
+     assert not snapshot.ready_to_complete
+     assert journal.materialized_result(f.id) == f.result
+     with journal.linearize(f.id):
+@@ -298,7 +298,7 @@
+     assert f.rollback() == plan.effects
+     terminal = journal.snapshot(f.id)
+     assert terminal.state is OutputPublicationJournalState.RETIRED
+-    assert terminal.retained_result_slots == ()
++    assert terminal.result_retained is False
+     assert terminal.rollback_tombstone.plan == plan
+     assert not journal.open(f.manifest)
+     assert journal.next_rollback_effect(f.id) is None
+@@ -405,16 +405,17 @@
+     journal = f.journal
+     f.complete()
+     proof = f.adoption()
+-    tombstones = journal.retire_completed(proof)
+-    assert tuple(t.object_id for t in tombstones) == (f.object_id,)
+-    assert journal.retire_completed(proof) == tombstones
++    tombstone = journal.retire_completed(proof)
++    assert tombstone.object_id == f.object_id and tombstone.publication_id == f.id
++    assert journal.retire_completed(proof) == tombstone
+     snapshot = journal.snapshot(f.id)
+     assert snapshot.state is OutputPublicationJournalState.RETIRED
+-    assert snapshot.complete == f.witness and snapshot.retained_result_slots == ()
++    assert snapshot.complete == f.witness and snapshot.result_retained is False
++    assert snapshot.materialized is True and snapshot.retirement == tombstone
+     assert journal.materialized_result(f.id) is None
+     with pytest.raises(OutputPublicationPayloadRetired) as caught:
+         journal.complete(f.id, f.witness)
+-    assert caught.value.tombstones == tombstones
++    assert caught.value.tombstone == tombstone
+     with pytest.raises(OutputPublicationConflictError, match="owner commit"):
+         journal.retire_completed(replace(proof, owner_commit_id="different-cas"))
+     assert journal.snapshot(f.id) == snapshot
+@@ -440,17 +441,19 @@
+     journal = f.journal
+     f.complete()
+     proof = f.adoption("frozen-owner-cas")
+-    returned, = journal.retire_completed(proof)
++    returned = journal.retire_completed(proof)
+     before = journal.snapshot(f.id)
+     object.__setattr__(returned.proof, "owner_commit_id", "tampered-return")
+     object.__setattr__(proof, "owner_commit_id", "tampered-input")
+     assert journal.snapshot(f.id) == before
+     exact = f.adoption("frozen-owner-cas")
+-    assert journal.retire_completed(exact) == before.retired_slots
++    assert journal.retire_completed(exact) == before.retirement
+     with pytest.raises(OutputPublicationPayloadRetired) as caught:
+         journal.complete(f.id, f.witness)
+-    assert tuple(t.slot_index for t in caught.value.tombstones) == (0,)
+-    object.__setattr__(caught.value.tombstones[0].proof, "owner_commit_id", "tampered-exception")
++    assert caught.value.tombstone.object_id == f.object_id
++    assert caught.value.tombstone.publication_id == f.id
++    assert caught.value.tombstone.manifest_digest == f.manifest.manifest_digest
++    object.__setattr__(caught.value.tombstone.proof, "owner_commit_id", "tampered-exception")
+     assert journal.snapshot(f.id) == before
+     _metadata(journal._records)
+ 
+--- a/tests/unit/test_output_publication_node.py
++++ b/tests/unit/test_output_publication_node.py
+@@ -175,7 +175,7 @@
+ 
+     def assert_no_pins_or_bytes(self):
+         assert self.store.used_bytes == 0
+-        assert self.journal.snapshot(self.id).retained_result_slots == ()
++        assert self.journal.snapshot(self.id).result_retained is False
+         for transfer in (self.manifest.value.transfers):
+             snapshot = self.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
+             assert transfer.provisional_hold not in snapshot.contained_holds
+@@ -331,7 +331,7 @@
+     fixture.adapter.converge_completed(fixture.id, commit_lease=fixture.commit)
+     assert fixture.adapter.pending_lease_completions() == ()
+     assert fixture.releases == 1
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+ 
+ 
+ @pytest.mark.parametrize("stage", ("owner-register", "prepare", "seal", "promote"))
+@@ -453,7 +453,7 @@
+         fixture.prepare()
+     assert set(fixture.events) == {"owner-register"}
+     assert fixture.store.used_bytes == 0
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+ 
+ 
+ def test_drop_callback_cannot_mutate_the_expected_slot_identity():
+@@ -504,7 +504,7 @@
+     fixture.handoffs.record_complete(values.witness)
+     fixture.handoffs.adopt(proof)
+     fixture.journal.retire_completed(proof)
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+     assert fixture.store.used_bytes > 0  # reply retirement is not physical GC
+     assert fixture.adapter.report_terminal(fixture.id)
+     for transfer in (fixture.manifest.value).transfers:
+--- a/tests/unit/test_output_publication_node_server.py
++++ b/tests/unit/test_output_publication_node_server.py
+@@ -139,7 +139,7 @@
+ 
+     def assert_no_pins_or_bytes(self):
+         assert self.store.used_bytes == 0
+-        assert self.journal.snapshot(self.id).retained_result_slots == ()
++        assert self.journal.snapshot(self.id).result_retained is False
+         for transfer in (self.manifest.value).transfers:
+             snapshot = self.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
+             assert transfer.provisional_hold not in snapshot.contained_holds
+@@ -410,7 +410,7 @@
+             assert saved.complete is None and local.complete is None
+             assert record.state is protocol.LeaseExecutionState.RUNNING
+             if arrival.phase is OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK:
+-                assert saved.manifest == fixture.manifest and local.materialized_slots == ()
++                assert saved.manifest == fixture.manifest and local.materialized is False
+                 assert fixture.store.used_bytes == 0
+                 assert not local.ready_to_complete
+             else:
+--- a/tests/unit/test_owner_finalize_replica_receipts.py
++++ b/tests/unit/test_owner_finalize_replica_receipts.py
+@@ -137,7 +137,7 @@
+     expected_effect = OutputPublicationEffect(fixture.id, fixture.manifest.manifest_digest, Stage.MATERIALIZE)
+     snapshot = fixture.journal.snapshot(fixture.id)
+     assert expected_effect in snapshot.intents and not fixture.journal.acknowledged(expected_effect)
+-    assert snapshot.retained_result_slots == (0,) and snapshot.complete is None
++    assert snapshot.result_retained is True and snapshot.complete is None
+     assert record.output_publication_id == fixture.id and record.state is protocol.LeaseExecutionState.RUNNING
+     assert fixture.store.capacity_bytes == 1024 and not node._sealed_metadata
+     assert not _receipts(node) and not node._dropped_metadata
+@@ -191,7 +191,7 @@
+     assert not fixture.adapter.owner_death_finished(fixture.id) and not fixture.adapter._tickets
+     snapshot = fixture.journal.snapshot(fixture.id)
+     assert snapshot.state is OutputPublicationJournalState.ACTIVE
+-    assert snapshot.retained_result_slots == (0,)
++    assert snapshot.result_retained is True
+     assert record.state is protocol.LeaseExecutionState.ABANDONED
+     assert fixture.ledger.available == ResourceVector({"CPU": 1})
+ 
+@@ -235,7 +235,7 @@
+     assert type(reply) is wire.FinalizeOutputOwnerDeathReply and reply.request == request and reply.cleaned
+     assert fixture.adapter.owner_death_finished(fixture.id) and not fixture.adapter._tickets
+     snapshot = fixture.journal.snapshot(fixture.id)
+-    assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.retained_result_slots
++    assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.result_retained
+     assert snapshot.complete is None and snapshot.rollback_tombstone is None
+     assert record.state is protocol.LeaseExecutionState.ABANDONED
+     assert fixture.ledger.available == ResourceVector({"CPU": 1})
+@@ -348,7 +348,7 @@
+         node._handle_finalize_output_owner_death(request)
+     assert calls == [request]
+     assert not fixture.adapter.owner_death_finished(fixture.id) and not fixture.adapter._tickets
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
++    assert fixture.journal.snapshot(fixture.id).result_retained is True
+     _assert_physical_receipt(fixture, node, monkeypatch)
+     before = deepcopy((node._dropped_metadata, _receipts(node)))
+     with monkeypatch.context() as guard:
+@@ -360,7 +360,7 @@
+     assert (node._dropped_metadata, _receipts(node)) == before
+     assert fixture.adapter.owner_death_finished(fixture.id)
+     assert fixture.journal.snapshot(fixture.id).state is OutputPublicationJournalState.RETIRED
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+     assert record.state is protocol.LeaseExecutionState.ABANDONED
+ 
+ 
+--- a/tests/unit/test_owner_reconstruction_completion_race.py
++++ b/tests/unit/test_owner_reconstruction_completion_race.py
+@@ -171,7 +171,7 @@
+         assert self.core._publish_reply(
+             pending, reply, expected_node_id=self.core.node_id, expected_lease_id=lease_id,
+         )
+-        assert not self.journal.snapshot(identity).retained_result_slots
++        assert not self.journal.snapshot(identity).result_retained
+         assert self.handoff_snapshot(identity).adoption.complete == reply.output_publication.complete
+         return reply.results
+ 
+--- a/tests/unit/test_publication_owner_death_control.py
++++ b/tests/unit/test_publication_owner_death_control.py
+@@ -178,7 +178,7 @@
+             node._handle_finalize_output_owner_death(request)
+         assert releases == [expected[0]] and not finalizations
+         assert fixture.adapter._owner_cleanup_acks == {}
+-        assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
++        assert fixture.journal.snapshot(fixture.id).result_retained is True
+         assert not fixture.adapter.owner_death_finished(fixture.id)
+         assert not node._handle_prepare_output_publication(wire.PrepareOutputPublication(
+             fixture.manifest, (values.payload),
+@@ -190,7 +190,7 @@
+         assert finalizations == [request]
+         assert len(fixture.adapter._owner_cleanup_acks) == 4
+         unresolved = fixture.journal.snapshot(fixture.id)
+-        assert unresolved.complete == journal_before.complete and unresolved.retained_result_slots == (0,)
++        assert unresolved.complete == journal_before.complete and unresolved.result_retained is True
+         assert not fixture.adapter.owner_death_finished(fixture.id)
+         assert not fixture.adapter._tickets
+ 
+@@ -199,7 +199,7 @@
+         assert tuple(releases) == (expected[0],) + expected
+         snapshot = fixture.journal.snapshot(fixture.id)
+         assert snapshot.state is OutputPublicationJournalState.RETIRED
+-        assert snapshot.complete == journal_before.complete and not snapshot.retained_result_slots
++        assert snapshot.complete == journal_before.complete and not snapshot.result_retained
+         assert snapshot.rollback is None and snapshot.rollback_tombstone is None
+         assert fixture.adapter.owner_death_finished(fixture.id)
+         assert fixture.ledger.available == ResourceVector({"CPU": 1})
+--- a/tests/unit/test_publication_pg_dispatch.py
++++ b/tests/unit/test_publication_pg_dispatch.py
+@@ -156,7 +156,7 @@
+         assert before.error is None
+         assert handoffs.query(identity).complete == reply.output_publication.complete
+         assert (handoffs.query(identity).adoption is not None) is (lost_ack == "adopted")
+-        assert outputs.journal.snapshot(identity).retained_result_slots == (0,)
++        assert outputs.journal.snapshot(identity).result_retained is True
+         assert not core._finish_pending_task(pending)
+         assert core._accepted_task_count == 1 and core._task_finish_barriers[output.object_id] == pending
+         delayed = _take_adoption_retry(core)
+@@ -194,7 +194,7 @@
+         assert after.output_publication.publication_id == identity
+         history = handoffs.query(identity)
+         assert history.adoption is not None and history.adoption.complete == reply.output_publication.complete
+-        assert not outputs.journal.snapshot(identity).retained_result_slots
++        assert not outputs.journal.snapshot(identity).result_retained
+         assert outputs.discoveries == len(outputs.pushes) == len(outputs.completions) == 1
+         assert not core._protocol_unresolved and not core._task_finish_barriers
+         assert core._accepted_task_count == 0 and pending.task_key in core._finished_tasks
+--- a/tests/unit/test_publication_trace_observation.py
++++ b/tests/unit/test_publication_trace_observation.py
+@@ -196,7 +196,7 @@
+     assert adapter.pending_terminal_reports() == (fixture.values.witness,)
+     assert adapter.pending_lease_completions() == ()
+     assert fixture.handoffs.query(fixture.id).complete is None
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
++    assert fixture.journal.snapshot(fixture.id).result_retained is True
+     assert [sample[2] for sample in sink.samples] == [
+         dict(_identity_fields(fixture), released=released, status="SUCCEEDED", state="COMPLETED")
+         for released in (True, False)
+@@ -230,7 +230,7 @@
+                 node._state_lock._is_owned(), fixture.journal._lock._is_owned(),
+                 core.owner_table.snapshot(stored_id).state, core._objects[stored_id].event.is_set(),
+                 fixture.handoffs.query(fixture.id).adoption is not None,
+-                fixture.journal.snapshot(fixture.id).retained_result_slots, fixture.store.get(stored_id))
++                fixture.journal.snapshot(fixture.id).result_retained, fixture.store.get(stored_id))
+     sink = _ObservedSink(probe, error_type)
+     core.event_sink = sink
+     def rpc(address, handler, request):
+@@ -253,9 +253,9 @@
+         ready, retired = sink.samples
+         assert ready[2] == dict(_identity_fields(fixture), return_count=1)
+         assert retired[2] == _identity_fields(fixture)
+-        ready_facts = (False, False, False, False, ObjectState.READY_STORED, True, True, (0,), (fixture.values.payload))
++        ready_facts = (False, False, False, False, ObjectState.READY_STORED, True, True, True, (fixture.values.payload))
+         assert ready[4] == ready_facts
+-        assert retired[4] == (*ready_facts[:7], (), (fixture.values.payload))
++        assert retired[4] == (*ready_facts[:7], False, (fixture.values.payload))
+         assert retired[3] == boundaries[0][3].event_id
+         if error_type is None:
+             actual = tuple(event for event in sink.events if event.name in _OBSERVATIONS)
+--- a/tests/unit/test_push_replay_state.py
++++ b/tests/unit/test_push_replay_state.py
+@@ -107,7 +107,7 @@
+     assert core.owner_table.snapshot(pending.object_id).state is ObjectState.READY_INLINE
+     assert len(core._test_outcome_queries) == core._test_outputs.discoveries == 1
+     assert core._test_outputs.recovery.snapshot(reply.output_publication.publication_id).adopted is not None
+-    assert not core._test_outputs.journal.snapshot(reply.output_publication.publication_id).retained_result_slots
++    assert not core._test_outputs.journal.snapshot(reply.output_publication.publication_id).result_retained
+ 
+ 
+ @pytest.mark.unit
+--- a/tests/unit/test_same_owner_output_custody.py
++++ b/tests/unit/test_same_owner_output_custody.py
+@@ -218,7 +218,7 @@
+     proof = OutputPublicationAdoptionProof(envelope.complete, f.header.owner_worker_id, "same-owner-cas")
+     f.handoffs.adopt(proof)
+     f.journal.retire_completed(proof)
+-    assert not f.journal.snapshot(f.identity).retained_result_slots
++    assert not f.journal.snapshot(f.identity).result_retained
+     assert f.store.used_bytes == (len((f.outputs.payload)) if stored else 0)
+     # Node reply retirement must not consume the outer's child lifetime.
+     assert f.child_table.snapshot(f.child.object_id).contained_holds == active
+--- a/tests/unit/test_single_output_journal_retirement.py
++++ b/tests/unit/test_single_output_journal_retirement.py
+@@ -63,14 +63,16 @@
+     envelope = journal.complete(identity, witness)
+     assert ((envelope.result,)) == (descriptor,)
+     retired = journal.retire_completed(proof)
+-    assert len(retired) == 1 and journal.retire_completed(proof) == retired
++    assert retired.publication_id == identity and retired.object_id == identity.object_id
++    assert journal.retire_completed(proof) == retired
+     snapshot = journal.snapshot(identity)
+     assert snapshot.state is OutputPublicationJournalState.RETIRED
+-    assert snapshot.complete == witness and snapshot.retained_result_slots == ()
++    assert snapshot.complete == witness and snapshot.result_retained is False
++    assert snapshot.materialized is True and snapshot.retirement == retired
+     assert journal.materialized_result(identity) is None
+     with pytest.raises(OutputPublicationPayloadRetired) as caught:
+         journal.complete(identity, witness)
+-    assert caught.value.tombstones == retired
++    assert caught.value.tombstone == retired
+     assert journal.snapshot(identity) == snapshot
+ 
+ 
+--- a/tests/unit/test_spillback_runtime.py
++++ b/tests/unit/test_spillback_runtime.py
+@@ -379,15 +379,16 @@
+         assert receipt.plan == plan and receipt.committed
+         assert self.core.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.ACTIVE
+         before = self.publication.journal.snapshot(envelope.publication_id)
+-        assert before.complete == request.proof.complete and before.retained_result_slots == (0,)
++        assert before.complete == request.proof.complete and before.result_retained is True
+         reply = self.target._handle_ack_output_publication_adopted(request)
+         assert type(reply) is wire.AckOutputPublicationAdoptedReply
+         assert reply.request == request and reply.accepted
+         after = self.publication.journal.snapshot(envelope.publication_id)
+-        assert after.complete == before.complete and not after.retained_result_slots
+-        (retired,) = after.retired_slots
++        assert after.complete == before.complete and not after.result_retained
++        retired = after.retirement
++        assert retired is not None
+         assert retired.publication_id == envelope.publication_id and retired.proof == request.proof
+-        assert retired.object_id == self.pending.object_id and retired.slot_index == 0
++        assert retired.object_id == self.pending.object_id and retired.manifest_digest == envelope.manifest.manifest_digest
+         # Retiring Node reply custody cannot collect the owner's live ObjectRef.
+         assert self.core.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.ACTIVE
+         return reply
+@@ -538,11 +539,11 @@
+         assert self.target._resource_report_version == version == 2
+         identity = self.completed.output_publication.publication_id
+         node_receipt = self.publication.journal.snapshot(identity)
+-        assert not node_receipt.retained_result_slots
++        assert not node_receipt.result_retained
+         handoff = self.owner_handoffs.query(identity)
+         assert handoff.phase is OutputHandoffPhase.ADOPTED
+         assert handoff.complete == self.completed.output_publication.complete
+-        assert handoff.adoption == node_receipt.retired_slots[0].proof
++        assert handoff.adoption == node_receipt.retirement.proof
+         assert not self.owner_handoffs.completions and not self.collection_receipts
+         assert core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.ACTIVE
+         if self.home is not self.target:
+@@ -590,7 +591,7 @@
+         handoff_before = self.owner_handoffs.query(identity)
+         node_before = self.publication.journal.snapshot(identity)
+         assert handoff_before.phase is OutputHandoffPhase.ADOPTED
+-        assert handoff_before.adoption == node_before.retired_slots[0].proof
++        assert handoff_before.adoption == node_before.retirement.proof
+         # A late metadata-only Complete report replays owner history after GC.
+         # It cannot recreate result bytes, a local reference, or object state.
+         assert self.publication.adapter.report_terminal(identity)
+--- a/tests/unit/test_stored_publication_node_death_gc.py
++++ b/tests/unit/test_stored_publication_node_death_gc.py
+@@ -108,7 +108,7 @@
+         assert core._accepted_task_count == 0 and not core._task_finish_barriers
+         assert not core._protocol_unresolved and not core._output_result_custody
+         assert fixture.handoffs.query(identity).adoption is not None
+-        assert not fixture.journal.snapshot(identity).retained_result_slots
++        assert not fixture.journal.snapshot(identity).result_retained
+         before = core.owner_table.snapshot(stored_id)
+         descriptor = core._stored_descriptors[stored_id]
+         assert before.canonical_stored_result == descriptor == (reply.output_publication.result)
+--- a/tests/unit/test_stored_publication_node_server.py
++++ b/tests/unit/test_stored_publication_node_server.py
+@@ -413,7 +413,7 @@
+     assert record.completion == request and record.output_complete_inflight is None
+     snapshot = fixture.journal.snapshot(fixture.id)
+     assert snapshot.complete == fixture.values.witness and snapshot.rollback is None
+-    assert snapshot.retained_result_slots == (0,) and fixture.ledger.available == fixture.ledger.total
++    assert snapshot.result_retained is True and fixture.ledger.available == fixture.ledger.total
+ 
+ 
+ @pytest.mark.unit
+@@ -497,7 +497,7 @@
+     assert node._handle_ack_output_publication_adopted(wire.AckOutputPublicationAdopted(proof)).accepted
+     node._drive_output_publications()
+     assert fixture.adapter.pending_lease_completions() == () and len(releases) == 1
+-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert fixture.journal.snapshot(fixture.id).result_retained is False
+ 
+ 
+ @pytest.mark.loopback_smoke
+@@ -576,7 +576,7 @@
+     node._drive_output_publications()
+     snapshot = fixture.journal.snapshot(fixture.id)
+     assert snapshot.state is OutputPublicationJournalState.COMPLETED
+-    assert snapshot.retained_result_slots == (0,) and snapshot.rollback is None
++    assert snapshot.result_retained is True and snapshot.rollback is None
+     assert fixture.adapter.pending_terminal_reports() == ()
+     assert not node._output_publications_clean_locked()
+     request = protocol.BeginDrain("retained-output-drain", "pure publication boundary")
+@@ -611,7 +611,7 @@
+     replay = node._handle_ack_output_publication_adopted(request)
+     assert first == replay and first.request == request and first.accepted
+     assert tuple(fixture.events) == before
+-    assert record.completion == complete and fixture.journal.snapshot(fixture.id).retained_result_slots == ()
++    assert record.completion == complete and fixture.journal.snapshot(fixture.id).result_retained is False
+     assert fixture.store.used_bytes > 0
+     assert not node._output_publications_clean_locked()  # terminal outbox is independent
+     assert node._drive_output_publications() and node._output_publications_clean_locked()
+--- a/tests/unit/test_targeted_output_publication.py
++++ b/tests/unit/test_targeted_output_publication.py
+@@ -157,7 +157,7 @@
+         assert core._stored_descriptors[pending.object_id] == reply.results[0]
+         assert core._objects[pending.object_id].event.is_set()
+         assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
+-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
++        assert not fixture.journal.snapshot(fixture.id).result_retained
+         assert core._finish_pending_task(pending) and _take(core) == ()
+         # Real physical loss and owner route invalidation precede ordinary
+         # retirement and accepted reconstruction. No targeted session exists.
+--- a/tests/unit/test_task_finish_barrier.py
++++ b/tests/unit/test_task_finish_barrier.py
+@@ -221,7 +221,7 @@
+             pending, reply, expected_node_id=self.core.node_id,
+             expected_lease_id=identity.lease_id,
+         )
+-        assert not self.journal.snapshot(identity).retained_result_slots
++        assert not self.journal.snapshot(identity).result_retained
+         assert self.handoff_snapshot(identity).adoption.complete == envelope.complete
+         assert self.core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
+         return ((envelope.result,))

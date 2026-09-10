@@ -240,7 +240,7 @@ def _node_process_with_lifecycle_observations(*args):
                 manifest, node._owner_death_fences[manifest.header.owner_worker_id],
             ))
             snapshot = node._output_publication_journal.snapshot(identity)
-            assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.retained_result_slots
+            assert snapshot.state is OutputPublicationJournalState.RETIRED and not snapshot.result_retained
             assert snapshot.complete is None and snapshot.rollback_tombstone is None
             assert node._output_publication_journal._records[identity].owner_death == node._owner_death_fences[manifest.header.owner_worker_id]
             assert any(effect.stage is OutputPublicationStage.OWNER_REGISTER for effect in snapshot.intents)

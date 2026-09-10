@@ -191,7 +191,11 @@ def _completed_output(core, pending, state, *, inline=False):
         }
         assert handler in methods
         reply = methods[handler](request)
-        assert reply.accepted and reply.request == request
+        assert reply.accepted
+        if handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER:
+            assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness
+        else:
+            assert type(reply) is wire.OutputHandoffReply and reply.request == request
         _assert_output_metadata(reply)
         return reply
     node._background_rpc = background_rpc
@@ -538,7 +542,7 @@ def test_completed_stored_result_publishes_while_worker_remains_alive(
     assert publication.reductions == [True] and len(publication.seals) == 1
     assert publication.completions == [publication.envelope.complete]
     assert publication.ledger.available == ResourceVector({"CPU": 1})
-    assert publication.journal.snapshot(publication.envelope.publication_id).retained_result_slots == ()
+    assert publication.journal.snapshot(publication.envelope.publication_id).result_retained is False
     assert publication.handoffs.query(publication.envelope.publication_id).adoption is not None
     assert core._recovery.task_record(pending.task_id).retries_started == 0
     assert not core._protocol_unresolved
@@ -803,7 +807,11 @@ class _DependencyRetryFixture:
         }
         assert handler in methods
         reply = methods[handler](request)
-        assert reply.accepted and reply.request == request, reply.error
+        assert reply.accepted, reply.error
+        if handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER:
+            assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness
+        else:
+            assert type(reply) is wire.OutputHandoffReply and reply.request == request
         _assert_output_metadata(reply)
         return reply
 
@@ -1078,7 +1086,7 @@ def test_dependency_hold_survives_worker_loss_retry(monkeypatch: pytest.MonkeyPa
         for identity, reply in f.replies.items():
             record = f.handoffs.query(identity)
             assert record.complete == reply.output_publication.complete and record.adoption is not None
-            assert not f.journal.snapshot(identity).retained_result_slots
+            assert not f.journal.snapshot(identity).result_retained
             assert f.adapter.report_terminal(identity)
         assert not f.adapter.pending_terminal_reports()
     finally:

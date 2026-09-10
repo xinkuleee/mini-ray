@@ -157,7 +157,7 @@ def test_owner_cas_effect_then_error_repair_fences_a_later_ordinary_attempt(monk
         assert core._stored_descriptors[pending.object_id] == reply.results[0]
         assert core._objects[pending.object_id].event.is_set()
         assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
+        assert not fixture.journal.snapshot(fixture.id).result_retained
         assert core._finish_pending_task(pending) and _take(core) == ()
         # Real physical loss and owner route invalidation precede ordinary
         # retirement and accepted reconstruction. No targeted session exists.

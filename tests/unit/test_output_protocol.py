@@ -112,10 +112,14 @@ def test_owner_handoff_and_retirement_echo_exact_metadata_facts():
     assert registered.complete is None and registered.adoption is None
     assert completed.complete == f.witness and completed.adoption is None
     assert adopted.adoption == _adoption(f)
-    for request, snapshot in ((register, registered), (complete, completed), (query, adopted)):
+    for request, snapshot in ((register, registered), (query, adopted)):
         reply = wire.OutputHandoffReply(request, True, snapshot)
         _metadata_roundtrip((request, reply), f)
         assert reply.snapshot == snapshot and reply.snapshot is not snapshot
+    acknowledgement = wire.OutputHandoffCompleteAck(completed.complete, True)
+    _metadata_roundtrip((complete, acknowledgement), f)
+    assert acknowledgement.witness == f.witness and acknowledgement.witness is not completed.complete
+    assert not hasattr(acknowledgement, "snapshot")
     retirement = wire.AckOutputPublicationAdopted(_adoption(f))
     assert retirement.request_identity == _identity(f)
     _metadata_roundtrip(wire.AckOutputPublicationAdoptedReply(retirement, True), f)
@@ -164,10 +168,9 @@ def test_aborted_handoff_fences_forward_work_without_inventing_complete_or_clean
         with pytest.raises((OutputHandoffStateError, OutputHandoffConflictError)):
             transition()
         assert table.query(f.publication_id) == snapshot
-    rejected = wire.OutputHandoffReply(
-        wire.ReportOutputHandoffComplete(f.witness), False, snapshot, "handoff aborted",
-    )
-    assert not rejected.accepted and rejected.snapshot.complete is None
+    rejected = wire.OutputHandoffCompleteAck(f.witness, False, "handoff aborted")
+    assert not rejected.accepted and rejected.witness == f.witness
+    assert table.query(f.publication_id) == snapshot and snapshot.complete is None
     _metadata_roundtrip(rejected, f)
 
 

@@ -1,11 +1,11 @@
-"""Mixed in-memory Worker-death reducers and real supervisor/race tests.
+"""In-memory Worker-death reducers and one bounded detector/Complete race.
 
 The bare Node fixture owns only a 1 KiB in-memory store and fake processes.
-Eleven synchronous functions remain unit; their successful completion paths
+Twelve synchronous functions remain unit; their successful completion paths
 use the actual journal/adapter, output envelope and resource ledger.
-The live supervisor retry and concurrent detector/Complete functions start real
-threads (the race also uses an unbounded Barrier), so remain heavy pending an
-independent bounded review. Original IDs and semantic contracts are retained.
+Supervisor retry drives the real loop for four finite logical-clock rounds.
+The opt-in L1 race uses exactly two threads, a one-second Barrier and joins,
+plus finally abort/join cleanup. Original IDs and contracts are retained.
 The old success fixtures use the required publication path; stale reseal checks
 also preserve the newer attempt across the original deletion watermark.
 """
@@ -50,7 +50,7 @@ from tests.support._worker_protocol import initialize_worker_protocol
 
 @pytest.fixture(autouse=True)
 def _pure_cases_have_no_runtime(request, monkeypatch):
-    if request.node.get_closest_marker("heavy") is not None:
+    if request.node.name == "test_concurrent_complete_and_detector_release_once":
         return
 
     def forbidden(*_args, **_kwargs):
@@ -62,6 +62,40 @@ def _pure_cases_have_no_runtime(request, monkeypatch):
     monkeypatch.setattr(socket, "socket", forbidden)
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr(time, "sleep", forbidden)
+
+
+@pytest.fixture
+def _bounded_race_threads(monkeypatch):
+    original_start, original_join = threading.Thread.start, threading.Thread.join
+    original_barrier_wait = threading.Barrier.wait
+    allowed_threads = set()
+    allowed_barriers = set()
+
+    def start(thread):
+        assert thread in allowed_threads and len(allowed_threads) == 2
+        return original_start(thread)
+
+    def join(thread, timeout=None):
+        assert thread in allowed_threads and type(timeout) in (int, float) and 0 <= timeout <= 1
+        return original_join(thread, timeout)
+
+    def wait(barrier, timeout=None):
+        assert barrier in allowed_barriers and timeout == 1.0
+        return original_barrier_wait(barrier, timeout=timeout)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("bounded supervisor race attempted unrelated runtime infrastructure")
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Thread, "join", join)
+    monkeypatch.setattr(threading.Barrier, "wait", wait)
+    monkeypatch.setattr(threading.Timer, "start", forbidden)
+    monkeypatch.setattr(NodeServer, "__init__", forbidden)
+    monkeypatch.setattr(WorkerServer, "__init__", forbidden)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(time, "sleep", forbidden)
+    return allowed_threads, allowed_barriers
 
 
 class _Process:
@@ -207,8 +241,8 @@ def _attach_output_publication(node):
 
     def report_complete(witness):
         snapshot = handoffs.record_complete(witness)
-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
-        assert reply.snapshot.complete == witness
+        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        assert reply.accepted and reply.witness == witness
 
     def report_rollback(tombstone, *, manifest):
         assert journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
@@ -234,7 +268,7 @@ def _prepare_one_output(node, request, grant, publication, payload, *, stored):
     )
     manifest = OutputPublicationManifest.create(header, (OutputValue(protocol.ResultStorage.OBJECT_STORE if stored else protocol.ResultStorage.INLINE, len(payload), hashlib.sha256(payload).hexdigest())))
     before = node.resource_ledger.snapshot()
-    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(manifest, (payload,)))
+    prepared = node._handle_prepare_output_publication(wire.PrepareOutputPublication(manifest, payload))
     assert prepared.accepted and node._leases[request.lease_id].output_publication_id == identity
     assert publication.journal.snapshot(identity).ready_to_complete
     assert publication.handoffs.query(identity).manifest == manifest
@@ -576,11 +610,13 @@ def test_replacement_is_fresh_and_begin_drain_prevents_replacement(
     assert drained_query.found and not drained_query.worker_alive
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_replacement_failures_balance_counter_and_supervisor_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    node, _request, grant, _object_id = _node_fixture()
+    node, request, grant, object_id = _node_fixture()
+    clock = [0.0]
+    monkeypatch.setattr("miniray.node.time.monotonic", lambda: clock[0])
     process = node._workers[grant.worker_id].process
     assert process is not None
     process.alive = False
@@ -599,6 +635,10 @@ def test_replacement_failures_balance_counter_and_supervisor_retries(
     assert vacant.process is None
     assert vacant.replacement_error == "RuntimeError: ID source unavailable"
     assert node._worker_replacements_inflight == 0
+    assert vacant.replacement_retry_round == 1
+    assert vacant.replacement_retry_after > clock[0]
+    assert node._leases[request.lease_id].state is protocol.LeaseExecutionState.WORKER_LOST
+    assert node._ledger.release_calls == 1 and node.resource_ledger.available == node.resource_ledger.total
 
     replacement_id = WorkerID.random()
     replacement = _Process(7102, alive=True)
@@ -612,22 +652,46 @@ def test_replacement_failures_balance_counter_and_supervisor_retries(
             raise RuntimeError("transient spawn failure")
         return replacement, ("127.0.0.1", 27102)
 
-    published = threading.Event()
+    published, waits = [], []
+
+    class _FiniteSupervisorStop:
+        stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def set(self):
+            self.stopped = True
+
+        def wait(self, delay):
+            assert 0 < delay <= 0.25 and len(waits) < 4
+            assert not node._state_lock._is_owned() and not node._worker_lifecycle_lock.locked()
+            assert node._worker_replacements_inflight == 0 and node._ledger.release_calls == 1
+            waits.append(delay)
+            if len(waits) == 1:
+                assert spawn_calls == 0 and vacant.replacement_retry_round == 1
+                assert clock[0] < vacant.replacement_retry_after
+            elif not published:
+                assert spawn_calls == 1 and vacant.replacement_retry_round == 2
+                assert vacant.replacement_error == "RuntimeError: transient spawn failure"
+                assert clock[0] < vacant.replacement_retry_after
+            clock[0] += delay
+            return self.stopped
+
+    stop = _FiniteSupervisorStop()
+    node._worker_supervisor_stop = stop
 
     def emit(name: str, **_attributes: object) -> None:
         if name == "worker_replaced":
-            published.set()
+            published.append(name)
+            stop.set()
 
-    vacant.replacement_retry_after = 0.0
     monkeypatch.setattr(node, "_fresh_worker_id_locked", lambda: replacement_id)
     monkeypatch.setattr(node, "_spawn_worker_process", spawn)
     monkeypatch.setattr(node, "_emit", emit)
 
-    node._start_worker_supervisor()
-    try:
-        assert published.wait(1.0), "supervisor did not retry the vacant slot"
-    finally:
-        node._stop_worker_supervisor()
+    node._worker_supervisor_loop()
+    assert published == ["worker_replaced"] and len(waits) == 4
 
     assert spawn_calls == 2
     assert node._worker_supervisor_thread is None
@@ -635,6 +699,9 @@ def test_replacement_failures_balance_counter_and_supervisor_retries(
     assert node._worker_order == (replacement_id,)
     assert node._workers[replacement_id].process is replacement
     assert grant.worker_id not in node._workers
+    assert node._ledger.release_calls == 1
+    outcome = node._handle_get_worker_lease_outcome(_query(request, grant, object_id))
+    assert outcome.state is protocol.LeaseExecutionState.WORKER_LOST and not outcome.worker_alive
 
 
 @pytest.mark.unit
@@ -729,12 +796,16 @@ def test_granted_or_running_child_death_reclaims_once(
     ).state is protocol.LeaseExecutionState.WORKER_LOST
 
 
-@pytest.mark.heavy
+@pytest.mark.loopback_smoke
 def test_concurrent_complete_and_detector_release_once(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, _bounded_race_threads,
 ) -> None:
-    node, request, grant, _ = _node_fixture()
-    node._handle_start_worker_lease(_start(request, grant))
+    node, request, grant, object_id = _node_fixture()
+    publication = _attach_output_publication(node)
+    assert node._handle_start_worker_lease(_start(request, grant)).accepted
+    payload = b"concurrent"
+    manifest = _prepare_one_output(node, request, grant, publication, payload, stored=False)
+    identity = manifest.publication_id
     process = node._workers[grant.worker_id].process
     assert process is not None
     process.alive = False
@@ -744,35 +815,75 @@ def test_concurrent_complete_and_detector_release_once(
         node, "_spawn_worker_process",
         lambda _worker: (_ for _ in ()).throw(AssertionError("no replacement")),
     )
-    gate = threading.Barrier(3)
+    gate = threading.Barrier(3, timeout=1.0)
     complete_replies: list[protocol.CompleteWorkerLeaseReply] = []
+    errors: list[BaseException] = []
+    detections: list[bool] = []
 
     def complete() -> None:
-        gate.wait()
-        complete_replies.append(
-            node._handle_complete_worker_lease(_complete(request, grant))
-        )
+        try:
+            gate.wait(timeout=1.0)
+            complete_replies.append(
+                node._handle_complete_worker_lease(_complete(request, grant))
+            )
+        except BaseException as exc:
+            errors.append(exc)
 
     def detect() -> None:
-        gate.wait()
-        node._handle_unexpected_worker_exit(grant.worker_id, process)
+        try:
+            gate.wait(timeout=1.0)
+            detections.append(node._handle_unexpected_worker_exit(grant.worker_id, process))
+        except BaseException as exc:
+            errors.append(exc)
 
-    threads = (threading.Thread(target=complete), threading.Thread(target=detect))
-    for thread in threads:
-        thread.start()
-    gate.wait()
-    for thread in threads:
-        thread.join(1.0)
-        assert not thread.is_alive()
+    threads = (threading.Thread(target=complete, name="complete-race", daemon=True),
+               threading.Thread(target=detect, name="detector-race", daemon=True))
+    allowed_threads, allowed_barriers = _bounded_race_threads
+    allowed_threads.update(threads)
+    allowed_barriers.add(gate)
+    try:
+        for thread in threads:
+            thread.start()
+        gate.wait(timeout=1.0)
+        for thread in threads:
+            thread.join(1.0)
+        assert not any(thread.is_alive() for thread in threads)
+    finally:
+        gate.abort()
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(1.0)
+        assert not any(thread.is_alive() for thread in threads), "bounded supervisor race leaked a thread"
+    assert not errors and detections == [True] and len(complete_replies) == 1
+    for _ in range(2):
+        node._drive_output_publications()
     state = node._leases[request.lease_id].state
     assert state in (
         protocol.LeaseExecutionState.COMPLETED,
         protocol.LeaseExecutionState.WORKER_LOST,
     )
     assert node._ledger.release_calls == 1
+    assert node.resource_ledger.available == node.resource_ledger.total
     assert complete_replies[0].accepted is (
         state is protocol.LeaseExecutionState.COMPLETED
     )
+    assert complete_replies[0].released is complete_replies[0].accepted
+    snapshot = publication.journal.snapshot(identity)
+    outcome = node._handle_get_worker_lease_outcome(_query(request, grant, object_id))
+    assert outcome.state is state and not outcome.worker_alive and not outcome.cleanup_pending
+    if state is protocol.LeaseExecutionState.COMPLETED:
+        envelope = complete_replies[0].output_publication
+        assert envelope.manifest == manifest and envelope.result.inline_data == payload
+        assert envelope.complete == OutputPublicationCompleteWitness.for_manifest(manifest)
+        assert snapshot.complete == envelope.complete and snapshot.result_retained
+        assert snapshot.rollback is None and outcome.output_publication == envelope
+        assert publication.handoffs.query(identity).complete == envelope.complete
+    else:
+        assert snapshot.complete is None and not snapshot.result_retained
+        assert publication.adapter.rollback_reported(identity)
+        assert publication.handoffs.query(identity).phase is OutputHandoffPhase.ABORTED
+        assert outcome.output_publication is None and outcome.output_completion is None
+    assert node._ledger.release_calls == 1
 
 
 class _PatchedExit(BaseException):

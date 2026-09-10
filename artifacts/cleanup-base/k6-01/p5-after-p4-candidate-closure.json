@@ -1,0 +1,207 @@
+{
+  "status": "P4trial02hunkrebased_static_closure_complete_waiting_runtime",
+  "consumer_count": 27,
+  "adapted_consumers": 18,
+  "unchanged_forwarders": 9,
+  "consumers": [
+    {
+      "path": "tests/support/_contained_output.py",
+      "changed": false,
+      "disposition": "request/handler forwarding, failure observer or accepted-only usage; no Complete reply snapshot consumption",
+      "sha256": "1e9dc43b595012f8ecd5c822751aa68db5bdad4e99ceff8f18760301e58aadc7"
+    },
+    {
+      "path": "tests/unit/test_abandoned_dependency_protocol.py",
+      "changed": false,
+      "disposition": "mandatory owner interface stub intentionally fails unrelated methods; Complete never invoked",
+      "sha256": "09f78bee411d4170966d831da85d2158a78b5c940808de21f89a669900910bbe"
+    },
+    {
+      "path": "tests/integration/test_core_reconstruction_concurrency.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "f4b66e1d17b4f64baa06aa2717b5bd297fa5f6358a7bba0377cf8335d9ad3cee"
+    },
+    {
+      "path": "tests/unit/test_common_cleanup_progress.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "234afce83bee2b095f8a8ad3be94e0298238b6c5b9a3dbd1f2152ac68a8a3e85"
+    },
+    {
+      "path": "tests/unit/test_core_output_node_loss.py",
+      "changed": false,
+      "disposition": "request/handler forwarding, failure observer or accepted-only usage; no Complete reply snapshot consumption",
+      "sha256": "5c97de80b9f05c04a35d1969b55b7d5fc245788c74f2af33677c8a63d9ae9ae8"
+    },
+    {
+      "path": "tests/unit/test_core_output_publication.py",
+      "changed": false,
+      "disposition": "request/handler forwarding, failure observer or accepted-only usage; no Complete reply snapshot consumption",
+      "sha256": "893d687891f4d19a0f769d62f05f9684259d2ef3863bfa972f22a88f1f21ffe9"
+    },
+    {
+      "path": "tests/unit/test_core_placement_group_scheduling.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "85961bef06970afd423a17df647b534ae017774ffea2752f4b604edf25acc03a"
+    },
+    {
+      "path": "tests/unit/test_core_worker_crash_recovery.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "43a8abbfe70d708e0974ae40a02177927b32ee5a9200f2b1bca88a949447efdc"
+    },
+    {
+      "path": "tests/unit/test_inline_recovery.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "d0a84bc335ba34da2d0ef50bb827141832a372c194bbee11ca67ad0505ca6f8d"
+    },
+    {
+      "path": "tests/unit/test_lease_completion_handshake.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "ce9572f0b263f553b2aecfe4604b8ec4baea6b64ad56291c78f089e2f0cd79b1"
+    },
+    {
+      "path": "tests/integration/test_precomplete_output_owner_death_path.py",
+      "changed": false,
+      "disposition": "Complete request counted only; snapshot reads belong GetOutputHandoff and Finalize request echo remains separate",
+      "sha256": "4bbe9737aba907c692843ed58a077df1cf159d29391e7475099dcd2434e6b81f"
+    },
+    {
+      "path": "tests/integration/test_unreported_complete_node_loss_path.py",
+      "changed": false,
+      "disposition": "Complete report request loss injection retains original method result; no shape-dependent read",
+      "sha256": "961ca08de7bd12ac684376fb87a66780d312476ec8fb1f942344bf13fa632ecf"
+    },
+    {
+      "path": "tests/unit/test_output_control_shutdown.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "7ba174174b7ce06886594dd5f00ca2f37e6d5e9dbc7655ba279a05ae1cc48b1b"
+    },
+    {
+      "path": "tests/unit/test_output_protocol.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "b6848ce096104f134285c2ae2589051dc79a61d1547bf23ccfb25d464cace3b7"
+    },
+    {
+      "path": "tests/unit/test_output_publication_node_server.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "100ee1b609cd7cfed1ca66547887555a2b43e3596777acfaee53f465e1e62e22"
+    },
+    {
+      "path": "tests/unit/test_owner_led_publication.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "f3234c8e2ea903acd25aef5d174e650c30457f517742d9046aa57e4e7a7a7d0d"
+    },
+    {
+      "path": "tests/unit/test_owner_service.py",
+      "changed": false,
+      "disposition": "stateless routing adapter returns opaque callback result; no Complete reply shape dependency",
+      "sha256": "19a73edfe91d907fed53147026861fa2309a70f2e7981b22f0be48292478ca90"
+    },
+    {
+      "path": "tests/unit/test_publication_pg_loss_paths.py",
+      "changed": false,
+      "disposition": "request/handler forwarding, failure observer or accepted-only usage; no Complete reply snapshot consumption",
+      "sha256": "df38d43094a5c1e3ec699959936cee24262be5701da61bcd741b47a8f3481c96"
+    },
+    {
+      "path": "tests/unit/test_same_owner_output_custody.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "69869d31aa058e970ea013ab278f7607e32bacff462c3028e22ae713e717cd99"
+    },
+    {
+      "path": "tests/unit/test_spillback_runtime.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "640177dff5434b1295971a8109ae326029470dedfb0714e9f188cefac32e9b03"
+    },
+    {
+      "path": "tests/unit/test_task_finish_barrier.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "2a1d4de475d0cc6c5c1ef5792916267f96d115378ae9fc9c1f7e9a2d009f7982"
+    },
+    {
+      "path": "tests/unit/test_task_output_seal_cleanup.py",
+      "changed": false,
+      "disposition": "request/handler forwarding, failure observer or accepted-only usage; no Complete reply snapshot consumption",
+      "sha256": "f3a089f112b9dd05df2dd7765adf52b7063426659b43db277e7ec186eae7060c"
+    },
+    {
+      "path": "tests/unit/test_worker_completion_paths.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "3021cfbea9e87110706e24e6ebb8a982469a5092012c7833cddc5b19db5c9b6a"
+    },
+    {
+      "path": "tests/unit/test_worker_crash_supervisor.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "78b9a49d58dff20eaa16df512c3a89d129115b3d2cd614eb440bfa9941e7b908"
+    },
+    {
+      "path": "tests/unit/test_worker_unified_output.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "12dce2df3a6b125cfe5cd661a3c73468f4c17e4819e2c108b9ee4fa56df38aee"
+    },
+    {
+      "path": "tests/unit/_pure_node_output_current.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "99a9936cc926594072aa0d92ea20a8821a1dea4e2044e6ac742468ccbe69131c"
+    },
+    {
+      "path": "tests/unit/_pure_output_runtime.py",
+      "changed": true,
+      "disposition": "narrow Complete ACK witness/type branch; Register/Rollback/Query snapshot paths preserved",
+      "sha256": "c91cb759652d2dbcb90281f629bb6c50bb3cc8530af1a458442a1eebe23eb952"
+    }
+  ],
+  "changed_paths": [
+    "src/miniray/core.py",
+    "src/miniray/node.py",
+    "src/miniray/output_protocol.py",
+    "src/miniray/worker.py",
+    "tests/integration/test_core_reconstruction_concurrency.py",
+    "tests/unit/_pure_node_output_current.py",
+    "tests/unit/_pure_output_runtime.py",
+    "tests/unit/test_common_cleanup_progress.py",
+    "tests/unit/test_core_placement_group_scheduling.py",
+    "tests/unit/test_core_worker_crash_recovery.py",
+    "tests/unit/test_inline_recovery.py",
+    "tests/unit/test_lease_completion_handshake.py",
+    "tests/unit/test_output_complete_ack.py",
+    "tests/unit/test_output_control_shutdown.py",
+    "tests/unit/test_output_protocol.py",
+    "tests/unit/test_output_publication_node_server.py",
+    "tests/unit/test_owner_led_publication.py",
+    "tests/unit/test_same_owner_output_custody.py",
+    "tests/unit/test_spillback_runtime.py",
+    "tests/unit/test_task_finish_barrier.py",
+    "tests/unit/test_worker_completion_paths.py",
+    "tests/unit/test_worker_crash_supervisor.py",
+    "tests/unit/test_worker_unified_output.py"
+  ],
+  "new_test": "tests/unit/test_output_complete_ack.py",
+  "new_test_cases": 8,
+  "preserved_P4_methods": [
+    "_put_value",
+    "_drive_put_handoff_cleanup",
+    "_retire_lost_output_memberships",
+    "_drive_output_node_loss_once"
+  ],
+  "owner_query_and_deepcopy_unchanged": true,
+  "P3_preflight_fix_included": false,
+  "pytest_run": false,
+  "base_changed": false
+}

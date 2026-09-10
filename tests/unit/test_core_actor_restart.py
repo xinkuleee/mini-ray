@@ -1,29 +1,36 @@
-"""Owner-side Actor restart contracts, mostly exercising a real Core runtime.
+"""Owner-side Actor restart contracts with explicit runtime ownership.
 
-Only the options-validation case is pure. The other cases start real Core
-threads, and some also start Actor-call threads or use control-plane RPCs. They
-remain heavy pending exact bounded review; synthetic teardown is not evidence
-of successful semantic drain or of a pure fixture.
+Three L1 cases use the public Actor submission and real dispatch/publication
+path, with at most two Actor-call threads and one-second gates/joins. The
+remaining state/options/create cases are threadless. All cases use a real
+owner table and ActorClientTable; synchronous transport replies and the local
+reference FIFO replace only infrastructure. No Core startup, listener,
+process, timer, ordinary-task execution or unbounded teardown runs.
 """
 
 from __future__ import annotations
 
 import hashlib
+import multiprocessing.process
+import socket
+import subprocess
 import threading
+import time
 
 import cloudpickle
 import pytest
 
 import miniray as ray
+import miniray.core as core_module
+import miniray.transport as transport_module
 from miniray import protocol
+from miniray.actor_client import ActorClientTable
 from miniray.core import CoreWorker
 from miniray.errors import ActorDiedError, ActorUnavailableError
 from miniray.ids import ActorGeneration, ActorID, NodeID, ObjectID, WorkerID
 from miniray.resources import ResourceVector
 from miniray.transport import TransportError, TransportTimeout
-from tests.unit._core_test_utils import (
-    assert_core_threads_stopped, force_stop_core_threads,
-)
+from tests.unit._pure_core import close_pure_core, make_pure_core
 
 
 class _Counter:
@@ -51,19 +58,105 @@ def _exit(snapshot):
     )
 
 
-def _core():
-    return CoreWorker(
-        ("127.0.0.1", 21001), NodeID.random(),
-        gcs_address=("127.0.0.1", 21002),
-        owner_address=("127.0.0.1", 21003),
-        restartable_actor_owner=True,
-    )
+@pytest.fixture(autouse=True)
+def _runtime_bounds(monkeypatch, request):
+    threads = []
+    violations = []
+    real_start = threading.Thread.start
+    real_join = threading.Thread.join
+    real_wait = threading.Event.wait
+    concurrent = request.node.get_closest_marker("loopback_smoke") is not None
+
+    def forbidden(*_args, **_kwargs):
+        violations.append("unexpected runtime boundary")
+        pytest.fail("Actor restart fixture attempted unmodelled runtime work")
+
+    def start(thread):
+        if (not concurrent or not thread.name.startswith("miniray-actor-call-")
+                or len(threads) >= 2):
+            forbidden()
+        # Record ownership before a partially successful Thread.start.
+        threads.append(thread)
+        return real_start(thread)
+
+    def join(thread, timeout=None):
+        if thread not in threads or timeout is None or not 0 <= timeout <= 1.0:
+            forbidden()
+        return real_join(thread, timeout)
+
+    def wait(event, timeout=None):
+        if event.is_set():
+            return True
+        # CPython Thread.start waits for its own bootstrap receipt. All
+        # scenario waits have explicit deadlines; no arbitrary infinite wait.
+        bootstrap = any(event is thread._started for thread in threads)
+        if not concurrent or (not bootstrap and (timeout is None or not 0 <= timeout <= 1.0)):
+            forbidden()
+        return real_wait(event, timeout)
+
+    for owner, name in (
+        (CoreWorker, "__init__"), (threading.Timer, "start"),
+        (multiprocessing.process.BaseProcess, "start"),
+        (multiprocessing.process.BaseProcess, "join"),
+        (subprocess, "Popen"), (time, "sleep"),
+        (core_module, "rpc_request"), (transport_module, "request"),
+    ):
+        monkeypatch.setattr(owner, name, forbidden)
+    for name in ("socket", "socketpair", "create_connection"):
+        monkeypatch.setattr(socket, name, forbidden)
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(threading.Thread, "join", join)
+    monkeypatch.setattr(threading.Event, "wait", wait)
+    if not concurrent:
+        monkeypatch.setattr(threading.Condition, "wait", forbidden)
+        monkeypatch.setattr(threading.Barrier, "wait", forbidden)
+    yield threads
+    assert not any(thread.is_alive() for thread in threads)
+    assert not violations
+
+
+@pytest.fixture
+def actor_core(monkeypatch, _runtime_bounds):
+    core = make_pure_core()
+    core.gcs_address = ("gcs.invalid", 1)
+    core._restartable_actor_owner = True
+    core._actor_clients = ActorClientTable()
+    core._actor_control_ops = 0
+    # make_pure_core fences this boundary by default. Restore the real Actor
+    # route/retry protocol; each case replaces only its two RPC boundaries.
+    core._actor_call_rpc = CoreWorker._actor_call_rpc.__get__(core)
+    refs = []
+    new_ref = core._new_object_ref
+
+    def remember_ref(object_id):
+        ref = new_ref(object_id)
+        refs.append(ref)
+        return ref
+
+    monkeypatch.setattr(core, "_new_object_ref", remember_ref)
+    core._test_actor_threads = _runtime_bounds
+    core._test_actor_refs = refs
+    try:
+        yield core
+    finally:
+        _stop(core)
 
 
 def _stop(core: CoreWorker) -> None:
-    if not core.shutdown(timeout=1.0):
-        force_stop_core_threads(core)
-    assert_core_threads_stopped(core)
+    # No drain counters or authority tables are reset to force success.
+    deadline = time.monotonic() + 1.0
+    for thread in core._test_actor_threads:
+        if thread.ident is not None:
+            thread.join(max(0.0, deadline - time.monotonic()))
+    assert not any(thread.is_alive() for thread in core._test_actor_threads)
+    assert not core._actor_call_threads and core._actor_control_ops == 0
+    for ref in core._test_actor_refs:
+        ref.close(timeout=0)
+        assert ref._release_done.is_set()
+    core._reference_mailbox.drain()
+    assert core._reference_mailbox.pending.empty()
+    assert not core._object_gc_obligations
+    close_pure_core(core)
 
 
 def _register(core, *, max_restarts=1):
@@ -94,11 +187,11 @@ def _success(request, snapshot):
     )
 
 
-@pytest.mark.heavy
+@pytest.mark.loopback_smoke
 def test_install_restarting_fails_old_inflight_and_new_generation_starts_at_zero(
-    monkeypatch,
+    monkeypatch, actor_core,
 ):
-    core = _core()
+    core = actor_core
     first = _register(core)
     entered = threading.Event()
     release = threading.Event()
@@ -106,6 +199,7 @@ def test_install_restarting_fails_old_inflight_and_new_generation_starts_at_zero
     new_sequences = []
 
     def direct(_address, _handler, request):
+        assert len(seen) < 1
         seen.append(request)
         entered.set()
         assert release.wait(1.0)
@@ -137,6 +231,7 @@ def test_install_restarting_fails_old_inflight_and_new_generation_starts_at_zero
         release.set()
 
         def new_direct(_address, _handler, request):
+            assert len(new_sequences) < 1
             new_sequences.append(request.sequence)
             return _success(request, second)
 
@@ -158,11 +253,11 @@ def test_install_restarting_fails_old_inflight_and_new_generation_starts_at_zero
 
 
 
-@pytest.mark.heavy
+@pytest.mark.loopback_smoke
 def test_same_alive_route_transport_failure_is_typed_actor_unavailable(
-    monkeypatch,
+    monkeypatch, actor_core,
 ):
-    core = _core()
+    core = actor_core
     first = _register(core)
     now = [0.0]
     waits = []
@@ -170,10 +265,12 @@ def test_same_alive_route_transport_failure_is_typed_actor_unavailable(
     state_queries = []
 
     def unavailable(address, _handler, request):
+        assert len(pushes) < 16, "same-route retry exceeded its finite budget"
         pushes.append((address, request))
         raise TransportTimeout("actor socket timeout")
 
     def wait(delay):
+        assert 0 < delay <= 0.1
         waits.append(delay)
         now[0] += delay
 
@@ -211,11 +308,11 @@ def test_same_alive_route_transport_failure_is_typed_actor_unavailable(
         _stop(core)
 
 
-@pytest.mark.heavy
+@pytest.mark.loopback_smoke
 def test_transport_failure_with_new_gcs_route_fences_old_generation(
-    monkeypatch,
+    monkeypatch, actor_core,
 ):
-    core = _core()
+    core = actor_core
     first = _register(core)
     restarting = protocol.ActorSnapshot(
         first.actor_id, first.generation.next(), protocol.ActorState.RESTARTING,
@@ -227,10 +324,12 @@ def test_transport_failure_with_new_gcs_route_fences_old_generation(
     state_queries = []
 
     def unavailable(address, _handler, request):
+        assert len(pushes) < 4, "old generation replay crossed its new route"
         pushes.append((address, request))
         raise TransportTimeout("old actor route is unreachable")
 
     def wait(delay):
+        assert 0 < delay <= 0.1
         waits.append(delay)
         now[0] += delay
 
@@ -257,9 +356,9 @@ def test_transport_failure_with_new_gcs_route_fences_old_generation(
         _stop(core)
 
 
-@pytest.mark.heavy
-def test_install_state_exact_replay_stale_noop_and_equal_epoch_conflict():
-    core = _core()
+@pytest.mark.unit
+def test_install_state_exact_replay_stale_noop_and_equal_epoch_conflict(actor_core):
+    core = actor_core
     first = _register(core)
     try:
         exact = protocol.InstallActorState(core.worker_id, first)
@@ -272,6 +371,7 @@ def test_install_state_exact_replay_stale_noop_and_equal_epoch_conflict():
             protocol.InstallActorState(core.worker_id, conflicting)
         )
         assert not rejected.installed and "reused" in (rejected.error or "")
+        assert core._actor_clients.snapshot(first.actor_id) == first
 
         generation1 = first.generation.next()
         restarting = protocol.ActorSnapshot(
@@ -288,9 +388,9 @@ def test_install_state_exact_replay_stale_noop_and_equal_epoch_conflict():
         _stop(core)
 
 
-@pytest.mark.heavy
-def test_dead_snapshot_rejects_new_calls_immediately():
-    core = _core()
+@pytest.mark.unit
+def test_dead_snapshot_rejects_new_calls_immediately(actor_core):
+    core = actor_core
     first = _register(core, max_restarts=0)
     dead = protocol.ActorSnapshot(
         first.actor_id, first.generation, protocol.ActorState.DEAD, 2, 0, 0,
@@ -302,6 +402,8 @@ def test_dead_snapshot_rejects_new_calls_immediately():
         ).installed
         with pytest.raises(ActorDiedError, match="not callable"):
             core.submit_actor_call(first.actor_id, "inc", (), {})
+        assert core._actor_clients.snapshot(first.actor_id) == dead
+        assert not core._objects and not core._actor_call_threads
     finally:
         _stop(core)
 
@@ -321,9 +423,9 @@ def test_max_restarts_is_actor_only_and_options_copy_is_independent():
         ray.remote(max_restarts=-1)(_Counter)
 
 
-@pytest.mark.heavy
-def test_create_actor_binds_restart_policy_to_driver_owner_endpoint(monkeypatch):
-    core = _core()
+@pytest.mark.unit
+def test_create_actor_binds_restart_policy_to_driver_owner_endpoint(monkeypatch, actor_core):
+    core = actor_core
     payload = cloudpickle.dumps(_Counter)
     definition = protocol.ActorClassDefinition(
         protocol.FunctionKey(core.job_id, __name__, "_Counter", "v1"),
@@ -332,6 +434,7 @@ def test_create_actor_binds_restart_policy_to_driver_owner_endpoint(monkeypatch)
     observed = []
 
     def create(_address, handler, request):
+        assert not observed, "accepted Actor creation must finish in one RPC"
         observed.append(request)
         assert handler == "create_actor"
         return protocol.CreateActorReply(

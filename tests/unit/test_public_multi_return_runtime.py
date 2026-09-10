@@ -373,7 +373,7 @@ def test_owner_terminal_preflight_failure_does_not_mutate_owner_or_recovery(monk
                 preflights.append(actual(plan))
                 raise RuntimeError("owner preflight")
             with monkeypatch.context() as patch:
-                patch.setattr(core.owner_table, "validate_output_publication", fail)
+                patch.setattr(core.owner_table, "commit_output_publication", fail)
                 assert not core._publish_reply(pending, reply, expected_node_id=node.node_id)
             assert len(preflights) == 1 and not calls
             assert (core.owner_table.snapshot(pending.object_id), replace(core._recovery.task_record(pending.task_id)), dict(core._stored_descriptors)) == before

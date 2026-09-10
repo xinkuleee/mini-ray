@@ -449,7 +449,7 @@ def test_reconstruction_system_retry_success_and_next_loss_start_cleanly() -> No
     old_handoff = runtime.handoff_snapshot(current_reply.output_publication.publication_id)
     assert old_handoff.adoption is not None
     assert core.owner_table.snapshot(original.object_id).output_publication is None
-    assert runtime.journal.snapshot(current_reply.output_publication.publication_id).retained_result_slots == ()
+    assert runtime.journal.snapshot(current_reply.output_publication.publication_id).result_retained is False
 
 
 @pytest.mark.unit

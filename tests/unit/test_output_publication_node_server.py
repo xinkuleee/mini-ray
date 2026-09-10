@@ -101,9 +101,9 @@ class _Fixture:
 
     def report_complete(self, witness):
         request = wire.ReportOutputHandoffComplete(witness)
-        snapshot = self.handoffs.record_complete(witness)
-        reply = wire.OutputHandoffReply(request, True, snapshot)
-        assert reply.request == request and reply.snapshot.complete == witness
+        snapshot = self.handoffs.record_complete(request.witness)
+        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        assert reply.accepted and reply.witness == request.witness
         self.hit("complete-report")
 
     def report_rollback(self, tombstone, *, manifest):
@@ -139,7 +139,7 @@ class _Fixture:
 
     def assert_no_pins_or_bytes(self):
         assert self.store.used_bytes == 0
-        assert self.journal.snapshot(self.id).retained_result_slots == ()
+        assert self.journal.snapshot(self.id).result_retained is False
         for transfer in (self.manifest.value).transfers:
             snapshot = self.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
             assert transfer.provisional_hold not in snapshot.contained_holds
@@ -410,7 +410,7 @@ def test_configured_checkpoints_follow_exact_owner_registration_and_promotions()
             assert saved.complete is None and local.complete is None
             assert record.state is protocol.LeaseExecutionState.RUNNING
             if arrival.phase is OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK:
-                assert saved.manifest == fixture.manifest and local.materialized_slots == ()
+                assert saved.manifest == fixture.manifest and local.materialized is False
                 assert fixture.store.used_bytes == 0
                 assert not local.ready_to_complete
             else:

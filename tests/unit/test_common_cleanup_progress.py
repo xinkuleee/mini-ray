@@ -164,7 +164,7 @@ class _CorePublication:
 
     def known_complete(self):
         reply = self.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(self.complete))
-        assert reply.accepted and reply.snapshot.complete == self.complete
+        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted and reply.witness == self.complete
 
     def loss(self, *, envelope=None):
         return self.core._drive_output_node_loss(

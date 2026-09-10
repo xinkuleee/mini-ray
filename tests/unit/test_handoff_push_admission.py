@@ -197,7 +197,7 @@ def test_cancellation_after_push_admission_is_arbitrated_by_node_start(monkeypat
             assert f.consumer._resolve_lease_cancellation(f.pending, f.pending.spec, f.sources, cancellation)
             start = f.target._handle_start_worker_lease(protocol.StartWorkerLease(
                 f.grant.lease_id, f.grant.task_id, f.grant.attempt_id, f.grant.worker_id,
-                f.grant.scheduling_key, f.grant.target_execution,
+                f.grant.scheduling_key,
             ))
             starts.append(start)
             assert type(start) is protocol.StartWorkerLeaseReply

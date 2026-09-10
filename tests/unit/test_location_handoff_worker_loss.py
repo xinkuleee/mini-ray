@@ -113,9 +113,9 @@ class _WorkerLossTransport:
 
         assert type(request) is protocol.GetWorkerLeaseOutcome
         assert (request.lease_id, request.task_id, request.attempt_id, request.executor_worker_id,
-                request.owner_worker_id, request.object_ids, request.scheduling_key, request.target_execution) == (
+                request.owner_worker_id, request.object_ids, request.scheduling_key) == (
             f.grant.lease_id, f.grant.task_id, f.grant.attempt_id, f.grant.worker_id,
-            f.consumer.worker_id, f.pending.output_ids, f.grant.scheduling_key, f.grant.target_execution,
+            f.consumer.worker_id, f.pending.output_ids, f.grant.scheduling_key,
         )
         # A real wire round-trip detaches response IDs from the query and Node
         # records. Preserve that boundary before deliberate delivery corruption.

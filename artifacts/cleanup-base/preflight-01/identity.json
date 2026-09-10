@@ -1,0 +1,54 @@
+{
+  "head": "ac3cee8f9454b0b03b3b99e48870237cfd7685c2",
+  "branch": "refs/heads/teaching-base",
+  "working_tree_status": "",
+  "mode": "isolated one-line Core preflight trial on P4trial02; real commit validation and all receipt queries retained; not runtime accepted",
+  "previous_candidate": "base-p4trial-02",
+  "previous_archive_sha256": "cfc3730b2d2b595e39e623e698275b707b0c89ee9e7881733a820d633d7c6fb5",
+  "archive_sha256": "e782e639078789a1fd36cccad0a0f36943295459f973f74b1b67dd19716a9814",
+  "file_count": 420,
+  "evaluation_root": "C:/Users/t-hdong/Desktop/gao/audit/p3-validation-evaluation",
+  "patch_sha256": "cb3c07fbe9f8e6692f01253b00e623199f0f7025d3d97fd4fd373f0ac1ec7a70",
+  "delta_from_previous": {
+    "scripts/baseline_manifest.json": {
+      "before_sha256": "1a63b904e5c93da728900476b37f3ce86bf98ff68faa1746492d61311bc7b040",
+      "after_sha256": "755ba78ea535aa9639572374993c33aaf09143b47fdb7908bd730ba83b261596"
+    },
+    "src/miniray/core.py": {
+      "before_sha256": "27857f52b25a85b5eba4d5ea1c0cfa2c1726fd0ddd5942863de60e607bb07ee9",
+      "after_sha256": "0c8521b98d0fc5c488002dc0c286c94d240d809ad6fa5a9bc438b753ef8121a1"
+    },
+    "tests/unit/test_core_output_publication.py": {
+      "before_sha256": "893d687891f4d19a0f769d62f05f9684259d2ef3863bfa972f22a88f1f21ffe9",
+      "after_sha256": "8718f00a61f297586519f091df3a8edd2b2cba5f9137b39b72b81658358e29e3"
+    },
+    "tests/unit/test_public_multi_return_runtime.py": {
+      "before_sha256": "259acd9e53745929c4266e445ab049f0ae51602ea94b812fbaf073f697148907",
+      "after_sha256": "6c23c66161c4c4fe7fe2cd2782d30c490d817a0a62eb607266ab8d2482f4b922"
+    }
+  },
+  "registry_refreshed": 311,
+  "delivery_gate": {
+    "pure_files": 26,
+    "smokes": 32
+  },
+  "gate_and_selectors_unchanged": true,
+  "planned_case_file_selectors": [
+    "tests/unit/test_core_output_publication.py",
+    "tests/unit/test_public_multi_return_runtime.py",
+    "tests/unit/test_output_owner_publication.py",
+    "tests/unit/test_core_output_receipt_loss.py",
+    "tests/unit/test_recovery.py"
+  ],
+  "new_fault_cases": 4,
+  "P4_other_core_methods_unchanged": true,
+  "source_extra_RPC_or_token": false,
+  "pytest_run": false,
+  "tests_executed": false,
+  "base_modified": false,
+  "protected_previous": {
+    "identity.json": "498faeb9705e0e1570895009aa9b6e52948f619bd5d89cf7ee774b01f5538ebc",
+    "snapshot.json": "9b688eb51c2e6bb624946455d40a0a9ea8b33b5a4d7bf44688ec6d540cda5b98",
+    "project.tar": "cfc3730b2d2b595e39e623e698275b707b0c89ee9e7881733a820d633d7c6fb5"
+  }
+}

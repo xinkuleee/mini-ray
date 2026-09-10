@@ -47,8 +47,10 @@ def prepare_ref_free_output(node, request, grant, *, job_id=None, values=(7,)):
         return owner_reply(request_value, handoffs.register(value, identity.attempt_id))
 
     def report_complete(witness):
-        request_value = wire.ReportOutputHandoffComplete(witness)
-        return owner_reply(request_value, handoffs.record_complete(witness))
+        snapshot = handoffs.record_complete(witness)
+        reply = replace(wire.OutputHandoffCompleteAck(snapshot.complete, True))
+        assert reply.accepted and reply.witness == witness
+        return reply
 
     def report_rollback(tombstone, *, manifest):
         request_value = wire.ReportOutputHandoffRollback(manifest, tombstone)

@@ -1,25 +1,23 @@
-"""Mixed owner metadata and real-thread stored-object collection contracts.
+"""Bounded stored-object collection on actual Node replicas and owner receipts.
 
-Only the two ObjectOwnerTable-only cases are pure. Every _stored_core fixture
-starts a real reference-event thread; retries may also start Timer threads.
-Their original cleanup cancels timers without a full bounded join, and the
-close-before-success case uses an unbounded Queue.join plus a stale pre-unified
-success reply. Keep those six tests heavy without hiding or rewriting either
-their runtime contract or the separate publication-fixture migration debt.
+One threadless Core, one accepted output and at most two 1-KiB Node stores.
+The existing publication fixture produces real owner registration and Node
+Complete before owner adoption. Replica Drop callbacks invoke actual Node
+handlers; only ACK delivery or one physical pin is faulted. Retry notifications
+are recorded locally and every replay is an explicit bounded call. No process,
+thread, socket, timer, sleep or blocking queue join runs.
 """
 
 from __future__ import annotations
 
 import hashlib
-import threading
 from dataclasses import replace
 
 import pytest
 
 from miniray import protocol
 from miniray.contained_edges import ContainedReferenceEdge, ContainedReferenceHold
-from miniray.core import _HomeRoute
-from miniray.core import CoreWorker, _ObjectWaiter, _PendingTask
+from miniray.core import CoreWorker
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.ownership import (
     ObjectCollectionInProgressError, ObjectCollectionState, ObjectOwnerTable, InvalidObjectTransitionError,
@@ -27,8 +25,14 @@ from miniray.ownership import (
 from miniray.reconstruction_runtime import (
     ReconstructionCoordinator, ReconstructionRuntimeError,
 )
-from miniray.recovery import RecoveryManager
 from miniray.resources import ResourceVector
+from miniray.object_store import ObjectStore
+from miniray.object_manager import ObjectManager
+from miniray.recovery import TaskState
+from tests.unit._pure_core import close_pure_core
+from tests.unit.test_core_output_publication import _fixture as _publication
+from tests.unit.test_node_dependency_pull import _bare_node
+from tests.unit.test_core_output_surviving_replica import _no_runtime as _no_runtime
 from miniray.output_publication import (OutputPublicationHeader, OutputPublicationID,
     OutputPublicationManifest, OutputPublicationNodeIncarnation, OutputValue,
     OutputPublicationCompleteWitness, OutputPublicationEnvelope)
@@ -57,69 +61,63 @@ def _spec(
 def _stored_core(
     *, locations: int = 2, local_token: object | None = None,
 ) -> tuple[CoreWorker, ObjectID, AttemptID, protocol.TaskSpec, tuple[NodeID, ...]]:
-    core = object.__new__(CoreWorker)
-    core.job_id = JobID.random()
-    core.worker_id = WorkerID.random()
-    core.node_id = NodeID.random()
-    core.node_address = ("127.0.0.1", 26021)
-    core.gcs_address = ("127.0.0.1", 26022)
-    core.driver_task_id = TaskID.for_driver(core.job_id)
-    core._owner_table = ObjectOwnerTable()
-    core._recovery = RecoveryManager()
-    core._objects = {}
-    core._stored_descriptors = {}
-    core._state_lock = threading.RLock()
-    core._membership_epoch = 0
-    core._installed_cluster_snapshot = None
-    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
-    core._dead_nodes = {}
-    core._completion = threading.Condition(core._state_lock)
-    core._object_gc_obligations = {}
-    core._gc_retry_timers = set()
-    core._owner_protocol_open = True
-    core._inflight_borrow_ops = 0
-    core._initialize_reference_events()
+    assert locations in (1, 2)
+    fixture, source, core, pending, reply, _calls, _rpc = _publication(refs=False, stored=True)
+    object_id, attempt, spec = pending.object_id, pending.spec.attempt_id, pending.spec
+    assert core._publish_reply(pending, reply, expected_node_id=source.node_id,
+                               expected_lease_id=fixture.id.lease_id)
+    assert core._finish_pending_task(pending)
+    nodes = {source.node_id: source}
+    payload = fixture.values.payload
+    assert len(payload) <= 64
+    for _ in range(locations - 1):
+        node_id = NodeID.random()
+        replica = _bare_node(node_id, ResourceVector())
+        replica._object_store = ObjectStore(1024)
+        replica._object_manager = ObjectManager(node_id, replica._object_store)
+        assert replica._handle_seal_object(protocol.SealObject.from_data(
+            object_id, attempt, core.worker_id, payload,
+        )).sealed
+        assert core.owner_table.publish_stored(object_id, attempt, node_id)
+        nodes[node_id] = replica
+    if local_token is not None:
+        assert core.owner_table.add_local_reference(object_id, local_token)
+    assert core.owner_table.release_local_reference(object_id, 'outer0')
+    core._physical_gc_nodes = nodes
+    core._physical_gc_retry_notifications = []
 
-    task_id = TaskID.derive(core.job_id, core.driver_task_id, 0)
-    object_id = ObjectID.for_task(task_id)
-    attempt = AttemptID(task_id, 0)
-    spec = _spec(core.job_id, object_id, attempt, core.worker_id)
-    node_ids = (core.node_id,) + tuple(NodeID.random() for _ in range(locations - 1))
-    core.owner_table.register(
-        object_id, current_attempt=attempt, producer_task_spec=spec,
-        local_token=local_token,
-    )
-    for node_id in node_ids:
-        core.owner_table.publish_stored(object_id, attempt, node_id)
-    payload = b"stored-physical-gc"
-    core._stored_descriptors[object_id] = protocol.ResultDescriptor(
-        object_id, protocol.ResultStorage.OBJECT_STORE, len(payload),
-        core.worker_id, core.node_id, hashlib.sha256(payload).hexdigest(),
-    )
-    core._objects[object_id] = _ObjectWaiter(threading.Event())
-    core._recovery.register_task(spec, max_retries=1)
-    core._recovery.record_task_success(spec.task_id, attempt)
-    return core, object_id, attempt, spec, tuple(sorted(node_ids))
+    def schedule(mailbox, event, delay):
+        assert mailbox is core._reference_mailbox and 0 < delay <= 0.25
+        assert event.object_id == object_id
+        core._physical_gc_retry_notifications.append(event)
+        assert len(core._physical_gc_retry_notifications) <= 3
+
+    core._schedule_reference_event = schedule
+    return core, object_id, attempt, spec, tuple(sorted(nodes))
 
 
-def _drop_reply(
-    request: protocol.DropObjectReplica,
-    status: protocol.DropObjectReplicaStatus,
-) -> protocol.DropObjectReplicaReply:
-    return protocol.DropObjectReplicaReply(
-        request.object_id, request.producer_attempt_id,
-        request.owner_worker_id, request.node_id, request.checksum, status,
-        None if status in (
-            protocol.DropObjectReplicaStatus.DROPPED,
-            protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
-        ) else status.value.lower(),
-    )
+def _drop_reply(core: CoreWorker, request: protocol.DropObjectReplica, *, pinned=False):
+    node = core._physical_gc_nodes[request.node_id]
+    pin = node.object_store.pin(request.object_id, 'physical-gc-pin') if pinned else None
+    try:
+        reply = node._handle_drop_object_replica(request)
+    finally:
+        if pin is not None:
+            node.object_store.unpin(request.object_id, pin)
+    if pinned:
+        assert reply.status is protocol.DropObjectReplicaStatus.PINNED
+    else:
+        assert reply.status in (protocol.DropObjectReplicaStatus.DROPPED,
+                                protocol.DropObjectReplicaStatus.ALREADY_DROPPED)
+    return reply
 
 
 def _stop_core(core: CoreWorker) -> None:
-    core._stop_reference_events(__import__("time").monotonic() + 1.0)
-    for timer in tuple(core._gc_retry_timers):
-        timer.cancel()
+    # No background execution exists and teardown does not claim GC completion.
+    for object_id in tuple(core._objects):
+        for token in tuple(core.owner_table.snapshot(object_id).local_tokens):
+            assert core.owner_table.release_local_reference(object_id, token)
+    close_pure_core(core)
 
 
 @pytest.mark.unit
@@ -181,7 +179,7 @@ def test_owner_freezes_complete_stored_plan_and_fences_every_mutator() -> None:
             mutate()
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_two_node_partial_ack_replays_only_missing_drop() -> None:
     core, object_id, _attempt, _spec_value, nodes = _stored_core()
     calls: list[NodeID] = []
@@ -192,12 +190,8 @@ def test_two_node_partial_ack_replays_only_missing_drop() -> None:
         calls.append(request.node_id)
         rounds[request.node_id] += 1
         if request.node_id == nodes[1] and rounds[request.node_id] == 1:
-            return _drop_reply(request, protocol.DropObjectReplicaStatus.PINNED)
-        return _drop_reply(
-            request, protocol.DropObjectReplicaStatus.DROPPED
-            if rounds[request.node_id] == 1
-            else protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
-        )
+            return _drop_reply(core, request, pinned=True)
+        return _drop_reply(core, request)
 
     core._rpc = rpc
     core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27100)
@@ -206,6 +200,8 @@ def test_two_node_partial_ack_replays_only_missing_drop() -> None:
         obligation = core._object_gc_obligations[object_id]
         assert set(obligation.pending_drops) == {nodes[1]}
         assert core.owner_table.collection_state(object_id) is ObjectCollectionState.COLLECTING
+        assert not core._physical_gc_nodes[nodes[0]].object_store.contains(object_id)
+        assert core._physical_gc_nodes[nodes[1]].object_store.contains(object_id)
 
         core._reference_released(object_id)
         assert calls.count(nodes[0]) == 1
@@ -219,7 +215,7 @@ def test_two_node_partial_ack_replays_only_missing_drop() -> None:
         _stop_core(core)
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_wrong_drop_ack_identity_is_ignored_until_exact_replay() -> None:
     core, object_id, _attempt, _spec_value, nodes = _stored_core(locations=1)
     calls = 0
@@ -228,7 +224,7 @@ def test_wrong_drop_ack_identity_is_ignored_until_exact_replay() -> None:
         nonlocal calls
         calls += 1
         assert isinstance(request, protocol.DropObjectReplica)
-        reply = _drop_reply(request, protocol.DropObjectReplicaStatus.DROPPED)
+        reply = _drop_reply(core, request)
         return replace(reply, owner_worker_id=WorkerID.random()) if calls == 1 else reply
 
     core._rpc = rpc
@@ -242,6 +238,7 @@ def test_wrong_drop_ack_identity_is_ignored_until_exact_replay() -> None:
 
         core._reference_released(object_id)
         assert calls == 2
+        assert not core._physical_gc_nodes[nodes[0]].object_store.contains(object_id, sealed_only=False)
         assert core.owner_table.collection_state(object_id) is ObjectCollectionState.COLLECTED
         assert object_id not in core._object_gc_obligations
         assert frozen_id
@@ -249,7 +246,7 @@ def test_wrong_drop_ack_identity_is_ignored_until_exact_replay() -> None:
         _stop_core(core)
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_shutdown_reports_unclean_then_second_convergence_is_clean() -> None:
     core, object_id, _attempt, _spec_value, _nodes = _stored_core(locations=1)
     calls = 0
@@ -260,7 +257,7 @@ def test_shutdown_reports_unclean_then_second_convergence_is_clean() -> None:
         assert isinstance(request, protocol.DropObjectReplica)
         if calls < 3:
             raise TimeoutError("ambiguous drop ACK")
-        return _drop_reply(request, protocol.DropObjectReplicaStatus.ALREADY_DROPPED)
+        return _drop_reply(core, request)
 
     core._rpc = rpc
     core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27102)
@@ -274,90 +271,75 @@ def test_shutdown_reports_unclean_then_second_convergence_is_clean() -> None:
         _stop_core(core)
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
 def test_collection_freeze_rejects_reconstruction_before_budget_mutation() -> None:
     core, object_id, attempt, spec, _nodes = _stored_core(locations=1)
-    core.owner_table.mark_lost(object_id, attempt)
-    core.owner_table.begin_collection(
+    assert core.owner_table.mark_lost(object_id, attempt)
+    descriptor = core._stored_descriptors[object_id]
+    plan = core.owner_table.begin_collection(
         object_id, collection_id="lost-collection",
-        canonical_size_bytes=18, canonical_checksum="b" * 64,
+        canonical_size_bytes=descriptor.size_bytes, canonical_checksum=descriptor.checksum,
     )
+    assert plan is not None
     coordinator = ReconstructionCoordinator(core._recovery, core.owner_table)
-    before = core._recovery.task_record(spec.task_id).retries_started
-
-    with pytest.raises(ReconstructionRuntimeError, match="collection"):
-        coordinator.request(object_id)
-
-    assert core._recovery.task_record(spec.task_id).retries_started == before
-    assert core._recovery.active_recovery(spec.task_id) is None
-    _stop_core(core)
-
-
-@pytest.mark.heavy
-def test_close_before_stored_success_records_lineage_before_gc() -> None:
-    core, object_id, attempt, spec, _nodes = _stored_core(
-        locations=1, local_token="handle"
-    )
-    # Reset the helper's completed result into the pre-reply state while
-    # keeping the same registered logical producer and local handle.
-    core.owner_table.remove_location(object_id, attempt, core.node_id)
-    core.owner_table.advance_attempt(
-        object_id, expected_attempt=attempt, next_attempt=attempt.next()
-    )
-    next_attempt = attempt.next()
-    next_spec = replace(spec, attempt_id=next_attempt)
-    # Rebuild a coherent fixture instead of mutating RecoveryManager's
-    # historical record across attempts.
-    core._owner_table = ObjectOwnerTable()
-    core._owner_table.register(
-        object_id, current_attempt=next_attempt, producer_task_spec=next_spec,
-        local_token="handle",
-    )
-    core._recovery = RecoveryManager()
-    core._recovery.register_task(next_spec, max_retries=1)
-    core._objects[object_id] = _ObjectWaiter(threading.Event())
-    core.owner_table.release_local_reference(object_id, "handle")
-    payload = b"closed-before-ready"
-    descriptor = protocol.ResultDescriptor(
-        object_id, protocol.ResultStorage.OBJECT_STORE, len(payload),
-        core.worker_id, core.node_id, hashlib.sha256(payload).hexdigest(),
-    )
-    reply = protocol.TaskReply(
-        next_spec.task_id, next_attempt, WorkerID.random(),
-        protocol.TaskReplyStatus.SUCCEEDED, (descriptor,),
-    )
-    pending = _PendingTask(object_id, next_spec)
-    core._rpc = lambda _address, _handler, request: _drop_reply(
-        request, protocol.DropObjectReplicaStatus.DROPPED
-    )
-    core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27103)
+    before = replace(core._recovery.task_record(spec.task_id))
+    owner_before = core.owner_table.snapshot(object_id)
     try:
-        assert core._publish_reply(
-            pending, reply, expected_node_id=core.node_id
-        )
-        core._reference_mailbox.events.join()
-        assert core.owner_table.collection_state(object_id) is ObjectCollectionState.COLLECTED
-        assert core._recovery.lineage_for_object(object_id) is None
+        with pytest.raises(ReconstructionRuntimeError, match="collection"):
+            coordinator.request(object_id)
+        assert core._recovery.task_record(spec.task_id) == before
+        assert core._recovery.active_recovery(spec.task_id) is None
+        assert core.owner_table.snapshot(object_id) == owner_before
     finally:
         _stop_core(core)
 
 
-@pytest.mark.heavy
+@pytest.mark.unit
+def test_close_before_stored_success_records_lineage_before_gc() -> None:
+    fixture, node, core, pending, reply, _calls, original_rpc = _publication(refs=False, stored=True)
+    object_id = pending.object_id
+    observed = []
+    assert core._recovery.task_record(pending.task_id).state is TaskState.PENDING
+    assert core.owner_table.release_local_reference(object_id, 'outer0')
+    assert not core.owner_table.snapshot(object_id).local_tokens
+
+    def rpc(address, handler, request):
+        if handler == 'drop_object_replica':
+            assert core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
+            assert core._recovery.lineage_for_object(object_id) is not None
+            observed.append(request)
+        return original_rpc(address, handler, request)
+
+    core._rpc = rpc
+    try:
+        assert core._publish_reply(pending, reply, expected_node_id=node.node_id,
+                                   expected_lease_id=fixture.id.lease_id)
+        assert not observed and node.object_store.contains(object_id)
+        assert core._finish_pending_task(pending)
+        core._reference_mailbox.drain()
+        assert len(observed) == 1
+        assert core.owner_table.collection_state(object_id) is ObjectCollectionState.COLLECTED
+        assert core._recovery.lineage_for_object(object_id) is None
+        assert not node.object_store.contains(object_id, sealed_only=False)
+        assert not core._object_gc_obligations and not core._task_finish_barriers
+    finally:
+        _stop_core(core)
+
+
+@pytest.mark.unit
 def test_owner_completion_failure_never_deletes_recovery_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     core, object_id, _attempt, _spec_value, _nodes = _stored_core(locations=1)
-    core._rpc = lambda _address, _handler, request: _drop_reply(
-        request, protocol.DropObjectReplicaStatus.DROPPED
-    )
+    core._rpc = lambda _address, _handler, request: _drop_reply(core, request)
     core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27104)
-    original = core.owner_table.complete_collection
+    original = core.owner_table.complete_output_publication_collection
 
     def fail_once(_plan: object) -> object:
-        monkeypatch.setattr(core.owner_table, "complete_collection", original)
+        monkeypatch.setattr(core.owner_table, "complete_output_publication_collection", original)
         raise RuntimeError("injected owner commit failure")
 
-    monkeypatch.setattr(core.owner_table, "complete_collection", fail_once)
+    monkeypatch.setattr(core.owner_table, "complete_output_publication_collection", fail_once)
     try:
         with pytest.raises(RuntimeError, match="owner commit"):
             core._reference_released(object_id)

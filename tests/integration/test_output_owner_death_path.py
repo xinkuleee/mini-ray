@@ -237,7 +237,7 @@ def _node_process_with_adopted_cleanup_observation(*args):
             death = node._owner_death_fences[proof.owner_worker_id]
             assert snapshot.complete == proof.complete and snapshot.rollback is None
             assert snapshot.state is OutputPublicationJournalState.RETIRED
-            assert snapshot.retained_result_slots == ()
+            assert snapshot.result_retained is False
             assert node._output_publications.owner_death_finished(identity)
             assert finalized == {identity: (spawned[0][2], wire.FinalizeOutputOwnerDeath(snapshot.manifest, death))}
             assert node._output_publication_journal._records[identity].owner_death == death

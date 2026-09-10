@@ -323,9 +323,9 @@ def test_node_preparation_gate_observes_acknowledged_phase_outside_locks(monkeyp
         assert record.state is protocol.LeaseExecutionState.RUNNING
         assert snapshot.complete is None and fixture.ledger.available != fixture.ledger.total
         if phase is gates.OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK:
-            assert snapshot.materialized_slots == () and not snapshot.ready_to_complete
+            assert snapshot.materialized is False and not snapshot.ready_to_complete
         else:
-            assert snapshot.ready_to_complete and snapshot.materialized_slots == (0,)
+            assert snapshot.ready_to_complete and snapshot.materialized is True
         assert handoff.manifest == fixture.manifest and handoff.complete is None
         return _Connection(events)
 

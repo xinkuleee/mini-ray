@@ -256,12 +256,12 @@ class _Case:
         assert push.dependencies == record.grant.dependencies
         start = node._handle_start_worker_lease(protocol.StartWorkerLease(
             push.lease_id, push.spec.task_id, push.spec.attempt_id, push.worker_id,
-            push.spec.scheduling_key, push.target_execution,
+            push.spec.scheduling_key,
         ))
         assert start.accepted and start.state is protocol.LeaseExecutionState.RUNNING
         complete = protocol.CompleteWorkerLease(
             push.lease_id, push.spec.task_id, push.spec.attempt_id, push.worker_id,
-            protocol.TaskReplyStatus.SYSTEM_ERROR, push.spec.scheduling_key, push.target_execution,
+            protocol.TaskReplyStatus.SYSTEM_ERROR, push.spec.scheduling_key,
         )
         completed = node._handle_complete_worker_lease(complete)
         assert completed.accepted and completed.released

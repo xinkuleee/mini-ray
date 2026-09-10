@@ -44,10 +44,10 @@ class UnknownOutputPublicationError(OutputPublicationJournalStateError, LookupEr
 class OutputPublicationPayloadRetired(OutputPublicationJournalStateError):
     """Complete is known but the Node no longer owns all reply payloads."""
 
-    def __init__(self, publication_id, tombstones):
+    def __init__(self, publication_id, tombstone):
         self.publication_id = replace(publication_id)
-        self.tombstones = tuple(replace(value) for value in tombstones)
-        super().__init__("publication payload was retired; consult its typed tombstones")
+        self.tombstone = replace(tombstone)
+        super().__init__("publication payload was retired; consult its typed tombstone")
 
 
 class OutputPublicationJournalState(str, Enum):
@@ -182,10 +182,9 @@ OutputPublicationRetirementProof = OutputPublicationAdoptionProof
 
 
 @dataclass(frozen=True)
-class OutputPublicationSlotTombstone(_WireValue):
+class OutputPublicationTombstone(_WireValue):
     publication_id: OutputPublicationID
     manifest_digest: str
-    slot_index: int
     object_id: ObjectID
     proof: OutputPublicationRetirementProof
 
@@ -193,16 +192,14 @@ class OutputPublicationSlotTombstone(_WireValue):
         _require_type(self.publication_id, OutputPublicationID, "publication_id")
         publication_id = replace(self.publication_id)
         digest = _checksum(self.manifest_digest, "manifest_digest")
-        _uint(self.slot_index, "slot_index")
         object_id = _object_id(self.object_id)
         proof = _retirement_proof(self.proof)
         if (
             proof.complete.publication_id != publication_id
             or proof.complete.manifest_digest != digest
-            or self.slot_index != 0
             or publication_id.object_id != object_id
         ):
-            raise OutputPublicationConflictError("slot retirement proof changed its identity")
+            raise OutputPublicationConflictError("retirement proof changed its identity")
         object.__setattr__(self, "publication_id", publication_id)
         object.__setattr__(self, "manifest_digest", digest)
         object.__setattr__(self, "object_id", object_id)
@@ -223,12 +220,12 @@ class OutputPublicationJournalSnapshot:
     state: OutputPublicationJournalState
     intents: Tuple[OutputPublicationEffect, ...]
     acknowledgements: Tuple[OutputPublicationAck, ...]
-    materialized_slots: Tuple[int, ...]
-    retained_result_slots: Tuple[int, ...]
+    materialized: bool
+    result_retained: bool
     complete: Optional[OutputPublicationCompleteWitness]
     rollback: Optional[OutputPublicationRollbackPlan]
     rollback_tombstone: Optional[OutputPublicationRollbackTombstone]
-    retired_slots: Tuple[OutputPublicationSlotTombstone, ...]
+    retirement: Optional[OutputPublicationTombstone]
     ready_to_complete: bool
 
     @property
@@ -246,7 +243,7 @@ class _Record:
     complete: Optional[OutputPublicationCompleteWitness] = None
     rollback: Optional[OutputPublicationRollbackPlan] = None
     rollback_tombstone: Optional[OutputPublicationRollbackTombstone] = None
-    retirement: Optional[OutputPublicationSlotTombstone] = None
+    retirement: Optional[OutputPublicationTombstone] = None
     adoption_proof: Optional[OutputPublicationAdoptionProof] = None
     owner_death: object = None
 
@@ -345,7 +342,7 @@ class OutputPublicationJournal:
             if record.retirement is not None:
                 raise OutputPublicationPayloadRetired(
                     record.manifest.publication_id,
-                    (record.retirement,),
+                    record.retirement,
                 )
             if record.result is None:
                 raise OutputPublicationJournalStateError("Complete requires all local results")
@@ -416,15 +413,15 @@ class OutputPublicationJournal:
             self._finish_rollback_if_ready(record)
             return True
 
-    def retire_completed(self, proof: OutputPublicationAdoptionProof) -> Tuple[OutputPublicationSlotTombstone, ...]:
+    def retire_completed(self, proof: OutputPublicationAdoptionProof) -> OutputPublicationTombstone:
         """Retire the single payload after validating its exact adoption proof."""
         _require_type(proof, OutputPublicationAdoptionProof, "proof")
         proof = replace(proof)
         with self._lock:
             record = self._record(proof.complete.publication_id)
-            terminal = self._prepare_retirement(record, 0, proof)
+            terminal = self._prepare_retirement(record, proof)
             self._commit_retirement(record, terminal)
-            return (replace(terminal),)
+            return replace(terminal)
 
     def retire_owner_death(self, publication_id: OutputPublicationID, death: object) -> None:
         """Forget reply custody only after exact owner-death cleanup.
@@ -462,12 +459,12 @@ class OutputPublicationJournal:
                 replace(record.manifest), record.state,
                 tuple(replace(value) for value in intents),
                 tuple(replace(value) for value in acknowledgements),
-                (0,) if self._acked(record, OutputPublicationStage.MATERIALIZE) else (),
-                () if record.result is None else (0,),
+                self._acked(record, OutputPublicationStage.MATERIALIZE),
+                record.result is not None,
                 None if record.complete is None else replace(record.complete),
                 None if record.rollback is None else replace(record.rollback),
                 None if record.rollback_tombstone is None else replace(record.rollback_tombstone),
-                () if record.retirement is None else (replace(record.retirement),),
+                None if record.retirement is None else replace(record.retirement),
                 active and self._ready_to_complete(record),
             )
 
@@ -600,10 +597,7 @@ class OutputPublicationJournal:
         record.state = OutputPublicationJournalState.RETIRED
 
     @staticmethod
-    def _prepare_retirement(record, slot_index, proof):
-        _uint(slot_index, "slot_index")
-        if slot_index != 0:
-            raise OutputPublicationConflictError("retirement slot is outside its manifest")
+    def _prepare_retirement(record, proof):
         if record.complete is None:
             raise OutputPublicationJournalStateError("payload retirement requires local Complete")
         if (proof.complete != record.complete or proof.owner_worker_id != record.manifest.header.owner_worker_id):
@@ -612,13 +606,13 @@ class OutputPublicationJournal:
             record.adoption_proof is not None and record.adoption_proof != proof
         ):
             raise OutputPublicationConflictError("whole-batch owner commit identity was rebound")
-        terminal = OutputPublicationSlotTombstone(
-            record.manifest.publication_id, record.manifest.manifest_digest, slot_index,
+        terminal = OutputPublicationTombstone(
+            record.manifest.publication_id, record.manifest.manifest_digest,
             record.manifest.publication_id.object_id, proof,
         )
         previous = record.retirement
         if previous is not None and previous != terminal:
-            raise OutputPublicationConflictError("slot retirement proof was rebound")
+            raise OutputPublicationConflictError("retirement proof was rebound")
         return previous if previous is not None else terminal
 
     @staticmethod
@@ -642,6 +636,6 @@ __all__ = [
     "OutputPublicationEffect", "OutputPublicationAck",
     "OutputPublicationAckDisposition", "OutputPublicationRollbackPlan",
     "OutputPublicationRollbackTombstone", "OutputPublicationAdoptionProof",
-    "OutputPublicationSlotTombstone",
+    "OutputPublicationTombstone",
     "OutputPublicationJournalSnapshot",
 ]

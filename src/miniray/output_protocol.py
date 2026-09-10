@@ -167,6 +167,25 @@ class GetOutputHandoff(_WireValue):
 
 
 @dataclass(frozen=True)
+class OutputHandoffCompleteAck(_WireValue):
+    """Exact recorded Complete; not owner visibility or forward permission."""
+
+    witness: object
+    accepted: bool
+    error: Optional[str] = None
+
+    def __post_init__(self):
+        from .output_publication import OutputPublicationCompleteWitness
+        object.__setattr__(self, "witness", _copy(
+            self.witness, OutputPublicationCompleteWitness, "complete witness"
+        ))
+        if type(self.accepted) is not bool or (self.accepted and self.error is not None):
+            raise ProtocolError("invalid Complete acknowledgement")
+        if not self.accepted and (type(self.error) is not str or not self.error):
+            raise ProtocolError("rejected Complete acknowledgement requires an error")
+
+
+@dataclass(frozen=True)
 class OutputHandoffReply(_WireValue):
     request: object
     accepted: bool
@@ -175,8 +194,7 @@ class OutputHandoffReply(_WireValue):
 
     def __post_init__(self):
         from .output_handoff import OutputHandoffSnapshot
-        if type(self.request) not in (RegisterOutputHandoff, ReportOutputHandoffComplete,
-                                      ReportOutputHandoffRollback, GetOutputHandoff):
+        if type(self.request) not in (RegisterOutputHandoff, ReportOutputHandoffRollback, GetOutputHandoff):
             raise ProtocolError("handoff reply requires an exact request")
         request = replace(self.request)
         if type(self.accepted) is not bool or (self.accepted and self.error is not None):
@@ -187,7 +205,6 @@ class OutputHandoffReply(_WireValue):
         if snapshot is not None:
             snapshot = _copy(snapshot, OutputHandoffSnapshot, "handoff snapshot")
             identity = (request.manifest.publication_id if isinstance(request, (RegisterOutputHandoff, ReportOutputHandoffRollback))
-                        else request.witness.publication_id if isinstance(request, ReportOutputHandoffComplete)
                         else request.publication_id)
             if snapshot.publication_id != identity:
                 raise ProtocolError("handoff reply changed identity")

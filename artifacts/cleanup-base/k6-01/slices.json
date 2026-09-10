@@ -1,0 +1,11 @@
+{
+  "P2": "implemented_and_validated scalar journal/effect/snapshot/tombstone; adapter merge retained with actual trial evidence",
+  "P3": "implemented_and_validated scalar owner/retirement; standalone duplicate prevalidation removed, final locked owner commit validation retained",
+  "P4": "implemented_and_validated typed local work, no second authority",
+  "P6": "retain_current_design_with_recorded_evidence; tested extraction added adapter/DTO complexity without persistent responsibility reduction",
+  "P5": "implemented_and_validated narrow exact Complete ACK; query still deep-detached and no extra production query; no generic validated token or phase merging",
+  "P5_evidence": "Independent pure343/1deselected, new eight ACK negatives/lifecycles, ordinary and contained real processes; combined base-k6 pure343/1deselected and ACK8",
+  "preflight_evidence": "Core17 including four new failure/alias boundaries, public-value24, ordinary and contained real processes",
+  "CI": "Applied identity-only pre-install recording; YAML and fake-event dry identity checked. No remote run claimed.",
+  "K7_residual": "six missed legacy binding files now tested; last seventeen retained heavy functions still being bounded/migrated; final gate/dependency and branch mapping pending"
+}

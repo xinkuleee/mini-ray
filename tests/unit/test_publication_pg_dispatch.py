@@ -156,7 +156,7 @@ def test_publication_replay_survives_other_bundle_node_loss_before_dispatch(lost
         assert before.error is None
         assert handoffs.query(identity).complete == reply.output_publication.complete
         assert (handoffs.query(identity).adoption is not None) is (lost_ack == "adopted")
-        assert outputs.journal.snapshot(identity).retained_result_slots == (0,)
+        assert outputs.journal.snapshot(identity).result_retained is True
         assert not core._finish_pending_task(pending)
         assert core._accepted_task_count == 1 and core._task_finish_barriers[output.object_id] == pending
         delayed = _take_adoption_retry(core)
@@ -194,7 +194,7 @@ def test_publication_replay_survives_other_bundle_node_loss_before_dispatch(lost
         assert after.output_publication.publication_id == identity
         history = handoffs.query(identity)
         assert history.adoption is not None and history.adoption.complete == reply.output_publication.complete
-        assert not outputs.journal.snapshot(identity).retained_result_slots
+        assert not outputs.journal.snapshot(identity).result_retained
         assert outputs.discoveries == len(outputs.pushes) == len(outputs.completions) == 1
         assert not core._protocol_unresolved and not core._task_finish_barriers
         assert core._accepted_task_count == 0 and pending.task_key in core._finished_tasks

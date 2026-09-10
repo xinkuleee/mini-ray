@@ -1,0 +1,579 @@
+--- a/src/miniray/core.py
++++ b/src/miniray/core.py
+@@ -4696,9 +4696,9 @@
+                     raise ValueError("output owner is stopped")
+                 snapshot = self._output_handoff_table().record_complete(request.witness)
+                 self._completion.notify_all()
+-                return wire.OutputHandoffReply(request, True, snapshot)
++                return wire.OutputHandoffCompleteAck(snapshot.complete, True)
+         except Exception as exc:
+-            return wire.OutputHandoffReply(request, False, error=str(exc) or type(exc).__name__)
++            return wire.OutputHandoffCompleteAck(request.witness, False, error=str(exc) or type(exc).__name__)
+ 
+     def report_output_handoff_rollback(self, request):
+         """Accept exact Node compensation, even when registration was rejected.
+--- a/src/miniray/node.py
++++ b/src/miniray/node.py
+@@ -1065,6 +1065,13 @@
+             if address is None:
+                 raise OutputPublicationRemoteError('executable lease has no owner endpoint')
+             reply = self._background_rpc(address, handler, message)
++            if type(message) is wire.ReportOutputHandoffComplete:
++                if type(reply) is not wire.OutputHandoffCompleteAck:
++                    raise OutputPublicationConflictError('owner returned an invalid Complete acknowledgement')
++                reply = replace(reply)
++                if reply.witness != message.witness or not reply.accepted:
++                    raise OutputPublicationRemoteError(reply.error or 'owner rejected output Complete')
++                return reply
+             if type(reply) is not wire.OutputHandoffReply:
+                 raise OutputPublicationConflictError('owner returned an invalid handoff reply')
+             reply = replace(reply)
+@@ -1080,9 +1087,7 @@
+ 
+         def complete(witness):
+             manifest = self._output_publication_journal.snapshot(witness.publication_id).manifest
+-            reply = owner_request(manifest, wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, wire.ReportOutputHandoffComplete(witness))
+-            if reply.snapshot.complete != witness:
+-                raise OutputPublicationConflictError('owner Complete receipt changed identity')
++            owner_request(manifest, wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, wire.ReportOutputHandoffComplete(witness))
+ 
+         def rollback(tombstone, *, manifest):
+             from .output_handoff import OutputHandoffPhase
+--- a/src/miniray/output_protocol.py
++++ b/src/miniray/output_protocol.py
+@@ -167,6 +167,25 @@
+ 
+ 
+ @dataclass(frozen=True)
++class OutputHandoffCompleteAck(_WireValue):
++    """Exact recorded Complete; not owner visibility or forward permission."""
++
++    witness: object
++    accepted: bool
++    error: Optional[str] = None
++
++    def __post_init__(self):
++        from .output_publication import OutputPublicationCompleteWitness
++        object.__setattr__(self, "witness", _copy(
++            self.witness, OutputPublicationCompleteWitness, "complete witness"
++        ))
++        if type(self.accepted) is not bool or (self.accepted and self.error is not None):
++            raise ProtocolError("invalid Complete acknowledgement")
++        if not self.accepted and (type(self.error) is not str or not self.error):
++            raise ProtocolError("rejected Complete acknowledgement requires an error")
++
++
++@dataclass(frozen=True)
+ class OutputHandoffReply(_WireValue):
+     request: object
+     accepted: bool
+@@ -175,8 +194,7 @@
+ 
+     def __post_init__(self):
+         from .output_handoff import OutputHandoffSnapshot
+-        if type(self.request) not in (RegisterOutputHandoff, ReportOutputHandoffComplete,
+-                                      ReportOutputHandoffRollback, GetOutputHandoff):
++        if type(self.request) not in (RegisterOutputHandoff, ReportOutputHandoffRollback, GetOutputHandoff):
+             raise ProtocolError("handoff reply requires an exact request")
+         request = replace(self.request)
+         if type(self.accepted) is not bool or (self.accepted and self.error is not None):
+@@ -187,7 +205,6 @@
+         if snapshot is not None:
+             snapshot = _copy(snapshot, OutputHandoffSnapshot, "handoff snapshot")
+             identity = (request.manifest.publication_id if isinstance(request, (RegisterOutputHandoff, ReportOutputHandoffRollback))
+-                        else request.witness.publication_id if isinstance(request, ReportOutputHandoffComplete)
+                         else request.publication_id)
+             if snapshot.publication_id != identity:
+                 raise ProtocolError("handoff reply changed identity")
+--- a/src/miniray/worker.py
++++ b/src/miniray/worker.py
+@@ -1452,9 +1452,11 @@
+             return self._embedded_core
+ 
+     def _handle_output_handoff(self, method, request):
+-        from .output_protocol import OutputHandoffReply
++        from .output_protocol import OutputHandoffReply, OutputHandoffCompleteAck, ReportOutputHandoffComplete
+         core = self._borrow_owner_core()
+         if core is None:
++            if type(request) is ReportOutputHandoffComplete:
++                return OutputHandoffCompleteAck(request.witness, False, error="object owner CoreWorker is not available")
+             return OutputHandoffReply(request, False, error="object owner CoreWorker is not available")
+         return getattr(core, method)(request)
+ 
+--- a/tests/integration/test_core_reconstruction_concurrency.py
++++ b/tests/integration/test_core_reconstruction_concurrency.py
+@@ -183,7 +183,10 @@
+             }
+             assert handler in methods
+             reply = methods[handler](request)
+-            assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
++            if handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER:
++                assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness and reply.accepted
++            else:
++                assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
+             return reply
+         assert address == self.gcs_address
+         if handler == node_module.GCS_REGISTER_NODE_HANDLER:
+--- a/tests/unit/_pure_node_output_current.py
++++ b/tests/unit/_pure_node_output_current.py
+@@ -47,8 +47,10 @@
+         return owner_reply(request_value, handoffs.register(value, identity.attempt_id))
+ 
+     def report_complete(witness):
+-        request_value = wire.ReportOutputHandoffComplete(witness)
+-        return owner_reply(request_value, handoffs.record_complete(witness))
++        snapshot = handoffs.record_complete(witness)
++        reply = replace(wire.OutputHandoffCompleteAck(snapshot.complete, True))
++        assert reply.accepted and reply.witness == witness
++        return reply
+ 
+     def report_rollback(tombstone, *, manifest):
+         request_value = wire.ReportOutputHandoffRollback(manifest, tombstone)
+--- a/tests/unit/_pure_output_runtime.py
++++ b/tests/unit/_pure_output_runtime.py
+@@ -83,10 +83,13 @@
+ 
+     def _report_complete(self, witness):
+         assert self.journal.snapshot(witness.publication_id).complete == witness
+-        snapshot = self._owner_rpc(
+-            wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete,
+-        )
+-        assert snapshot.complete == witness
++        request = wire.ReportOutputHandoffComplete(witness)
++        _metadata(request)
++        self.calls.append((type(request).__name__, request))
++        reply = self.core.report_output_handoff_complete(request)
++        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted, reply.error
++        assert reply.witness == witness
++        _metadata(reply)
+ 
+     def _report_rollback(self, tombstone, *, manifest):
+         assert self.journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
+--- a/tests/unit/test_common_cleanup_progress.py
++++ b/tests/unit/test_common_cleanup_progress.py
+@@ -164,7 +164,7 @@
+ 
+     def known_complete(self):
+         reply = self.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(self.complete))
+-        assert reply.accepted and reply.snapshot.complete == self.complete
++        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted and reply.witness == self.complete
+ 
+     def loss(self, *, envelope=None):
+         return self.core._drive_output_node_loss(
+--- a/tests/unit/test_core_placement_group_scheduling.py
++++ b/tests/unit/test_core_placement_group_scheduling.py
+@@ -220,8 +220,9 @@
+         assert snapshot.manifest == manifest and snapshot.complete is None
+ 
+     def report_complete(self, witness):
+-        snapshot = self.owner_call(output_wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete)
+-        assert snapshot.complete == witness
++        reply = self.core.report_output_handoff_complete(output_wire.ReportOutputHandoffComplete(witness))
++        assert type(reply) is output_wire.OutputHandoffCompleteAck and reply.accepted, reply.error
++        assert reply.witness == witness
+ 
+     def report_rollback(self, tombstone, *, manifest):
+         snapshot = self.owner_call(output_wire.ReportOutputHandoffRollback(manifest, tombstone),
+--- a/tests/unit/test_core_worker_crash_recovery.py
++++ b/tests/unit/test_core_worker_crash_recovery.py
+@@ -191,7 +191,11 @@
+         }
+         assert handler in methods
+         reply = methods[handler](request)
+-        assert reply.accepted and reply.request == request
++        assert reply.accepted
++        if handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER:
++            assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness
++        else:
++            assert type(reply) is wire.OutputHandoffReply and reply.request == request
+         _assert_output_metadata(reply)
+         return reply
+     node._background_rpc = background_rpc
+@@ -803,7 +807,11 @@
+         }
+         assert handler in methods
+         reply = methods[handler](request)
+-        assert reply.accepted and reply.request == request, reply.error
++        assert reply.accepted, reply.error
++        if handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER:
++            assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness
++        else:
++            assert type(reply) is wire.OutputHandoffReply and reply.request == request
+         _assert_output_metadata(reply)
+         return reply
+ 
+--- a/tests/unit/test_inline_recovery.py
++++ b/tests/unit/test_inline_recovery.py
+@@ -216,7 +216,10 @@
+         assert f.node._drive_output_publications()
+         current = f.handoffs.query(f.identity)
+         assert current.complete == envelope.complete and historical.complete is None
+-        assert f.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(envelope.complete)).snapshot == current
++        acknowledged = f.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(envelope.complete))
++        assert type(acknowledged) is wire.OutputHandoffCompleteAck and acknowledged.accepted
++        assert acknowledged.witness == current.complete == envelope.complete
++        assert f.handoffs.query(f.identity) == current
+         assert f.record.state is protocol.LeaseExecutionState.COMPLETED
+         assert f.f.ledger.available == ResourceVector({"CPU": 1})
+         _metadata((historical, current, f.f.journal.snapshot(f.identity)))
+--- a/tests/unit/test_lease_completion_handshake.py
++++ b/tests/unit/test_lease_completion_handshake.py
+@@ -364,8 +364,8 @@
+ 
+     def report_complete(witness):
+         snapshot = handoffs.record_complete(witness)
+-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+-        assert reply.snapshot.complete == witness
++        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
++        assert reply.accepted and reply.witness == witness
+ 
+     node._output_publications = OutputPublicationNodeAdapter(
+         node._output_publication_journal, register_owner=register_owner,
+--- /dev/null
++++ b/tests/unit/test_output_complete_ack.py
+@@ -0,0 +1,177 @@
++"""Narrow Complete ACK boundaries over actual Node/owner handoff methods.
++
++Two threadless Cores, one accepted Task, one8KiBStore, zero/one child, at most
++two exact report attempts; no runtime constructor, thread/socket/process/wait.
++Complete reporting remains distinct from owner visibility and physical GC.
++"""
++from dataclasses import replace
++import multiprocessing.process
++import pickle
++import queue
++import socket
++import subprocess
++import threading
++import time
++
++import pytest
++
++from miniray import core as core_module, node, worker, control, transport, protocol
++from miniray import output_protocol as wire
++from miniray.core import CoreWorker, _PendingTask, _WAKE_COORDINATOR
++from miniray.ids import LeaseID
++from miniray.output_handoff import OutputHandoffPhase, OutputHandoffTable
++from miniray.ownership import ObjectCollectionState, ObjectState
++from tests.support._contained_output import ContainedOutput
++from tests.unit._pure_core import close_pure_core
++
++pytestmark = pytest.mark.unit
++
++@pytest.fixture(autouse=True)
++def _no_runtime(monkeypatch):
++    def forbidden(*_args, **_kwargs):
++        pytest.fail('Complete ACK contract attempted infrastructure')
++    for kind in (CoreWorker, node.NodeServer, worker.WorkerServer, control.GCSLite, transport.TCPServer):
++        monkeypatch.setattr(kind, '__init__', forbidden)
++    for kind, name in ((threading.Thread, 'start'), (threading.Timer, 'start'),
++                       (threading.Condition, 'wait'), (queue.Queue, 'join'),
++                       (multiprocessing.process.BaseProcess, 'start')):
++        monkeypatch.setattr(kind, name, forbidden)
++    for name in ('socket', 'socketpair', 'create_connection'):
++        monkeypatch.setattr(socket, name, forbidden)
++    monkeypatch.setattr(subprocess, 'Popen', forbidden)
++    monkeypatch.setattr(time, 'sleep', forbidden)
++    for module in (core_module, node, worker, control):
++        monkeypatch.setattr(module, 'rpc_request', forbidden)
++    def already_set(event, timeout=None):
++        assert event.is_set(), 'reference receipt must already be set'
++        return True
++    monkeypatch.setattr(threading.Event, 'wait', already_set)
++
++def _consume(core):
++    tasks = []
++    assert core._submissions.qsize() <= 16
++    for _ in range(core._submissions.qsize()):
++        event = core._submissions.get_nowait()
++        core._submissions.task_done()
++        if event is not _WAKE_COORDINATOR:
++            assert type(event) is _PendingTask
++            tasks.append(event)
++    return tasks
++
++@pytest.fixture
++def publication():
++    values = []
++    def make(contained):
++        assert not values
++        f = ContainedOutput(contained=contained, stored=True)
++        values.append(f)
++        f.register()
++        assert _consume(f.core) == [f.pending] and _consume(f.child_owner) == []
++        f.reply = f.complete()
++        return f
++    yield make
++    for f in values:
++        for ref in (f.ref, f.child_ref):
++            if ref is not None and not ref.closed:
++                ref.close(timeout=0)
++        close_pure_core(f.core)
++        close_pure_core(f.child_owner)
++
++@pytest.mark.parametrize('contained', (False, True), ids=('ordinary', 'contained'))
++def test_lost_complete_ack_replays_exact_witness_without_query_or_early_ready(publication, contained):
++    f = publication(contained)
++    identity, witness = f.envelope.publication_id, f.envelope.complete
++    original = f.node._background_rpc
++    reports = []
++    def lose_first(address, handler, request):
++        assert handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER
++        reply = original(address, handler, request)
++        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted
++        assert reply.witness == request.witness == witness
++        reports.append((request, reply))
++        assert len(reports) <= 2
++        if len(reports) == 1:
++            raise TimeoutError('owner accepted Complete; response lost')
++        return pickle.loads(pickle.dumps(reply))
++    f.node._background_rpc = lose_first
++    with pytest.raises(TimeoutError):
++        f.adapter.report_terminal(identity)
++    assert f.adapter.pending_terminal_reports() == (witness,)
++    assert f.core.owner_table.snapshot(f.ref.object_id).state is ObjectState.PENDING
++    assert f.core._output_handoff_table().query(identity).complete == witness
++    assert f.node.resource_ledger.available == f.node.resource_ledger.total
++    assert f.adapter.report_terminal(identity)
++    assert reports[0] == reports[1]
++    assert not f.adapter.report_terminal(identity) and len(reports) == 2
++    assert f.core._publish_reply(f.pending, f.reply, expected_node_id=f.node.node_id, expected_lease_id=f.grant.lease_id)
++    assert f.core._finish_pending_task(f.pending) and _consume(f.core) == []
++    assert f.node.object_store.contains(f.ref.object_id)
++    f.ref.close(timeout=0)
++    if f.child_ref is not None:
++        f.child_ref.close(timeout=0)
++    for _ in range(4):
++        f.core._reference_mailbox.drain()
++        f.child_owner._reference_mailbox.drain()
++    assert f.node.object_store.used_bytes == 0
++    assert f.core.owner_table.collection_state(f.ref.object_id) is ObjectCollectionState.COLLECTED
++
++@pytest.mark.parametrize('bad', ('subclass', 'wrong-witness', 'nested-tamper', 'rejected'))
++def test_complete_ack_rejected_by_real_node_keeps_pending_report(publication, bad):
++    f = publication(True)
++    identity, witness = f.envelope.publication_id, f.envelope.complete
++    if bad == 'subclass':
++        class Hidden(wire.OutputHandoffCompleteAck):
++            pass
++        invalid = Hidden(witness, True)
++        object.__setattr__(invalid, 'payload', b'hidden')
++    elif bad == 'wrong-witness':
++        invalid = wire.OutputHandoffCompleteAck(replace(witness, publication_id=replace(identity, lease_id=LeaseID.random())), True)
++    elif bad == 'rejected':
++        invalid = wire.OutputHandoffCompleteAck(witness, False, 'owner unavailable')
++    else:
++        invalid = wire.OutputHandoffCompleteAck(witness, True)
++        object.__setattr__(invalid.witness.publication_id.execution.attempt_id, 'attempt_number', -1)
++    original = f.node._background_rpc
++    f.node._background_rpc = lambda *_args: invalid
++    with pytest.raises((TypeError, ValueError, protocol.ProtocolError)):
++        f.adapter.report_terminal(identity)
++    assert f.adapter.pending_terminal_reports() == (witness,)
++    assert f.core.owner_table.snapshot(f.ref.object_id).state is ObjectState.PENDING
++    f.node._background_rpc = original
++    assert f.adapter.report_terminal(identity)
++
++def test_complete_ack_is_not_forward_permission_and_query_stays_detached(publication):
++    f = publication(True)
++    witness, identity = f.envelope.complete, f.envelope.publication_id
++    report = wire.ReportOutputHandoffComplete(witness)
++    ack = f.core.report_output_handoff_complete(report)
++    assert type(ack) is wire.OutputHandoffCompleteAck and ack.accepted
++    assert not hasattr(ack, 'snapshot')
++    with pytest.raises(protocol.ProtocolError):
++        wire.OutputHandoffReply(report, True, f.core._output_handoff_table().query(identity))
++    query = f.core.get_output_handoff(wire.GetOutputHandoff(identity))
++    assert query.snapshot.complete == ack.witness
++    object.__setattr__(query.snapshot.manifest.value, 'size_bytes', -1)
++    assert f.core.get_output_handoff(wire.GetOutputHandoff(identity)).snapshot.manifest == f.outputs.manifest
++    table = OutputHandoffTable()
++    table.register(f.outputs.manifest, identity.attempt_id)
++    table.record_complete(witness)
++    assert table.abort(identity, 'no future publication')
++    replay = wire.OutputHandoffCompleteAck(table.record_complete(witness).complete, True)
++    assert replay == ack and table.query(identity).phase is OutputHandoffPhase.ABORTED
++    with pytest.raises(ValueError):
++        table.register(f.outputs.manifest, identity.attempt_id)
++
++def test_worker_without_owner_returns_narrow_complete_rejection(publication):
++    f = publication(False)
++    endpoint = object.__new__(worker.WorkerServer)
++    endpoint._embedded_core_lock = threading.Lock()
++    endpoint._embedded_core = None
++    request = wire.ReportOutputHandoffComplete(f.envelope.complete)
++    reply = endpoint._handle_output_handoff('report_output_handoff_complete', request)
++    assert type(reply) is wire.OutputHandoffCompleteAck and not reply.accepted
++    assert reply.witness == request.witness
++    endpoint._embedded_core = f.core
++    accepted = endpoint._handle_output_handoff('report_output_handoff_complete', request)
++    assert type(accepted) is wire.OutputHandoffCompleteAck and accepted.accepted
++    assert accepted.witness == request.witness
+--- a/tests/unit/test_output_control_shutdown.py
++++ b/tests/unit/test_output_control_shutdown.py
+@@ -101,7 +101,7 @@
+         assert core.register_output_handoff(request) == registered
+         report = wire.ReportOutputHandoffComplete(complete)
+         completed = core.report_output_handoff_complete(report)
+-        assert completed.accepted and completed.snapshot.complete == complete
++        assert type(completed) is wire.OutputHandoffCompleteAck and completed.accepted and completed.witness == complete
+         assert core.report_output_handoff_complete(report) == completed
+         if refs:
+             assert not core._drive_output_node_loss(pending, loss)
+--- a/tests/unit/test_output_protocol.py
++++ b/tests/unit/test_output_protocol.py
+@@ -112,10 +112,14 @@
+     assert registered.complete is None and registered.adoption is None
+     assert completed.complete == f.witness and completed.adoption is None
+     assert adopted.adoption == _adoption(f)
+-    for request, snapshot in ((register, registered), (complete, completed), (query, adopted)):
++    for request, snapshot in ((register, registered), (query, adopted)):
+         reply = wire.OutputHandoffReply(request, True, snapshot)
+         _metadata_roundtrip((request, reply), f)
+         assert reply.snapshot == snapshot and reply.snapshot is not snapshot
++    acknowledgement = wire.OutputHandoffCompleteAck(completed.complete, True)
++    _metadata_roundtrip((complete, acknowledgement), f)
++    assert acknowledgement.witness == f.witness and acknowledgement.witness is not completed.complete
++    assert not hasattr(acknowledgement, "snapshot")
+     retirement = wire.AckOutputPublicationAdopted(_adoption(f))
+     assert retirement.request_identity == _identity(f)
+     _metadata_roundtrip(wire.AckOutputPublicationAdoptedReply(retirement, True), f)
+@@ -164,10 +168,9 @@
+         with pytest.raises((OutputHandoffStateError, OutputHandoffConflictError)):
+             transition()
+         assert table.query(f.publication_id) == snapshot
+-    rejected = wire.OutputHandoffReply(
+-        wire.ReportOutputHandoffComplete(f.witness), False, snapshot, "handoff aborted",
+-    )
+-    assert not rejected.accepted and rejected.snapshot.complete is None
++    rejected = wire.OutputHandoffCompleteAck(f.witness, False, "handoff aborted")
++    assert not rejected.accepted and rejected.witness == f.witness
++    assert table.query(f.publication_id) == snapshot and snapshot.complete is None
+     _metadata_roundtrip(rejected, f)
+ 
+ 
+--- a/tests/unit/test_output_publication_node_server.py
++++ b/tests/unit/test_output_publication_node_server.py
+@@ -101,9 +101,9 @@
+ 
+     def report_complete(self, witness):
+         request = wire.ReportOutputHandoffComplete(witness)
+-        snapshot = self.handoffs.record_complete(witness)
+-        reply = wire.OutputHandoffReply(request, True, snapshot)
+-        assert reply.request == request and reply.snapshot.complete == witness
++        snapshot = self.handoffs.record_complete(request.witness)
++        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
++        assert reply.accepted and reply.witness == request.witness
+         self.hit("complete-report")
+ 
+     def report_rollback(self, tombstone, *, manifest):
+--- a/tests/unit/test_owner_led_publication.py
++++ b/tests/unit/test_owner_led_publication.py
+@@ -108,7 +108,8 @@
+         request = wire.ReportOutputHandoffComplete(witness)
+         snapshot = self.handoffs.record_complete(request.witness)
+         self.lose_reply("complete-report")
+-        assert self.validate_reply(request, snapshot).complete == witness
++        reply = replace(wire.OutputHandoffCompleteAck(snapshot.complete, True))
++        assert reply.accepted and reply.witness == witness
+ 
+     def report_rollback(self, tombstone, *, manifest):
+         self.events.append("owner-rollback")
+--- a/tests/unit/test_same_owner_output_custody.py
++++ b/tests/unit/test_same_owner_output_custody.py
+@@ -156,8 +156,8 @@
+     def report_complete(self, witness):
+         request = wire.ReportOutputHandoffComplete(witness)
+         snapshot = self.handoffs.record_complete(request.witness)
+-        reply = wire.OutputHandoffReply(request, True, snapshot)
+-        assert reply.request == request and reply.snapshot.complete == witness
++        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
++        assert reply.accepted and reply.witness == request.witness
+ 
+     def report_rollback(self, tombstone, *, manifest):
+         request = wire.ReportOutputHandoffRollback(manifest, tombstone)
+--- a/tests/unit/test_spillback_runtime.py
++++ b/tests/unit/test_spillback_runtime.py
+@@ -217,11 +217,13 @@
+     def record_complete(self, witness):
+         request = wire.ReportOutputHandoffComplete(witness)
+         reply = self.core.report_output_handoff_complete(request)
+-        assert type(reply) is wire.OutputHandoffReply and reply.request == request
++        assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness
+         assert reply.accepted and reply.error is None
+-        assert reply.snapshot.complete == witness
+         self.completions.append((request, reply))
+-        return reply.snapshot
++        # This test endpoint implements the local table interface used by the
++        # Node fixture. Observe the real query separately; do not fabricate a
++        # snapshot from a narrow ACK or add a query to production's callback.
++        return self.query(witness.publication_id)
+ 
+     def query(self, identity):
+         request = wire.GetOutputHandoff(identity)
+@@ -597,7 +599,8 @@
+         assert not self.publication.adapter.pending_terminal_reports()
+         ((completion, reported),) = self.owner_handoffs.completions
+         assert completion.witness == self.completed.output_publication.complete
+-        assert reported.snapshot == handoff_before == self.owner_handoffs.query(identity)
++        assert reported.accepted and reported.witness == completion.witness == handoff_before.complete
++        assert handoff_before == self.owner_handoffs.query(identity)
+         assert self.publication.journal.snapshot(identity) == node_before
+         assert core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.COLLECTED
+         assert not core._objects and not core._stored_descriptors and not core._object_gc_obligations
+--- a/tests/unit/test_task_finish_barrier.py
++++ b/tests/unit/test_task_finish_barrier.py
+@@ -150,8 +150,12 @@
+ 
+     def _report_complete(self, witness):
+         assert self.journal.snapshot(witness.publication_id).complete == witness
+-        snapshot = self._owner_call(wire.ReportOutputHandoffComplete(witness), self.core.report_output_handoff_complete)
+-        assert snapshot.complete == witness
++        request = wire.ReportOutputHandoffComplete(witness)
++        _assert_metadata(request)
++        reply = self.core.report_output_handoff_complete(request)
++        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted, reply.error
++        assert reply.witness == witness
++        _assert_metadata(reply)
+ 
+     def _report_rollback(self, tombstone, *, manifest):
+         snapshot = self._owner_call(wire.ReportOutputHandoffRollback(manifest, tombstone),
+--- a/tests/unit/test_worker_completion_paths.py
++++ b/tests/unit/test_worker_completion_paths.py
+@@ -62,8 +62,8 @@
+     def _report_complete(self, witness):
+         assert self.journal.snapshot(witness.publication_id).complete == witness
+         snapshot = self.handoffs.record_complete(witness)
+-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+-        assert reply.accepted and reply.snapshot.complete == witness
++        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
++        assert reply.accepted and reply.witness == witness
+ 
+     def prepare(self, request):
+         assert type(request) is wire.PrepareOutputPublication
+--- a/tests/unit/test_worker_crash_supervisor.py
++++ b/tests/unit/test_worker_crash_supervisor.py
+@@ -207,8 +207,8 @@
+ 
+     def report_complete(witness):
+         snapshot = handoffs.record_complete(witness)
+-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+-        assert reply.snapshot.complete == witness
++        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
++        assert reply.accepted and reply.witness == witness
+ 
+     def report_rollback(tombstone, *, manifest):
+         assert journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
+--- a/tests/unit/test_worker_unified_output.py
++++ b/tests/unit/test_worker_unified_output.py
+@@ -205,8 +205,8 @@
+     def report_complete(self, witness):
+         assert self.journal.snapshot(witness.publication_id).complete == witness
+         snapshot = self.handoffs.record_complete(witness)
+-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
+-        assert reply.snapshot.complete == witness
++        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
++        assert reply.accepted and reply.witness == witness
+ 
+     def report_rollback(self, tombstone, *, manifest):
+         assert self.journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone

@@ -5,6 +5,7 @@ explicit replay. Real owner/handoff/recovery/journal/GC transitions run without
 constructors, sockets, threads, sleeps, blocking waits, or user execution.
 """
 
+from copy import deepcopy
 from dataclasses import replace
 import socket
 import threading
@@ -15,7 +16,7 @@ import pytest
 from miniray import output_protocol as wire, protocol
 from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _DelayedReadyTask, _ObjectWaiter, _PendingTask, _PushRequestState, _WAKE_COORDINATOR
-from miniray.errors import SystemTaskError
+from miniray.errors import ProtocolError, SystemTaskError
 from miniray.output_handoff import OutputHandoffPhase
 from miniray.ownership import ObjectCollectionState, ObjectState, OutputOwnerPublicationPlan
 from miniray.resources import ResourceVector
@@ -159,7 +160,7 @@ def test_core_adopts_single_output_and_gc_releases_exact_children(refs, stored):
         assert snapshot.state is (ObjectState.READY_STORED if stored else ObjectState.READY_INLINE)
         assert snapshot.output_publication.manifest == fixture.manifest
         assert fixture.handoffs.query(fixture.id).phase is OutputHandoffPhase.ADOPTED
-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
+        assert not fixture.journal.snapshot(fixture.id).result_retained
         assert fixture.store.used_bytes == (len((fixture.values.payload)) if stored else 0)
         for transfer in (fixture.manifest.value).transfers:
             child = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
@@ -178,6 +179,77 @@ def test_core_adopts_single_output_and_gc_releases_exact_children(refs, stored):
         assert not core._objects and not core._stored_descriptors and not core._object_gc_obligations
         assert sum(handler == "drop_object_replica" for handler, _ in calls) == int(stored)
         assert sum(handler == "release_contained_reference" for handler, _ in calls) == (2 if refs else 0)
+    finally:
+        _close(core)
+
+
+@pytest.mark.parametrize("refs", (False, True))
+@pytest.mark.parametrize("fault", ("recovery-preflight", "owner-final-tamper"))
+def test_final_owner_validation_fences_failures_without_early_recovery_commit(monkeypatch, refs, fault):
+    fixture, node, core, pending, reply, calls, _rpc = _fixture(refs=refs, stored=False)
+    try:
+        owner_before = core.owner_table.snapshot(pending.object_id)
+        recovery_before = replace(core._recovery.task_record(pending.task_id))
+        active_before = core._recovery.active_recovery(pending.task_id)
+        physical_before = fixture.journal.snapshot(fixture.id), fixture.store.used_bytes
+        child_before = {
+            transfer.contained_object_id: fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
+            for transfer in fixture.manifest.value.transfers
+        }
+        original_reply = deepcopy(reply)
+        validate = core._recovery.validate_task_success
+        commit = core.owner_table.commit_output_publication
+        events = []
+
+        def recovery_preflight(task_id, attempt_id):
+            transition = validate(task_id, attempt_id)
+            events.append("recovery-preflight")
+            assert transition.decision.action.value == "ACCEPT_SUCCESS"
+            assert core.owner_table.snapshot(pending.object_id) == owner_before
+            assert core._recovery.task_record(pending.task_id) == recovery_before
+            if fault == "recovery-preflight":
+                raise RuntimeError("recovery copy preflight failed before owner commit")
+            return transition
+
+        def owner_final(plan):
+            assert events == ["recovery-preflight"]
+            assert core._recovery.task_record(pending.task_id) == recovery_before
+            payload = plan.envelope.result.inline_data
+            assert payload
+            changed = bytes((payload[0] ^ 1,)) + payload[1:]
+            object.__setattr__(plan.envelope.result, "inline_data", changed)
+            with pytest.raises(ProtocolError):
+                commit(plan)
+            events.append("owner-final-rejected")
+            raise RuntimeError("owner final validation rejected same-size corrupted payload")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(core._recovery, "validate_task_success", recovery_preflight)
+            patch.setattr(core._recovery, "commit_validated_transition", lambda *_: pytest.fail("recovery committed before owner success"))
+            patch.setattr(core.owner_table, "validate_output_publication", lambda *_: pytest.fail("redundant owner preflight still called"))
+            patch.setattr(core.owner_table, "commit_output_publication", owner_final if fault == "owner-final-tamper" else lambda *_: pytest.fail("owner commit ran after recovery preflight failure"))
+            assert not core._publish_reply(pending, reply, expected_node_id=node.node_id, expected_lease_id=fixture.id.lease_id)
+        assert events == (["recovery-preflight"] if fault == "recovery-preflight" else ["recovery-preflight", "owner-final-rejected"])
+        assert core.owner_table.snapshot(pending.object_id) == owner_before
+        assert core._recovery.task_record(pending.task_id) == recovery_before
+        assert core._recovery.active_recovery(pending.task_id) == active_before
+        assert not core._stored_descriptors and not core.owner_table._output_publication_receipts
+        assert (fixture.journal.snapshot(fixture.id), fixture.store.used_bytes) == physical_before
+        assert {
+            transfer.contained_object_id: fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id)
+            for transfer in fixture.manifest.value.transfers
+        } == child_before
+        assert reply == original_reply and not calls
+        assert not core._objects[pending.object_id].event.is_set()
+        assert not core._finish_pending_task(pending)
+        obligation = _take_adoption(core)
+        assert obligation.envelope == original_reply.output_publication
+        assert core._execute(pending, pending.spec, output_adoption=obligation)
+        assert core._recovery.task_record(pending.task_id).state.value == "SUCCEEDED"
+        assert core._finish_pending_task(pending)
+        assert core.owner_table.release_local_reference(pending.object_id, "outer0")
+        core._reference_released(pending.object_id)
+        fixture.assert_no_pins_or_bytes()
     finally:
         _close(core)
 
@@ -204,7 +276,7 @@ def test_lost_adoption_ack_keeps_finish_barrier_and_replays_without_second_cas(m
     try:
         assert not core._publish_reply(pending, reply, expected_node_id=node.node_id, expected_lease_id=fixture.id.lease_id)
         assert core.owner_table.snapshot(pending.object_id).state is ObjectState.READY_STORED
-        assert not fixture.journal.snapshot(fixture.id).retained_result_slots
+        assert not fixture.journal.snapshot(fixture.id).result_retained
         assert not core._finish_pending_task(pending)
         assert core._task_finish_barriers == {pending.object_id: pending}
         assert core._accepted_task_count == 1 and len(commits) == 1

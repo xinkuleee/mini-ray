@@ -1,0 +1,98 @@
+{
+  "status": "REAL_ONE_LINE_CANDIDATE_NOT_APPLIED_OR_EXECUTED",
+  "scope": "Remove standalone Core owner prevalidation only; retain final owner validation and both receipt lookups",
+  "metrics": {
+    "src/miniray/core.py": {
+      "before_sha256": "62789790856f160ee22d5cab558fd4a07e784bdde80c8e8b6e676286c0f77113",
+      "after_sha256": "4a41578fac16c58c146d848d7a57254d67c6d7ee774fa0e6e2b0067bcf98fff0",
+      "added": 0,
+      "removed": 1
+    },
+    "tests/unit/test_core_output_publication.py": {
+      "before_sha256": "893d687891f4d19a0f769d62f05f9684259d2ef3863bfa972f22a88f1f21ffe9",
+      "after_sha256": "4c20bb2696f6d21cdc984d8005e726032c0e4a9035bbd299652ced27e0781137",
+      "added": 73,
+      "removed": 1
+    },
+    "tests/unit/test_public_multi_return_runtime.py": {
+      "before_sha256": "259acd9e53745929c4266e445ab049f0ae51602ea94b812fbaf073f697148907",
+      "after_sha256": "7d8b580fc692dd1b82bad642feeec93de08db02e4de7d20e19fb67fff8cbceb5",
+      "added": 1,
+      "removed": 1
+    }
+  },
+  "patch_sha256": "cb3c07fbe9f8e6692f01253b00e623199f0f7025d3d97fd4fd373f0ac1ec7a70",
+  "input_drift": {
+    "src/miniray/core.py": false,
+    "src/miniray/ownership.py": false,
+    "src/miniray/recovery.py": false,
+    "tests/unit/test_core_output_publication.py": false,
+    "tests/unit/test_core_output_receipt_loss.py": false,
+    "tests/unit/test_output_owner_publication.py": false,
+    "tests/unit/test_public_multi_return_runtime.py": false
+  },
+  "lock_analysis": {
+    "Core": "Existing Core._state_lock remains held continuously over recovery.validate_task_success -> owner.commit_output_publication -> recovery.commit_validated_transition.",
+    "Recovery": "RecoveryManager owns no separate lock; validate_task_success copies TaskRecord twice, mutates only after copy, then reads lineage. commit_validated_transition remains assignment-only under caller composition lock.",
+    "Owner": "Public commit_output_publication unchanged: exact plan deep rebuild, owner lock acquisition, final state/attempt/collection/manifest validation, detached receipt+edges+locations allocation, then owner mutation. Its lock is not widened around recovery.",
+    "revision_capability_needed": false,
+    "why": "No prior validation result is reused as authority. The retained owner commit is still the final validation boundary; recovery plan is discarded if owner fails.",
+    "unsafe_alternative": "Removing final owner validation or carrying a prepared token across lock release would require revision coverage across publication, current attempt, collection, retirement and fences, or a new continuously locked API. That alternative was not needed or implemented.",
+    "counterexample_to_unchecked_token": "After a hypothetical owner preflight and before commit, another owner transition may start collection/retirement or advance attempt; a stale unchecked token would overwrite the new state. Existing final commit rejects this. Same-thread RLock reentrancy also prevents a lock-owned flag alone from proving revision stability."
+  },
+  "concrete_operations": {
+    "ordinary": "refs=False sends one real INLINE envelope through Core owner/recovery adoption, retains Complete and runs GC on exact replay.",
+    "contained": "refs=True uses two exact contained transfers already prepared/promoted by the real local journal/child owners; failures must leave both child states unchanged and later successful replay releases pins on GC.",
+    "faults": [
+      "Recovery validate_task_success returns a candidate success plan, live recovery/owner checked unchanged, then raises: owner commit and recovery commit forbidden.",
+      "After successful recovery preflight, mutate detached owner plan descriptor with same-length different bytes. Existing public owner commit must reject checksum before owner writes; recovery commit forbidden. Original envelope unchanged and replay succeeds."
+    ]
+  },
+  "tests": {
+    "new_test_function": "tests/unit/test_core_output_publication.py::test_final_owner_validation_fences_failures_without_early_recovery_commit",
+    "parameter_axes": {
+      "refs": [
+        false,
+        true
+      ],
+      "fault": [
+        "recovery-preflight",
+        "owner-final-tamper"
+      ]
+    },
+    "case_count": 4,
+    "changed_existing_selector": "tests/unit/test_public_multi_return_runtime.py::test_owner_terminal_preflight_failure_does_not_mutate_owner_or_recovery[success]",
+    "existing_fault_preserved": "Old helper still calls actual owner preflight then throws, but injection moved to commit entry so removal cannot silently skip the negative case.",
+    "planned_registered_file_runs": [
+      "tests/unit/test_core_output_publication.py",
+      "tests/unit/test_public_multi_return_runtime.py",
+      "tests/unit/test_output_owner_publication.py",
+      "tests/unit/test_core_output_receipt_loss.py",
+      "tests/unit/test_recovery.py"
+    ],
+    "registration": "All five whole-file selectors are already registered. Hash refresh required only if trial evaluated; no registry changed here."
+  },
+  "cost": {
+    "source_delta": -1,
+    "new_api": 0,
+    "new_state": 0,
+    "new_locks": 0,
+    "removed_work": "One public owner validate call, one deep plan/envelope/manifest rebuild+digest path and one owner state validation before every first owner CAS. Actual Python internal replace recursion may rebuild nested values multiple times, so no fabricated exact hash-count speedup.",
+    "unchanged_cost": "Two preexisting receipt queries and final commit validation remain; no copy/detachment is removed at public boundary.",
+    "test_delta": "Two imports and one 4-case function; existing failure hook adapted.",
+    "assessment": "Favorable minimal candidate; needs requested existing bounded tests before acceptance. Larger revision/token optimization is not justified by this case."
+  },
+  "checks": {
+    "all_frozen_inputs_unchanged": true,
+    "source_diff_exactly_one_line": true,
+    "ownership_recovery_bytes_unchanged": true,
+    "two_receipt_queries_unchanged": true,
+    "AST_valid": true,
+    "patch_apply_check_pass": true,
+    "pytest_run": false,
+    "tests_imported": false,
+    "runtime_executed": false,
+    "base_or_evaluated_P3_tree_modified": false,
+    "manifest_modified": false
+  }
+}

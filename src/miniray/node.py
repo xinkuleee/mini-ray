@@ -1064,6 +1064,13 @@ class NodeServer:
             if address is None:
                 raise OutputPublicationRemoteError('executable lease has no owner endpoint')
             reply = self._background_rpc(address, handler, message)
+            if type(message) is wire.ReportOutputHandoffComplete:
+                if type(reply) is not wire.OutputHandoffCompleteAck:
+                    raise OutputPublicationConflictError('owner returned an invalid Complete acknowledgement')
+                reply = replace(reply)
+                if reply.witness != message.witness or not reply.accepted:
+                    raise OutputPublicationRemoteError(reply.error or 'owner rejected output Complete')
+                return reply
             if type(reply) is not wire.OutputHandoffReply:
                 raise OutputPublicationConflictError('owner returned an invalid handoff reply')
             reply = replace(reply)
@@ -1079,9 +1086,7 @@ class NodeServer:
 
         def complete(witness):
             manifest = self._output_publication_journal.snapshot(witness.publication_id).manifest
-            reply = owner_request(manifest, wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, wire.ReportOutputHandoffComplete(witness))
-            if reply.snapshot.complete != witness:
-                raise OutputPublicationConflictError('owner Complete receipt changed identity')
+            owner_request(manifest, wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, wire.ReportOutputHandoffComplete(witness))
 
         def rollback(tombstone, *, manifest):
             from .output_handoff import OutputHandoffPhase
@@ -2152,7 +2157,7 @@ class NodeServer:
                                 protocol.LeaseExecutionState.ABANDONED,
                             )
                             or snapshot.state is not OutputPublicationJournalState.RETIRED
-                            or snapshot.retained_result_slots):
+                            or snapshot.result_retained):
                         return False
                     if adapter.owner_death_finished(identity):
                         continue
@@ -2168,8 +2173,7 @@ class NodeServer:
                         if (record.state is not protocol.LeaseExecutionState.COMPLETED
                                 or record.completion is None
                                 or record.completion.status is not protocol.TaskReplyStatus.SUCCEEDED
-                                or tuple(item.slot_index for item in snapshot.retired_slots)
-                                != (0,)):
+                                or snapshot.retirement is None):
                             return False
                     elif (snapshot.rollback_tombstone is None
                           or not adapter.rollback_reported(identity)):

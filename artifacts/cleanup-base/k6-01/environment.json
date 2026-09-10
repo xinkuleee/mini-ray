@@ -1,0 +1,21 @@
+{
+  "python": "3.12.13 (main, Jun 23 2026, 15:18:24) [Clang 22.1.3 ]",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-libc",
+  "packages": {
+    "pytest": "8.4.2",
+    "cloudpickle": "3.1.2",
+    "packaging": "26.3",
+    "pluggy": "1.6.0",
+    "iniconfig": "2.3.0",
+    "pygments": "2.21.0"
+  },
+  "source": {
+    "branch": "refs/heads/teaching-base",
+    "head": "2bdff69a2eec0365d3df0861954dfcb500fc5d48",
+    "working_tree_status": " M .github/workflows/baseline.yml\n M docs/cleanup-progress.md\n M scripts/_ci_baseline.py\n M scripts/baseline_manifest.json\n M src/miniray/core.py\n M src/miniray/node.py\n M src/miniray/output_protocol.py\n M src/miniray/output_publication_journal.py\n M src/miniray/worker.py\n M tests/integration/test_core_reconstruction_concurrency.py\n M tests/integration/test_output_owner_death_path.py\n M tests/integration/test_precomplete_output_owner_death_path.py\n M tests/unit/_pure_node_output_current.py\n M tests/unit/_pure_output_runtime.py\n M tests/unit/test_actor_result_publication.py\n M tests/unit/test_ambiguous_grant_custody.py\n M tests/unit/test_borrowed_object_refs.py\n M tests/unit/test_common_cleanup_progress.py\n M tests/unit/test_core_blocking_get_notifications.py\n M tests/unit/test_core_lease_locality.py\n M tests/unit/test_core_lineage_holds.py\n M tests/unit/test_core_lost_blocking_lock_order.py\n M tests/unit/test_core_output_publication.py\n M tests/unit/test_core_placement_group_scheduling.py\n M tests/unit/test_core_stored_publication_adoption.py\n M tests/unit/test_core_task_retry.py\n M tests/unit/test_core_worker_crash_recovery.py\n M tests/unit/test_foreign_stored_task_dependencies.py\n M tests/unit/test_foreign_wait_drop.py\n M tests/unit/test_handoff_push_admission.py\n M tests/unit/test_inline_publication_gate.py\n M tests/unit/test_inline_publication_node_server.py\n M tests/unit/test_inline_recovery.py\n M tests/unit/test_large_object_runtime.py\n M tests/unit/test_lease_completion_handshake.py\n M tests/unit/test_location_handoff_worker_loss.py\n M tests/unit/test_node_blocking_get_authority.py\n M tests/unit/test_node_lease_execution.py\n M tests/unit/test_node_publication_owner_death_finalize.py\n M tests/unit/test_output_control_shutdown.py\n M tests/unit/test_output_owner_death_node.py\n M tests/unit/test_output_protocol.py\n M tests/unit/test_output_publication_journal.py\n M tests/unit/test_output_publication_node.py\n M tests/unit/test_output_publication_node_server.py\n M tests/unit/test_owner_finalize_replica_receipts.py\n M tests/unit/test_owner_led_publication.py\n M tests/unit/test_owner_reconstruction_completion_race.py\n M tests/unit/test_public_multi_return_runtime.py\n M tests/unit/test_publication_owner_death_control.py\n M tests/unit/test_publication_pg_dispatch.py\n M tests/unit/test_publication_trace_observation.py\n M tests/unit/test_push_replay_state.py\n M tests/unit/test_same_owner_output_custody.py\n M tests/unit/test_single_output_journal_retirement.py\n M tests/unit/test_spillback_runtime.py\n M tests/unit/test_stored_publication_node_death_gc.py\n M tests/unit/test_stored_publication_node_server.py\n M tests/unit/test_targeted_output_publication.py\n M tests/unit/test_task_finish_barrier.py\n M tests/unit/test_worker_completion_paths.py\n M tests/unit/test_worker_crash_supervisor.py\n M tests/unit/test_worker_unified_output.py\n?? artifacts/cleanup-base/k5snapshot-01/\n?? artifacts/cleanup-base/p2snapshot-01/\n?? tests/unit/test_output_complete_ack.py\n",
+    "archive_sha256": "f5206dea5b429be8796c860ad85e72f37704f8c23d4073ecfe266c9eb210490a",
+    "file_count": 421,
+    "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+  },
+  "selection_mode": "case"
+}

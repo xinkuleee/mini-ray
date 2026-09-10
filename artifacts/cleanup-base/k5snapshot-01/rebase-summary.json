@@ -1,0 +1,46 @@
+{
+  "status": "STATIC_REBASE_NOT_APPLIED_NOT_TESTED",
+  "source": "current mini-ray-base",
+  "rows": [
+    {
+      "path": "tests/unit/test_core_lost_blocking_lock_order.py",
+      "before_raw_sha256": "564ee91099125a201e47abf88e2ecf059915b841710de02808f36d082c9b66a5",
+      "after_raw_sha256": "f6686e74e63c6579a82e390179100a141869f955aa6b6ec170712fcdb67a11e8",
+      "line_ending": "CRLF",
+      "test_function_count_before_after": [
+        3,
+        3
+      ],
+      "test_names_markers_parameters_unchanged": true
+    },
+    {
+      "path": "tests/unit/test_inline_publication_gate.py",
+      "before_raw_sha256": "221e940cf61460ea3409d4d43fc04331d8b0951912bdb7ea699fabc74fbccc91",
+      "after_raw_sha256": "c84c70395ea8bcea7eaf98a1091ccf4e986f7938d4552677596f500215b4954f",
+      "line_ending": "CRLF",
+      "test_function_count_before_after": [
+        17,
+        17
+      ],
+      "test_names_markers_parameters_unchanged": true
+    },
+    {
+      "path": "tests/unit/test_spillback_runtime.py",
+      "before_raw_sha256": "47cd28ed061ffbb0869504adc296ba8774a70331f871281a765039ea3eebb183",
+      "after_raw_sha256": "9bade3fd35895f4c1107d5e688d8b0b16b00176974aa7344c02956db4d12c542",
+      "line_ending": "CRLF",
+      "test_function_count_before_after": [
+        12,
+        12
+      ],
+      "test_names_markers_parameters_unchanged": true
+    }
+  ],
+  "three_test_patch_sha256": "a2e2bd3c074c06da99964245f44ee00416c4746963b3c5ebb02ffa1c6180e1ef",
+  "original_patch_sha256": "d94cd3dc1dc81d163fd79e0bee9e2957943f8214b97511ecec49a21f173dc4fa",
+  "remaining_original_sections": 38,
+  "current_P3_P4_content_preserved": true,
+  "base_modified": false,
+  "pytest_run": false,
+  "manifest_changed": false
+}

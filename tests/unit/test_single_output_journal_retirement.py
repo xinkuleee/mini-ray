@@ -63,14 +63,16 @@ def test_exact_retirement_replays_without_recreating_payload_or_erasing_complete
     envelope = journal.complete(identity, witness)
     assert ((envelope.result,)) == (descriptor,)
     retired = journal.retire_completed(proof)
-    assert len(retired) == 1 and journal.retire_completed(proof) == retired
+    assert retired.publication_id == identity and retired.object_id == identity.object_id
+    assert journal.retire_completed(proof) == retired
     snapshot = journal.snapshot(identity)
     assert snapshot.state is OutputPublicationJournalState.RETIRED
-    assert snapshot.complete == witness and snapshot.retained_result_slots == ()
+    assert snapshot.complete == witness and snapshot.result_retained is False
+    assert snapshot.materialized is True and snapshot.retirement == retired
     assert journal.materialized_result(identity) is None
     with pytest.raises(OutputPublicationPayloadRetired) as caught:
         journal.complete(identity, witness)
-    assert caught.value.tombstones == retired
+    assert caught.value.tombstone == retired
     assert journal.snapshot(identity) == snapshot
 
 

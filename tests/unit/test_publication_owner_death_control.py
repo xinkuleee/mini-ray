@@ -178,7 +178,7 @@ def test_child_ack_loss_then_invalid_worker_finalize_preserves_exact_owner_clean
             node._handle_finalize_output_owner_death(request)
         assert releases == [expected[0]] and not finalizations
         assert fixture.adapter._owner_cleanup_acks == {}
-        assert fixture.journal.snapshot(fixture.id).retained_result_slots == (0,)
+        assert fixture.journal.snapshot(fixture.id).result_retained is True
         assert not fixture.adapter.owner_death_finished(fixture.id)
         assert not node._handle_prepare_output_publication(wire.PrepareOutputPublication(
             fixture.manifest, (values.payload),
@@ -190,7 +190,7 @@ def test_child_ack_loss_then_invalid_worker_finalize_preserves_exact_owner_clean
         assert finalizations == [request]
         assert len(fixture.adapter._owner_cleanup_acks) == 4
         unresolved = fixture.journal.snapshot(fixture.id)
-        assert unresolved.complete == journal_before.complete and unresolved.retained_result_slots == (0,)
+        assert unresolved.complete == journal_before.complete and unresolved.result_retained is True
         assert not fixture.adapter.owner_death_finished(fixture.id)
         assert not fixture.adapter._tickets
 
@@ -199,7 +199,7 @@ def test_child_ack_loss_then_invalid_worker_finalize_preserves_exact_owner_clean
         assert tuple(releases) == (expected[0],) + expected
         snapshot = fixture.journal.snapshot(fixture.id)
         assert snapshot.state is OutputPublicationJournalState.RETIRED
-        assert snapshot.complete == journal_before.complete and not snapshot.retained_result_slots
+        assert snapshot.complete == journal_before.complete and not snapshot.result_retained
         assert snapshot.rollback is None and snapshot.rollback_tombstone is None
         assert fixture.adapter.owner_death_finished(fixture.id)
         assert fixture.ledger.available == ResourceVector({"CPU": 1})

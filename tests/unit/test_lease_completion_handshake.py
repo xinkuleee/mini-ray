@@ -364,8 +364,8 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
 
     def report_complete(witness):
         snapshot = handoffs.record_complete(witness)
-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
-        assert reply.snapshot.complete == witness
+        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        assert reply.accepted and reply.witness == witness
 
     node._output_publications = OutputPublicationNodeAdapter(
         node._output_publication_journal, register_owner=register_owner,

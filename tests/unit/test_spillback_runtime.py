@@ -217,11 +217,13 @@ class _CoreHandoffEndpoint:
     def record_complete(self, witness):
         request = wire.ReportOutputHandoffComplete(witness)
         reply = self.core.report_output_handoff_complete(request)
-        assert type(reply) is wire.OutputHandoffReply and reply.request == request
+        assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness
         assert reply.accepted and reply.error is None
-        assert reply.snapshot.complete == witness
         self.completions.append((request, reply))
-        return reply.snapshot
+        # This test endpoint implements the local table interface used by the
+        # Node fixture. Observe the real query separately; do not fabricate a
+        # snapshot from a narrow ACK or add a query to production's callback.
+        return self.query(witness.publication_id)
 
     def query(self, identity):
         request = wire.GetOutputHandoff(identity)
@@ -379,15 +381,16 @@ class _SubmissionFixture:
         assert receipt.plan == plan and receipt.committed
         assert self.core.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.ACTIVE
         before = self.publication.journal.snapshot(envelope.publication_id)
-        assert before.complete == request.proof.complete and before.retained_result_slots == (0,)
+        assert before.complete == request.proof.complete and before.result_retained is True
         reply = self.target._handle_ack_output_publication_adopted(request)
         assert type(reply) is wire.AckOutputPublicationAdoptedReply
         assert reply.request == request and reply.accepted
         after = self.publication.journal.snapshot(envelope.publication_id)
-        assert after.complete == before.complete and not after.retained_result_slots
-        (retired,) = after.retired_slots
+        assert after.complete == before.complete and not after.result_retained
+        retired = after.retirement
+        assert retired is not None
         assert retired.publication_id == envelope.publication_id and retired.proof == request.proof
-        assert retired.object_id == self.pending.object_id and retired.slot_index == 0
+        assert retired.object_id == self.pending.object_id and retired.manifest_digest == envelope.manifest.manifest_digest
         # Retiring Node reply custody cannot collect the owner's live ObjectRef.
         assert self.core.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.ACTIVE
         return reply
@@ -538,11 +541,11 @@ class _SubmissionFixture:
         assert self.target._resource_report_version == version == 2
         identity = self.completed.output_publication.publication_id
         node_receipt = self.publication.journal.snapshot(identity)
-        assert not node_receipt.retained_result_slots
+        assert not node_receipt.result_retained
         handoff = self.owner_handoffs.query(identity)
         assert handoff.phase is OutputHandoffPhase.ADOPTED
         assert handoff.complete == self.completed.output_publication.complete
-        assert handoff.adoption == node_receipt.retired_slots[0].proof
+        assert handoff.adoption == node_receipt.retirement.proof
         assert not self.owner_handoffs.completions and not self.collection_receipts
         assert core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.ACTIVE
         if self.home is not self.target:
@@ -590,14 +593,15 @@ class _SubmissionFixture:
         handoff_before = self.owner_handoffs.query(identity)
         node_before = self.publication.journal.snapshot(identity)
         assert handoff_before.phase is OutputHandoffPhase.ADOPTED
-        assert handoff_before.adoption == node_before.retired_slots[0].proof
+        assert handoff_before.adoption == node_before.retirement.proof
         # A late metadata-only Complete report replays owner history after GC.
         # It cannot recreate result bytes, a local reference, or object state.
         assert self.publication.adapter.report_terminal(identity)
         assert not self.publication.adapter.pending_terminal_reports()
         ((completion, reported),) = self.owner_handoffs.completions
         assert completion.witness == self.completed.output_publication.complete
-        assert reported.snapshot == handoff_before == self.owner_handoffs.query(identity)
+        assert reported.accepted and reported.witness == completion.witness == handoff_before.complete
+        assert handoff_before == self.owner_handoffs.query(identity)
         assert self.publication.journal.snapshot(identity) == node_before
         assert core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.COLLECTED
         assert not core._objects and not core._stored_descriptors and not core._object_gc_obligations

@@ -1,0 +1,30 @@
+...........F.                                                            [100%]
+=================================== FAILURES ===================================
+_ test_actor_rejects_task_publication_authority_without_graph_side_effects[output-envelope] _
+
+extra = 'output-envelope'
+
+    @pytest.mark.parametrize("extra", ("output-envelope", "contained-edge"))
+    def test_actor_rejects_task_publication_authority_without_graph_side_effects(extra):
+        with _case() as values:
+            call = values.begin()
+            reply = values.reply(call)
+            descriptor = reply.task_reply.results[0]
+            if extra == "output-envelope":
+                execution = (TaskExecution(call.request.attempt_id))
+                identity = OutputPublicationID(_id(LeaseID, 7), execution)
+                header = OutputPublicationHeader(
+                    identity, values.core.job_id, call.endpoint.worker_id, values.core.worker_id,
+                    OutputPublicationNodeIncarnation(call.endpoint.node_id, 1101, 1),
+                )
+                manifest = OutputPublicationManifest.create(header, (OutputValue(descriptor.storage, descriptor.size_bytes, descriptor.checksum)))
+                envelope = OutputPublicationEnvelope(
+>                   manifest, OutputPublicationCompleteWitness.for_manifest(manifest), (descriptor[0]),
+                                                                                        ^^^^^^^^^^^^^
+                )
+E               TypeError: 'ResultDescriptor' object is not subscriptable
+
+tests/unit/test_actor_result_publication.py:351: TypeError
+=========================== short test summary info ============================
+FAILED tests/unit/test_actor_result_publication.py::test_actor_rejects_task_publication_authority_without_graph_side_effects[output-envelope]
+1 failed, 12 passed in 3.93s

@@ -1,0 +1,54 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_output_publication.py",
+    "exit_code": 0,
+    "seconds": 5.869,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-preflight-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_output_publication.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_public_multi_return_runtime.py",
+    "exit_code": 0,
+    "seconds": 8.497,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-preflight-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_public_multi_return_runtime.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_path.py::test_one_node_one_worker_task_path",
+    "exit_code": 0,
+    "seconds": 6.273,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-preflight-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_path.py::test_one_node_one_worker_task_path"
+    ],
+    "log": "002-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects",
+    "exit_code": 0,
+    "seconds": 9.249,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-preflight-01/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_contained_reconstruction_path.py::test_foreign_task_outer_renews_imports_replaces_edges_and_collects"
+    ],
+    "log": "003-smoke.log"
+  }
+]

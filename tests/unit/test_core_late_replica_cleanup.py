@@ -1,9 +1,9 @@
 """Pure late-DROP custody with actual target grant, cancel and replica deletion.
 
-Two 1 KiB stores, one adopted two-output producer and one unexecuted consumer;
+Two 1 KiB stores, one adopted single-output producer and one unexecuted consumer;
 the mixed-dependency case adds one seven-byte owner-held value. At most two
-threadless Cores, one unstarted GCS, six source transfer calls, and two exact
-target grants exist. All interleavings use synchronous RPC hooks.
+threadless Cores, one member registry, six source transfer calls, and two exact
+target grants exist. All interleavings use synchronous boundary hooks.
 
 The target pull/seal/grant happens before publisher death; only owner location
 reporting is delayed. No dead source is contacted, no successful grant/drop
@@ -18,7 +18,7 @@ import threading
 
 import pytest
 
-from miniray import node as node_module, output_protocol as wire, protocol
+from miniray import node as node_module, protocol
 from miniray.core import _HomeRoute
 from miniray.core import (
     _DelayedReadyTask, _ForeignDependencyGuard, _LeaseRequestState,
@@ -26,7 +26,9 @@ from miniray.core import (
 )
 from miniray.ids import AttemptID, LeaseID, ObjectID, TaskID
 from miniray.errors import SystemTaskError
+from miniray.output_handoff import NodeLostOutputResolution
 from miniray.ownership import ObjectCollectionState, ObjectState
+from miniray.reconstruction_runtime import ReconstructionDisposition
 from miniray.resources import ResourceVector
 from miniray.transport import TransportTimeout
 from tests.unit._pure_core import close_pure_core, make_pure_core
@@ -51,7 +53,7 @@ class _Case:
             consumer.node_id, consumer.node_address = f.target.node_id, f.target_address
         consumer._home_route = _HomeRoute(consumer.node_id, consumer.node_address, consumer._membership_epoch)
         self.calls, self.cancel_replies, self.drop_replies, self.report_replies = [], [], [], []
-        self.before_cancel = self.before_progress = None
+        self.before_cancel = self.before_resolution = None
         self.lose_cancel_ack = self.lose_drop_ack = False
         self.cancel_ack_lost = self.drop_ack_lost = False
         self.requests = []
@@ -160,14 +162,24 @@ class _Case:
             self.replica.object_id, self.replica.producer_attempt_id, self.replica.owner_worker_id,
             self.replica.node_id, self.replica.checksum,
         )
+        original_resolution_init = NodeLostOutputResolution.__post_init__
+
+        def before_owner_resolution(resolution):
+            original_resolution_init(resolution)
+            if (resolution.publication_id == f.identity and not resolution.keep
+                    and self.before_resolution is not None):
+                assert not self.owner._state_lock._is_owned()
+                assert self.owner._output_loss_choices[f.identity] is False
+                assert f.identity not in self.owner.owner_table._output_loss_receipts
+                callback, self.before_resolution = self.before_resolution, None
+                callback()
+
+        monkeypatch.setattr(NodeLostOutputResolution, "__post_init__", before_owner_resolution)
 
     def rpc(self, address, handler, request):
         self.calls.append((address, handler, request))
         assert len(self.calls) <= 32
         f = self.f
-        if handler == wire.PROGRESS_OUTPUT_NODE_LOSS_HANDLER and self.before_progress is not None:
-            callback, self.before_progress = self.before_progress, None
-            callback()
         if handler == node_module.REQUEST_LEASE_HANDLER:
             assert address == f.target_address and request == self.request
             result = f.target._handle_request_lease(request)
@@ -225,7 +237,7 @@ class _Case:
 
         def execute():
             choice = self.owner._output_loss_choices[self.f.identity]
-            assert (choice.value).decision.value == "DROP"
+            assert choice is False
             assert self.owner.owner_table.snapshot(self.f.output).locations == frozenset()
             assert self.f.target.object_store.snapshot(self.f.output).pin_count == 1
             result = self.consumer._execute(
@@ -234,12 +246,16 @@ class _Case:
             observed.append(result)
             assert result is expect_terminal
 
-        self.before_progress = execute
+        self.before_resolution = execute
         obligation = self.f.lose_publisher()
         assert self.owner._drive_output_node_loss(self.f.pending, obligation)
         assert observed == [expect_terminal]
-        resolution = self.f.service.publications.output_recovery.snapshot(self.f.identity).resolution
-        assert resolution.kept_slots == (0,) and resolution.complete == self.f.envelope.complete
+        resolution = self.owner.owner_table._output_loss_receipts[self.f.identity]
+        assert type(resolution) is NodeLostOutputResolution and resolution.keep is False
+        assert (resolution.publication_id, resolution.manifest_digest, resolution.owner_worker_id, resolution.node_death) == (
+            self.f.identity, self.f.manifest.manifest_digest, self.owner.worker_id, self.f.death,
+        )
+        assert resolution.complete == self.f.envelope.complete and resolution.cleanup == ()
         assert self.owner._finish_pending_task(self.f.pending)
         current = self.owner.owner_table.snapshot(self.f.output)
         assert current.state is ObjectState.LOST and not current.locations
@@ -331,7 +347,7 @@ def test_late_drop_report_cancels_real_grant_and_exact_cleanup_survives_both_los
         assert not owner._retire_lost_output_memberships(f.output)
         assert owner._start_or_join_reconstruction(f.output, owner._objects[f.output]) is None
         assert owner._recovery.task_record(f.pending.task_id) == before
-        assert owner.owner_table.release_local_reference(f.output, "outer1")
+        assert owner.owner_table.release_local_reference(f.output, "outer0")
         owner._reference_released(f.output)
         assert owner.owner_table.collection_state(f.output) is ObjectCollectionState.ACTIVE
 
@@ -386,19 +402,26 @@ def test_completed_old_cleanup_and_late_report_cannot_delete_new_targeted_attemp
         case.execute_during_drop()
         assert owner._drive_late_replica_cleanup(schedule_retry=False)
         assert not owner._late_replica_cleanup.has_pending()
-        owner._start_or_join_reconstruction(f.output, owner._objects[f.output])
-        started = owner._start_open_targeted_reconstruction(f.pending.task_id)
-        assert started is not None and started.execution.attempt_id == f.pending.spec.attempt_id.next()
-        assert started.target_output_ids == (f.output,)
-        newer = started.execution.attempt_id
-        payload = b"new-target-attempt"
+        started = owner._start_or_join_reconstruction(
+            f.output, owner._objects[f.output], return_requested_outcome=True,
+        )
+        assert started is not None and started.disposition is ReconstructionDisposition.START
+        assert started.plan.attempt_id == f.pending.spec.attempt_id.next()
+        assert started.plan.output_ids == (f.output,) and started.plan.object_id == f.output
+        newer = started.plan.attempt_id
+        admitted = tuple(item for item in tuple(owner._submissions.queue)
+                         if isinstance(item, _PendingTask) and item.task_id == f.pending.task_id
+                         and item.spec.attempt_id == newer)
+        assert len(admitted) == 1 and admitted[0].object_id == f.output
+        assert owner.owner_table.snapshot(f.output).current_attempt == newer
+        payload = b"new-ordinary-attempt"
         assert f.target._handle_seal_object(protocol.SealObject.from_data(
             f.output, newer, owner.worker_id, payload,
         )).sealed
         request = protocol.RequestWorkerLease(
             LeaseID(bytes((85,)) * 16), newer.task_id, newer, ResourceVector({"CPU": 1}),
             f.target.node_id, owner.worker_id, target_node_id=f.target.node_id,
-            return_ids=(f.output,), target_execution=started.execution,
+            return_ids=admitted[0].spec.return_ids(),
         )
         case.requests.append(request)
         grant = f.target._handle_request_lease(request)
@@ -460,14 +483,14 @@ def test_installed_target_death_discharges_cleanup_without_fabricating_drop_ack(
         case.execute_during_drop()
         case.assert_pending_cleanup()
         assert case.consumer._finish_pending_task(case.pending)
-        target = f.service.nodes.get(f.target.node_id)
-        result = f.service.publications.commit_node_death(lambda: f.service.nodes.report_death(
+        target = f.registry.get(f.target.node_id)
+        result = f.registry.report_death(
             protocol.ReportNodeDeath(
                 "late-secondary-node-exit", target.node_id, target.node_pid, target.registration_epoch,
                 2, protocol.NodeDeathReason.PROCESS_EXIT, "confirmed target Node exit",
             ),
-        ))
-        epoch, live = f.service.nodes.live_snapshot()
+        )
+        epoch, live = f.registry.live_snapshot()
         owner.handle_node_death(result.death, protocol.InstallClusterSnapshot(epoch, "late-target-dead", live))
         assert owner._drive_late_replica_cleanup(schedule_retry=False)
         (record,) = owner._late_replica_cleanup.snapshot()
@@ -490,11 +513,18 @@ def test_system_retry_waits_for_a_late_old_replica_after_targeted_start(monkeypa
         obligation = f.lose_publisher()
         assert owner._drive_output_node_loss(f.pending, obligation)
         assert owner._finish_pending_task(f.pending)
-        owner._start_or_join_reconstruction(f.output, owner._objects[f.output])
-        started = owner._start_open_targeted_reconstruction(f.pending.task_id)
-        assert started is not None
-        current = next(item for item in tuple(owner._submissions.queue)
-                       if isinstance(item, _PendingTask) and item.target_execution == started.execution)
+        started = owner._start_or_join_reconstruction(
+            f.output, owner._objects[f.output], return_requested_outcome=True,
+        )
+        assert started is not None and started.disposition is ReconstructionDisposition.START
+        assert started.plan.output_ids == (f.output,)
+        assert started.plan.attempt_id == f.pending.spec.attempt_id.next()
+        admitted = tuple(item for item in tuple(owner._submissions.queue)
+                         if isinstance(item, _PendingTask) and item.task_id == f.pending.task_id
+                         and item.spec.attempt_id == started.plan.attempt_id)
+        assert len(admitted) == 1
+        current = admitted[0]
+        assert current.object_id == f.output and current.execution.attempt_id == started.plan.attempt_id
         assert owner.report_retained_object_location(case.report()).status is protocol.RetainedLocationReportStatus.RETIRED
         before = replace(owner._recovery.task_record(f.pending.task_id))
         assert not owner._retry_system_failure(current, SystemTaskError("new attempt failed before result"))

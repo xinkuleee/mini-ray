@@ -101,7 +101,7 @@ def test_closed_admission_preserves_accepted_output_until_exact_cleanup_and_fini
         assert core.register_output_handoff(request) == registered
         report = wire.ReportOutputHandoffComplete(complete)
         completed = core.report_output_handoff_complete(report)
-        assert completed.accepted and completed.snapshot.complete == complete
+        assert type(completed) is wire.OutputHandoffCompleteAck and completed.accepted and completed.witness == complete
         assert core.report_output_handoff_complete(report) == completed
         if refs:
             assert not core._drive_output_node_loss(pending, loss)

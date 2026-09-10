@@ -486,7 +486,7 @@ def test_concurrent_block_and_completion_linearize_without_leaking(
         # delivery custody; it cannot authorize retirement or physical GC.
         snapshot = journal.snapshot(identity)
         assert snapshot.state is OutputPublicationJournalState.COMPLETED
-        assert snapshot.retained_result_slots == (0,) and snapshot.retired_slots == ()
+        assert snapshot.result_retained is True and snapshot.retirement is None
         assert snapshot.rollback is None and snapshot.rollback_tombstone is None
         stored = (envelope.result)
         assert stored.inline_data is None

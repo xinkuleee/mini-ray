@@ -92,7 +92,7 @@ def test_open_prepare_bind_order_and_authority_exclusion():
     ]
     snapshot = fixture.journal.snapshot(fixture.id)
     assert snapshot.ready_to_complete and snapshot.complete is None
-    assert snapshot.materialized_slots == (0,)
+    assert snapshot.materialized is True
     assert fixture.handoffs.query(fixture.id).manifest == fixture.manifest
     assert fixture.handoffs.query(fixture.id).complete is None
     assert fixture.store.used_bytes == 0
@@ -107,7 +107,7 @@ def test_owner_registration_ack_loss_replays_exact_manifest_before_any_effect():
         _prepare(fixture, node)
     assert record.output_publication_id == fixture.id
     assert fixture.events == ["owner-register"]
-    assert fixture.journal.snapshot(fixture.id).retained_result_slots == ()
+    assert fixture.journal.snapshot(fixture.id).result_retained is False
     assert _prepare(fixture, node).accepted
     assert fixture.events[:2] == ["owner-register", "owner-register"]
     assert fixture.events.count("prepare") == 2
@@ -478,13 +478,13 @@ def test_owner_fence_during_terminal_reply_preserves_fact_but_never_restores_cus
         node._handle_get_output_worker_lease_outcome(_query(fixture, record), fixture.id)
     if finish_cleanup:
         assert snapshot.state is OutputPublicationJournalState.RETIRED
-        assert not snapshot.retained_result_slots
+        assert not snapshot.result_retained
         assert worker_acks == [cleanup]
         assert node._handle_finalize_output_owner_death(cleanup).cleaned
         assert _clean(node)
         assert node._drive_output_publications()
     else:
-        assert snapshot.retained_result_slots == (0,)
+        assert snapshot.result_retained is True
         assert not fixture.adapter.owner_death_finished(fixture.id)
         assert not _clean(node)
         # Progress completion is not clean-shutdown/custody completion.  The

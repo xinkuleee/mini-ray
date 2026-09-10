@@ -195,7 +195,7 @@ def test_owner_handoff_is_complete_pre_effect_metadata_and_exact_replay(monkeypa
                 assert f.core.owner_table.snapshot(f.pending.object_id) == owner_before
                 journal = f.f.journal.snapshot(f.identity)
                 assert len(journal.intents) == 1 and journal.intents[0].stage is OutputPublicationStage.OWNER_REGISTER
-                assert journal.acknowledgements == () and journal.retained_result_slots == ()
+                assert journal.acknowledgements == () and journal.result_retained is False
                 _metadata((reply, journal))
                 if len(receipts) == 1:
                     raise TimeoutError("owner registration applied before ACK loss")
@@ -216,7 +216,10 @@ def test_owner_handoff_is_complete_pre_effect_metadata_and_exact_replay(monkeypa
         assert f.node._drive_output_publications()
         current = f.handoffs.query(f.identity)
         assert current.complete == envelope.complete and historical.complete is None
-        assert f.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(envelope.complete)).snapshot == current
+        acknowledged = f.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(envelope.complete))
+        assert type(acknowledged) is wire.OutputHandoffCompleteAck and acknowledged.accepted
+        assert acknowledged.witness == current.complete == envelope.complete
+        assert f.handoffs.query(f.identity) == current
         assert f.record.state is protocol.LeaseExecutionState.COMPLETED
         assert f.f.ledger.available == ResourceVector({"CPU": 1})
         _metadata((historical, current, f.f.journal.snapshot(f.identity)))
@@ -287,7 +290,7 @@ def test_owner_fence_and_prepare_have_two_serial_admission_histories(owner_first
             assert f.node._handle_finalize_output_owner_death(f.finalize).cleaned
             retired = f.f.journal.snapshot(f.identity)
             assert retired.complete is None and retired.state is OutputPublicationJournalState.RETIRED
-            assert retired.rollback_tombstone is None and retired.retained_result_slots == ()
+            assert retired.rollback_tombstone is None and retired.result_retained is False
             assert f.record.state is protocol.LeaseExecutionState.ABANDONED
             assert f.f.ledger.available == ResourceVector({"CPU": 1})
             assert f.handoffs.query(f.identity) == historical

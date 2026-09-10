@@ -4696,9 +4696,9 @@ class CoreWorker:
                     raise ValueError("output owner is stopped")
                 snapshot = self._output_handoff_table().record_complete(request.witness)
                 self._completion.notify_all()
-                return wire.OutputHandoffReply(request, True, snapshot)
+                return wire.OutputHandoffCompleteAck(snapshot.complete, True)
         except Exception as exc:
-            return wire.OutputHandoffReply(request, False, error=str(exc) or type(exc).__name__)
+            return wire.OutputHandoffCompleteAck(request.witness, False, error=str(exc) or type(exc).__name__)
 
     def report_output_handoff_rollback(self, request):
         """Accept exact Node compensation, even when registration was rejected.
@@ -11466,7 +11466,6 @@ class CoreWorker:
                     raise SystemTaskError("output publication needs Node-loss resolution")
                 previous = self._owner_table.output_owner_publication_receipt(plan)
                 if previous is None:
-                    self._owner_table.validate_output_publication(plan)
                     recovery = self._recovery_manager()
                     success = recovery.validate_task_success(pending.task_id, pending.spec.attempt_id)
                     if success.decision.action is not RecoveryAction.ACCEPT_SUCCESS:

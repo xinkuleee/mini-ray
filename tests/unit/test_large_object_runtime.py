@@ -228,7 +228,7 @@ def test_core_publishes_stored_location_then_fetches_from_node(
             wire.ReportOutputPublicationAdopted,
             wire.AckOutputPublicationAdopted,
         ]
-        assert not backend.journal.snapshot(envelope.publication_id).retained_result_slots
+        assert not backend.journal.snapshot(envelope.publication_id).result_retained
         assert backend.store.get(object_id) == payload
 
         # Adoption retires Node reply custody, not the physical replica. The

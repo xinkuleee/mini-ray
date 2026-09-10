@@ -1,0 +1,696 @@
+{
+  "parsed_files": 383,
+  "syntax": [],
+  "missing_imports": [],
+  "missing_all_exports": [],
+  "missing_self_handler_bindings": [],
+  "source_items": [
+    {
+      "id": "SRC-001",
+      "path": "src/miniray/core.py",
+      "symbol": "CoreWorker._known_output_completion_locked",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-002",
+      "path": "src/miniray/core.py",
+      "symbol": "CoreWorker._resolve_task_dependencies",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-003",
+      "path": "src/miniray/node.py",
+      "symbol": "NodeServer._legacy_unregister_from_gcs_best_effort",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-004",
+      "path": "src/miniray/node.py",
+      "symbol": "NodeServer._start_worker_locked",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-005",
+      "path": "src/miniray/node.py",
+      "symbol": "NodeServer._stop_worker",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-006",
+      "path": "src/miniray/node.py",
+      "symbol": "NodeServer._drain_actor_workers_once",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-007",
+      "path": "src/miniray/worker.py",
+      "symbol": "WorkerServer._claim_system_error_failpoint",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-008",
+      "path": "src/miniray/worker.py",
+      "symbol": "WorkerServer._begin_drain",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-009",
+      "path": "src/miniray/core.py",
+      "symbol": "_ActorInflightCall",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-010",
+      "path": "src/miniray/dependency.py",
+      "symbol": "_deduplicate",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-011",
+      "path": "src/miniray/runtime_state.py",
+      "symbol": "runtime_state module",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": false,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-012",
+      "path": "src/miniray/recovery.py",
+      "symbol": "RecoveryManager.validate_terminal_reconstruction_failure",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-013",
+      "path": "src/miniray/recovery.py",
+      "symbol": "RecoveryAction.FAIL_RECONSTRUCTION_TARGETS",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-014",
+      "path": "src/miniray/node.py",
+      "symbol": "NodeServer._legacy_worker_compat initialization",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-015",
+      "path": "src/miniray/node.py",
+      "symbol": "NodeServer._legacy_worker_compat legacy assignment",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-016",
+      "path": "src/miniray/node_monitor.py",
+      "symbol": "ManagedNodeMonitor._processes",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-017",
+      "path": "src/miniray/output_publication_journal.py",
+      "symbol": "OutputPublicationJournal.retire_slot",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-018",
+      "path": "src/miniray/output_publication_journal.py",
+      "symbol": "OutputPublicationSlotCleanupProof",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "SRC-019",
+      "path": "src/miniray/protocol.py",
+      "symbol": "StoredPublicationQueryDisposition",
+      "planned_action": "delete_after_migration",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-001",
+      "path": "src/miniray/ids.py",
+      "symbol": "derive_task_id",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-002",
+      "path": "src/miniray/ids.py",
+      "symbol": "derive_object_id",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-003",
+      "path": "src/miniray/recovery.py",
+      "symbol": "mark_running",
+      "planned_action": "keep",
+      "phase": "retain",
+      "path_present": true,
+      "matching_definition_lines": [
+        166
+      ],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-004",
+      "path": "src/miniray/recovery.py",
+      "symbol": "forget_collected_object",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-005",
+      "path": "src/miniray/recovery.py",
+      "symbol": "record_terminal_system_failure",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-006",
+      "path": "src/miniray/control.py",
+      "symbol": "live_node_infos",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-007",
+      "path": "src/miniray/api.py",
+      "symbol": "first_worker_forced",
+      "planned_action": "keep",
+      "phase": "retain",
+      "path_present": true,
+      "matching_definition_lines": [
+        325
+      ],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-008",
+      "path": "src/miniray/foreign_lineage.py",
+      "symbol": "admission_is_open",
+      "planned_action": "keep",
+      "phase": "retain",
+      "path_present": true,
+      "matching_definition_lines": [
+        225
+      ],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-009",
+      "path": "src/miniray/foreign_lineage_runtime.py",
+      "symbol": "has_registered_lineage",
+      "planned_action": "keep",
+      "phase": "retain",
+      "path_present": true,
+      "matching_definition_lines": [
+        885
+      ],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-010",
+      "path": "src/miniray/reconstruction_runtime.py",
+      "symbol": "lineage_inputs",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-011",
+      "path": "src/miniray/reconstruction_runtime.py",
+      "symbol": "rewrite_nested_holds",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-012",
+      "path": "src/miniray/ownership.py",
+      "symbol": "abort_task_lineage_edges",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-013",
+      "path": "src/miniray/foreign_lineage_runtime.py",
+      "symbol": "abandon_renewal",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-014",
+      "path": "src/miniray/ownership.py",
+      "symbol": "add_outgoing_contained_edge",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-015",
+      "path": "src/miniray/ownership.py",
+      "symbol": "add_outgoing_contained_edges",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-016",
+      "path": "src/miniray/ownership.py",
+      "symbol": "collect_if_unused",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-017",
+      "path": "src/miniray/ownership.py",
+      "symbol": "collect_unused_with_edges",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-018",
+      "path": "src/miniray/ownership.py",
+      "symbol": "publish_inline",
+      "planned_action": "keep",
+      "phase": "retain",
+      "path_present": true,
+      "matching_definition_lines": [
+        1469
+      ],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-019",
+      "path": "src/miniray/ownership.py",
+      "symbol": "publish_task_outputs",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-020",
+      "path": "src/miniray/ownership.py",
+      "symbol": "commit_publish_task_outputs",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "API-021",
+      "path": "src/miniray/owner_death_fence_registry.py",
+      "symbol": "from_node_info",
+      "planned_action": "delete",
+      "phase": "K2",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": true,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-001",
+      "path": "src/miniray/node.py",
+      "symbol": "_ensure_worker_slots_locked / _sync_first_worker_compat_locked",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-002",
+      "path": "src/miniray/core.py",
+      "symbol": "_gc_obligations",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-003",
+      "path": "src/miniray/core.py",
+      "symbol": "_resolve_node_address_with_timeout_at_route",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [
+        7849
+      ],
+      "matching_ast_reference_lines": [
+        7751,
+        11700
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-004",
+      "path": "src/miniray/worker.py",
+      "symbol": "_shutdown_embedded_core",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [
+        959
+      ],
+      "matching_ast_reference_lines": [
+        468,
+        1932,
+        2082
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-005",
+      "path": "src/miniray/core.py",
+      "symbol": "handle_node_death",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [
+        1935
+      ],
+      "matching_ast_reference_lines": [
+        2128
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-006",
+      "path": "src/miniray/output_publication_node.py",
+      "symbol": "_converge_lease / report_terminal",
+      "planned_action": "modify",
+      "phase": "K5",
+      "path_present": true,
+      "matching_definition_lines": [
+        248
+      ],
+      "matching_ast_reference_lines": [
+        282,
+        246
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-007",
+      "path": "src/miniray/output_publication_journal.py",
+      "symbol": "OutputPublicationJournalSnapshot / _Record / retire_completed",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [
+        216
+      ],
+      "matching_ast_reference_lines": [
+        451,
+        458
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-008",
+      "path": "src/miniray/output_publication_journal.py",
+      "symbol": "_Record / ack_prepared / ack_promoted / ack_rollback",
+      "planned_action": "keep",
+      "phase": "K5",
+      "path_present": true,
+      "matching_definition_lines": [
+        237
+      ],
+      "matching_ast_reference_lines": [
+        255,
+        284
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-009",
+      "path": "src/miniray/core.py",
+      "symbol": "_drive_output_node_loss / _drive_output_node_loss_once / _drive_output_publication_adoption",
+      "planned_action": "modify",
+      "phase": "K5",
+      "path_present": true,
+      "matching_definition_lines": [
+        11209
+      ],
+      "matching_ast_reference_lines": [
+        9285,
+        10691,
+        11451
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-010",
+      "path": "src/miniray/worker.py",
+      "symbol": "WorkerServer._begin_task",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [
+        727
+      ],
+      "matching_ast_reference_lines": [
+        487
+      ],
+      "retirement_expected": false,
+      "retirement_residual": false
+    },
+    {
+      "id": "REP-011",
+      "path": "src/miniray/owner_service.py",
+      "symbol": "OwnerService.__init__",
+      "planned_action": "modify",
+      "phase": "K4",
+      "path_present": true,
+      "matching_definition_lines": [
+        108,
+        164
+      ],
+      "matching_ast_reference_lines": [],
+      "retirement_expected": false,
+      "retirement_residual": false
+    }
+  ],
+  "retired_name_leads": [
+    {
+      "path": "tests/unit/test_core_late_replica_cleanup.py",
+      "line": 241,
+      "attribute": "self.f.service.publications.output_recovery"
+    },
+    {
+      "path": "tests/unit/test_output_publication_control.py",
+      "line": 86,
+      "literal": "output_recovery"
+    },
+    {
+      "path": "tests/unit/test_single_output_contract.py",
+      "line": 78,
+      "literal": "TaskOutputManifest"
+    },
+    {
+      "path": "tests/unit/test_single_output_contract.py",
+      "line": 79,
+      "literal": "TaskExecutionKey"
+    }
+  ]
+}

@@ -183,7 +183,10 @@ class _Case:
             }
             assert handler in methods
             reply = methods[handler](request)
-            assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
+            if handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER:
+                assert type(reply) is wire.OutputHandoffCompleteAck and reply.witness == request.witness and reply.accepted
+            else:
+                assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted
             return reply
         assert address == self.gcs_address
         if handler == node_module.GCS_REGISTER_NODE_HANDLER:
@@ -285,7 +288,7 @@ class _Case:
         node._flush_pending_resource_report()
         assert node.resource_ledger.available == node.resource_ledger.total
         assert node._leases[request.lease_id].state is protocol.LeaseExecutionState.COMPLETED
-        assert not node._output_publication_journal.snapshot(self.identity).retained_result_slots
+        assert not node._output_publication_journal.snapshot(self.identity).result_retained
         for ref, descriptor in zip(self.refs, self.reply.results):
             ready = core.owner_table.snapshot(ref.object_id)
             assert ready.state is ObjectState.READY_STORED and ready.canonical_stored_result == descriptor

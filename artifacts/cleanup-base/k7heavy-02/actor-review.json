@@ -1,0 +1,58 @@
+{
+  "scope": "Actor six originals; seven function names including already-unit options preserved",
+  "execution": "AST only; no pytest, test import, collection, or runtime command",
+  "base_matches_input": true,
+  "source_sha256": "bd248bebce8a3fb7696b529572fca480787d4dc909040be39a8dc02d6a60ffe6",
+  "candidate_sha256": "6109380ad1f2641548a221c51905acc0b92009ab625acad864f95589355a4b32",
+  "patch_sha256": "d895f516eec7123aa10a0348884b24d4790a80a4ce4e695b63ff313ba0c6cf18",
+  "dependencies": [
+    "tests/unit/_pure_core.py::make_pure_core",
+    "tests/unit/_pure_core.py::SynchronousReferenceMailbox",
+    "tests/unit/_pure_core.py::close_pure_core",
+    "src/miniray/actor_client.py::ActorClientTable",
+    "src/miniray/core.py::submit_actor_call",
+    "src/miniray/core.py::_dispatch_actor_call",
+    "src/miniray/core.py::_actor_call_rpc",
+    "src/miniray/core.py::_publish_actor_reply",
+    "src/miniray/core.py::install_actor_state",
+    "src/miniray/core.py::create_actor"
+  ],
+  "registrations": [
+    {
+      "selector": "tests/unit/test_core_actor_restart.py::test_install_restarting_fails_old_inflight_and_new_generation_starts_at_zero",
+      "original_marker": "heavy",
+      "candidate_marker": "loopback_smoke",
+      "original_assertions_preserved": true
+    },
+    {
+      "selector": "tests/unit/test_core_actor_restart.py::test_same_alive_route_transport_failure_is_typed_actor_unavailable",
+      "original_marker": "heavy",
+      "candidate_marker": "loopback_smoke",
+      "original_assertions_preserved": true
+    },
+    {
+      "selector": "tests/unit/test_core_actor_restart.py::test_transport_failure_with_new_gcs_route_fences_old_generation",
+      "original_marker": "heavy",
+      "candidate_marker": "loopback_smoke",
+      "original_assertions_preserved": true
+    },
+    {
+      "selector": "tests/unit/test_core_actor_restart.py::test_install_state_exact_replay_stale_noop_and_equal_epoch_conflict",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "original_assertions_preserved": true
+    },
+    {
+      "selector": "tests/unit/test_core_actor_restart.py::test_dead_snapshot_rejects_new_calls_immediately",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "original_assertions_preserved": true
+    },
+    {
+      "selector": "tests/unit/test_core_actor_restart.py::test_create_actor_binds_restart_policy_to_driver_owner_endpoint",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "original_assertions_preserved": true
+    }
+  ]
+}

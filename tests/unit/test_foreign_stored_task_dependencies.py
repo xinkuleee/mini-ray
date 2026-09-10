@@ -903,7 +903,7 @@ class _CanonicalReportFixture:
             snapshot = self.publication.handoff_snapshot(identity)
             assert snapshot.phase is OutputHandoffPhase.ADOPTED and snapshot.adoption is not None
             assert snapshot.complete == self.envelope.complete
-            assert not self.publication.journal.snapshot(identity).retained_result_slots
+            assert not self.publication.journal.snapshot(identity).result_retained
             assert not self.publication.adapter.pending_terminal_reports()
         # The live owner's own input handle keeps both reported replicas alive
         # until normal owner GC; consumer failure is not deletion authority.

@@ -61,7 +61,7 @@ def _complete_inline(core: CoreWorker, outputs: PureOutputRuntime, pending, valu
     assert core._publish_reply(pending, reply, expected_lease_id=push.lease_id,
                                expected_node_id=core.node_id)
     assert core.owner_table.snapshot(pending.object_id).output_publication is not None
-    assert not outputs.journal.snapshot(reply.output_publication.publication_id).retained_result_slots
+    assert not outputs.journal.snapshot(reply.output_publication.publication_id).result_retained
 
 
 @pytest.mark.unit

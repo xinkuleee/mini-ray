@@ -62,8 +62,8 @@ class _SingleOutputRPC:
     def _report_complete(self, witness):
         assert self.journal.snapshot(witness.publication_id).complete == witness
         snapshot = self.handoffs.record_complete(witness)
-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffComplete(witness), True, snapshot)
-        assert reply.accepted and reply.snapshot.complete == witness
+        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        assert reply.accepted and reply.witness == witness
 
     def prepare(self, request):
         assert type(request) is wire.PrepareOutputPublication

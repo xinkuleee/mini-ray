@@ -1,0 +1,67 @@
+{
+  "status": "AUDIT_CANDIDATE_STATIC_ONLY_AWAITING_ROOT_EXECUTION",
+  "path": "tests/unit/test_stored_physical_gc.py",
+  "before_sha256": "3b6f3d945a0a3b6a3c625b28687eff58881da0f9658e2fd448debfbafb779f04",
+  "candidate_sha256": "9a7455ce8481d8a702f52489e425ecd6653627a0828159f41e235bf1b6036f2d",
+  "patch_sha256": "ab19a2940b99172d0fc190e723122cd90f885dfc8403fb3e1d70923d8b07760e",
+  "patch_bytes": 17857,
+  "apply_check": 0,
+  "test_names_preserved": 8,
+  "old_pure_functions_ast_unchanged": [
+    "test_owner_freezes_complete_stored_plan_and_fences_every_mutator",
+    "test_stored_collection_requires_canonical_metadata_before_freezing_drop_plan"
+  ],
+  "heavy_to_unit_original_selectors": [
+    {
+      "selector": "tests/unit/test_stored_physical_gc.py::test_two_node_partial_ack_replays_only_missing_drop",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "cost": "one threadless Core, one actual output publication, <=2 1-KiB stores, <=64-byte result; <=3 explicit Drop rounds and <=3 recorded retry notifications; no runtime threads/timers/listeners/waits",
+      "contract": "actual pin keeps one replica; already-ACKed Node never repeated; all physical stores and lineage retire"
+    },
+    {
+      "selector": "tests/unit/test_stored_physical_gc.py::test_wrong_drop_ack_identity_is_ignored_until_exact_replay",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "cost": "one threadless Core, one actual output publication, <=2 1-KiB stores, <=64-byte result; <=3 explicit Drop rounds and <=3 recorded retry notifications; no runtime threads/timers/listeners/waits",
+      "contract": "actual Drop effect then corrupted owner echo retains frozen obligation; exact Node tombstone replay closes"
+    },
+    {
+      "selector": "tests/unit/test_stored_physical_gc.py::test_shutdown_reports_unclean_then_second_convergence_is_clean",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "cost": "one threadless Core, one actual output publication, <=2 1-KiB stores, <=64-byte result; <=3 explicit Drop rounds and <=3 recorded retry notifications; no runtime threads/timers/listeners/waits",
+      "contract": "two unknown Drop deliveries leave shutdown dirty then actual ACK permits clean"
+    },
+    {
+      "selector": "tests/unit/test_stored_physical_gc.py::test_collection_freeze_rejects_reconstruction_before_budget_mutation",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "cost": "one threadless Core, one actual output publication, <=2 1-KiB stores, <=64-byte result; <=3 explicit Drop rounds and <=3 recorded retry notifications; no runtime threads/timers/listeners/waits",
+      "contract": "COLLECTING blocks original request with owner/recovery snapshots unchanged"
+    },
+    {
+      "selector": "tests/unit/test_stored_physical_gc.py::test_close_before_stored_success_records_lineage_before_gc",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "cost": "one threadless Core, one actual output publication, <=2 1-KiB stores, <=64-byte result; <=3 explicit Drop rounds and <=3 recorded retry notifications; no runtime threads/timers/listeners/waits",
+      "contract": "close token before Core adoption; real Node Complete then owner/recovery success precedes physical GC, no unbounded Queue.join"
+    },
+    {
+      "selector": "tests/unit/test_stored_physical_gc.py::test_owner_completion_failure_never_deletes_recovery_lineage",
+      "original_marker": "heavy",
+      "candidate_marker": "unit",
+      "cost": "one threadless Core, one actual output publication, <=2 1-KiB stores, <=64-byte result; <=3 explicit Drop rounds and <=3 recorded retry notifications; no runtime threads/timers/listeners/waits",
+      "contract": "real physical Drop ACK before injected owner collection failure; lineage persists until current owner commit replay"
+    }
+  ],
+  "no_new_fault_products": true,
+  "no_runtime_calls_wait_join_start_in_file": true,
+  "pytest_run": false,
+  "base_modified": false,
+  "oracle_limit": "Uses existing Core/Node publication fixture and direct real Drop handlers; root runner must validate current imported helper closure before accepting.",
+  "assertion_semantic_mapping": {
+    "test_collection_freeze_rejects_reconstruction_before_budget_mutation": "old retries_started == integer before is subsumed by entire Recovery task record equality and added owner snapshot equality",
+    "test_close_before_stored_success_records_lineage_before_gc": "old _publish_reply expected_node_id=core.node_id replaced by identical Node identity plus expected_lease_id against genuine NodeComplete envelope; no accepted success fabricated"
+  }
+}
