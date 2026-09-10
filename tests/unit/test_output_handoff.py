@@ -2,7 +2,8 @@
 
 No runtime constructor, user code, transport, thread or Store is used.
 The rollback checks compose real Core owner handlers and the Node journal with
-a synchronous owner table; no Node execution or live RPC is simulated.
+a synchronous owner table. The adapter case adds one real publication authority
+and owner client; no Node execution or live RPC is simulated.
 Constructed Complete/adoption values are input facts for this local reducer;
 these tests do not claim that a Node executed or that Core performed owner CAS.
 """
@@ -222,14 +223,24 @@ def _rollback_core(f):
     # Real Core methods with no runtime constructor or background work.
     from threading import RLock, Condition
     from miniray.core import CoreWorker
+    from miniray import enhanced_publication as enhanced
+    from miniray.enhanced_publication_client import PublicationClient
     from miniray.ownership import ObjectOwnerTable
     core = object.__new__(CoreWorker)
     core.worker_id = f.owner
+    core.owner_address = ("output-owner.invalid", 1235)
     core._owner_protocol_open = True
     core._state_lock = RLock()
     core._completion = Condition(core._state_lock)
     core._owner_table = ObjectOwnerTable()
     core._output_handoffs = f.table
+    core._test_publication_authority = enhanced.PublicationAuthority()
+
+    def publication_rpc(handler, request):
+        assert handler == enhanced.PUBLICATION_HANDLER
+        return core._test_publication_authority.apply(request)
+
+    core._enhanced_publication_client = PublicationClient(publication_rpc)
     return core
 
 
@@ -262,7 +273,7 @@ def test_real_registration_rejection_can_ack_empty_node_rollback_and_fence_late_
 
 
 def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
-    from miniray import output_protocol as wire
+    from miniray import enhanced_publication as enhanced, output_protocol as wire
     from miniray.output_publication_journal import (
         OutputPublicationRollbackTombstone, OutputPublicationStage,
     )
@@ -272,6 +283,9 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
     from miniray.transport import TransportTimeout
     f = _Fixture()
     core = _rollback_core(f)
+    publication = enhanced.TaskPublication(f.manifest, core.owner_address)
+    authority = core._test_publication_authority
+    publication_calls = []
     child = ObjectOwnerTable()
     child.register(f.child, current_attempt=AttemptID(f.child.task_id, 0))
     child.publish_inline(f.child, AttemptID(f.child.task_id, 0), b"child")
@@ -280,12 +294,16 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
     def register(manifest):
         # Register really commits, but its first response is lost.
         f.table.register(manifest, f.attempt)
+        core._publication_client().remember(enhanced.TaskPublication(manifest, core.owner_address))
         registers.append(manifest)
         if len(registers) == 1:
             raise TransportTimeout("owner registration ACK lost")
 
     def prepare(address, request):
         assert address == (f.manifest.value).transfers[0].contained_owner_address
+        graph = authority.query(enhanced.GetPublication(publication.reference)).snapshot
+        assert graph.graph_active and graph.forward_open
+        assert graph.receipt(enhanced.PublicationStage.PREPARED) is not None
         child.prepare_stored_contained_reference(
             request.transfer, authority_worker_id=request.authority_worker_id,
         )
@@ -293,6 +311,8 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
 
     def release(address, request):
         assert address == (f.manifest.value).transfers[0].contained_owner_address
+        graph = authority.query(enhanced.GetPublication(publication.reference)).snapshot
+        assert graph.fence is not None and graph.graph_active
         released = child.release_contained_reference(request.object_id, request.hold)
         releases.append(request)
         return protocol.ReleaseContainedReferenceReply(
@@ -300,8 +320,27 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
         )
 
     def report(tombstone, *, manifest):
+        graph = authority.query(enhanced.GetPublication(publication.reference)).snapshot
+        assert graph.receipt(enhanced.PublicationStage.RETIRED) is not None
         reply = core.report_output_handoff_rollback(wire.ReportOutputHandoffRollback(manifest, tombstone))
         assert reply.accepted, reply.error
+
+    def publication_value(manifest):
+        assert manifest == f.manifest
+        return enhanced.TaskPublication(manifest, core.owner_address)
+
+    def publication_rpc(request):
+        assert enhanced.request_reference(request) == publication.reference
+        assert len(publication_calls) < 12, "rollback exceeded its finite callback budget"
+        publication_calls.append(request)
+        return authority.apply(request)
+
+    def abort_owner(value, scope):
+        assert value == publication and scope == journal.rollback_scope(f.identity)
+        request = enhanced.AbortOwnerPublication(value, scope)
+        reply = core.abort_owner_publication(request)
+        assert reply.request == request and reply.accepted, reply.error
+        return reply.receipt
 
     def forbidden(*args, **kwargs):
         pytest.fail("unreached publication effect")
@@ -309,6 +348,7 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
     journal = _journal(f)
     adapter = OutputPublicationNodeAdapter(
         journal, register_owner=register, report_complete=forbidden, report_rollback=report,
+        publication_value=publication_value, publication_rpc=publication_rpc, abort_owner=abort_owner,
         prepare_child=prepare, promote_child=forbidden, release_child=release,
         seal_replica=forbidden, drop_replica=forbidden,
     )
@@ -316,10 +356,14 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
         adapter.prepare(f.manifest, b"value")
     assert f.table.query(f.identity).phase is OutputHandoffPhase.PENDING
     assert not child.snapshot(f.child).contained_holds and not releases
+    assert not publication_calls and not authority.snapshots()
     with pytest.raises(TransportTimeout, match="child prepare"):
         adapter.prepare(f.manifest, b"value")
     hold = (f.manifest.value).transfers[0].provisional_hold
     assert hold in child.snapshot(f.child).contained_holds
+    graph = authority.query(enhanced.GetPublication(publication.reference)).snapshot
+    assert graph.graph_active and graph.receipt(enhanced.PublicationStage.ARMED) is None
+    assert graph.complete is None and graph.adoption is None
     plan = journal.begin_rollback(f.identity, "partial-child")
     assert len(plan.effects) == 1 and plan.effects[0].stage is OutputPublicationStage.PROVISIONAL_RELEASE
     with pytest.raises(ValueError, match="every ordered effect ACK"):
@@ -330,6 +374,15 @@ def test_unknown_registration_and_child_ack_keep_full_compensation_obligation():
     assert completed is not None and len(releases) == 1
     assert not child.snapshot(f.child).contained_holds
     assert f.table.query(f.identity).phase is OutputHandoffPhase.ABORTED
+    graph = authority.query(enhanced.GetPublication(publication.reference)).snapshot
+    assert not graph.graph_active and not graph.forward_open
+    assert graph.receipt(enhanced.PublicationStage.RETIRED) is not None
+    assert graph.closed_holds == journal.closed_rollback_holds(f.identity)
+    assert graph.closed_holds.rollback_scope.prepare_intents == (0,)
+    assert graph.closed_holds.rollback_scope.promote_intents == ()
+    assert graph.closed_holds.releases[0].hold == hold
+    assert graph.complete is None and graph.adoption is None
+    assert core._output_rollback_receipts[f.identity] == completed
     assert adapter.rollback(f.identity, "partial-child") == completed
     assert len(releases) == 1
 

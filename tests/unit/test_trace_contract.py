@@ -227,7 +227,24 @@ def _success_records():
             storage="INLINE",
         ),
     ]
-    assert len(records) == 57
+    # E's actual GCS stage event names and request types. These records are
+    # synthetic matcher inputs, never a claim that a runtime stage executed.
+    central = (
+        ("gcs-intent", node, 810, 850, 200, 240, "INTENT", "BeginPublication", "handoff-done"),
+        ("gcs-prepared", node, 870, 910, 300, 340, "PREPARED", "PrepareGraph", "gcs-intent-done"),
+        ("gcs-armed", node, 930, 970, 400, 440, "ARMED", "ArmTask", "gcs-prepared-done"),
+        ("gcs-terminal", driver, 1410, 1440, 500, 540, "TERMINAL", "RecordTerminal", "push-done"),
+        ("gcs-committed", driver, 1450, 1480, 600, 640, "COMMITTED", "CommitGraph", "gcs-terminal-done"),
+        ("gcs-adopted", driver, 1830, 1860, 700, 740, "ADOPTED", "RecordAdoption", "owner-ready"),
+    )
+    for prefix, client, sent, done, received, reply, stage, request_type, cause in central:
+        records.extend(_rpc(prefix, client, gcs, "enhanced_publication",
+                            (sent, received, reply, done), cause=cause,
+                            handler_span=True, finished_cause=prefix + "-fact"))
+        records.append(fact(prefix + "-fact", gcs, received + 20,
+                            "enhanced_publication_stage", cause=prefix + "-started",
+                            object_id=obj, stage=stage, request_type=request_type))
+    assert len(records) == 99
     return _bounded_records(records), task
 
 
@@ -348,8 +365,8 @@ def test_renderer_is_a_stable_teaching_sequence_not_a_raw_trace_dump() -> None:
         assert len(matches) == 1, fragment
         return matches[0]
 
-    # B Prepare encloses Node -> owner registration. GCS only participates
-    # in membership; no ordinary result INTENT/ARM transaction is normalized in.
+    # E retains the same local boundaries and adds actual central stages.
+    # Rendering this synthetic fixture does not validate runtime delivery.
     ordered = (
         "Owner CoreWorker -> Execution Worker : push_task [request_sent]",
         "Execution Worker : task_started",
@@ -370,6 +387,14 @@ def test_renderer_is_a_stable_teaching_sequence_not_a_raw_trace_dump() -> None:
     )
     positions = tuple(position(fragment) for fragment in ordered)
     assert positions == tuple(sorted(positions))
+    stages = ("INTENT", "PREPARED", "ARMED", "TERMINAL", "COMMITTED", "ADOPTED")
+    central = tuple(position("enhanced_publication_stage [stage=" + stage + ",") for stage in stages)
+    assert central == tuple(sorted(central))
+    assert position("register_output_handoff [reply_received") < central[0]
+    assert central[2] < position("prepare_output_publication [reply_received")
+    assert position("push_task [reply_received") < central[3]
+    assert central[4] < position("output_owner_ready [return_count=1]") < central[5]
+    assert central[5] < position("ack_output_publication_adopted [reply_received")
     assert "report_output_publication" not in rendered
     assert "round trip" not in rendered
     for volatile in (
@@ -426,8 +451,11 @@ def test_contract_rejects_rpc_name_match_without_concrete_cross_process_edge() -
     assert any("push_task" in violation for violation in match.violations)
 
 
-_STAGE_RPCS = ("register_handoff_rpc", "complete_rpc", "retire_rpc")
-_ACK_IDS = ("node-complete", "owner-ready", "payload-retired")
+_CENTRAL_STAGES = ("intent", "prepared", "armed", "terminal", "committed", "adopted")
+_STAGE_RPCS = ("register_handoff_rpc", "complete_rpc", "retire_rpc") + tuple(
+    "gcs_" + stage + "_rpc" for stage in _CENTRAL_STAGES)
+_ACK_IDS = ("node-complete", "owner-ready", "payload-retired") + tuple(
+    "gcs-" + stage + "-fact" for stage in _CENTRAL_STAGES)
 
 
 def _change_record(records, event_id, *, fields=None, **changes):
@@ -520,11 +548,12 @@ def test_publication_stages_cannot_be_reversed_inside_valid_round_trips(first, s
     assert not load_trace_contract(SUCCESS_TRACE_CONTRACT).match(changed, task_id=task_id).ok
 
 
-def test_publication_stages_select_distinct_current_base_request_edges() -> None:
+def test_publication_stages_select_distinct_current_enhanced_request_edges() -> None:
     records, task_id = _ordinary_records()
     match = load_trace_contract(SUCCESS_TRACE_CONTRACT).match(records, task_id=task_id).require()
     assert tuple(match.rpc_matches[key][0].event_id for key in _STAGE_RPCS) == (
         "handoff-sent", "complete-sent", "retire-sent",
+        *("gcs-" + stage + "-sent" for stage in _CENTRAL_STAGES),
     )
     complete = match.rpc_matches["complete_rpc"]
     node_complete = next(record for record in records if record.event_id == "node-complete")

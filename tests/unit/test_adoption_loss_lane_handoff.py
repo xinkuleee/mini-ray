@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from miniray import core as core_module, protocol, output_protocol as wire
+from miniray import core as core_module, protocol, output_protocol as wire, enhanced_publication as ep
 from miniray.core import CoreWorker, _DelayedReadyTask, _OutputAdoptionObligation, _OutputNodeLossObligation, _WAKE_COORDINATOR
 from miniray.node import NodeServer
 from miniray.ownership import ObjectCollectionState, ObjectState
@@ -37,6 +37,9 @@ def test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup(monkeyp
 
     def lose_initial_adoption_ack(address, handler, request):
         actual = original_rpc(address, handler, request)
+        if handler == ep.PUBLICATION_HANDLER:
+            assert type(actual) is ep.PublicationReply and actual.request == request
+            return actual
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
         assert actual.request == request and actual.accepted
         first_ack.append(actual)
@@ -76,9 +79,16 @@ def test_actual_adoption_ack_cannot_clear_same_attempt_node_loss_cleanup(monkeyp
 
     def adoption_rpc(address, handler, request):
         result = original_rpc(address, handler, request)
+        if handler == ep.PUBLICATION_HANDLER:
+            assert type(result) is ep.PublicationReply and result.request == request
+            return result
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
         assert result.request == request and result.accepted
         assert fixture.journal.snapshot(identity).retirement.proof == request.proof
+        central = fixture.authority.query(ep.GetPublication(ep.PublicationRef(
+            identity, envelope.manifest.manifest_digest))).snapshot
+        assert central.adoption == request.proof
+        assert request.gcs_adoption == central.receipt(ep.PublicationStage.ADOPTED)
         ack_applied.set()
         assert allow_ack_return.wait(2.0), "adoption reply boundary was not released"
         return result

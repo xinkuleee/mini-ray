@@ -5,6 +5,8 @@ process-exit observation enters the real NodeRegistry; the survivor installs
 its real snapshot before Core.handle_node_death installs the fence and route.
 This proves the protocol boundary, not an OS process exit. A dead Node's store
 remains an inaccessible fixture snapshot; no fake deletion models its death.
+The actual graph authority adds at most 32 metadata callbacks, separately
+from the original five physical calls; no service process is started.
 """
 
 from __future__ import annotations
@@ -21,8 +23,10 @@ import cloudpickle
 import pytest
 
 from miniray import control, core as core_module, node as node_module, protocol, transport, worker
+from miniray import enhanced_publication as ep
 from miniray.control import NodeRegistry
 from miniray.core import CoreWorker, _HomeRoute, _NodeDeathObserved, _WAKE_COORDINATOR
+from miniray.errors import NodeDiedError
 from miniray.ids import AttemptID, NodeID, ObjectID, TaskID
 from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
@@ -40,6 +44,10 @@ class _Homes:
     def __init__(self):
         self.core = core = make_pure_core()
         self.registry = NodeRegistry()
+        self.authority = core._test_publication_authority
+        core._test_publication_nodes = self.registry
+        self.gcs_calls = []
+        core.gcs_address = ("put-home-gcs.invalid", 23000)
         self.nodes, self.references, self.calls = [], [], []
         self.deaths, self.mode, self.failed_seals = [], None, 0
         for index in range(2):
@@ -101,6 +109,13 @@ class _Homes:
         self.deaths.append(result.death)
 
     def rpc(self, address, handler, request):
+        if address == self.core.gcs_address:
+            assert len(self.gcs_calls) < 32, "put home graph metadata exceeded finite budget"
+            self.gcs_calls.append((handler, request))
+            if handler == ep.PUBLICATION_HANDLER:
+                return self.authority.apply(request)
+            assert handler == "get_node_state"
+            return self.registry.get_state_reply(request)
         assert len(self.calls) < 5
         target, = [node for node in self.nodes if node.address == address]
         assert not self.core._node_is_dead(target.node_id), "never access the dead Node fixture"
@@ -157,6 +172,8 @@ class _Homes:
             if not self.core._node_is_dead(node.node_id):
                 assert node.object_store.used_bytes == 0 and not node._sealed_metadata
         close_pure_core(self.core)
+        assert all(snapshot.receipt(ep.PublicationStage.RETIRED) is not None
+                   for snapshot in self.authority.snapshots())
 
 
 @pytest.fixture
@@ -218,6 +235,74 @@ def test_put_reseals_exact_bytes_on_installed_survivor_after_original_seal(homes
     assert snapshot.producer_task_spec is None
     assert homes.core._recovery.reconstruction_snapshot(ref.object_id).is_put
     assert homes.core._put_index == 1 and not homes.core._put_handoffs
+
+
+def test_put_home_death_after_graph_commit_never_rebinds_materialization_before_owner_install(homes, monkeypatch):
+    core = homes.core
+    old, survivor = homes.nodes
+    original_route = core._home_route_snapshot()
+    client = core._publication_client()
+    real_rpc = homes.rpc
+    observed = {}
+
+    def death_after_commit(address, handler, request):
+        reply = real_rpc(address, handler, request)
+        if handler == ep.PUBLICATION_HANDLER and type(request) is ep.CommitGraph:
+            assert not observed, "one logical put must never recommit on a survivor"
+            assert reply.accepted and reply.receipt.stage is ep.PublicationStage.COMMITTED
+            publication = reply.snapshot.publication
+            identity = publication.object_id
+            work = core._put_handoffs[identity]
+            # C5 is an actual authority fact while Core still owns the open
+            # put handoff and has not installed a public owner value.
+            assert work.choice is PutChoice.OPEN and work.driving
+            assert core.owner_table.snapshot(identity).state is ObjectState.PENDING
+            assert identity not in core._stored_descriptors
+            assert work.materialization.route == original_route
+            committed = client.query(publication)
+            assert committed == reply.snapshot and committed.graph_active
+            assert committed.prepared == request.put_prepared
+            assert committed.prepared.materialization.node_incarnation.node_id == old.node_id
+            assert committed.prepared.seal_reply == work.materialization.seal_receipt
+            assert not committed.prepared.prepare_replies and not committed.prepared.promote_replies
+            observed.update(work=work, publication=publication, committed=committed, request=request)
+            homes.lose_first()
+            assert core.owner_table.snapshot(identity).state is ObjectState.PENDING
+            assert core._put_handoffs[identity] is work
+            assert client.query(publication) == committed
+        return reply
+
+    monkeypatch.setattr(core, "_rpc", death_after_commit)
+    with pytest.raises(NodeDiedError, match="materialization was lost before owner installation"):
+        core.put(b"fixed-on-old-home")
+    work, publication, committed = observed["work"], observed["publication"], observed["committed"]
+    identity = publication.object_id
+    assert len(homes.calls) == 1 and homes.calls[0][:2] == (old.node_id, "seal_object")
+    assert homes.calls[0][2] == work.materialization.seal_request
+    assert homes.calls[0][2].data == cloudpickle.dumps(b"fixed-on-old-home")
+    assert work.materialization.route == original_route
+    assert work.materialization.seal_receipt == committed.prepared.seal_reply
+    assert work.materialization.drop_receipt == homes.deaths[0]
+    assert work.materialization.drop_request is None
+    assert work.choice is PutChoice.ABORTED and not work.driving and not work.children
+    owner = core.owner_table.snapshot(identity)
+    assert owner.state is ObjectState.ERROR and isinstance(owner.error, NodeDiedError)
+    assert owner.inline_data is None and owner.canonical_stored_result is None and not owner.locations
+    assert identity not in core._stored_descriptors and identity not in core._put_handoffs
+    assert survivor.object_store.used_bytes == 0 and not survivor._sealed_metadata
+    assert core._home_route_snapshot().node_id == survivor.node_id
+    assert core._put_index == 1 and core._inflight_puts == 0 and not homes.references
+    retired = client.query(publication)
+    assert retired.prepared == committed.prepared
+    assert retired.receipt(ep.PublicationStage.COMMITTED) == committed.receipt(ep.PublicationStage.COMMITTED)
+    assert retired.fence == work.abort_receipt
+    assert retired.closed_holds == ep.ClosedContainedHolds(publication.reference)
+    assert retired.receipt(ep.PublicationStage.RETIRED) is not None
+    assert not retired.forward_open and not retired.graph_active
+    assert retired.complete is None and retired.adoption is None
+    assert [request for handler, request in homes.gcs_calls if type(request) is ep.CommitGraph] == [observed["request"]]
+    assert core._drive_put_handoff_cleanup(identity)
+    assert client.query(publication) == retired and len(homes.calls) == 1
 
 
 def test_inline_put_uses_owner_bytes_after_home_death_without_node_access(homes):

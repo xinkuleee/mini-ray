@@ -16,8 +16,9 @@ from types import SimpleNamespace
 import cloudpickle
 import pytest
 
-from miniray import output_protocol as wire, protocol
-from miniray.core import ObjectRef
+from miniray import enhanced_publication as ep, output_protocol as wire, protocol
+from miniray.core import CoreWorker, ObjectRef
+from miniray.enhanced_publication_client import PublicationClient
 from miniray.dependency import ContainedRef, NestedReferenceImportSession, encode_task_argument
 from miniray.ids import LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_discovery import OutputDiscoverySession
@@ -169,6 +170,17 @@ class _ActualNodePublication:
         self.children = child_tables or {}
         self.journal = OutputPublicationJournal()
         self.handoffs = OutputHandoffTable()
+        self.authority = ep.PublicationAuthority()
+        self.publication_calls = []
+        self.owner_address = ("owner.invalid", 32302)
+        owner = self.owner = object.__new__(CoreWorker)
+        owner.worker_id = fixture.push.spec.owner_worker_id
+        owner.owner_address = self.owner_address
+        owner._state_lock = threading.RLock()
+        owner._completion = threading.Condition(owner._state_lock)
+        owner._owner_protocol_open = True
+        owner._output_handoffs = self.handoffs
+        owner._enhanced_publication_client = PublicationClient(self.owner_publication_rpc)
         self.store = ObjectStore(128 * 1024)
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         self.token = AllocationToken("exact-worker-output")
@@ -189,12 +201,33 @@ class _ActualNodePublication:
         self.adapter = OutputPublicationNodeAdapter(
             self.journal, register_owner=self.register_owner,
             report_complete=self.report_complete, report_rollback=self.report_rollback,
+            publication_value=lambda manifest: ep.TaskPublication(manifest, self.owner_address),
+            publication_rpc=self.publication_rpc, abort_owner=self.abort_owner,
             prepare_child=self.prepare_child, promote_child=self.promote_child,
             release_child=self.release_child,
             seal_replica=node._seal_output_publication_replica,
             drop_replica=node._drop_output_publication_replica,
         )
         fixture.on_prepare, fixture.on_complete = self.prepare, self.complete
+
+    def publication_rpc(self, request):
+        assert len(self.publication_calls) < 24
+        reply = self.authority.apply(request)
+        assert type(reply) is ep.PublicationReply and reply.request == request
+        self.publication_calls.append((request, reply))
+        return reply
+
+    def owner_publication_rpc(self, handler, request):
+        assert handler == ep.PUBLICATION_HANDLER
+        return self.publication_rpc(request)
+
+    def abort_owner(self, publication, scope):
+        assert scope == self.journal.rollback_scope(publication.reference.key)
+        request = ep.AbortOwnerPublication(publication, scope)
+        reply = self.owner.abort_owner_publication(request)
+        assert type(reply) is ep.AbortOwnerPublicationReply and reply.request == request
+        assert reply.accepted and reply.receipt is not None, reply.error
+        return reply.receipt
 
     def register_owner(self, manifest):
         snapshot = self.handoffs.register(manifest, manifest.publication_id.attempt_id)
@@ -204,15 +237,17 @@ class _ActualNodePublication:
 
     def report_complete(self, witness):
         assert self.journal.snapshot(witness.publication_id).complete == witness
-        snapshot = self.handoffs.record_complete(witness)
-        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        reply = self.owner.report_output_handoff_complete(wire.ReportOutputHandoffComplete(witness))
+        assert type(reply) is wire.OutputHandoffCompleteAck
         assert reply.accepted and reply.witness == witness
 
     def report_rollback(self, tombstone, *, manifest):
         assert self.journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
-        snapshot = self.handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffRollback(manifest, tombstone), True, snapshot)
+        request = wire.ReportOutputHandoffRollback(manifest, tombstone)
+        reply = self.owner.report_output_handoff_rollback(request)
+        assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted, reply.error
         assert reply.snapshot.phase is OutputHandoffPhase.ABORTED
+        assert reply.snapshot.abort_reason == "node rollback:" + tombstone.plan.rollback_id
 
     def prepare_child(self, address, request):
         assert address == request.transfer.contained_owner_address

@@ -36,7 +36,7 @@ from .owner_service import (
     RELEASE_CONTAINED_REFERENCE_HANDLER,
 )
 from .publication_gate import (
-    OutputPublicationGate, OutputPublicationGateArrival,
+    GraphReservationOutcome, OutputPublicationGate, OutputPublicationGateArrival,
     OutputPublicationGateConfig, OutputPublicationGatePhase,
 )
 from .placement import Bundle, BundleReservationLedger, ReservationState
@@ -1094,9 +1094,62 @@ class NodeServer:
             if reply.snapshot.phase is not OutputHandoffPhase.ABORTED:
                 raise OutputPublicationRemoteError('owner did not fence rolled-back handoff')
 
+        def publication_value(manifest):
+            from .enhanced_publication import TaskPublication
+            with self._state_lock:
+                record = self._output_lease_record_locked(manifest, allow_owner_dead=True)
+                address = record.request.requester_owner_address
+            if address is None:
+                raise OutputPublicationRemoteError('publication lease has no owner endpoint')
+            return TaskPublication(manifest, address)
+
+        def publication_rpc(request):
+            from .enhanced_publication import PUBLICATION_HANDLER, RecordTerminal, PublicationReply, PublicationStage
+            with self._state_lock:
+                address = self._gcs_address
+            if address is None:
+                raise OutputPublicationRemoteError('enhanced publication requires a GCS endpoint')
+            gate = getattr(self, '_output_publication_gate', None)
+            phase = None if gate is None else gate.config.phase
+            terminal_gate = type(request) is RecordTerminal and phase in (
+                OutputPublicationGatePhase.BEFORE_TERMINAL_REPORT,
+                OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK)
+            if terminal_gate:
+                manifest = self._output_publication_journal.snapshot(request.complete.publication_id).manifest
+                self._validate_terminal_gate_complete(manifest, request.complete)
+                if phase is OutputPublicationGatePhase.BEFORE_TERMINAL_REPORT:
+                    gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
+            reply = self._background_rpc(address, PUBLICATION_HANDLER, request)
+            if terminal_gate and phase is OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK:
+                if type(reply) is not PublicationReply:
+                    raise OutputPublicationConflictError('terminal gate requires the actual GCS reply')
+                reply = replace(reply)
+                if (reply.request != request or not reply.accepted or reply.snapshot.complete != request.complete
+                        or reply.receipt.stage is not PublicationStage.TERMINAL):
+                    raise OutputPublicationConflictError('terminal gate requires actual GCS acceptance')
+                # Intercept the real reply before the adapter records its ACK.
+                # Both direct-result and supervisor paths share this gate; a
+                # release deliberately drops the reply, never returns success.
+                gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
+                raise TimeoutError('test transport discarded accepted GCS terminal reply')
+            return reply
+
+        def abort_owner(publication, scope):
+            from .enhanced_publication import (AbortOwnerPublication, AbortOwnerPublicationReply,
+                                               ABORT_OWNER_PUBLICATION_HANDLER)
+            request = AbortOwnerPublication(publication, scope)
+            reply = self._background_rpc(publication.owner_address, ABORT_OWNER_PUBLICATION_HANDLER, request)
+            if type(reply) is not AbortOwnerPublicationReply:
+                raise OutputPublicationConflictError('owner returned invalid abort proof')
+            reply = replace(reply)
+            if reply.request != request or not reply.accepted or reply.receipt is None:
+                raise OutputPublicationRemoteError(reply.error or 'owner did not acknowledge exact abort')
+            return reply.receipt
+
         return OutputPublicationNodeAdapter(
             self._output_publication_journal, register_owner=register,
             report_complete=complete, report_rollback=rollback,
+            publication_value=publication_value, publication_rpc=publication_rpc, abort_owner=abort_owner,
             prepare_child=lambda address, request: self._background_rpc(address, PREPARE_STORED_CONTAINED_PIN_HANDLER, request),
             promote_child=lambda address, request: self._background_rpc(address, PROMOTE_STORED_CONTAINED_PIN_HANDLER, request),
             release_child=self._release_output_child_pin,
@@ -1231,7 +1284,7 @@ class NodeServer:
             )
         return reply
 
-    def _output_lease_record_locked(self, manifest: OutputPublicationManifest) -> _LeaseRecord:
+    def _output_lease_record_locked(self, manifest: OutputPublicationManifest, *, allow_owner_dead=False) -> _LeaseRecord:
         header, identity = manifest.header, manifest.publication_id
         record = self._leases.get(identity.lease_id)
         if record is None:
@@ -1242,7 +1295,7 @@ class NodeServer:
             raise OutputPublicationConflictError("output manifest changed lease execution binding")
         if record.output_publication_id not in (None, identity):
             raise OutputPublicationConflictError("lease output publication was rebound")
-        if header.owner_worker_id in getattr(self, "_owner_death_fences", {}):
+        if not allow_owner_dead and header.owner_worker_id in getattr(self, "_owner_death_fences", {}):
             raise OutputPublicationJournalStateError("output owner is death-fenced")
         return record
 
@@ -1328,7 +1381,7 @@ class NodeServer:
                 return self._completion_reply(request, record.state, accepted=False, released=False, error="successful output cannot roll back")
             if (snapshot.complete is None and request.status is protocol.TaskReplyStatus.SUCCEEDED
                     and not snapshot.ready_to_complete):
-                return self._completion_reply(request, record.state, accepted=False, released=False, error="output Complete requires owner registration and every local/child effect ACK")
+                return self._completion_reply(request, record.state, accepted=False, released=False, error="output Complete requires owner registration, child/materialization and GCS ARM ACKs")
             if (snapshot.complete is None and request.status is protocol.TaskReplyStatus.SUCCEEDED
                     and record.state is not protocol.LeaseExecutionState.RUNNING):
                 # A pre-boundary local exception may have left this proposal,
@@ -1382,6 +1435,11 @@ class NodeServer:
                     or record.completion is None
                     or record.completion.status is not protocol.TaskReplyStatus.SUCCEEDED):
                 raise OutputPublicationJournalStateError("output adoption preceded local lease completion")
+            from .enhanced_publication import PublicationReceipt, PublicationStage, PublicationRef
+            if (type(request.gcs_adoption) is not PublicationReceipt
+                    or request.gcs_adoption.stage is not PublicationStage.ADOPTED
+                    or request.gcs_adoption.reference != PublicationRef(identity, snapshot.manifest.manifest_digest)):
+                raise OutputPublicationJournalStateError("reply retirement requires exact GCS adoption receipt")
             journal.retire_completed(request.proof)
         return wire.AckOutputPublicationAdoptedReply(request, True)
 
@@ -1471,7 +1529,8 @@ class NodeServer:
             cleaned = adapter.finish_owner_death(manifest, death, cleanup=cleanup)
         except OutputPublicationBusy:
             cleaned = False
-        return wire.FinalizeOutputOwnerDeathReply(request, cleaned)
+        closed = adapter.owner_death_closed_holds(manifest.publication_id) if cleaned else None
+        return wire.FinalizeOutputOwnerDeathReply(request, cleaned, closed)
 
     def _finalize_output_owner_custody(self, request) -> bool:
         """Local cleanup plus exact Worker ACK under the adapter's ticket."""
@@ -6318,7 +6377,8 @@ class NodeServer:
             # release marked the report pending; the Worker supervisor and
             # drain driver flush it independently.
 
-    def _test_output_publication_checkpoint(self, manifest, phase) -> None:
+    def _test_output_publication_checkpoint(self, manifest, phase,
+            graph_outcome=GraphReservationOutcome.UNOBSERVED) -> None:
         """Observe one acknowledged preparation phase outside authority locks."""
         gate = getattr(self, "_output_publication_gate", None)
         if gate is None:
@@ -6334,12 +6394,16 @@ class NodeServer:
                 ready = (self._output_publication_journal.acknowledged(effect)
                          and all(item.stage is OutputPublicationStage.OWNER_REGISTER for item in snapshot.intents))
             elif phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK:
-                ready = snapshot.ready_to_complete
+                self._output_publication_journal.preparation_receipt(identity)
+                ready = True
+            elif phase in (OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
+                           OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY):
+                ready = all(item.stage is OutputPublicationStage.OWNER_REGISTER for item in snapshot.intents)
             else:
                 raise ValueError("preparation checkpoint cannot report Complete")
             if not ready:
                 raise RuntimeError("output gate preceded its acknowledged phase")
-        gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
+        gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase, graph_outcome))
         with self._output_publication_journal.linearize(identity), self._state_lock:
             self._output_lease_record_locked(manifest)
             if self._output_publication_journal.snapshot(identity).state is not OutputPublicationJournalState.ACTIVE:
@@ -6370,6 +6434,14 @@ class NodeServer:
         identity = witness.publication_id
         journal = self._output_publication_journal
         manifest = journal.snapshot(identity).manifest
+        if gate.config.phase in (OutputPublicationGatePhase.BEFORE_TERMINAL_REPORT,
+                                  OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK):
+            # The same outgoing terminal-report gate fences every Complete or
+            # outcome delivery. Neither the Worker nor owner can retain C3
+            # while the finite test observes GCS-only terminal knowledge.
+            self._validate_terminal_gate_complete(manifest, witness)
+            self._output_publications.report_terminal(identity)
+            return
 
         def validate_delivery():
             with journal.linearize(identity), self._state_lock:
@@ -6395,6 +6467,18 @@ class NodeServer:
             manifest, OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY,
         ), ensure_terminal)
         validate_delivery()
+
+
+    def _validate_terminal_gate_complete(self, manifest, witness):
+        """Observe actual C3 and local resource release before W2 I/O."""
+        identity = manifest.publication_id
+        with self._output_publication_journal.linearize(identity), self._state_lock:
+            record = self._output_lease_record_locked(manifest)
+            snapshot = self._output_publication_journal.snapshot(identity)
+            if (snapshot.complete != witness or record.state is not protocol.LeaseExecutionState.COMPLETED
+                    or record.completion is None or record.completion.status is not protocol.TaskReplyStatus.SUCCEEDED
+                    or record.output_complete_inflight is not None):
+                raise RuntimeError('terminal report checkpoint preceded actual local Complete')
 
     def _handle_complete_worker_lease_inner(self, request: object) -> object:
         if not isinstance(request, protocol.CompleteWorkerLease):

@@ -246,6 +246,9 @@ class _Record:
     retirement: Optional[OutputPublicationTombstone] = None
     adoption_proof: Optional[OutputPublicationAdoptionProof] = None
     owner_death: object = None
+    child_replies: dict[OutputPublicationEffect, object] = field(default_factory=dict)
+    cleanup_replies: dict[OutputPublicationEffect, object] = field(default_factory=dict)
+    publication_receipts: dict[object, object] = field(default_factory=dict)
 
 
 class OutputPublicationJournal:
@@ -293,8 +296,8 @@ class OutputPublicationJournal:
     def begin_prepare(self, publication_id: OutputPublicationID, transfer_index: int) -> OutputPublicationEffect:
         return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
 
-    def ack_prepared(self, acknowledgement: OutputPublicationAck) -> bool:
-        return self._ack_forward(acknowledgement, OutputPublicationStage.PREPARE)
+    def ack_prepared(self, acknowledgement: OutputPublicationAck, reply: object) -> bool:
+        return self._ack_forward(acknowledgement, OutputPublicationStage.PREPARE, child_reply=reply)
 
     def begin_materialize(self, publication_id: OutputPublicationID) -> OutputPublicationEffect:
         return self._begin(publication_id, OutputPublicationStage.MATERIALIZE)
@@ -307,8 +310,91 @@ class OutputPublicationJournal:
     def begin_promote(self, publication_id: OutputPublicationID, transfer_index: int) -> OutputPublicationEffect:
         return self._begin(publication_id, OutputPublicationStage.PROMOTE, transfer_index)
 
-    def ack_promoted(self, acknowledgement: OutputPublicationAck) -> bool:
-        return self._ack_forward(acknowledgement, OutputPublicationStage.PROMOTE)
+    def ack_promoted(self, acknowledgement: OutputPublicationAck, reply: object) -> bool:
+        return self._ack_forward(acknowledgement, OutputPublicationStage.PROMOTE, child_reply=reply)
+
+    def publication_receipt(self, publication_id, stage):
+        with self._lock:
+            receipt = self._record(publication_id).publication_receipts.get(stage)
+            return None if receipt is None else replace(receipt)
+
+
+    def record_publication_reply(self, publication_id, request, reply, stage, *, forward=False):
+        """Retain an exact server receipt, without another phase authority."""
+        from .enhanced_publication import PublicationRef, PublicationReply, PublicationStage
+        if type(reply) is not PublicationReply:
+            raise OutputPublicationConflictError("GCS returned an invalid publication reply")
+        reply = replace(reply)
+        with self._lock:
+            record = self._record(publication_id)
+            reference = PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest)
+            if (reply.request != request or not reply.accepted or reply.receipt is None
+                    or reply.snapshot is None or reply.receipt.reference != reference
+                    or reply.receipt.stage is not stage or reply.snapshot.reference != reference):
+                raise OutputPublicationConflictError("GCS did not acknowledge the exact publication stage")
+            if forward:
+                self._require_active(record)
+                if not reply.snapshot.forward_open:
+                    raise OutputPublicationJournalStateError("historical GCS receipt is not forward permission")
+                if stage is PublicationStage.INTENT and not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+                    raise OutputPublicationJournalStateError("GCS INTENT follows actual owner registration")
+                if stage is PublicationStage.PREPARED and PublicationStage.INTENT not in record.publication_receipts:
+                    raise OutputPublicationJournalStateError("graph reservation follows exact INTENT receipt")
+                if stage is PublicationStage.ARMED and reply.snapshot.prepared != self.preparation_receipt(publication_id):
+                    raise OutputPublicationConflictError("ARM changed the actual journal preparation")
+            previous = record.publication_receipts.get(stage)
+            if previous is not None and previous != reply.receipt:
+                raise OutputPublicationConflictError("GCS stage receipt changed on replay")
+            record.publication_receipts[stage] = replace(reply.receipt)
+            return replace(reply.receipt)
+
+
+    def preparation_receipt(self, publication_id):
+        """Attest only to actual owner/child/materialization ACKs."""
+        from .enhanced_publication import MaterializationReceipt, PublicationRef, TaskPreparedReceipt
+        with self._lock:
+            record = self._record(publication_id)
+            self._require_active(record)
+            if not self._preparation_ready(record):
+                raise OutputPublicationJournalStateError("preparation receipt requires every actual effect ACK")
+            reference = PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest)
+            replies = lambda stage: tuple(replace(record.child_replies[self._effect(record, stage, index)])
+                                          for index in self._transfer_indices(record))
+            return TaskPreparedReceipt(reference, replies(OutputPublicationStage.PREPARE),
+                replies(OutputPublicationStage.PROMOTE),
+                MaterializationReceipt(reference, record.manifest.header.node_incarnation))
+
+
+    def rollback_scope(self, publication_id):
+        """Describe frozen possible effects, never infer absence from ARM."""
+        from .enhanced_publication import PublicationRef, TaskRollbackScope
+        with self._lock:
+            record = self._record(publication_id)
+            if record.rollback is None or record.complete is not None:
+                raise OutputPublicationJournalStateError("rollback scope requires an actual pre-Complete fence")
+            indices = lambda stage: tuple(index for index in self._transfer_indices(record)
+                                          if self._intended(record, stage, index))
+            return TaskRollbackScope(
+                PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest),
+                record.rollback.rollback_id, indices(OutputPublicationStage.PREPARE),
+                indices(OutputPublicationStage.PROMOTE),
+                self._intended(record, OutputPublicationStage.MATERIALIZE))
+
+
+    def closed_rollback_holds(self, publication_id):
+        from .enhanced_publication import ClosedContainedHolds
+        from . import protocol
+        with self._lock:
+            record = self._record(publication_id)
+            if record.rollback_tombstone is None:
+                raise OutputPublicationJournalStateError("graph retirement requires completed compensation")
+            scope = self.rollback_scope(publication_id)
+            replies = [record.cleanup_replies[effect] for effect in record.rollback.effects
+                       if effect.stage in (OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE)]
+            return ClosedContainedHolds(scope.reference,
+                tuple(replace(value) for value in replies if type(value) is protocol.ReleaseContainedReferenceReply),
+                tuple(dict.fromkeys(replace(value.death) for value in replies if type(value) is protocol.GetWorkerStateReply)), scope)
+
 
     def acknowledged(self, effect: OutputPublicationEffect) -> bool:
         _require_type(effect, OutputPublicationEffect, "effect")
@@ -391,10 +477,13 @@ class OutputPublicationJournal:
             record = self._record(publication_id)
             if record.rollback is None:
                 raise OutputPublicationJournalStateError("rollback was not begun")
+            from .enhanced_publication import PublicationStage
+            if PublicationStage.FENCED not in record.publication_receipts:
+                raise OutputPublicationJournalStateError("rollback requires the exact GCS forward fence")
             value = self._next_rollback(record)
             return None if value is None else replace(value)
 
-    def ack_rollback(self, acknowledgement: OutputPublicationAck) -> bool:
+    def ack_rollback(self, acknowledgement: OutputPublicationAck, reply: object = None) -> bool:
         _require_type(acknowledgement, OutputPublicationAck, "acknowledgement")
         acknowledgement = replace(acknowledgement)
         effect = acknowledgement.effect
@@ -407,6 +496,11 @@ class OutputPublicationJournal:
                 return False
             if self._next_rollback(record) != effect:
                 raise OutputPublicationJournalStateError("rollback ACK arrived out of order")
+            from .enhanced_publication import PublicationStage
+            if PublicationStage.FENCED not in record.publication_receipts:
+                raise OutputPublicationJournalStateError("rollback ACK requires exact GCS fence")
+            if effect.stage in (OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE):
+                record.cleanup_replies[effect] = self._validate_cleanup_reply(record, effect, reply)
             record.acknowledgements[effect] = acknowledgement
             if effect.stage is OutputPublicationStage.SLOT_DROP:
                 record.result = None
@@ -481,7 +575,7 @@ class OutputPublicationJournal:
             record.intents.add(effect)
             return replace(effect)
 
-    def _ack_forward(self, acknowledgement, stage, *, descriptor=None):
+    def _ack_forward(self, acknowledgement, stage, *, descriptor=None, child_reply=None):
         _require_type(acknowledgement, OutputPublicationAck, "acknowledgement")
         acknowledgement = replace(acknowledgement)
         effect = acknowledgement.effect
@@ -496,12 +590,16 @@ class OutputPublicationJournal:
             self._require_stage_ready(record, stage)
             if stage is OutputPublicationStage.MATERIALIZE:
                 descriptor = self._validate_descriptor(record, descriptor)
+            if stage in (OutputPublicationStage.PREPARE, OutputPublicationStage.PROMOTE):
+                child_reply = self._validate_child_reply(record, effect, child_reply)
             if effect in record.acknowledgements:
                 if stage is OutputPublicationStage.MATERIALIZE and record.result != descriptor:
                     raise OutputPublicationConflictError("materialized result changed on replay")
                 return False
             if stage is OutputPublicationStage.MATERIALIZE:
                 record.result = descriptor
+            if child_reply is not None:
+                record.child_replies[effect] = child_reply
             record.acknowledgements[effect] = acknowledgement
             return True
 
@@ -551,17 +649,26 @@ class OutputPublicationJournal:
     def _all_materialized(self, record):
         return self._acked(record, OutputPublicationStage.MATERIALIZE)
 
-    def _ready_to_complete(self, record):
+    def _preparation_ready(self, record):
         return (self._acked(record, OutputPublicationStage.OWNER_REGISTER)
                 and self._all_materialized(record)
                 and all(self._acked(record, OutputPublicationStage.PROMOTE, index)
                         for index in self._transfer_indices(record)))
+
+    def _ready_to_complete(self, record):
+        from .enhanced_publication import PublicationStage
+        return (self._preparation_ready(record)
+                and PublicationStage.ARMED in record.publication_receipts)
+
 
     def _require_stage_ready(self, record, stage):
         if stage is OutputPublicationStage.OWNER_REGISTER:
             return
         if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
             raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
+        from .enhanced_publication import PublicationStage
+        if PublicationStage.PREPARED not in record.publication_receipts:
+            raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
         if stage is OutputPublicationStage.PREPARE:
             return
         self._require_all_prepared(record)
@@ -569,6 +676,41 @@ class OutputPublicationJournal:
             return
         if not self._all_materialized(record):
             raise OutputPublicationJournalStateError("promotion requires every materialization ACK")
+
+    @staticmethod
+    def _validate_child_reply(record, effect, reply):
+        from . import protocol
+        if type(reply) is not protocol.StoredContainedPinReply:
+            raise TypeError("child ACK requires its concrete received reply")
+        reply = replace(reply)
+        transfer = record.manifest.value.transfers[effect.transfer_index]
+        kind = (protocol.PrepareStoredContainedPin if effect.stage is OutputPublicationStage.PREPARE
+                else protocol.PromoteStoredContainedPin)
+        if reply.request != kind(transfer, transfer.contained_owner_worker_id) or not reply.accepted:
+            raise OutputPublicationConflictError("child ACK does not match the journal effect")
+        return reply
+
+
+    @staticmethod
+    def _validate_cleanup_reply(record, effect, reply):
+        from . import protocol
+        from .death_proofs import owner_death
+        transfer = record.manifest.value.transfers[effect.transfer_index]
+        if type(reply) is protocol.GetWorkerStateReply:
+            death = owner_death(reply.death)
+            if (reply.worker_id != transfer.contained_owner_worker_id or death.worker_id != reply.worker_id
+                    or reply.state is not protocol.WorkerMembershipState.DEAD):
+                raise OutputPublicationConflictError("cleanup death does not match the child owner")
+            return replace(reply)
+        if type(reply) is not protocol.ReleaseContainedReferenceReply:
+            raise TypeError("child cleanup requires the actual release or death reply")
+        reply = replace(reply)
+        hold = transfer.final_hold if effect.stage is OutputPublicationStage.FINAL_RELEASE else transfer.provisional_hold
+        if ((reply.object_id, reply.owner_worker_id, reply.hold)
+                != (transfer.contained_object_id, transfer.contained_owner_worker_id, hold) or not reply.accepted):
+            raise OutputPublicationConflictError("cleanup ACK does not match the journal effect")
+        return reply
+
 
     @staticmethod
     def _validate_descriptor(record, descriptor):

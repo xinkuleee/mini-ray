@@ -25,7 +25,7 @@ from dataclasses import replace
 
 import pytest
 
-from miniray import control, core as core_module, node as node_module, output_protocol as wire, protocol, transport
+from miniray import control, core as core_module, node as node_module, output_protocol as wire, protocol, transport, enhanced_publication as ep
 from miniray.core import CoreWorker, _WAKE_COORDINATOR
 from miniray.node import NodeServer
 from miniray.output_publication_journal import OutputPublicationJournalState
@@ -41,7 +41,7 @@ from tests.unit.test_output_publication_node_server import _node
 pytestmark = pytest.mark.unit
 _LIMIT = 32
 _OBSERVATIONS = frozenset((
-    "output_lease_completed",
+    "enhanced_publication_stage", "output_lease_completed",
     "output_owner_ready", "output_payload_retired",
 ))
 
@@ -159,16 +159,22 @@ def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(er
                 fixture.handoffs.query(fixture.id).complete, fixture.store.get(stored_id))
     sink = _ObservedSink(probe, error_type)
     node.event_sink = sink
+    fixture.observe_gcs(sink)
     record.request = replace(record.request, requester_owner_address=("owner.invalid", 1))
     def owner_rpc(address, handler, request):
-        assert address == ("owner.invalid", 1) and len(calls) < 3
         assert not node._state_lock._is_owned()
+        if handler == ep.PUBLICATION_HANDLER:
+            assert address == node._gcs_address
+            return fixture.publication_rpc(request)
+        assert address == ("owner.invalid", 1) and len(calls) < 3
         if handler == wire.REGISTER_OUTPUT_HANDOFF_HANDLER:
             snapshot = fixture.handoffs.register(request.manifest, fixture.id.attempt_id)
         else:
             assert handler == wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER
             snapshot = fixture.handoffs.record_complete(request.witness)
-        reply = wire.OutputHandoffReply(request, True, snapshot)
+        reply = (wire.OutputHandoffCompleteAck(snapshot.complete, True)
+                 if type(request) is wire.ReportOutputHandoffComplete else
+                 wire.OutputHandoffReply(request, True, snapshot))
         received = _received(sink, "node", handler, len(calls))
         calls.append((request, reply, received))
         return reply
@@ -197,13 +203,17 @@ def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(er
     assert adapter.pending_lease_completions() == ()
     assert fixture.handoffs.query(fixture.id).complete is None
     assert fixture.journal.snapshot(fixture.id).result_retained is True
-    assert [sample[2] for sample in sink.samples] == [
+    local_samples = [sample for sample in sink.samples if sample[0] == "output_lease_completed"]
+    assert [sample[2] for sample in local_samples] == [
         dict(_identity_fields(fixture), released=released, status="SUCCEEDED", state="COMPLETED")
         for released in (True, False)
     ]
     assert all(sample[4] == (False, False, protocol.LeaseExecutionState.COMPLETED, fixture.ledger.total,
-                            fixture.values.witness, None, (fixture.values.payload)) for sample in sink.samples)
-    assert sink.samples[0][3] == "inert-complete-handler"
+                            fixture.values.witness, None, (fixture.values.payload)) for sample in local_samples)
+    assert local_samples[0][3] == "inert-complete-handler"
+    assert [reply.receipt.stage for _, reply in fixture.gcs_calls] == [
+        ep.PublicationStage.INTENT, ep.PublicationStage.PREPARED, ep.PublicationStage.ARMED]
+    assert fixture.authority.snapshots()[0].complete is None
     with causal_scope("inert-terminal-parent"):
         assert adapter.report_terminal(fixture.id)
         assert current_cause_id() == calls[-1][2].event_id
@@ -211,7 +221,16 @@ def test_node_observation_preserves_prepare_local_release_and_terminal_outbox(er
     assert not adapter.report_terminal(fixture.id) and len(calls) == 2
     assert adapter.pending_terminal_reports() == ()
     assert fixture.handoffs.query(fixture.id).complete == fixture.values.witness
-    assert len(sink.samples) == 2
+    assert fixture.authority.snapshots()[0].complete == fixture.values.witness
+    assert [reply.receipt.stage for _, reply in fixture.gcs_calls] == [
+        ep.PublicationStage.INTENT, ep.PublicationStage.PREPARED,
+        ep.PublicationStage.ARMED, ep.PublicationStage.TERMINAL]
+    stages = [sample for sample in sink.samples if sample[0] == "enhanced_publication_stage"]
+    assert len(stages) == 4 and len(sink.samples) == 6
+    for sample, (request, reply) in zip(stages, fixture.gcs_calls):
+        assert sample[1] == "gcs" and sample[2]["stage"] == reply.receipt.stage.value
+        assert sample[2]["request_type"] == type(request).__name__ and sample[2]["accepted"] is True
+        assert sample[2]["manifest_digest"] == fixture.manifest.manifest_digest
     _assert_sink(sink, error_type)
     assert fixture.store.get(stored_id) == (fixture.values.payload)
 
@@ -233,6 +252,8 @@ def test_core_observation_preserves_ready_adoption_payload_retirement_and_gc(err
                 fixture.journal.snapshot(fixture.id).result_retained, fixture.store.get(stored_id))
     sink = _ObservedSink(probe, error_type)
     core.event_sink = sink
+    fixture.observe_gcs(sink)
+    preparation_calls = len(fixture.gcs_calls)
     def rpc(address, handler, request):
         nonlocal rpc_limit_exceeded
         if len(boundaries) >= _LIMIT or len(calls) >= _LIMIT:
@@ -248,18 +269,26 @@ def test_core_observation_preserves_ready_adoption_payload_retirement_and_gc(err
         assert fixture.store.capacity_bytes == 1024
         assert core._publish_reply(pending, reply, expected_node_id=node.node_id, expected_lease_id=fixture.id.lease_id)
         assert current_cause_id() == prior_cause
-        assert [handler for handler, _ in calls] == [wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER]
-        assert [sample[0] for sample in sink.samples] == ["output_owner_ready", "output_payload_retired"]
-        ready, retired = sink.samples
+        assert [handler for handler, _ in calls] == [
+            ep.PUBLICATION_HANDLER, ep.PUBLICATION_HANDLER, ep.PUBLICATION_HANDLER,
+            wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER]
+        assert [sample[0] for sample in sink.samples] == [
+            "enhanced_publication_stage", "enhanced_publication_stage", "output_owner_ready",
+            "enhanced_publication_stage", "output_payload_retired"]
+        ready, retired = sink.samples[2], sink.samples[4]
+        assert [sample[2]["stage"] for sample in sink.samples if sample[0] == "enhanced_publication_stage"] == [
+            "TERMINAL", "COMMITTED", "ADOPTED"]
+        assert fixture.authority.snapshots()[0].adoption == fixture.handoffs.query(fixture.id).adoption
         assert ready[2] == dict(_identity_fields(fixture), return_count=1)
         assert retired[2] == _identity_fields(fixture)
         ready_facts = (False, False, False, False, ObjectState.READY_STORED, True, True, True, (fixture.values.payload))
         assert ready[4] == ready_facts
         assert retired[4] == (*ready_facts[:7], False, (fixture.values.payload))
-        assert retired[3] == boundaries[0][3].event_id
+        assert retired[3] == boundaries[3][3].event_id
         if error_type is None:
             actual = tuple(event for event in sink.events if event.name in _OBSERVATIONS)
-            assert actual[1].cause_id == boundaries[0][3].event_id
+            assert actual[-1].name == "output_payload_retired"
+            assert actual[-1].cause_id == boundaries[3][3].event_id
         assert fixture.ledger.available == fixture.ledger.total
         assert fixture.journal.snapshot(fixture.id).state is OutputPublicationJournalState.RETIRED
         assert fixture.store.get(stored_id) == (fixture.values.payload)
@@ -284,13 +313,22 @@ def test_core_observation_preserves_ready_adoption_payload_retirement_and_gc(err
             finally:
                 core._submissions.task_done()
         assert core._submissions.empty() and core._submissions.unfinished_tasks == 0
-        assert len(calls) == len(boundaries) == 2
+        assert len(calls) == len(boundaries) == 9
+        cleanup = [type(request) for handler, request in calls[4:]]
+        assert cleanup == [ep.GetPublication, ep.FencePublication, protocol.DropObjectReplica,
+                           ep.GetPublication, ep.RetireGraph]
+        assert len(fixture.gcs_calls) == preparation_calls + 7
+        central = fixture.authority.snapshots()[0]
+        assert not central.graph_active and central.closed_holds is not None
+        assert central.adoption == fixture.handoffs.query(fixture.id).adoption
         assert fixture.store.used_bytes == 0 and not node._sealed_metadata
         assert not core._objects and not core._stored_descriptors and not core._object_gc_obligations
         assert core._recovery.lineage_for_object(stored_id) is None
         with pytest.raises(UnknownTaskError):
             core._recovery.task_record(pending.task_id)
-        assert len(sink.samples) == 2
+        assert len(sink.samples) == 7
+        assert [sample[2]["stage"] for sample in sink.samples if sample[0] == "enhanced_publication_stage"] == [
+            "TERMINAL", "COMMITTED", "ADOPTED", "FENCED", "RETIRED"]
         _assert_sink(sink, error_type)
         assert current_cause_id() == prior_cause
     finally:

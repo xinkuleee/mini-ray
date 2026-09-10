@@ -1,6 +1,6 @@
-# 基础版架构：从任务到引用回收
+# 协议增强版架构：共同机制与两项自定义保证
 
-本页描述 teaching-base 的实际单输出运行时：用真实进程、消息和资源账本解释所选 Ray Core 机制。
+本页描述teaching-enhanced候选：继承基础版单输出运行时，并同时加入普通发布事务与全局ObjectID图防环。正式分支与验收身份见[状态页](current-status.md)。
 它是缩小规模与范围的教学实现，不承诺生产 Ray 的完整功能、接口兼容或相同内部协议。
 运行命令见[学习路径](learning-path.md)和[测试指南](testing.md)，当前整理版身份与实测边界见[状态页](current-status.md)；[基础验收账本](acceptance-baseline.md)保留固定历史版本的证据。
 
@@ -12,7 +12,7 @@
 | 参与方 | 实际负责的事实 | 不代替的事实 |
 |---|---|---|
 | Driver / Worker 内的 CoreWorker | 提交、依赖准备、owner 表、恢复准入及本地组合提交 | 远端 Node 的资源释放与物理 bytes |
-| GCSLite | 成员与资源摘要、函数导出、权威死亡、owner-wide Node fence、Actor、PG 协调 | 普通 Task 转发、普通结果发布事务、全局 contained 图 |
+| GCSLite | 成员/死亡、Actor/PG协调；E普通发布事实与已提交/预留contained图 | Task转发、owner READY、Node bytes或资源账本 |
 | NodeServer | Worker pool、lease/allocation、依赖物化、Store、执行 Complete、回复托管 | owner 的逻辑可见性和 child owner 的引用真相 |
 | ObjectOwnerTable | 对象状态、位置、存活理由、outgoing child edges、退休与 GC | 由 metadata 凭空生成 bytes |
 | child owner | incoming hold 的完整身份、Acquire/Release 与墓碑 | outer Task 的成功或全局防环 |
@@ -54,16 +54,14 @@ lease 通过后，提交者 Core 直接向指定 Worker 发送 PushTask；GCS �
 
 ## 3. 结果交接：Complete、READY 与退休
 
-普通结果由 Node 与 owner 交接。OutputHandoffTable 保存 owner 本地的准确清单/Complete/adoption/abort 历史，
-本身不拥有执行成功或对象可见性；Node journal 则记录自己实际发出的效果与收到的收据。
-基础版没有 GCS 普通发布 INTENT/ARM/terminal/adopted 门禁，也没有全局 ObjectID 图服务。
+普通结果仍由Node与owner分别提交本地事实。OutputHandoffTable保存owner的准确交接历史，Node journal保存实际效果与收据；E另外要求GCS发布事务和图门禁，不能将GCS阶段合并成owner或Node的权威。
 
-1. Worker 执行并序列化一次，保留 payload、原 child handles 和 import session。
-2. Node 验证完整 manifest/payload，先让 outer owner 登记清理清单并取得准确 ACK。
-3. Node 推进 child prepare、物化 INLINE/STORED 结果及 final-hold promotion；未知回复重放原效果。
-4. Node journal 记录准确 Complete，并使本地 lease/资源清账收敛；owner 是否已 READY 是另一个事实。
-5. Core 在组合锁中检查当前 attempt，提交 owner 结果/outgoing、recovery 状态与唤醒，记录准确 adoption。
-6. owner 的接管证明驱动 Node/Worker 退休回复与来源托管；对象的 bytes、引用和 lineage 仍由正常 GC 回收。
+1. Worker序列化一次；Node核完整manifest/payload并取得outer owner登记ACK。
+2. C0登记INTENT、C1预留图边；全局判环同时考虑已提交边与并发预留。
+3. 实际child prepare、物化与promotion完成后，C2以准确准备收据ARM。
+4. C3由Node journal提交Complete并收口本地lease/资源；C4向GCS记录准确terminal。
+5. C5提交图边后，C6由Core在组合锁内提交owner结果/outgoing/recovery与唤醒；已知成功而bytes不可用仍是LOST。
+6. C7以实际owner提交收据记录adopted；ACK未知保留finish/GC屏障并精确重放。托管退休与正常对象GC继续分别完成。
 
 这些步骤不能压成一个“成功”：函数返回、Node Complete、owner READY、bytes 可用、回复退休、对象 GC 各有观察点。
 owner 已 READY 后丢失退休 ACK，只继续精确重放和 finish/GC 屏障，不回滚 READY 或再次执行函数。
@@ -73,6 +71,8 @@ abort 关闭旧身份的前进权限；已经存在的 holds、partial write 或
 跨模块必要原子性由 Core 的现有组合锁维护；外部调用后重查当前身份/撤销状态，旧 ACK 不是永久前进许可。
 临时scratch托管丢失时，先核已有owner完整receipt/result；owner仍持有的INLINE bytes不能误判LOST，已锁定UNKNOWN/DISCARD也不能因晚消息反转。
 对象后来 LOST、重建或 GC，不改写旧交接事实；紧凑历史保留在 owner/job 生命周期内，不随 payload 一起删除。
+
+GCS事务与图归[enhanced_publication.py](../src/miniray/enhanced_publication.py)，成员/死亡组合归[enhanced_publication_control.py](../src/miniray/enhanced_publication_control.py)，owner调用归[enhanced_publication_client.py](../src/miniray/enhanced_publication_client.py)。这些模块只保metadata和责任，不保结果bytes。
 
 入口：[output_handoff.py](../src/miniray/output_handoff.py)、[output_publication_journal.py](../src/miniray/output_publication_journal.py)、
 [output_publication_node.py](../src/miniray/output_publication_node.py)，Core 的 register_output_handoff 与 _drive_output_publication_adoption。
@@ -132,7 +132,7 @@ Node 的删除水位阻止旧写入；真实物理 absence 与 metadata/manager 
 如果报告冲突且没有 custody/删除授权，Core 进入 quarantine：保留证据和未清责任，不盲删共享 bytes，不反复轮询同一拒绝。
 准确死亡安装可唤醒相应处理；外来 descriptor 不能自行授权删除或替换 owner。
 手造无历史 epoch 或损坏 metadata 的纯模型只说明 fail-closed，不证明公共 API 可达，也不承诺自动修复任意损坏。
-基础版不保证 ObjectID contained 环全局拒绝或回收；普通 Python 容器自环是另一件事。
+E对受支持Task、含Ref put和whole replacement入口执行全局判环；失败候选先fence、依据真实效果释放child/replica，再退休预留。它不修复任意损坏图；普通Python容器自环是另一件事。
 
 入口：[ownership.py](../src/miniray/ownership.py)、[put_handoff.py](../src/miniray/put_handoff.py)、
 [ref_transfer.py](../src/miniray/ref_transfer.py)、[replica_cleanup.py](../src/miniray/replica_cleanup.py)与 Node 的物理 Drop 尾部。
@@ -234,11 +234,17 @@ TraceRecord 记录实体/执行身份、process_sequence 和 cause_event_id；�
 观察 sink 异常不改变业务提交；trace 的 ACK 事件表示观察到回复，不自动证明后续本地 commit 已完成。
 
 output_owner_ready 观察实际 owner CAS/wake 后的事实；output_payload_retired 只表示回复托管退休，不代表物理 GC。
-基础版示例解释 owner-led 路径，不能引入增强 GCS 阶段来“补齐”基础 trace，也不能把缺失 trace 当丢失业务事实。
+E示例保留真实GCS阶段增量，不归一化成B trace。比较B时仍使用B自己的owner-led trace；缺失trace不能代替丢失业务事实的证明。
 
 第一遍沿例 01 的 API→Core→Node lease→Worker→owner 阅读；第二遍用例 03/06 与引用实验追踪 bytes、holds 和重建；
-再用例 05/04/07 看 CPU、Actor、PG。源码入口见[学习路径](learning-path.md)，证据层级见[基础验收账本](acceptance-baseline.md)。
+再用例 05/04/07 看 CPU、Actor、PG。源码入口见[学习路径](learning-path.md)，证据层级见[历史增强账本](acceptance-enhanced.md)和[当前状态](current-status.md)。
 纯模型、真实 authority 组合和有界进程各证明自己的边界；历史 pass 不认证后续修改，本文不替代版本绑定的实测结果。
 
 入口：[trace.py](../src/miniray/trace.py)、[trace_contract.py](../src/miniray/trace_contract.py)、
 [golden_traces](../src/miniray/golden_traces/)。旧规格与清理前文本从[历史索引](history-index.md)取回。
+
+## 13. 两项保证的收益和成本
+
+GCS存活时多一个准确执行事实来源，图预留联合已提交边拒绝受支持的成环候选。INTENT/ARM不是成功，terminal不是bytes，图COMMITTED不是owner READY；C7 ACK丢失不能回滚已提交READY。
+
+成本是普通成功增加同步GCS依赖、不可达等待，以及每份publication的预留、补偿、死亡清扫、fencing和退休收据。单GCS内存权威不提供HA/持久恢复/owner接管；也不提供外部副作用exactly-once。这是两项mini自定义协议，不意味着更接近生产Ray。

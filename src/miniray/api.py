@@ -2448,6 +2448,7 @@ def shutdown() -> Optional[ShutdownReport]:
                 and owner_death_candidate.request_id == drain.request_id
                 and owner_death_candidate.clean
                 and owner_death_candidate.active_fences == 0
+                and owner_death_candidate.active_publication_cleanups == 0
             )
         if control_called:
             # Recheck membership at the top before treating these acknowledgments

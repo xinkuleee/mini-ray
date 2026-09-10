@@ -1,0 +1,5 @@
+/dev/shm/mini-ray-enhanced-install-check/project/src/miniray/__init__.py
+/dev/shm/mini-ray-enhanced-install-check/project/src/miniray/enhanced_publication.py
+/dev/shm/mini-ray-enhanced-install-check/project/src/miniray/enhanced_publication_control.py
+<3.13,>=3.12
+0.1.0.dev0

@@ -15,7 +15,9 @@ import time
 import cloudpickle
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import enhanced_publication as ep, output_protocol as wire, protocol
+from miniray.core import CoreWorker
+from miniray.enhanced_publication_client import PublicationClient
 from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.node import NodeServer, _WorkerSlot
@@ -353,9 +355,48 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     request, grant = _grant(node, resources, num_returns=1)
     handoffs = OutputHandoffTable()
     node._output_publication_journal = OutputPublicationJournal()
+    authority = ep.PublicationAuthority()
+    publication_calls = []
+    owner = object.__new__(CoreWorker)
+    owner.worker_id = request.requester_worker_id
+    owner.owner_address = request.requester_owner_address or ("handshake-owner.invalid", 1)
+    owner._owner_protocol_open = True
+    owner._state_lock = threading.RLock()
+    owner._completion = threading.Condition(owner._state_lock)
+    owner._output_handoffs = handoffs
+
+    def publication_rpc(message):
+        assert len(publication_calls) < 16
+        reply = authority.apply(message)
+        assert type(reply) is ep.PublicationReply and reply.request == message
+        publication_calls.append((message, reply))
+        return reply
+
+    def client_rpc(handler, message):
+        assert handler == ep.PUBLICATION_HANDLER
+        return publication_rpc(message)
+
+    owner._enhanced_publication_client = PublicationClient(client_rpc)
+
+    def abort_owner(publication, scope):
+        assert scope == node._output_publication_journal.rollback_scope(publication.manifest.publication_id)
+        message = ep.AbortOwnerPublication(publication, scope)
+        reply = owner.abort_owner_publication(message)
+        assert type(reply) is ep.AbortOwnerPublicationReply and reply.request == message
+        assert reply.accepted and reply.receipt is not None, reply.error
+        return reply.receipt
+
+    def report_rollback(tombstone, *, manifest):
+        assert node._output_publication_journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
+        message = wire.ReportOutputHandoffRollback(manifest, tombstone)
+        reply = owner.report_output_handoff_rollback(message)
+        assert type(reply) is wire.OutputHandoffReply and reply.request == message
+        assert reply.accepted, reply.error
+        return reply
+
 
     def unexpected_effect(*_args, **_kwargs):
-        pytest.fail("ref-free INLINE handshake attempted a child/graph/store effect")
+        pytest.fail("ref-free INLINE handshake attempted a child/store effect")
 
     def register_owner(manifest):
         snapshot = handoffs.register(manifest, manifest.publication_id.attempt_id)
@@ -363,13 +404,14 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
         assert reply.snapshot.manifest == manifest
 
     def report_complete(witness):
-        snapshot = handoffs.record_complete(witness)
-        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
-        assert reply.accepted and reply.witness == witness
+        reply = owner.report_output_handoff_complete(wire.ReportOutputHandoffComplete(witness))
+        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted and reply.witness == witness
 
     node._output_publications = OutputPublicationNodeAdapter(
         node._output_publication_journal, register_owner=register_owner,
-        report_complete=report_complete, report_rollback=unexpected_effect,
+        report_complete=report_complete, report_rollback=report_rollback,
+        publication_value=lambda manifest: ep.TaskPublication(manifest, owner.owner_address),
+        publication_rpc=publication_rpc, abort_owner=abort_owner,
         prepare_child=unexpected_effect, promote_child=unexpected_effect,
         release_child=unexpected_effect, seal_replica=unexpected_effect, drop_replica=unexpected_effect,
     )
@@ -415,6 +457,7 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     rpc_events: list[str] = []
     completion_calls = 0
     prepares = []
+    preparation_receipts = []
     completion_replies = []
 
     class OnceResult:
@@ -442,7 +485,12 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
         if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
             assert type(message) is wire.PrepareOutputPublication
             prepares.append(message)
-            return node._handle_prepare_output_publication(message)
+            reply = node._handle_prepare_output_publication(message)
+            if reply.accepted:
+                preparation_receipts.append(node._output_publication_journal.preparation_receipt(
+                    message.manifest.publication_id,
+                ))
+            return reply
         if handler == COMPLETE_WORKER_LEASE_HANDLER:
             completion_calls += 1
             reply = node._handle_complete_worker_lease(message)
@@ -504,5 +552,21 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     # Node local Complete is authoritative even before the owner terminal outbox.
     publication = pending.outputs.manifest.publication_id
     assert handoffs.query(publication).complete is None
+    value = ep.TaskPublication(pending.outputs.manifest, owner.owner_address)
+    central = authority.query(ep.GetPublication(value.reference)).snapshot
+    (prepared_fact,) = preparation_receipts
+    assert central is not None and central.prepared == prepared_fact
+    assert central.receipt(ep.PublicationStage.ARMED) is not None
+    assert node._output_publication_journal.snapshot(publication).complete == cached.output_publication.complete
+    assert central.complete is None and central.receipt(ep.PublicationStage.TERMINAL) is None
     assert node._output_publications.report_terminal(publication)
     assert handoffs.query(publication).complete == cached.output_publication.complete
+    reported = authority.query(ep.GetPublication(value.reference)).snapshot
+    assert reported.complete == cached.output_publication.complete
+    assert reported.receipt(ep.PublicationStage.TERMINAL) is not None
+    # This is a Node/Worker handshake; no owner READY, adoption or GC has run.
+    assert all(reported.receipt(stage) is None for stage in (
+        ep.PublicationStage.COMMITTED, ep.PublicationStage.ADOPTED, ep.PublicationStage.RETIRED))
+    assert reported.graph_active and reported.forward_open
+    assert handoffs.query(publication).adoption is None
+    assert node._ledger.release_calls == 1 and executions == reductions == 1

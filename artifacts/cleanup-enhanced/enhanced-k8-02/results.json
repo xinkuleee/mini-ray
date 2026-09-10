@@ -1,0 +1,40 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 14.618,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/enhanced-k8-02/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_output_publication_node.py",
+    "exit_code": 0,
+    "seconds": 6.825,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/enhanced-k8-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_output_publication_node.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_lease_completion_handshake.py",
+    "exit_code": 0,
+    "seconds": 4.532,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/enhanced-k8-02/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_lease_completion_handshake.py"
+    ],
+    "log": "002-case.log"
+  }
+]

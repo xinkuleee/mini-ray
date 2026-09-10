@@ -1,9 +1,10 @@
-"""Bounded common cleanup composition on the base authorities.
+"""Bounded common cleanup composition with real enhanced metadata authority.
 
-One Core submission, one child table and at most one retry per case. Complete,
-member-death and replica replies are explicit boundary inputs, not claims of a
-real process exit or physical deletion. Actual Core handoff, death consumption,
-owner retirement/reconstruction and GCS owner-fence drivers are exercised.
+One Core submission, one child table, one 1 KiB store and at most one retry
+per case. A real journal/adapter prepares and completes one 20-byte result;
+its local Complete stays unavailable to the Core until explicitly delivered.
+Member death remains an explicit boundary input, not a real process exit.
+Actual owner/graph/child reducers and Node Seal/Drop handlers supply receipts.
 No runtime constructors, user execution, sockets, threads, timers or sleeps.
 """
 
@@ -18,17 +19,21 @@ import time
 
 import pytest
 
-from miniray import control, core as core_module, output_protocol as wire, protocol, transport
+from miniray import control, core as core_module, enhanced_publication as ep, output_protocol as wire, protocol, transport
+from miniray.enhanced_publication_control import EnhancedPublicationControl
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.core import CoreWorker, _OutputNodeLossObligation
 from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.node import NodeServer
+from miniray.object_manager import ObjectManager
+from miniray.object_store import ObjectStore
 from miniray.output_handoff import OutputHandoffPhase
 from miniray.output_publication import (
-    OutputPublicationCompleteWitness, OutputPublicationEnvelope,
     OutputPublicationHeader, OutputPublicationID, OutputPublicationManifest,
     OutputPublicationNodeIncarnation, OutputValue,
 )
+from miniray.output_publication_journal import OutputPublicationAdoptionProof, OutputPublicationJournal
+from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.owner_death_fence_registry import OwnerDeathFenceRegistry, OwnerFenceNodeIncarnation
 from miniray.ownership import ObjectOwnerTable, ObjectState, OutputOwnerPublicationPlan
 from miniray.publication_sources import OwnedContainedSource, PreparedContainedTransfer
@@ -111,19 +116,37 @@ class _CorePublication:
                 OutputPublicationNodeIncarnation(self.publisher, 4201, 1),
             ), (self.value),
         )
-        self.complete = OutputPublicationCompleteWitness.for_manifest(self.manifest)
-        descriptor = protocol.ResultDescriptor(
-            self.ref.object_id, tier, len(payload), self.core.worker_id,
-            self.publisher, (self.manifest.value).checksum, None if stored else payload,
-        )
-        self.envelope = OutputPublicationEnvelope(self.manifest, self.complete, descriptor)
-        registered = self.core.register_output_handoff(wire.RegisterOutputHandoff(self.manifest))
-        assert registered.accepted and registered.snapshot.manifest == self.manifest
+        self.core.gcs_address = ("publication.invalid", 1235)
+        self.authority = self.core._test_publication_authority
+        self.publication = ep.TaskPublication(self.manifest, self.core.owner_address)
+        self.metadata_calls = []
+        self.core._rpc = self.publication_rpc
         self.child_table = ObjectOwnerTable()
         self.child_table.register(self.child, local_token="child-source")
         self.child_table.publish_inline(self.child, None, b"child")
-        self.child_table.prepare_stored_contained_reference(self.transfer, authority_worker_id=self.child_owner)
-        self.child_table.promote_stored_contained_reference(self.transfer, authority_worker_id=self.child_owner)
+        self.node = node = object.__new__(NodeServer)
+        node.node_id = self.publisher
+        node._state_lock = threading.RLock()
+        node._object_store = self.store = ObjectStore(1024)
+        node._object_manager = ObjectManager(node.node_id, self.store)
+        node._sealed_metadata, node._dropped_metadata = {}, {}
+        node._object_localization_locks = {}
+        self.journal = OutputPublicationJournal()
+        self.adapter = OutputPublicationNodeAdapter(
+            self.journal, register_owner=self.register, report_complete=self.report_complete,
+            report_rollback=_forbidden_rpc, publication_value=lambda manifest: ep.TaskPublication(manifest, self.core.owner_address),
+            publication_rpc=lambda request: self.publication_rpc(self.core.gcs_address, ep.PUBLICATION_HANDLER, request),
+            abort_owner=self.abort_owner, prepare_child=self.prepare_child, promote_child=self.promote_child,
+            release_child=lambda address, request: self.release(address, "release_contained_reference", request),
+            seal_replica=self.seal, drop_replica=lambda effect, request: node._handle_drop_object_replica(request),
+        )
+        self.local_completions = []
+        self.adapter.prepare(self.manifest, payload)
+        self.envelope = self.adapter.complete(self.identity, commit_lease=self.local_completions.append)
+        self.complete = self.envelope.complete
+        assert self.local_completions == [self.complete]
+        assert self.authority.query(ep.GetPublication(self.publication.reference)).snapshot.complete is None
+        assert self.core.get_output_handoff(wire.GetOutputHandoff(self.identity)).snapshot.complete is None
         self.node_death = protocol.NodeDeathRecord(
             "publisher-exited", self.publisher, 4201, 1, 1, 7,
             protocol.NodeDeathReason.PROCESS_EXIT, "explicit test member fact",
@@ -135,6 +158,54 @@ class _CorePublication:
         )
         self.releases = []
         self.core._borrow_rpc = self.release
+
+    def publication_rpc(self, address, handler, request):
+        assert address == self.core.gcs_address and handler == ep.PUBLICATION_HANDLER
+        assert not self.core._state_lock._is_owned()
+        assert len(self.metadata_calls) < 48, "common cleanup exceeded finite metadata budget"
+        self.metadata_calls.append(request)
+        reply = self.authority.apply(request)
+        assert type(reply) is ep.PublicationReply and reply.request == request
+        assert reply.accepted, reply.error
+        return reply
+
+    def register(self, manifest):
+        reply = self.core.register_output_handoff(wire.RegisterOutputHandoff(manifest))
+        assert reply.accepted and reply.snapshot.manifest == manifest
+
+    def report_complete(self, witness):
+        reply = self.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(witness))
+        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted and reply.witness == witness
+
+    def abort_owner(self, publication, scope):
+        reply = self.core.abort_owner_publication(ep.AbortOwnerPublication(publication, scope))
+        assert reply.accepted and reply.receipt is not None
+        return reply.receipt
+
+    def prepare_child(self, address, request):
+        assert address == self.transfer.contained_owner_address
+        disposition = self.child_table.prepare_stored_contained_reference(
+            request.transfer, authority_worker_id=request.authority_worker_id,
+        )
+        return protocol.StoredContainedPinReply(request, disposition)
+
+    def promote_child(self, address, request):
+        assert address == self.transfer.contained_owner_address
+        disposition = self.child_table.promote_stored_contained_reference(
+            request.transfer, authority_worker_id=request.authority_worker_id,
+        )
+        return protocol.StoredContainedPinReply(request, disposition)
+
+    def seal(self, effect, descriptor, payload):
+        request = protocol.SealObject.from_data(
+            descriptor.object_id, effect.publication_id.attempt_id, descriptor.owner_worker_id, payload,
+        )
+        reply = self.node._handle_seal_object(request)
+        assert reply.sealed and (reply.object_id, reply.node_id, reply.size_bytes, reply.checksum) == (
+            descriptor.object_id, descriptor.node_id, descriptor.size_bytes, descriptor.checksum,
+        )
+        assert self.store.get(descriptor.object_id) == payload
+        return descriptor
 
     def release(self, address, handler, request):
         assert len(self.releases) < 8
@@ -153,6 +224,8 @@ class _CorePublication:
         self.core.gcs_address = ("membership.invalid", 1234)
 
         def rpc(address, handler, request):
+            if handler == ep.PUBLICATION_HANDLER:
+                return self.publication_rpc(address, handler, request)
             assert address == self.core.gcs_address and handler == "get_worker_deaths"
             return protocol.GetWorkerDeathsReply(
                 request.after_epoch, supplied.death_epoch,
@@ -163,8 +236,8 @@ class _CorePublication:
         return self.core._sync_worker_deaths()
 
     def known_complete(self):
-        reply = self.core.report_output_handoff_complete(wire.ReportOutputHandoffComplete(self.complete))
-        assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted and reply.witness == self.complete
+        assert self.adapter.report_terminal(self.identity)
+        assert self.authority.query(ep.GetPublication(self.publication.reference)).snapshot.complete == self.complete
 
     def loss(self, *, envelope=None):
         return self.core._drive_output_node_loss(
@@ -199,6 +272,8 @@ def test_membership_child_death_drains_core_node_loss_without_dead_rpc(publicati
     assert f.identity not in f.core._output_node_cleanup
     assert f.pending.task_key not in f.core._protocol_unresolved
     assert not f.releases
+    central = f.authority.query(ep.GetPublication(f.publication.reference)).snapshot
+    assert central.complete == f.complete and central.receipt(ep.PublicationStage.RETIRED) is not None
 
 
 def test_membership_death_cache_detaches_input_and_rejects_conflicting_replay(publication, monkeypatch):
@@ -240,7 +315,12 @@ def test_unproven_child_death_leaves_core_cleanup_pending(publication, fact):
         assert f.install_death(replace(f.death, incarnation=replace(f.death.incarnation, worker_id=_id(WorkerID, 46))))
     elif fact == "timeout":
         f.core.gcs_address = ("membership.invalid", 1234)
-        f.core._rpc = lambda *_args: (_ for _ in ()).throw(TimeoutError("no member proof"))
+        def unavailable_membership(address, handler, request):
+            if handler == ep.PUBLICATION_HANDLER:
+                return f.publication_rpc(address, handler, request)
+            assert handler == "get_worker_deaths"
+            raise TimeoutError("no member proof")
+        f.core._rpc = unavailable_membership
         assert not f.core._sync_worker_deaths()
     attempts = []
 
@@ -286,6 +366,9 @@ def test_late_envelope_does_not_reverse_unknown_cleanup_or_consume_budget_twice(
     assert f.loss(envelope=f.envelope)
     assert len(f.releases) == calls and record.retries_started == 1
     assert f.core.owner_table.snapshot(f.ref.object_id) == state
+    central = f.authority.query(ep.GetPublication(f.publication.reference)).snapshot
+    assert central.complete is None and central.adoption is None and not central.graph_active
+    assert central.receipt(ep.PublicationStage.RETIRED) is not None
 
 
 def test_known_inline_envelope_keeps_actual_bytes_and_child_holds(publication):
@@ -297,15 +380,24 @@ def test_known_inline_envelope_keeps_actual_bytes_and_child_holds(publication):
     assert state.state is ObjectState.READY_INLINE and state.inline_data == (f.envelope.result).inline_data
     assert f.child_table.snapshot(f.child) == before
     assert f.core._recovery.task_record(f.pending.task_id).retries_started == 0
+    central = f.authority.query(ep.GetPublication(f.publication.reference)).snapshot
+    assert central.adoption.complete == f.complete and central.graph_active
 
 
 def test_dead_child_retirement_blocks_reconstruction_until_replica_ack():
     f = _CorePublication(stored=True)
     try:
         f.known_complete()
+        f.core._publication_client().commit_task(f.publication, f.complete)
         assert f.core.owner_table.commit_output_publication(
             OutputOwnerPublicationPlan(f.pending.execution, f.envelope),
         ).committed
+        proof = OutputPublicationAdoptionProof(
+            f.complete, f.core.worker_id,
+            "output-owner:{}:{}".format(f.identity.transaction_id, f.manifest.manifest_digest),
+        )
+        f.core._output_handoff_table().adopt(proof)
+        f.core._publication_client().adopt(proof)
         f.core._recovery.record_task_success(f.pending.task_id, f.pending.spec.attempt_id)
         assert f.core._finish_pending_task(f.pending)
         assert f.core.owner_table.mark_lost(f.ref.object_id, f.pending.spec.attempt_id)
@@ -315,16 +407,18 @@ def test_dead_child_retirement_blocks_reconstruction_until_replica_ack():
         f.core._resolve_node_address = lambda node_id, *, home_route=None: ("replica.invalid", 1234)
 
         def replica_rpc(address, handler, request):
+            if handler == ep.PUBLICATION_HANDLER:
+                return f.publication_rpc(address, handler, request)
             assert address == ("replica.invalid", 1234) and handler == "drop_object_replica"
             assert request.object_id == f.ref.object_id and request.node_id == f.publisher
             drops.append(request)
+            reply = f.node._handle_drop_object_replica(request)
             if first:
                 first.pop()
+                assert reply.status is protocol.DropObjectReplicaStatus.DROPPED
                 raise TimeoutError("replica effect acknowledgement unknown")
-            return protocol.DropObjectReplicaReply(
-                request.object_id, request.producer_attempt_id, request.owner_worker_id,
-                request.node_id, request.checksum, protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
-            )
+            assert reply.status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED
+            return reply
 
         f.core._rpc = replica_rpc
         waiter = f.core._objects[f.ref.object_id]
@@ -339,6 +433,9 @@ def test_dead_child_retirement_blocks_reconstruction_until_replica_ack():
         assert not f.core.owner_table.has_active_output_retirements()
         assert not f.core._output_retirement_work and not f.releases
         assert len(drops) == 2 and drops[0] == drops[1]
+        assert f.store.used_bytes == 0
+        central = f.authority.query(ep.GetPublication(f.publication.reference)).snapshot
+        assert central.receipt(ep.PublicationStage.RETIRED) is not None and not central.graph_active
     finally:
         f.close()
 
@@ -348,6 +445,15 @@ def test_owner_fence_driver_rotates_past_blocked_target_and_survives_shrink(bloc
     service = object.__new__(control.GCSLite)
     service._owner_death_control_lock = threading.RLock()
     service.owner_death_fences = OwnerDeathFenceRegistry()
+    service._owner_fence_progress_cursor = service._owner_death_progress_cursor = 0
+    service.nodes = control.NodeRegistry()
+    service.workers = control.WorkerRegistry(service.nodes)
+    service.publication_control = EnhancedPublicationControl(
+        nodes=service.nodes, workers=service.workers, owner_fences=service.owner_death_fences,
+        lock=service._owner_death_control_lock, rpc=_forbidden_rpc,
+    )
+    assert not service.publication_control.pending_deaths()
+    assert service.publication_control.authority.snapshots() == ()
     targets = tuple(OwnerFenceNodeIncarnation(_id(NodeID, value), 6000 + value, 1) for value in (61, 62))
     for target in targets:
         service.owner_death_fences.register_node(target)

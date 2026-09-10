@@ -3,8 +3,9 @@
 One outer, one child, one 16 KiB ObjectStore and one CPU ledger. Real discovery,
 owner handoff/child tables, local owner CAS and Node storage handlers compose
 synchronously. Borrowed credentials require actual retain/acquire transitions.
-No Core/Node constructor, RPC, threads, waits or processes. Local composition
-does not claim scheduler reconstruction, distributed shutdown or GCS evidence.
+One real publication authority supplies GCS transaction and graph receipts.
+No Core/Node constructor, live RPC, threads, waits or processes are used; this
+local composition does not claim scheduler reconstruction or shutdown.
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ import time
 import cloudpickle
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import enhanced_publication as ep, output_protocol as wire, protocol
+from miniray.core import CoreWorker
+from miniray.enhanced_publication_client import PublicationClient
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import AttemptID, ObjectID, TaskID
 from miniray.object_store import ObjectStore
@@ -33,7 +36,7 @@ from miniray.output_publication_node import OutputPublicationNodeAdapter
 from miniray.output_handoff import OutputHandoffPhase, OutputHandoffTable
 from miniray.owner_service import StoredContainedPinOwnerAdapter
 from miniray.ownership import (
-    ConflictingBorrowerTokenError, ObjectCollectionState, ObjectOwnerTable,
+    ConflictingBorrowerTokenError, ObjectCollectionState, ObjectOwnerTable, ObjectState,
     OutputOwnerPublicationPlan, ReleasedBorrowerTokenError,
     StoredContainedReferenceDisposition as Disposition,
 )
@@ -98,6 +101,16 @@ class _Fixture:
         self.transfers = ((self.manifest.value.transfers[0],))
         self.journal = OutputPublicationJournal()
         self.handoffs = OutputHandoffTable()
+        self.authority = ep.PublicationAuthority()
+        self.publication_calls = []
+        self.publication = ep.TaskPublication(self.manifest, ("output-owner.invalid", 31103))
+        self.owner_core = owner = object.__new__(CoreWorker)
+        owner.worker_id, owner.owner_address = header.owner_worker_id, self.publication.owner_address
+        owner._owner_protocol_open = True
+        owner._state_lock = threading.RLock()
+        owner._completion = threading.Condition(owner._state_lock)
+        owner._owner_table, owner._output_handoffs = self.outer, self.handoffs
+        self.client = owner._enhanced_publication_client = PublicationClient(self.owner_publication_rpc)
         self.store = ObjectStore(16 * 1024)
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         self.token = self.ledger.allocate(ResourceVector({"CPU": 1}), AllocationToken("same-owner-execution"))
@@ -106,6 +119,8 @@ class _Fixture:
         self.adapter = OutputPublicationNodeAdapter(
             self.journal, register_owner=self.register_owner,
             report_complete=self.report_complete, report_rollback=self.report_rollback,
+            publication_value=self.publication_value, publication_rpc=self.publication_rpc,
+            abort_owner=self.abort_owner,
             prepare_child=self.prepare,
             promote_child=self.promote, release_child=self.release,
             seal_replica=self.unbound_storage, drop_replica=self.unbound_storage,
@@ -123,6 +138,7 @@ class _Fixture:
 
     def prepare(self, address, request):
         assert address == self.child.owner_address
+        assert self.graph().graph_active and self.graph().forward_open
         reply = self.pin_adapter.prepare(request)
         if reply.disposition is Disposition.PREPARED:
             holds = self.child_table.snapshot(self.child.object_id).contained_holds
@@ -141,6 +157,7 @@ class _Fixture:
 
     def release(self, address, request):
         assert address == self.child.owner_address and request.owner_worker_id == self.child.owner_worker_id
+        assert self.graph().fence is not None
         released = self.child_table.release_contained_reference(request.object_id, request.hold)
         assert self.child_table.contained_release_was_seen(request.object_id, request.hold)
         return protocol.ReleaseContainedReferenceReply(
@@ -150,21 +167,48 @@ class _Fixture:
     def register_owner(self, manifest):
         request = wire.RegisterOutputHandoff(manifest)
         snapshot = self.handoffs.register(request.manifest, self.identity.attempt_id)
+        self.client.remember(self.publication_value(manifest))
         reply = wire.OutputHandoffReply(request, True, snapshot)
         assert reply.request == request and reply.snapshot.manifest == self.manifest
 
     def report_complete(self, witness):
         request = wire.ReportOutputHandoffComplete(witness)
-        snapshot = self.handoffs.record_complete(request.witness)
-        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        assert self.graph().complete == witness
+        reply = self.owner_core.report_output_handoff_complete(request)
+        assert type(reply) is wire.OutputHandoffCompleteAck
         assert reply.accepted and reply.witness == request.witness
 
     def report_rollback(self, tombstone, *, manifest):
         request = wire.ReportOutputHandoffRollback(manifest, tombstone)
         assert request.tombstone == self.journal.snapshot(self.identity).rollback_tombstone
-        snapshot = self.handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
-        reply = wire.OutputHandoffReply(request, True, snapshot)
+        assert self.graph().receipt(ep.PublicationStage.RETIRED) is not None
+        reply = self.owner_core.report_output_handoff_rollback(request)
+        assert reply.accepted, reply.error
         assert reply.request == request and reply.snapshot.phase is OutputHandoffPhase.ABORTED
+
+    def publication_value(self, manifest):
+        assert manifest == self.manifest
+        return ep.TaskPublication(manifest, self.owner_core.owner_address)
+
+    def publication_rpc(self, request):
+        assert ep.request_reference(request) == self.publication.reference
+        assert len(self.publication_calls) < 24, "finite custody callback budget exceeded"
+        self.publication_calls.append(request)
+        return self.authority.apply(request)
+
+    def owner_publication_rpc(self, handler, request):
+        assert handler == ep.PUBLICATION_HANDLER
+        return self.publication_rpc(request)
+
+    def graph(self):
+        return self.authority.query(ep.GetPublication(self.publication.reference)).snapshot
+
+    def abort_owner(self, publication, scope):
+        assert scope == self.journal.rollback_scope(self.identity)
+        request = ep.AbortOwnerPublication(publication, scope)
+        reply = self.owner_core.abort_owner_publication(request)
+        assert reply.request == request and reply.accepted, reply.error
+        return reply.receipt
 
     def commit_lease(self, witness):
         assert witness.publication_id == self.identity and witness.manifest_digest == self.manifest.manifest_digest
@@ -200,6 +244,8 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
         restored = cloudpickle.loads((f.outputs.payload))
     assert restored[0] is restored[1] and restored_holds == [transfer.final_hold]
     f.adapter.prepare(f.manifest, (f.outputs.payload))
+    assert f.graph().prepared == f.journal.preparation_receipt(f.identity)
+    assert f.graph().receipt(ep.PublicationStage.ARMED) is not None
     assert [event[0] for event in f.events] == ["prepare", "promote"]
     assert all(reply.accepted for _stage, _request, reply in f.events)
     active = frozenset((transfer.final_hold,))
@@ -212,12 +258,26 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
     envelope = f.adapter.complete(f.identity, commit_lease=f.commit_lease)
     assert f.ledger.available == f.ledger.total
     assert f.handoffs.query(f.identity).complete is None
+    assert f.graph().complete is None
     assert f.adapter.report_terminal(f.identity)
     assert f.handoffs.query(f.identity).complete == envelope.complete
+    assert f.graph().complete == envelope.complete
+    assert f.outer.snapshot(f.identity.object_id).state is ObjectState.PENDING
+    assert f.journal.snapshot(f.identity).result_retained
+    assert f.graph().receipt(ep.PublicationStage.COMMITTED) is None
+    f.client.commit_task(f.publication, envelope.complete)
+    assert f.graph().receipt(ep.PublicationStage.COMMITTED) is not None
     assert f.outer.commit_output_publication(OutputOwnerPublicationPlan(f.identity.execution, envelope)).committed
     proof = OutputPublicationAdoptionProof(envelope.complete, f.header.owner_worker_id, "same-owner-cas")
     f.handoffs.adopt(proof)
-    f.journal.retire_completed(proof)
+    receipt = f.client.adopt(proof)
+    assert receipt == f.graph().receipt(ep.PublicationStage.ADOPTED)
+    retirement = wire.AckOutputPublicationAdopted(proof, receipt)
+    assert f.graph().adoption == retirement.proof
+    assert retirement.gcs_adoption == f.graph().receipt(ep.PublicationStage.ADOPTED)
+    # This journal boundary consumes the actual C7 evidence after the local
+    # owner CAS above; no scheduled Node lease record is claimed.
+    f.journal.retire_completed(retirement.proof)
     assert not f.journal.snapshot(f.identity).result_retained
     assert f.store.used_bytes == (len((f.outputs.payload)) if stored else 0)
     # Node reply retirement must not consume the outer's child lifetime.
@@ -226,6 +286,10 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
     assert f.outer.release_local_reference((f.identity).object_id, "output-0")
     collection = f.outer.begin_output_publication_collection((f.identity).object_id, collection_id="same-owner-gc")
     assert collection is not None
+    decision = ep.OwnerRetirementReceipt(f.publication.reference, f.header.owner_worker_id,
+                                         "same-owner-gc", ep.RetirementReason.GC)
+    f.client.fence(f.publication, decision)
+    assert f.graph().fence == decision and f.graph().graph_active
     assert collection.metadata_plan.contained_releases == slot.edges
     release = protocol.ReleaseContainedReference(f.child.object_id, f.child.owner_worker_id, transfer.final_hold)
     reply = f.release(f.child.owner_address, release)
@@ -239,8 +303,11 @@ def test_same_owner_discovery_promotes_and_collects_one_child_lifetime(borrowed,
         assert (dropped.object_id, dropped.producer_attempt_id, dropped.owner_worker_id, dropped.node_id, dropped.checksum) == (
             drop.object_id, drop.producer_attempt_id, drop.owner_worker_id, drop.node_id, drop.checksum)
         assert f.node._handle_drop_object_replica(drop).status is protocol.DropObjectReplicaStatus.ALREADY_DROPPED
-    # Current owner collection records the local metadata CAS after actual
-    # child release / optional Node Drop above; it takes no fabricated graph ACK.
+    # Actual Release and optional Node Drop precede graph retirement and the
+    # final owner metadata CAS. Source borrower credentials remain separate.
+    f.client.retire(f.publication, (reply,))
+    assert not f.graph().graph_active
+    assert f.graph().closed_holds.releases == (reply,)
     assert f.outer.complete_output_publication_collection(collection).collection.collected
     assert f.outer.collection_state((f.identity).object_id) is ObjectCollectionState.COLLECTED
     assert f.child_table.prepare_stored_contained_reference(transfer, authority_worker_id=f.child.owner_worker_id) is Disposition.ALREADY_PREPARED

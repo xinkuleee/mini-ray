@@ -1,12 +1,16 @@
 """One real owner-led INLINE publication on an already unstarted Node.
 
-No process, transport, GCS authority, child effect or physical store mutation.
+No process, transport, child effect or physical store mutation. One actual
+GCS metadata authority provides the required enhanced stage receipts.
 The caller owns worker slots/leases/resource ledgers and invokes Complete.
 """
 from dataclasses import replace
 from types import SimpleNamespace
+from threading import Condition, RLock
 
-from miniray import output_protocol as wire, protocol
+from miniray import output_protocol as wire, protocol, enhanced_publication as ep
+from miniray.core import CoreWorker
+from miniray.enhanced_publication_client import PublicationClient
 from miniray.ids import JobID
 from miniray.object_store import ObjectStore
 from miniray.output_discovery import OutputDiscoverySession
@@ -32,6 +36,28 @@ def prepare_ref_free_output(node, request, grant, *, job_id=None, values=(7,)):
     value = (manifest.value)
     assert value.tier is protocol.ResultStorage.INLINE and not value.transfers and value.size_bytes <= 1024
     journal, handoffs, rollback_reports = OutputPublicationJournal(), OutputHandoffTable(), []
+    authority = ep.PublicationAuthority()
+    publication_calls = []
+    owner_address = request.requester_owner_address or ("ref-free-owner.invalid", 1)
+    publication = ep.TaskPublication(manifest, owner_address)
+    owner = object.__new__(CoreWorker)
+    owner.worker_id, owner.owner_address = request.requester_worker_id, owner_address
+    owner._owner_protocol_open = True
+    owner._state_lock = RLock()
+    owner._completion = Condition(owner._state_lock)
+    owner._output_handoffs = handoffs
+
+    def publication_rpc(message):
+        assert len(publication_calls) < 16
+        publication_calls.append(message)
+        return authority.apply(message)
+
+    owner._enhanced_publication_client = PublicationClient(lambda handler, message: publication_rpc(message))
+
+    def abort_owner(value, scope):
+        reply = owner.abort_owner_publication(ep.AbortOwnerPublication(value, scope))
+        assert reply.accepted and reply.receipt is not None, reply.error
+        return reply.receipt
 
     def forbidden(*_args, **_kwargs):
         raise AssertionError('ref-free INLINE fixture attempted child/store/external work')
@@ -65,6 +91,8 @@ def prepare_ref_free_output(node, request, grant, *, job_id=None, values=(7,)):
 
     adapter = OutputPublicationNodeAdapter(journal, register_owner=register_owner,
         report_complete=report_complete, report_rollback=report_rollback,
+        publication_value=lambda value: ep.TaskPublication(value, owner_address),
+        publication_rpc=publication_rpc, abort_owner=abort_owner,
         prepare_child=forbidden, promote_child=forbidden, release_child=forbidden,
         seal_replica=forbidden, drop_replica=forbidden)
     assert getattr(node, '_output_publication_journal', None) is None
@@ -77,9 +105,11 @@ def prepare_ref_free_output(node, request, grant, *, job_id=None, values=(7,)):
     prepared = node._handle_prepare_output_publication(
         wire.PrepareOutputPublication(manifest, (outputs.payload)))
     assert prepared.accepted and journal.snapshot(identity).ready_to_complete
+    assert authority.query(ep.GetPublication(publication.reference)).snapshot.receipt(ep.PublicationStage.ARMED) is not None
     assert handoffs.query(identity).manifest == manifest
     assert handoffs.query(identity).complete is None
     assert node.resource_ledger.snapshot() == before
     session.release_sources_after_promotions()
     return SimpleNamespace(manifest=manifest, journal=journal, handoffs=handoffs,
-        adapter=adapter, report_rollback=report_rollback, rollback_reports=rollback_reports)
+        adapter=adapter, report_rollback=report_rollback, rollback_reports=rollback_reports,
+        authority=authority, publication=publication, owner=owner)

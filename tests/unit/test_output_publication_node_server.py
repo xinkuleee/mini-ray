@@ -12,19 +12,22 @@ import time
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import output_protocol as wire, protocol, enhanced_publication as ep, control
+from miniray.enhanced_publication_control import EnhancedPublicationControl
+from miniray.owner_death_fence_registry import OwnerDeathFenceRegistry
+from miniray.ids import NodeID
 from miniray.node import NodeServer, _LeaseRecord, _WorkerSlot
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.output_handoff import OutputHandoffTable, OutputHandoffPhase
 from miniray.output_publication import OutputPublicationCompleteWitness, OutputPublicationEnvelope, OutputPublicationManifest
-from miniray.output_publication_journal import OutputPublicationJournal
+from miniray.output_publication_journal import OutputPublicationJournal, OutputPublicationJournalStateError
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.ownership import ObjectOwnerTable
+from miniray.ownership import ObjectOwnerTable, OutputOwnerPublicationPlan
 from miniray.publication_sources import BorrowedContainedSource
 from miniray.resources import AllocationToken, ResourceLedger
 from miniray.output_publication_journal import OutputPublicationAdoptionProof, OutputPublicationJournalState
-from miniray.publication_gate import OutputPublicationGatePhase
+from miniray.publication_gate import OutputPublicationGatePhase, OutputPublicationGateConfig, GraphReservationOutcome
 from miniray.resources import NodeSnapshot, ResourceVector
 
 
@@ -49,7 +52,7 @@ def _no_runtime(monkeypatch):
 
 
 class _Fixture:
-    """Node journal/store and real owner/child reducers; no GCS publication state."""
+    """Node journal/store, actual GCS authority, and real owner/child reducers."""
 
     def __init__(self, *, refs=True, stored=True, reverse_children=False):
         self.values = _Values(refs=refs, stored=stored)
@@ -63,6 +66,11 @@ class _Fixture:
                 self.values.manifest, self.values.witness, (self.values.result))
         self.manifest, self.id = self.values.manifest, self.values.publication_id
         self.journal, self.handoffs = OutputPublicationJournal(), OutputHandoffTable()
+        self.authority = ep.PublicationAuthority()
+        self.gcs = None
+        self.owner_address = ("owner.invalid", 1)
+        self.publication = ep.TaskPublication(self.manifest, self.owner_address)
+        self.gcs_calls = []
         self.store, self.child_owners = ObjectStore(1024), {}
         self.events, self.fault = [], None
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
@@ -80,8 +88,66 @@ class _Fixture:
         self.adapter = OutputPublicationNodeAdapter(self.journal,
             register_owner=self.register_owner, report_complete=self.report_complete,
             report_rollback=self.report_rollback, prepare_child=self.prepare_child,
+            publication_value=lambda manifest: ep.TaskPublication(manifest, self.owner_address),
+            publication_rpc=self.publication_rpc, abort_owner=self.abort_owner,
             promote_child=self.promote_child, release_child=self.release_child,
             seal_replica=self.unbound_storage, drop_replica=self.unbound_storage)
+
+    def publication_rpc(self, request):
+        reply = self.authority.apply(request) if self.gcs is None else self.gcs.enhanced_publication(request)
+        assert type(reply) is ep.PublicationReply and reply.request == request
+        self.gcs_calls.append((request, reply))
+        return reply
+
+    def observe_gcs(self, sink):
+        """Bind actual GCS stage emission to the already-used authority."""
+        gcs = object.__new__(control.GCSLite)
+        gcs.nodes = control.NodeRegistry()
+        incarnation = self.manifest.header.node_incarnation
+        # The immutable fixture incarnation is epoch two. Populate it using
+        # genuine registrations rather than assigning a fabricated epoch.
+        assert incarnation.registration_epoch == 2
+        assert gcs.nodes.register_message(protocol.RegisterNode(
+            NodeID(b'z' * 16), 1700, ("unused-node.invalid", 1), ResourceVector({"CPU": 1}))).accepted
+        registered = gcs.nodes.register_message(protocol.RegisterNode(
+            incarnation.node_id, incarnation.node_pid, ("node.invalid", 1), ResourceVector({"CPU": 1})))
+        assert registered.accepted and registered.registration_epoch == incarnation.registration_epoch
+        gcs.workers = control.WorkerRegistry(gcs.nodes)
+        assert gcs.workers.register(protocol.RegisterWorkerIncarnation(protocol.WorkerIncarnation(
+            incarnation.node_id, incarnation.node_pid, incarnation.registration_epoch,
+            self.values.executor, 1801))).accepted
+        gcs.owner_death_fences = OwnerDeathFenceRegistry()
+        gcs._owner_death_control_lock = threading.RLock()
+        gcs.event_sink = sink
+        gcs.publication_control = EnhancedPublicationControl(
+            nodes=gcs.nodes, workers=gcs.workers, owner_fences=gcs.owner_death_fences,
+            lock=gcs._owner_death_control_lock, rpc=self.unbound_storage, authority=self.authority)
+        self.gcs = gcs
+
+    def abort_owner(self, publication, scope):
+        assert publication == self.publication and scope == self.journal.rollback_scope(self.id)
+        current = self.handoffs.query(self.id)
+        assert current.complete is current.adoption is None
+        aborted = self.handoffs.abort_manifest(self.manifest, "node rollback:" + scope.rollback_id)
+        assert aborted.phase is OutputHandoffPhase.ABORTED
+        return ep.OwnerAbortReceipt(publication.reference, self.values.owner, scope.rollback_id)
+
+    def adopt_from_owner_table(self, proof):
+        # This Node-only boundary supplies an actual owner CAS receipt. It
+        # does not claim a scheduled Core/Worker path or fabricate GCS C7.
+        values = self.values
+        spec = protocol.TaskSpec(values.job, values.task, values.attempt,
+            protocol.FunctionKey(values.job, __name__, "adoption", "v1"),
+            (), 1, ResourceVector({"CPU": 1}), values.owner)
+        owner = ObjectOwnerTable()
+        owner.register_task_outputs(spec, local_tokens=("owner-live",))
+        assert owner.commit_output_publication(OutputOwnerPublicationPlan(values.execution, values.envelope)).committed
+        self.handoffs.record_complete(proof.complete)
+        self.handoffs.adopt(proof)
+        for request in (ep.RecordTerminal(proof.complete), ep.CommitGraph(self.publication.reference), ep.RecordAdoption(proof)):
+            reply = self.publication_rpc(request)
+            assert reply.accepted, reply.error
+        return reply.receipt
 
     def unbound_storage(self, *_args):
         pytest.fail("Node storage must be explicitly bound before effects")
@@ -109,7 +175,9 @@ class _Fixture:
     def report_rollback(self, tombstone, *, manifest):
         request = wire.ReportOutputHandoffRollback(manifest, tombstone)
         assert tombstone == self.journal.snapshot(self.id).rollback_tombstone
-        snapshot = self.handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
+        current = self.handoffs.query(self.id)
+        assert current.phase is OutputHandoffPhase.ABORTED
+        snapshot = self.handoffs.abort_manifest(manifest, current.abort_reason)
         reply = wire.OutputHandoffReply(request, True, snapshot)
         assert reply.request == request and snapshot.phase is OutputHandoffPhase.ABORTED
         self.hit("rollback-report")
@@ -318,7 +386,8 @@ def test_payload_retirement_is_independent_of_terminal_outbox_and_physical_repli
     node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload)))
     assert node._handle_complete_worker_lease_inner(complete).accepted
     proof = OutputPublicationAdoptionProof(fixture.values.witness, fixture.values.owner, "owner-cas")
-    assert node._handle_ack_output_publication_adopted(wire.AckOutputPublicationAdopted(proof)).accepted
+    c7 = fixture.adopt_from_owner_table(proof)
+    assert node._handle_ack_output_publication_adopted(wire.AckOutputPublicationAdopted(proof, c7)).accepted
     assert fixture.journal.snapshot(fixture.id).state is OutputPublicationJournalState.RETIRED
     assert fixture.store.used_bytes > 0
     assert node._drive_output_publications()
@@ -398,6 +467,8 @@ def test_configured_checkpoints_follow_exact_owner_registration_and_promotions()
     observed = []
 
     class Gate:
+        config = OutputPublicationGateConfig(0, ("127.0.0.1", 39001))
+
         def checkpoint(self, arrival):
             assert not node._state_lock._is_owned()
             assert not fixture.journal._lock._is_owned()
@@ -413,9 +484,21 @@ def test_configured_checkpoints_follow_exact_owner_registration_and_promotions()
                 assert saved.manifest == fixture.manifest and local.materialized is False
                 assert fixture.store.used_bytes == 0
                 assert not local.ready_to_complete
+            elif arrival.phase in (OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
+                                    OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY):
+                assert not local.materialized and fixture.store.used_bytes == 0
+                central = fixture.authority.query(ep.GetPublication(fixture.publication.reference)).snapshot
+                if arrival.phase is OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE:
+                    assert arrival.graph_outcome is GraphReservationOutcome.UNOBSERVED
+                    assert central.receipt(ep.PublicationStage.PREPARED) is None
+                else:
+                    assert arrival.graph_outcome is GraphReservationOutcome.ACCEPTED
+                    assert central.receipt(ep.PublicationStage.PREPARED) is not None and central.graph_active
             else:
                 assert arrival.phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK
-                assert local.ready_to_complete and fixture.store.used_bytes > 0
+                assert not local.ready_to_complete and fixture.store.used_bytes > 0
+                assert fixture.journal.preparation_receipt(fixture.id) is not None
+                assert fixture.authority.query(ep.GetPublication(fixture.publication.reference)).snapshot.prepared is None
                 for transfer in (fixture.manifest.value).transfers:
                     holds = fixture.child_owners[transfer.contained_owner_worker_id].snapshot(transfer.contained_object_id).contained_holds
                     assert transfer.final_hold in holds and transfer.provisional_hold not in holds
@@ -425,7 +508,10 @@ def test_configured_checkpoints_follow_exact_owner_registration_and_promotions()
     fixture.adapter._test_checkpoint = node._test_output_publication_checkpoint
     assert node._handle_prepare_output_publication(wire.PrepareOutputPublication(fixture.manifest, (fixture.values.payload))).accepted
     assert observed == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
+                        OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
+                        OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY,
                         OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK]
+    assert fixture.journal.snapshot(fixture.id).ready_to_complete
     assert node._handle_complete_worker_lease_inner(complete).accepted
 
 
@@ -434,6 +520,8 @@ def test_promoted_prepare_replay_cannot_emit_an_earlier_checkpoint():
     calls = []
 
     class Gate:
+        config = OutputPublicationGateConfig(0, ("127.0.0.1", 39001))
+
         def checkpoint(self, arrival):
             calls.append(arrival.phase)
 
@@ -443,12 +531,17 @@ def test_promoted_prepare_replay_cannot_emit_an_earlier_checkpoint():
     fixture.fault = "promote"
     with pytest.raises(TimeoutError, match="promote"):
         node._handle_prepare_output_publication(request)
-    assert calls == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK]
+    assert calls == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
+                     OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
+                     OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY]
     assert not fixture.journal.snapshot(fixture.id).ready_to_complete
-    for phase in (OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK, OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK):
-        with pytest.raises(RuntimeError, match="acknowledged phase"):
-            node._test_output_publication_checkpoint(fixture.manifest, phase)
+    with pytest.raises(RuntimeError, match="acknowledged phase"):
+        node._test_output_publication_checkpoint(fixture.manifest, OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK)
+    with pytest.raises(OutputPublicationJournalStateError):
+        node._test_output_publication_checkpoint(fixture.manifest, OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
     assert node._handle_prepare_output_publication(request).accepted
     assert calls == [OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK,
+                     OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
+                     OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY,
                      OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK]
     assert node._handle_complete_worker_lease_inner(complete).accepted

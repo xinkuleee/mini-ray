@@ -31,13 +31,25 @@ class OutputPublicationGatePhase(str, Enum):
     AFTER_OWNER_REGISTER_ACK = "AFTER_OWNER_REGISTER_ACK"
     AFTER_PROMOTIONS_ACK = "AFTER_PROMOTIONS_ACK"
     AFTER_COMPLETE_BEFORE_TASK_REPLY = "AFTER_COMPLETE_BEFORE_TASK_REPLY"
+    BEFORE_GRAPH_PREPARE = "BEFORE_GRAPH_PREPARE"
+    AFTER_GRAPH_PREPARE_REPLY = "AFTER_GRAPH_PREPARE_REPLY"
+    BEFORE_TERMINAL_REPORT = "BEFORE_TERMINAL_REPORT"
+    AFTER_TERMINAL_ACCEPTED_BEFORE_ACK = "AFTER_TERMINAL_ACCEPTED_BEFORE_ACK"
+
+
+class GraphReservationOutcome(str, Enum):
+    UNOBSERVED = "UNOBSERVED"
+    ACCEPTED = "ACCEPTED"
+    CYCLE = "CYCLE"
+    REJECTED = "REJECTED"
 
 
 OUTPUT_PUBLICATION_GATE_RELEASE = b"G"
-_MAGIC = b"MROPG002"
+_MAGIC = b"MROPG003"
 # The output is always ObjectID(task_id, 0), so the frame needs no slot scope.
-_FRAME = struct.Struct("!8s16sQQ16s16sQ32sB")
+_FRAME = struct.Struct("!8s16sQQ16s16sQ32sBB")
 _PHASES = tuple(OutputPublicationGatePhase)
+_GRAPH_OUTCOMES = tuple(GraphReservationOutcome)
 
 
 @dataclass(frozen=True)
@@ -46,6 +58,8 @@ class OutputPublicationGateConfig:
     address: Tuple[str, int]
     phase: OutputPublicationGatePhase = OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY
     timeout_seconds: float = 10.0
+    graph_reservation_barrier: bool = False
+    attempt_number: Optional[int] = None
 
     def __post_init__(self) -> None:
         if type(self.node_index) is not int:
@@ -63,6 +77,12 @@ class OutputPublicationGateConfig:
                 or not math.isfinite(timeout) or not 0 < timeout <= 10.0):
             raise ValueError("output gate timeout_seconds must be in (0, 10]")
         object.__setattr__(self, "timeout_seconds", float(timeout))
+        if type(self.graph_reservation_barrier) is not bool:
+            raise TypeError("graph reservation barrier must be boolean")
+        if self.attempt_number is not None:
+            _uint(self.attempt_number, "gate attempt_number")
+        if self.graph_reservation_barrier and self.attempt_number != 1:
+            raise ValueError("graph reservation barrier selects reconstruction attempt one")
 
 
 @dataclass(frozen=True)
@@ -73,6 +93,7 @@ class OutputPublicationGateArrival:
     publication_id: OutputPublicationID
     manifest_digest: str
     phase: OutputPublicationGatePhase
+    graph_outcome: GraphReservationOutcome = GraphReservationOutcome.UNOBSERVED
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "node_id", _opaque(self.node_id, NodeID, "output gate Node"))
@@ -84,15 +105,29 @@ class OutputPublicationGateArrival:
         object.__setattr__(self, "manifest_digest", _checksum(self.manifest_digest, "manifest_digest"))
         if type(self.phase) is not OutputPublicationGatePhase:
             raise TypeError("output gate arrival requires an exact phase")
+        if type(self.graph_outcome) is not GraphReservationOutcome:
+            raise TypeError("graph gate requires an exact observed outcome")
+        if ((self.phase is OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY)
+                != (self.graph_outcome is not GraphReservationOutcome.UNOBSERVED)):
+            raise ValueError("only graph reply checkpoint carries an observed outcome")
+
+    @property
+    def graph_accepted(self):
+        return None if self.graph_outcome is GraphReservationOutcome.UNOBSERVED else self.graph_outcome is GraphReservationOutcome.ACCEPTED
+
+    @property
+    def graph_cycle_rejected(self):
+        return self.graph_outcome is GraphReservationOutcome.CYCLE
 
     @classmethod
-    def from_manifest(cls, manifest: OutputPublicationManifest, phase: OutputPublicationGatePhase):
+    def from_manifest(cls, manifest: OutputPublicationManifest, phase: OutputPublicationGatePhase,
+                      graph_outcome: GraphReservationOutcome = GraphReservationOutcome.UNOBSERVED):
         if type(manifest) is not OutputPublicationManifest:
             raise TypeError("output gate requires an OutputPublicationManifest")
         manifest = replace(manifest)
         node = manifest.header.node_incarnation
         return cls(node.node_id, node.node_pid, node.registration_epoch,
-                   manifest.publication_id, manifest.manifest_digest, phase)
+                   manifest.publication_id, manifest.manifest_digest, phase, graph_outcome)
 
     def to_bytes(self) -> bytes:
         arrival = replace(self)
@@ -100,23 +135,25 @@ class OutputPublicationGateArrival:
         return _FRAME.pack(
             _MAGIC, bytes(arrival.node_id), arrival.node_pid, arrival.registration_epoch,
             bytes(publication.lease_id), bytes(publication.task_id), publication.attempt_id.attempt_number,
-            bytes.fromhex(arrival.manifest_digest), _PHASES.index(arrival.phase),
+            bytes.fromhex(arrival.manifest_digest), _PHASES.index(arrival.phase), _GRAPH_OUTCOMES.index(arrival.graph_outcome),
         )
 
     @classmethod
     def from_bytes(cls, data: bytes):
         if type(data) is not bytes or len(data) != _FRAME.size:
             raise ValueError("output gate frame has the wrong type or size")
-        magic, node, pid, epoch, lease, task, attempt, digest, phase = _FRAME.unpack(data)
+        magic, node, pid, epoch, lease, task, attempt, digest, phase, outcome = _FRAME.unpack(data)
         if magic != _MAGIC:
             raise ValueError("output gate frame has the wrong magic")
         if phase >= len(_PHASES):
             raise ValueError("output gate frame has an invalid phase")
+        if outcome >= len(_GRAPH_OUTCOMES):
+            raise ValueError("output gate frame has an invalid graph outcome")
         task_id = TaskID(task)
         attempt_id = AttemptID(task_id, attempt)
         execution = TaskExecution(attempt_id)
         return cls(NodeID(node), pid, epoch, OutputPublicationID(LeaseID(lease), execution),
-                   digest.hex(), _PHASES[phase])
+                   digest.hex(), _PHASES[phase], _GRAPH_OUTCOMES[outcome])
 
 
 def recv_output_publication_gate_arrival(connection: socket.socket) -> OutputPublicationGateArrival:
@@ -153,12 +190,25 @@ class OutputPublicationGate:
         self._started = False
         self._deadline: Optional[float] = None
         self._error: Optional[str] = None
+        self._graph_gates = ({phase: OutputPublicationGate(replace(self.config,
+            graph_reservation_barrier=False, phase=phase)) for phase in (
+                OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
+                OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY)}
+            if self.config.graph_reservation_barrier else None)
 
     def checkpoint(self, arrival: OutputPublicationGateArrival,
                    ensure_terminal: Optional[Callable[[float], None]] = None) -> None:
         if type(arrival) is not OutputPublicationGateArrival:
             raise TypeError("output gate requires typed arrival")
         arrival = replace(arrival)
+        if (self.config.attempt_number is not None
+                and arrival.publication_id.attempt_id.attempt_number != self.config.attempt_number):
+            return
+        if self._graph_gates is not None:
+            gate = self._graph_gates.get(arrival.phase)
+            if gate is not None:
+                gate.checkpoint(arrival, ensure_terminal)
+            return
         if ensure_terminal is not None and not callable(ensure_terminal):
             raise TypeError("output gate preparation must be callable")
         leader = False
@@ -167,7 +217,7 @@ class OutputPublicationGate:
                 self._selected = arrival
             elif self._selected.publication_id != arrival.publication_id:
                 return
-            elif replace(self._selected, phase=arrival.phase) != arrival:
+            elif replace(self._selected, phase=arrival.phase, graph_outcome=arrival.graph_outcome) != arrival:
                 raise RuntimeError("output gate publication incarnation or manifest changed")
             if arrival.phase is not self.config.phase:
                 return
@@ -210,5 +260,6 @@ class OutputPublicationGate:
 __all__ = [
     "OUTPUT_PUBLICATION_GATE_RELEASE", "OutputPublicationGateConfig",
     "OutputPublicationGatePhase", "OutputPublicationGateArrival",
+    "GraphReservationOutcome",
     "OutputPublicationGate", "recv_output_publication_gate_arrival",
 ]

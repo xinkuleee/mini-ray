@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import output_protocol as wire, protocol, enhanced_publication as ep
 from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _DelayedReadyTask, _ObjectWaiter, _PendingTask, _PushRequestState, _WAKE_COORDINATOR
 from miniray.errors import ProtocolError, SystemTaskError
@@ -47,7 +47,11 @@ def _fixture(*, refs=True, stored=True, report_complete=True):
     core.job_id, core.worker_id, core.node_id = values.job, values.owner, values.node
     core.node_address, core.owner_address = ("node.invalid", 1), ("owner.invalid", 1)
     core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
-    core.gcs_address = None
+    core.gcs_address = ("gcs.invalid", 1)
+    # No input publications exist yet; this composition selects one shared
+    # real authority for Node reports, Core publication and future put work.
+    assert not core._test_publication_authority.snapshots()
+    core._test_publication_authority = fixture.authority
     spec = protocol.TaskSpec(
         values.job, values.task, values.attempt,
         protocol.FunctionKey(values.job, __name__, "producer", "v1"),
@@ -70,6 +74,9 @@ def _fixture(*, refs=True, stored=True, report_complete=True):
     def rpc(address, handler, request):
         assert not core._state_lock._is_owned()
         calls.append((handler, request))
+        if handler == ep.PUBLICATION_HANDLER:
+            assert address == core.gcs_address
+            return fixture.publication_rpc(request)
         assert address == core.node_address
         if handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER:
             return node._handle_ack_output_publication_adopted(request)
@@ -92,7 +99,11 @@ def _fixture(*, refs=True, stored=True, report_complete=True):
             wire.REGISTER_OUTPUT_HANDOFF_HANDLER: core.register_output_handoff,
             wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: core.report_output_handoff_complete,
             wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: core.report_output_handoff_rollback,
+            ep.ABORT_OWNER_PUBLICATION_HANDLER: core.abort_owner_publication,
         }
+        if handler == ep.PUBLICATION_HANDLER:
+            assert address == core.gcs_address
+            return fixture.publication_rpc(request)
         if handler in owner_handlers:
             assert address == core.owner_address
             owner_calls.append((handler, request))

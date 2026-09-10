@@ -1,0 +1,38 @@
+........F..........................                                      [100%]
+=================================== FAILURES ===================================
+_ test_owner_adoption_can_precede_terminal_outbox_without_reopening_forward_work _
+
+    def test_owner_adoption_can_precede_terminal_outbox_without_reopening_forward_work():
+        fixture = _Fixture()
+        fixture.prepare()
+        fixture.complete()
+        # The exact envelope independently drives real C4/C5, local owner CAS
+        # and C7 while the Node's terminal outbox is still pending.
+        proof = fixture.adopt("owner-cas")
+        assert fixture.graph().adoption == proof
+        assert fixture.adapter.report_terminal(fixture.id)
+        assert fixture.adapter.pending_terminal_reports() == ()
+        before = tuple(fixture.events)
+>       fixture.prepare()
+
+tests/unit/test_output_publication_node.py:368: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/unit/test_output_publication_node.py:244: in prepare
+    assert self.graph().prepared == self.journal.preparation_receipt(self.id)
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/miniray/output_publication_journal.py:357: in preparation_receipt
+    self._require_active(record)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=...02cbfd27bdc0acc361d3c11cf12c7034efff9b0cd579a835edc6108'), stage=<PublicationStage.TERMINAL: 'TERMINAL'>, sequence=4)})
+
+    @staticmethod
+    def _require_active(record):
+        if record.state is not OutputPublicationJournalState.ACTIVE:
+>           raise OutputPublicationJournalStateError("forward work requires an ACTIVE publication")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: forward work requires an ACTIVE publication
+
+src/miniray/output_publication_journal.py:617: OutputPublicationJournalStateError
+=========================== short test summary info ============================
+FAILED tests/unit/test_output_publication_node.py::test_owner_adoption_can_precede_terminal_outbox_without_reopening_forward_work
+1 failed, 34 passed in 4.36s

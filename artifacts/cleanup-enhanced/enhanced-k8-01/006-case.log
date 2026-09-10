@@ -1,0 +1,233 @@
+.....F                                                                   [100%]
+=================================== FAILURES ===================================
+_______ test_worker_retries_cached_completion_without_rerunning_callable _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x742463ddf200>
+
+    @pytest.mark.usefixtures("_no_worker_runtime")
+    def test_worker_retries_cached_completion_without_rerunning_callable(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An ambiguous Complete reply loss retries metadata, not user code."""
+    
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(
+            NodeID.random(), WorkerID.random(), resources
+        )
+        request, grant = _grant(node, resources, num_returns=1)
+        handoffs = OutputHandoffTable()
+        node._output_publication_journal = OutputPublicationJournal()
+        authority = ep.PublicationAuthority()
+        publication_calls = []
+        owner = object.__new__(CoreWorker)
+        owner.worker_id = request.requester_worker_id
+        owner.owner_address = request.requester_owner_address or ("handshake-owner.invalid", 1)
+        owner._owner_protocol_open = True
+        owner._state_lock = threading.RLock()
+        owner._completion = threading.Condition(owner._state_lock)
+        owner._output_handoffs = handoffs
+    
+        def publication_rpc(message):
+            assert len(publication_calls) < 16
+            reply = authority.apply(message)
+            assert type(reply) is ep.PublicationReply and reply.request == message
+            publication_calls.append((message, reply))
+            return reply
+    
+        def client_rpc(handler, message):
+            assert handler == ep.PUBLICATION_HANDLER
+            return publication_rpc(message)
+    
+        owner._enhanced_publication_client = PublicationClient(client_rpc)
+    
+        def abort_owner(publication, scope):
+            assert scope == node._output_publication_journal.rollback_scope(publication.manifest.publication_id)
+            message = ep.AbortOwnerPublication(publication, scope)
+            reply = owner.abort_owner_publication(message)
+            assert type(reply) is ep.AbortOwnerPublicationReply and reply.request == message
+            assert reply.accepted and reply.receipt is not None, reply.error
+            return reply.receipt
+    
+        def report_rollback(tombstone, *, manifest):
+            assert node._output_publication_journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
+            message = wire.ReportOutputHandoffRollback(manifest, tombstone)
+            reply = owner.report_output_handoff_rollback(message)
+            assert type(reply) is wire.OutputHandoffReply and reply.request == message
+            assert reply.accepted, reply.error
+            return reply
+    
+    
+        def unexpected_effect(*_args, **_kwargs):
+            pytest.fail("ref-free INLINE handshake attempted a child/store effect")
+    
+        def register_owner(manifest):
+            snapshot = handoffs.register(manifest, manifest.publication_id.attempt_id)
+            reply = wire.OutputHandoffReply(wire.RegisterOutputHandoff(manifest), True, snapshot)
+            assert reply.snapshot.manifest == manifest
+    
+        def report_complete(witness):
+            reply = owner.report_output_handoff_complete(wire.ReportOutputHandoffComplete(witness))
+            assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted and reply.witness == witness
+    
+        node._output_publications = OutputPublicationNodeAdapter(
+            node._output_publication_journal, register_owner=register_owner,
+            report_complete=report_complete, report_rollback=report_rollback,
+            publication_value=lambda manifest: ep.TaskPublication(manifest, owner.owner_address),
+            publication_rpc=publication_rpc, abort_owner=abort_owner,
+            prepare_child=unexpected_effect, promote_child=unexpected_effect,
+            release_child=unexpected_effect, seal_replica=unexpected_effect, drop_replica=unexpected_effect,
+        )
+        job_id = JobID.random()
+        definition = protocol.FunctionDefinition.from_payload(
+            protocol.FunctionKey(job_id, __name__, "counting_callable", "v1"),
+            b"test callable payload",
+        )
+        spec = protocol.TaskSpec(
+            job_id=job_id,
+            task_id=request.task_id,
+            attempt_id=request.attempt_id,
+            function=definition.key,
+            args=(),
+            num_returns=1,
+            resources=resources,
+            owner_worker_id=request.requester_worker_id,
+            function_definition=definition,
+        )
+        push = protocol.PushTask(request.lease_id, grant.worker_id, spec)
+    
+        worker = object.__new__(WorkerServer)
+        initialize_worker_protocol(worker)
+        worker.worker_id = grant.worker_id
+        worker.node_id = node.node_id
+        worker.node_address = ("127.0.0.1", 19000)
+        worker.inline_threshold = 1024
+        worker._execution_lock = threading.Lock()
+        worker._replies = {}
+        worker._cached_pushes = {}
+        worker._completion_acked = set()
+        worker._lease_bindings = {}
+        worker._attempt_leases = {}
+        worker._functions = {}
+        worker._lifecycle = threading.Condition(threading.RLock())
+        worker._accepted_pushes = {}
+        worker._push_obligations = set()
+        worker._accepting_tasks = True
+        worker._active_tasks = 0
+    
+        executions = 0
+        reductions = 0
+        rpc_events: list[str] = []
+        completion_calls = 0
+        prepares = []
+        completion_replies = []
+    
+        class OnceResult:
+            def __reduce__(self):
+                nonlocal reductions
+                reductions += 1
+                return str, ("once",)
+    
+        def counting_callable():
+            nonlocal executions
+            executions += 1
+            return OnceResult()
+    
+        real_cloudpickle_loads = cloudpickle.loads
+        monkeypatch.setattr(
+            "miniray.worker.cloudpickle.loads", lambda _: counting_callable
+        )
+    
+        def fake_rpc(address, handler, message):
+            nonlocal completion_calls
+            assert address == worker.node_address
+            rpc_events.append(handler)
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(message)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                assert type(message) is wire.PrepareOutputPublication
+                prepares.append(message)
+                return node._handle_prepare_output_publication(message)
+            if handler == COMPLETE_WORKER_LEASE_HANDLER:
+                completion_calls += 1
+                reply = node._handle_complete_worker_lease(message)
+                assert reply.accepted and reply.output_publication is not None
+                completion_replies.append(reply)
+                if completion_calls == 1:
+                    # The Node committed and released, but the response was lost.
+                    raise ConnectionError("completion acknowledgement was lost")
+                return reply
+            raise AssertionError("unexpected worker RPC handler: {!r}".format(handler))
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", fake_rpc)
+    
+        with pytest.raises(RuntimeError, match="exact PushTask replay") as lost:
+            worker._handle_push_task(push)
+    
+        assert isinstance(lost.value.__cause__, ConnectionError)
+        key = request.attempt_id, request.lease_id
+        pending = worker._prepared_output_replies[key]
+        assert executions == reductions == 1 and len(prepares) == 1
+        assert pending.outputs.manifest == prepares[0].manifest
+        assert (pending.outputs.payload) == (prepares[0].payload)
+        assert pending.prepare_acked and pending.complete_envelope is None
+        assert not worker._replies and not worker._cached_pushes
+        assert not worker._completion_acked
+        assert node._leases[request.lease_id].state is (
+            protocol.LeaseExecutionState.COMPLETED
+        )
+        assert node._ledger.release_calls == 1
+        assert node.resource_ledger.available == resources
+    
+        cached = worker._handle_push_task(push)
+        cached_again = worker._handle_push_task(push)
+    
+        assert cached is worker._replies[(request.attempt_id, request.lease_id)]
+        assert cached_again is cached
+        assert cached.output_publication == completion_replies[0].output_publication
+        assert cached.output_publication == completion_replies[1].output_publication
+        assert cached.output_publication.manifest == pending.outputs.manifest
+        assert not hasattr(cached, "stored_publication") and not hasattr(cached, "inline_publication")
+        assert all(not hasattr(reply, field) for reply in completion_replies
+                   for field in ("stored_publication", "inline_publication"))
+        assert cached.results[0].inline_data == (pending.outputs.payload)
+        assert real_cloudpickle_loads(cached.results[0].inline_data) == "once"
+        assert executions == reductions == 1 and len(prepares) == 1
+        assert not worker._prepared_output_replies
+        assert completion_calls == 2
+        assert rpc_events == [
+            START_WORKER_LEASE_HANDLER,
+            wire.PREPARE_OUTPUT_PUBLICATION_HANDLER,
+            COMPLETE_WORKER_LEASE_HANDLER,
+            COMPLETE_WORKER_LEASE_HANDLER,
+        ]
+        assert worker._completion_acked == {
+            (request.attempt_id, request.lease_id)
+        }
+        assert node._ledger.release_calls == 1
+        assert completion_replies[0].released and not completion_replies[1].released
+        # Node local Complete is authoritative even before the owner terminal outbox.
+        publication = pending.outputs.manifest.publication_id
+        assert handoffs.query(publication).complete is None
+        value = ep.TaskPublication(pending.outputs.manifest, owner.owner_address)
+        central = authority.query(ep.GetPublication(value.reference)).snapshot
+>       assert central is not None and central.prepared == node._output_publication_journal.preparation_receipt(publication)
+                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_lease_completion_handshake.py:551: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/miniray/output_publication_journal.py:357: in preparation_receipt
+    self._require_active(record)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+record = _Record(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_id=...8dd3e3823cf8d9a5649690bfda97b44e7e7e652c8009ff16afc330ef2961f'), stage=<PublicationStage.ARMED: 'ARMED'>, sequence=3)})
+
+    @staticmethod
+    def _require_active(record):
+        if record.state is not OutputPublicationJournalState.ACTIVE:
+>           raise OutputPublicationJournalStateError("forward work requires an ACTIVE publication")
+E           miniray.output_publication_journal.OutputPublicationJournalStateError: forward work requires an ACTIVE publication
+
+src/miniray/output_publication_journal.py:617: OutputPublicationJournalStateError
+=========================== short test summary info ============================
+FAILED tests/unit/test_lease_completion_handshake.py::test_worker_retries_cached_completion_without_rerunning_callable
+1 failed, 5 passed in 2.38s

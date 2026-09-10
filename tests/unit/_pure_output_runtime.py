@@ -10,7 +10,7 @@ from dataclasses import fields, is_dataclass
 
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import output_protocol as wire, protocol, enhanced_publication as ep
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.output_discovery import OutputDiscoverySession
 from miniray.output_publication import (
@@ -46,6 +46,7 @@ class PureOutputRuntime:
         self.core = core
         self.node_address = core.node_address
         self.gcs_address = core.gcs_address
+        self.authority = core._test_publication_authority
         self.owner_address = core.owner_address
         assert self.owner_address is not None
         self.incarnation = OutputPublicationNodeIncarnation(core.node_id, 21001, 3)
@@ -61,9 +62,26 @@ class PureOutputRuntime:
             self.journal, register_owner=self._register_owner,
             report_complete=self._report_complete,
             report_rollback=self._report_rollback,
+            publication_value=lambda manifest: ep.TaskPublication(manifest, self.owner_address),
+            publication_rpc=self._publication_rpc, abort_owner=self._abort_owner,
             prepare_child=forbidden, promote_child=forbidden, release_child=forbidden,
             seal_replica=forbidden, drop_replica=forbidden,
         )
+
+    def _publication_rpc(self, request):
+        _metadata(request)
+        reply = self.authority.apply(request)
+        assert type(reply) is ep.PublicationReply and reply.request == request
+        _metadata(reply)
+        return reply
+
+    def _abort_owner(self, publication, scope):
+        request = ep.AbortOwnerPublication(publication, scope)
+        reply = self.core.abort_owner_publication(request)
+        assert type(reply) is ep.AbortOwnerPublicationReply
+        assert reply.request == request and reply.accepted, reply.error
+        assert reply.receipt is not None
+        return reply.receipt
 
     def _owner_rpc(self, request, method):
         _metadata(request)
@@ -107,7 +125,7 @@ class PureOutputRuntime:
         return snapshot
 
     def handles(self, handler):
-        return handler in (wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, "get_worker_deaths")
+        return handler in (wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, "get_worker_deaths", ep.PUBLICATION_HANDLER)
 
     def complete(self, push, values, *, inline_threshold=1024):
         """Return one exact cached TaskReply; replay never repeats discovery."""
@@ -158,6 +176,9 @@ class PureOutputRuntime:
         assert self.handles(handler)
         self.calls.append((handler, request))
         _metadata(request)
+        if handler == ep.PUBLICATION_HANDLER:
+            assert address == self.gcs_address
+            return self._publication_rpc(request)
         if handler == "get_worker_deaths":
             assert address == self.gcs_address and type(request) is protocol.GetWorkerDeaths
             assert request.after_epoch == 0  # this fixture never registers a death
@@ -172,6 +193,9 @@ class PureOutputRuntime:
         assert self.core.owner_table.output_owner_publication_receipt(
             OutputOwnerPublicationPlan(envelope.manifest.execution, envelope),
         ).committed
+        central = self.authority.query(ep.GetPublication(ep.PublicationRef(identity, envelope.manifest.manifest_digest))).snapshot
+        assert central.adoption == request.proof
+        assert request.gcs_adoption == central.receipt(ep.PublicationStage.ADOPTED)
         self.journal.retire_completed(request.proof)
         result = wire.AckOutputPublicationAdoptedReply(request, True)
         _metadata(result)
@@ -187,6 +211,9 @@ class PureOutputRuntime:
                 (identity.object_id)
             ) is ObjectCollectionState.COLLECTED
             assert not self.journal.snapshot(identity).result_retained
+            central = self.authority.query(ep.GetPublication(ep.PublicationRef(identity, reply.output_publication.manifest.manifest_digest))).snapshot
+            assert not central.graph_active and central.closed_holds is not None
+            assert central.receipt(ep.PublicationStage.RETIRED) is not None
             if any(item.publication_id == identity for item in self.adapter.pending_terminal_reports()):
                 assert self.adapter.report_terminal(identity)
         assert not self.adapter.pending_terminal_reports()

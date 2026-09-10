@@ -5,10 +5,10 @@ or result bytes. This module records membership/resource summaries, exported
 functions and Actor lifecycle state; it never queues or forwards ordinary
 Task or Actor-method submissions.
 
-Ordinary result publication belongs to the object owner and executing Node.
-GCS holds no per-task publication manifest, result-stage history or contained
-reference graph. It commits membership/owner-death facts and retries their
-owner-wide Node fences until exact acknowledgements make Nodes safe to use.
+Object visibility and execution remain with the owner and Node. The enhanced
+teaching version adds central publication facts and reference-cycle admission.
+It keeps metadata only, with exact membership/death cleanup; this is neither
+production Ray behavior nor durable/replicated GCS recovery.
 
 Placement groups use a small GCS-side runtime adapter around the pure
 ``PlacementGroupCoordinator``.  GCS freezes the plan and converges participant
@@ -27,6 +27,8 @@ from types import MappingProxyType
 from typing import Callable, Hashable, Mapping, Optional, Tuple
 
 from . import protocol
+from . import enhanced_publication as ep
+from .enhanced_publication_control import EnhancedPublicationControl
 from .errors import FunctionNotRegisteredError
 from .function_registry import (
     FunctionRegistrationConflictError,
@@ -2593,6 +2595,7 @@ class GCSLite:
         self._owner_death_progress_wakeup = Event()
         self._owner_death_progress_stop = Event()
         self._owner_death_progress_thread: Optional[Thread] = None
+        self._owner_death_progress_cursor = 0
         self._owner_fence_progress_cursor = 0
         self.nodes = NodeRegistry(scheduling_visible=lambda node_id: node_id in (
             self.owner_death_fences.cleanup_safe_node_ids()
@@ -2602,6 +2605,10 @@ class GCSLite:
             raise TypeError("owner_fence_rpc must be callable or None")
         self._owner_fence_rpc = (
             owner_fence_rpc if owner_fence_rpc is not None else rpc_request
+        )
+        self.publication_control = EnhancedPublicationControl(
+            nodes=self.nodes, workers=self.workers, owner_fences=self.owner_death_fences,
+            lock=self._owner_death_control_lock, rpc=self._owner_fence_rpc,
         )
         self._on_node_dead = on_node_dead
         self.functions = FunctionRegistry()
@@ -2670,6 +2677,7 @@ class GCSLite:
                 DRAIN_PLACEMENT_GROUPS_HANDLER: self.drain_placement_groups,
                 DRAIN_ACTORS_HANDLER: self.drain_actors,
                 DRAIN_OWNER_DEATH_FENCES_HANDLER: self.drain_owner_death_fences,
+                ep.PUBLICATION_HANDLER: self.enhanced_publication,
             }
         )
 
@@ -2761,7 +2769,8 @@ class GCSLite:
                     error="{}: {}".format(type(exc).__name__, exc),
                 )
             try:
-                active = self._owner_fence_registry().has_active_operations()
+                active = (self._owner_fence_registry().has_active_operations()
+                          or bool(self.publication_control.pending_deaths()))
             except Exception as exc:
                 self._emit(
                     "owner_death_fence_state_failed",
@@ -2783,20 +2792,60 @@ class GCSLite:
         if not isinstance(request, protocol.DrainOwnerDeathFences):
             raise TypeError("drain_owner_death_fences expects DrainOwnerDeathFences")
         self._drive_owner_death_fence_once()
-        active = len(self._owner_fence_registry().pending())
-        return protocol.DrainOwnerDeathFencesReply(request.request_id, active == 0, active)
+        with self._owner_fence_lock():
+            active = len(self._owner_fence_registry().pending())
+            publications = len(self.publication_control.pending_deaths())
+        return protocol.DrainOwnerDeathFencesReply(
+            request.request_id, active == 0 and publications == 0, active, publications)
+
+    def enhanced_publication(self, request):
+        reply = self.publication_control.handle(request)
+        try:
+            if reply.accepted and reply.receipt is not None and reply.snapshot is not None:
+                publication = reply.snapshot.publication
+                attributes = {
+                    "stage": reply.receipt.stage.value,
+                    "request_type": type(reply.request).__name__,
+                    "sequence": reply.receipt.sequence,
+                    "manifest_digest": reply.receipt.reference.digest,
+                    "object_id": str(publication.object_id),
+                    "owner_worker_id": str(publication.owner_worker_id),
+                    "accepted": True,
+                }
+                if type(publication) is ep.TaskPublication:
+                    identity = publication.manifest.publication_id
+                    attributes.update(
+                        task_id=str(identity.task_id), attempt_id=str(identity.attempt_id),
+                        lease_id=str(identity.lease_id),
+                    )
+                # The reducer has already returned outside its composition
+                # lock. Observation cannot turn its committed reply into error.
+                self._emit("enhanced_publication_stage", **attributes)
+        except BaseException:
+            # Trace formatting and observers own no publication authority.
+            pass
+        if self.publication_control.pending_deaths():
+            self._wake_owner_death_progress()
+        return reply
 
     def _drive_owner_death_fence_once(self) -> bool:
-        # Advance on attempts so a pinned or unreachable target cannot starve
-        # independent owner fences. The remote call stays outside this lock.
+        # Alternate cleanup classes on attempts, then retain CF-004 rotation
+        # among owner fences. A blocked sweep must not starve publication work.
         with self._owner_fence_lock():
             pending = self._owner_fence_registry().pending()
-            if not pending:
-                return False
-            cursor = getattr(self, "_owner_fence_progress_cursor", 0)
-            effect = pending[cursor % len(pending)]
-            self._owner_fence_progress_cursor = cursor + 1
-        return self._drive_owner_death_fence(effect)
+            publications = self.publication_control.pending_deaths()
+            choice = self._owner_death_progress_cursor
+            self._owner_death_progress_cursor += 1
+            use_publication = bool(publications) and (not pending or choice % 2 == 1)
+            effect = None
+            if pending and not use_publication:
+                cursor = getattr(self, "_owner_fence_progress_cursor", 0)
+                effect = pending[cursor % len(pending)]
+                self._owner_fence_progress_cursor = cursor + 1
+        # Each driver performs its remote effect outside the composition lock.
+        if use_publication:
+            return self.publication_control.drive_one()
+        return bool(effect is not None and self._drive_owner_death_fence(effect))
 
     def _drive_owner_death_fence(
         self, effect: OwnerDeathFenceEffect,
@@ -2917,10 +2966,11 @@ class GCSLite:
     def unregister_node(self, message: object) -> UnregisterNodeReply:
         if not isinstance(message, UnregisterNode):
             raise TypeError("unregister_node expects UnregisterNode")
-        death_reply = self.nodes.unregister(
-            message.node_id, message.node_pid, message.registration_epoch,
-            message.detection_id,
-        )
+        with self._owner_fence_lock():
+            death_reply = self.nodes.unregister(
+                message.node_id, message.node_pid, message.registration_epoch,
+                message.detection_id,
+            )
         removed = death_reply.disposition in (
             protocol.NodeDeathDisposition.APPLIED,
             protocol.NodeDeathDisposition.ALREADY_DEAD,
@@ -2994,6 +3044,7 @@ class GCSLite:
                     committed_worker_deaths = workers.fail_node(reply.death)
                     for death in committed_worker_deaths:
                         self._owner_fence_registry().commit_owner_death(death)
+                        self.publication_control.commit_owner_death(death)
                 if (
                     reply.death.reason
                     is protocol.NodeDeathReason.PROCESS_EXIT
@@ -3069,7 +3120,8 @@ class GCSLite:
                 "register_worker_incarnation expects "
                 "RegisterWorkerIncarnation"
             )
-        reply = self.workers.register(message)
+        with self._owner_fence_lock():
+            reply = self.workers.register(message)
         self._emit(
             "worker_registered" if reply.accepted
             else "worker_registration_rejected",
@@ -3097,6 +3149,7 @@ class GCSLite:
                 )
             ):
                 self._owner_fence_registry().commit_owner_death(reply.death)
+                self.publication_control.commit_owner_death(reply.death)
         if (
             reply.death is not None
             and reply.death.reason in (
@@ -3233,6 +3286,7 @@ class GCSLite:
             ):
                 raise ValueError("GCS shutdown already has a different request ID")
             self._shutdown_request_id = message.request_id
+        self.publication_control.close_admission()
         actor_coordinator = getattr(self, "actor_coordinator", None)
         if actor_coordinator is not None:
             actor_coordinator.close_admission()
@@ -3248,6 +3302,7 @@ class GCSLite:
         )
         owner_death_fences_clean = (
             not self._owner_fence_registry().has_active_operations()
+            and not self.publication_control.has_active_operations()
         )
         with self._snapshot_lock:
             schedule_exit = (
@@ -3464,6 +3519,10 @@ class GCSLite:
         boundary avoids importing control state into task submission.
         """
 
+        if type(message) in (ep.BeginPublication, ep.PrepareGraph, ep.ArmTask,
+                ep.RecordTerminal, ep.CommitGraph, ep.RecordAdoption,
+                ep.FencePublication, ep.RetireGraph, ep.GetPublication):
+            return self.enhanced_publication(message)
         name = type(message).__name__
         dispatch: Mapping[str, Callable[[object], object]] = {
             "RegisterNode": self.register_node,

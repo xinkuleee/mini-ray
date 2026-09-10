@@ -16,7 +16,8 @@ import weakref
 import cloudpickle
 import pytest
 
-from miniray import protocol
+from miniray import protocol, enhanced_publication as ep
+from miniray.control import NodeRegistry
 from miniray.core import CoreWorker, _HomeRoute, _LocalReferenceRelease, _RetryInlineGc, _RetryReplicaCleanup
 from miniray.ids import JobID, NodeID, TaskID, WorkerID
 from miniray.ownership import ObjectOwnerTable
@@ -29,6 +30,17 @@ def _unexpected_effect(*_args, **_kwargs):
     # pytest.fail is not an Exception, so best-effort production RPC/finalizer
     # handlers cannot silently turn an unexpected effect into a passing test.
     pytest.fail("pure Core fixture attempted unmodelled RPC/thread/timer work")
+
+
+def pure_publication_rpc(core, address, handler, request):
+    """Actual E metadata reducer; every unrelated transport stays forbidden."""
+    if address != core.gcs_address:
+        return _unexpected_effect(address, handler, request)
+    if handler == ep.PUBLICATION_HANDLER:
+        return core._test_publication_authority.apply(request)
+    if handler == "get_node_state" and type(request) is protocol.GetNodeState:
+        return core._test_publication_nodes.get_state_reply(request)
+    return _unexpected_effect(address, handler, request)
 
 
 class SynchronousReferenceMailbox:
@@ -102,8 +114,8 @@ class SynchronousReferenceMailbox:
 def make_pure_core() -> CoreWorker:
     """Construct only the authorities touched by reconstruction contracts.
 
-    Addresses are inert protocol metadata, not listeners.  Every transport
-    boundary rejects calls unless a test installs an exact typed fake reply.
+    Addresses are inert protocol metadata, not listeners. E publication calls
+    run the real local authority; every unrelated transport remains forbidden.
     Missing state fails normally instead of inheriting new constructor effects.
     """
 
@@ -123,6 +135,11 @@ def make_pure_core() -> CoreWorker:
     core._put_index = 0
     core._reference_index = 0
     core._owner_table = ObjectOwnerTable()
+    core._test_publication_authority = ep.PublicationAuthority()
+    core._test_publication_nodes = NodeRegistry()
+    assert core._test_publication_nodes.register(
+        core.node_id, core.node_address, ResourceVector({"CPU": 1}), node_pid=21001,
+    )
     core._recovery = RecoveryManager()
     core._objects = {}
     core._stored_descriptors = {}
@@ -154,7 +171,7 @@ def make_pure_core() -> CoreWorker:
     core._sink_closed = False
     core.event_sink = MemoryEventSink()
     core._reference_mailbox = SynchronousReferenceMailbox(core)
-    core._rpc = _unexpected_effect
+    core._rpc = lambda address, handler, request: pure_publication_rpc(core, address, handler, request)
     core._borrow_rpc = _unexpected_effect
     core._borrow_rpc_with_deadline = _unexpected_effect
     core._push_task_rpc = _unexpected_effect

@@ -7,6 +7,8 @@ child-stage fault, or one Seal ACK loss plus one cleanup Drop ACK loss. The
 store-full case submits two 8 KiB byte values to the real 16 KiB store.
 Seal validation cases send at most two six-byte requests through the real Node
 handler and use pickle round trips to check the received-value boundary.
+The actual E graph authority and Node registry add at most 160 byte-free
+metadata callbacks; the existing 128 physical/owner callback cap is unchanged.
 """
 
 from __future__ import annotations
@@ -21,9 +23,12 @@ import time
 import pytest
 
 from miniray import core as core_module, node as node_module, protocol, transport
+from miniray import enhanced_publication as ep
+from miniray.control import NodeRegistry
 from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _ReleaseBorrowedReference
 from miniray.ids import AttemptID, ObjectID, TaskID
+from miniray.resources import ResourceVector
 from miniray.node import NodeServer
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
@@ -54,6 +59,8 @@ class _Runtime:
     def __init__(self):
         self.owner, self.borrower = make_pure_core(), make_pure_core()
         self.cores = (self.owner, self.borrower)
+        self.borrower.job_id = self.owner.job_id
+        self.borrower.driver_task_id = TaskID.for_driver(self.owner.job_id)
         self.borrower.node_id = self.owner.node_id
         self.borrower._home_route = _HomeRoute(self.borrower.node_id, self.borrower.node_address, self.borrower._membership_epoch)
         self.owner.owner_address = ("owner-a.invalid", 1001)
@@ -66,10 +73,19 @@ class _Runtime:
         node._sealed_metadata = {}
         node._dropped_metadata = {}
         node._object_localization_locks = {}
+        self.registry = NodeRegistry()
+        assert self.registry.register_message(protocol.RegisterNode(
+            node.node_id, 1001, self.owner.node_address, ResourceVector({"CPU": 1}),
+        )).accepted
+        self.authority = ep.PublicationAuthority()
+        self.gcs_calls = []
         self.references, self.calls = [], []
         self.before = self.after = None
         for core in self.cores:
             core._reference_mailbox = _Mailbox(core)
+            core.gcs_address = ("put-gcs.invalid", 1003)
+            core._test_publication_authority = self.authority
+            core._test_publication_nodes = self.registry
             core._rpc = core._borrow_rpc = self.rpc
             core._borrow_rpc_with_deadline = self.owner_rpc
 
@@ -82,6 +98,13 @@ class _Runtime:
         return self.rpc(address, handler, request)
 
     def rpc(self, address, handler, request):
+        if address == self.owner.gcs_address:
+            assert len(self.gcs_calls) < 160, "put graph metadata exceeded finite budget"
+            self.gcs_calls.append((handler, request))
+            if handler == ep.PUBLICATION_HANDLER:
+                return self.authority.apply(request)
+            assert handler == "get_node_state"
+            return self.registry.get_state_reply(request)
         assert len(self.calls) < 128, "put composition exceeded its finite RPC budget"
         self.calls.append((handler, request))
         if self.before is not None:
@@ -166,6 +189,8 @@ class _Runtime:
             assert not core._object_gc_obligations
             close_pure_core(core)
         assert self.store.used_bytes == 0
+        assert all(snapshot.receipt(ep.PublicationStage.RETIRED) is not None
+                   for snapshot in self.authority.snapshots())
 
 
 @pytest.fixture

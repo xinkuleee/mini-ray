@@ -1,0 +1,28 @@
+{
+  "status": "audit-only proposed test patch; not installed in candidate",
+  "verification": "AST parse/compile only; no pytest, collection, test imports or runtime execution",
+  "original_test_asts_unchanged": [
+    "test_put_reseals_exact_bytes_on_installed_survivor_after_original_seal",
+    "test_inline_put_uses_owner_bytes_after_home_death_without_node_access",
+    "test_unknown_seal_does_not_change_home_or_discard_cleanup_identity"
+  ],
+  "added_case": [
+    "test_put_home_death_after_graph_commit_never_rebinds_materialization_before_owner_install"
+  ],
+  "source_input_sha256": "c7b24c7b16884df099d471500f0248a52237589e6aa9f4e36d0902439122ea85",
+  "staged_sha256": "a97fdf01353a7db0504baf77e4fcc7bde71336e1bd84600268e6853f9635eab8",
+  "patch_sha256": "952ffbf859e4d95a98cf2edff8047109e9eab332c21bc19425f109c383f343e8",
+  "source_inputs": {
+    "tests/unit/test_put_home_failover.py": "c7b24c7b16884df099d471500f0248a52237589e6aa9f4e36d0902439122ea85",
+    "tests/unit/_pure_core.py": "d8ac9c0d9ea589aa52ecf8c61912e54d3e441495115fa5ddb53d9361d6ae2a50",
+    "src/miniray/core.py": "df79c23eeee2d449511e12b6500d4926e1c2621bf835434c5ae6fc0374a1309d",
+    "src/miniray/put_work.py": "2f9144313fd30d39cfc1e815216da0f7e640d91e4fdfcbb52244ecd690b413ba",
+    "src/miniray/enhanced_publication.py": "a262879b65b7e54b4d6bcf280b32d7fce081d08351e017f1974870373f681d47",
+    "src/miniray/enhanced_publication_client.py": "659c11e18a62c21bbaea58eaeb40305d14e87a9d4ebc29883042e7c46677d4f5",
+    "src/miniray/control.py": "883d6befb006002823d3dc50a6b9872812ee79a154e6d46cd39b002b29b63321",
+    "src/miniray/ownership.py": "86619f97fa7718df3b3ad7ca698d37940c68702b4c2b780862f173225a5b4e37",
+    "src/miniray/node.py": "94db6273b6c779f6d827044b274dee83fc9bdbd71d679287528b207c131c4fa4"
+  },
+  "physical_scope": "Existing homes fixture: one plain stored put, zero children, one real Seal; dead store inaccessible",
+  "window": "Actual authority C5 observed via real PublicationClient query; real NodeRegistry death installed before owner CAS"
+}

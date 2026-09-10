@@ -410,6 +410,7 @@ class DrainOwnerDeathFencesReply:
     request_id: str
     clean: bool
     active_fences: int
+    active_publication_cleanups: int = 0
 
     def __post_init__(self) -> None:
         DrainOwnerDeathFences(self.request_id)
@@ -418,7 +419,10 @@ class DrainOwnerDeathFencesReply:
         _validate_non_negative_integer(
             self.active_fences, "active_fences"
         )
-        if self.clean != (self.active_fences == 0):
+        _validate_non_negative_integer(
+            self.active_publication_cleanups, "active_publication_cleanups"
+        )
+        if self.clean != (self.active_fences == 0 and self.active_publication_cleanups == 0):
             raise ProtocolError(
                 "owner-death drain clean flag must match active publications"
             )

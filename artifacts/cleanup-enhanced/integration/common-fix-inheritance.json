@@ -1,0 +1,31 @@
+{
+  "status": "COMMON_FIX_INHERITED_FROM_ACCEPTED_B_COMMIT",
+  "source_file": "src/miniray/core.py",
+  "method": "_drive_output_publication_adoption",
+  "before_sha256": "325ad0463f36f56481ae8c110a11bcdfa073307c9f5ae01ad3cc9a5bb05f9f25",
+  "after_sha256": "df79c23eeee2d449511e12b6500d4926e1c2621bf835434c5ae6fc0374a1309d",
+  "patch_sha256": "fbeb4807902916202297f5a893b600a6d18a8e3f8b49cf2a1fb9d591f9c93691",
+  "B_source_fix_sha256": "daf919fddc9f1a5a373594fbe592d03471e5f08c1258646f7f02e9271db42e13",
+  "B_commit": "0a340b792c89667e493f7e7313935e45e29071bf",
+  "B_red_green_reported_by_root": {
+    "before": "both params failed exactly on premature terminal+finish",
+    "fixed": "2 passed in 1.08s"
+  },
+  "same_tail_text_as_B": true,
+  "E_C5_C7_and_graph_logic_unchanged": true,
+  "E_loss_catch_unchanged": true,
+  "old_frozen_E_evidence_unchanged": true,
+  "pytest_run_by_this_task": false,
+  "base_modified": false,
+  "E_regression": {
+    "path": "tests/unit/test_adoption_loss_lane_handoff.py",
+    "B_raw_sha256": "8d10f011f99ecf63e69e860143080c35e2c39708d87ac7aa521e7418d459673a",
+    "E_raw_sha256": "71951538a873e39d88680a6776884984ef9d75129573d656a849367d51032c03",
+    "patch_sha256": "9e8885242742325732886246c273551dc9007fdc06e8264fb7fe2a82c0ad07be",
+    "markers_and_two_params_unchanged": true,
+    "GCS_requests": "original_rpc -> actual fixture PublicationAuthority; no gating/counter/failure injection",
+    "Node_ACK": "only exact Node adoption response is gated; actual C7 receipt checked",
+    "pytest_run": false,
+    "manifest_modified": false
+  }
+}

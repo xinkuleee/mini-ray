@@ -1,0 +1,22 @@
+{
+  "status": "actual import-only closure passed",
+  "modules": [
+    "miniray",
+    "miniray.enhanced_publication",
+    "miniray.enhanced_publication_client",
+    "miniray.enhanced_publication_control",
+    "miniray.node",
+    "miniray.control",
+    "miniray.core",
+    "miniray.worker",
+    "miniray.output_protocol",
+    "miniray.output_publication_journal",
+    "miniray.output_publication_node",
+    "miniray.publication_gate",
+    "miniray.put_work"
+  ],
+  "source_root": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\k8-runtime-candidate\\files",
+  "runtime_tripwires": true,
+  "tests_run": false,
+  "runtime_objects_constructed": false
+}

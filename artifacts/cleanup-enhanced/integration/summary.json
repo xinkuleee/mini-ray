@@ -1,0 +1,16 @@
+{
+  "edition": "enhanced",
+  "status": "implemented; finite integration checks passed; final commit gate pending",
+  "branch_ref": "refs/heads/teaching-enhanced",
+  "fork_point_commit": "f9a9b35015f114afda9c87e653b6fedcda2eb0b2",
+  "base_tested_source_commit": "0a340b792c89667e493f7e7313935e45e29071bf",
+  "guarantees": [
+    "GCS ordinary publication transaction",
+    "global ObjectID contained-edge cycle admission"
+  ],
+  "implemented_common": "P1-P5 scalar/type cleanup, P2/P6 evidence-backed retain choices and shared late-adoption-loss fix inherited from B",
+  "evidence": "Prebranch E392/37; formal E393/1deselected including post-C5 put-death case, shared race2, Worker75, Node35, sameowner12, finish11, lease6, trace6, foreignwait5, PG and Worker-death registered sequences",
+  "failures_retained": "Two fixture checks called ACTIVE-only preparation after Complete; moved to saved real preparation/ARM comparison. Runtime protocol not weakened.",
+  "non_equivalence": "Post-C5 put death cannot rebind committed materialization; terminal knowledge does not restore bytes; B has no central publication/graph guarantees.",
+  "remote": "No push or remote CI execution"
+}

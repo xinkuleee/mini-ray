@@ -1,6 +1,6 @@
-# 基础版学习路径
+# 协议增强版学习路径
 
-首次学习推荐从基础分支teaching-base开始：先跟一次真实Task，再看引用和故障。本文链接已完成K4–K6整理的B源码；K7最终同版验收仍在进行，复现实验前先看[状态页](current-status.md)，不要把分批结果当成最终HEAD证明。[增强版合同](redesign-plan.md)的§10属于后续阅读；E尚未创建，不能用于解释B的普通结果trace。
+首次学习仍推荐teaching-base：先理解Task、lease、owner与引用回收，再在E比较两项mini自定义保证。本文面向E候选，正式分支是否已创建、候选与最终HEAD区别以[状态页](current-status.md)为准。[增强合同](redesign-plan.md)§10描述保证边界，不是新实现计划。
 
 ## 第一遍：提交、执行、交接
 
@@ -16,11 +16,11 @@
 | 结果交接 | [output_publication_node.py](../src/miniray/output_publication_node.py)的prepare/complete/report_terminal；[output_handoff.py](../src/miniray/output_handoff.py) | Node Complete、owner READY和回复托管退休为何是不同事实？ |
 | owner可见性 | CoreWorker._drive_output_publication_adoption；[ownership.py](../src/miniray/ownership.py)的ObjectOwnerTable | 身份、checksum、当前attempt与已有收据如何决定是否可提交？ |
 
-B仍有GCS：[control.py](../src/miniray/control.py)的GCSLite、NodeRegistry、WorkerRegistry负责注册/成员和死亡事实，Actor/PG有各自协调器。普通Task结果没有GCS发布阶段或图门禁。
+B仍有GCS：[control.py](../src/miniray/control.py)的GCSLite、NodeRegistry、WorkerRegistry负责注册/成员和死亡事实，Actor/PG有各自协调器。E额外读取[enhanced_publication.py](../src/miniray/enhanced_publication.py)、[enhanced_publication_control.py](../src/miniray/enhanced_publication_control.py)与[enhanced_publication_client.py](../src/miniray/enhanced_publication_client.py)：将C0–C7逐一标成GCS、Node或owner自己的事实，不能合并成一个成功。
 
 ## 七条示例主线
 
-全部示例保留原始main。使用 testing.md 中的同一smoke命令，将参数 example01 替换为对应编号，逐个运行。
+全部示例保留原始main。正式E检出后使用testing.md中的同一smoke入口，逐个运行；E trace保留额外GCS阶段，不把B/E golden当同一输出。
 
 | 示例 | 观察重点 | 下一份源码 |
 |---|---|---|
@@ -42,7 +42,7 @@ B仍有GCS：[control.py](../src/miniray/control.py)的GCSLite、NodeRegistry、
 
 ## 第三遍：历史事实与故障
 
-从[基础账本B04–B07](acceptance-baseline.md)选择一个已有有限场景，先写出owner、Node、child各自掌握什么事实，再读CoreWorker._drive_output_node_loss_once与owner reconstruction handle。
+先用[基础账本B04–B07](acceptance-baseline.md)理解共同事实，再从[增强账本的G/D/W与R场景](acceptance-enhanced.md)选择一个已有有限窗口，先写出owner、Node、child各自掌握什么事实，再读CoreWorker._drive_output_node_loss_once与owner reconstruction handle。
 
 对照[output_protocol.py](../src/miniray/output_protocol.py)中的窄Complete ACK与完整history query，再看Core的Node-loss/retirement work记录。重点区分准确Complete、UNKNOWN、已知成功但bytes丢失的LOST；第一次准入与旧收据重放；未知RPC与未发生效果；已安装死亡事实与单纯timeout。旧epoch不能覆盖新执行，完整死亡proof只能解除对应死亡参与方的责任。
 

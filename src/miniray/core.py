@@ -2,8 +2,8 @@
 
 CoreWorker combines logical identity, dependency admission, owner handoff and
 lineage recovery. Tasks obtain a Node lease and submit directly to its Worker.
-Ordinary results are handed to their owner; GCS retains membership/Actor/PG
-control only. Node resources and physical result custody remain Node duties.
+Ordinary results are handed to their owner through the enhanced GCS publication
+and graph protocol. Node resources and physical result custody remain Node duties.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 import cloudpickle
 
 from . import protocol
+from . import enhanced_publication as enhanced
 from .output_handoff import OutputHandoffTable, OutputHandoffPhase
 from .actor_client import ActorCallFence, ActorClientTable
 from .contained_edges import ContainedReferenceEdge, IncomingContainedReferenceHold, LineageReferenceEdge, ObjectMetadataCollectionPlan
@@ -71,7 +72,7 @@ from .ownership import (
     DeadWorkerReferenceRecord, NodeLocationRemoval, ObjectOwnerSnapshot, ObjectOwnerTable, ObjectState, UnknownObjectError,
 )
 from .ownership import OutputOwnerPublicationPlan, OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError, OutputOwnerPublicationRetirementPlan
-from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID, OutputPublicationManifest
+from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation
 from .output_publication_journal import OutputPublicationAdoptionProof
 from .owner_service import (
     REPLACE_RETAINED_OBJECT_FOR_TASK_HANDLER,
@@ -373,6 +374,8 @@ class _OutputNodeCleanupWork:
     manifest: OutputPublicationManifest
     complete: OutputPublicationCompleteWitness | None
     keep: bool
+    publication: enhanced.TaskPublication | None = None
+    fence: enhanced.OwnerRetirementReceipt | enhanced.OwnerAbortReceipt | None = None
     acks: dict[protocol.ReleaseContainedReference,
                protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
 
@@ -382,6 +385,8 @@ class _OutputRetirementWork:
     """One exact owner retirement plan and its acknowledged cleanup work."""
 
     plan: OutputOwnerPublicationRetirementPlan
+    publication: enhanced.TaskPublication | None = None
+    fence: enhanced.OwnerRetirementReceipt | None = None
     child: dict[protocol.ReleaseContainedReference,
                 protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
     replica: dict[protocol.DropObjectReplica,
@@ -398,6 +403,10 @@ class _ObjectGcObligation:
     output_plan: OutputOwnerPublicationCollectionPlan | None = None
     retry_scheduled: bool = False
     retry_round: int = 0
+    publication: enhanced.Publication | None = None
+    publication_fence: enhanced.OwnerRetirementReceipt | None = None
+    child_receipts: dict[protocol.ReleaseContainedReference, protocol.ReleaseContainedReferenceReply] = field(default_factory=dict)
+    child_deaths: dict[WorkerID, protocol.WorkerDeathRecord] = field(default_factory=dict)
 
     @property
     def object_id(self) -> ObjectID:
@@ -2342,6 +2351,7 @@ class CoreWorker:
                 if dead_edges:
                     contained_releases += len(dead_edges)
                     obligation.pending_edges.difference_update(dead_edges)
+                    obligation.child_deaths[dead] = replace(death)
                     collection_candidates.add(object_id)
 
             retries = getattr(self, "_foreign_guard_release_retries", {})
@@ -3249,11 +3259,14 @@ class CoreWorker:
                 self._owner_table.register(identity, current_attempt=attempt, producer_task_spec=None)
                 self._objects[identity] = _ObjectWaiter(threading.Event())
                 self._recovery_manager().register_put(identity)
-                work = PutHandoff(prepared, attempt)
+                work = PutHandoff(prepared, attempt, publication=enhanced.PutPublication(
+                    self.job_id, self.owner_address, prepared.manifest,
+                ))
                 obligations = getattr(self, '_put_handoffs', None)
                 if obligations is None:
                     obligations = self._put_handoffs = {}
                 obligations[identity] = work
+            self._publication_client().begin(work.publication)
             for stage, kind in (('prepare', protocol.PrepareStoredContainedPin), ('promote', protocol.PromoteStoredContainedPin)):
                 for child in work.children:
                     transfer = child.transfer
@@ -3277,6 +3290,8 @@ class CoreWorker:
                 seal = protocol.SealObject.from_data(identity, attempt, self.worker_id, prepared.payload)
                 route = self._require_home_route('explicit put')
             while True:
+                seal_reply = None
+                incarnation = None
                 if seal is not None:
                     work.materialization = MaterializationWork(route, seal)
                     try:
@@ -3306,15 +3321,37 @@ class CoreWorker:
                         if not reply.sealed:
                             raise SystemTaskError(reply.error or 'put seal was rejected')
                         node_id = route.node_id
+                        seal_reply = reply
+                if seal is not None:
+                    incarnation = self._put_node_incarnation(route.node_id)
+                    with self._state_lock:
+                        if self._node_is_dead(route.node_id):
+                            next_route = self._home_route
+                            if next_route is None or next_route.node_id == route.node_id:
+                                raise NodeDiedError('put Node died without a survivor')
+                            route = next_route
+                            continue
+                preparation = enhanced.PutPreparedReceipt(
+                    work.publication.reference,
+                    tuple(child.prepare_receipt for child in work.children),
+                    tuple(child.promotion_receipt for child in work.children),
+                    enhanced.MaterializationReceipt(work.publication.reference, incarnation), seal_reply,
+                )
+                self._publication_client().commit_put(work.publication, preparation)
+                with self._state_lock:
+                    if seal is not None and self._node_is_dead(route.node_id):
+                        # C5 fixed this exact materialization. Do not reroute
+                        # an uninstalled committed put to another Node.
+                        raise NodeDiedError('put materialization was lost before owner installation')
                     descriptor = protocol.ResultDescriptor(
                         identity, manifest.tier, manifest.size_bytes, self.worker_id, node_id, manifest.checksum,
                         prepared.payload if manifest.tier is protocol.ResultStorage.INLINE else None,
                     )
                     if work.choice is PutChoice.ABORTED:
                         raise SystemTaskError('put was aborted before owner installation')
-                    # Death handling and owner installation share this lock.
-                    # A winning death reroutes above; a later death observes
-                    # a real committed owner result and follows ordinary loss.
+                    # C5 bound materialization already; death and installation
+                    # share this lock. A later death sees a committed owner
+                    # result, while a winning death aborts without rebinding C5.
                     if not self._owner_table.publish_put_value(identity, attempt, descriptor, manifest.edges):
                         raise SystemTaskError('put owner installation was fenced')
                     work.choice = PutChoice.COMMITTED
@@ -3330,8 +3367,12 @@ class CoreWorker:
                 raise
         except BaseException as exc:
             if work is not None and work.choice is not PutChoice.COMMITTED:
-                work.choice = PutChoice.ABORTED
-                work.driving = False
+                with self._state_lock:
+                    work.choice = PutChoice.ABORTED
+                    work.driving = False
+                    work.abort_receipt = enhanced.OwnerAbortReceipt(
+                        work.publication.reference, self.worker_id, 'put-abort:' + identity.hex,
+                    )
                 self._drive_put_handoff_cleanup(identity)
                 self._publish_error(identity, attempt, exc)
             raise
@@ -3339,6 +3380,19 @@ class CoreWorker:
             if work is not None:
                 work.driving = False
             self._end_put()
+
+    def _put_node_incarnation(self, node_id):
+        """Read registered materialization identity, never infer it from a route."""
+        with self._state_lock:
+            snapshot = self._installed_cluster_snapshot
+            info = None if snapshot is None else next((node for node in snapshot.nodes if node.node_id == node_id), None)
+        if info is not None:
+            return OutputPublicationNodeIncarnation(node_id, info.node_pid, info.registration_epoch)
+        reply = self._rpc(self.gcs_address, 'get_node_state', protocol.GetNodeState(node_id))
+        if type(reply) is not protocol.GetNodeStateReply or not reply.found or reply.node_id != node_id:
+            raise SystemTaskError('put materialization lacks registered Node identity')
+        reply = replace(reply)
+        return OutputPublicationNodeIncarnation(node_id, reply.node_pid, reply.registration_epoch)
 
     def _put_child_rpc(self, transfer, handler, request):
         if transfer.contained_owner_worker_id == self.worker_id:
@@ -3355,16 +3409,17 @@ class CoreWorker:
                 return False
             work.driving = True
         try:
+            self._publication_client().fence(work.publication, work.abort_receipt)
             for child in work.children:
-                if not child.has_sent_effect:
-                    continue
+                # Graph reservation covers even transfers not yet sent. Their
+                # exact Release tombstones close delayed prepare/promote too.
                 transfer = child.transfer
                 for hold in (transfer.final_hold, transfer.provisional_hold):
                     request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
                     if request in child.releases:
                         continue
                     with self._state_lock:
-                        death = self._owner_table.dead_worker_record(transfer.contained_owner_worker_id)
+                        death = getattr(self, '_worker_death_records', {}).get(transfer.contained_owner_worker_id)
                     if death is not None:
                         child.releases[request] = death
                         continue
@@ -3405,6 +3460,11 @@ class CoreWorker:
                             != (drop.object_id, drop.producer_attempt_id, drop.owner_worker_id, drop.node_id, drop.checksum)):
                         return False
                     materialization.drop_receipt = replace(dropped)
+            releases = [proof for child in work.children for proof in child.releases.values()
+                        if type(proof) is protocol.ReleaseContainedReferenceReply]
+            deaths = tuple(dict.fromkeys(proof for child in work.children for proof in child.releases.values()
+                                         if type(proof) is protocol.WorkerDeathRecord))
+            self._publication_client().retire(work.publication, releases, deaths)
             with self._state_lock:
                 self._put_handoffs.pop(identity, None)
                 self._completion.notify_all()
@@ -4658,6 +4718,41 @@ class CoreWorker:
             table = self._output_handoffs = OutputHandoffTable()
         return table
 
+    def _publication_client(self):
+        from .enhanced_publication_client import PublicationClient
+        with self._state_lock:
+            client = getattr(self, '_enhanced_publication_client', None)
+            if client is None:
+                client = PublicationClient(lambda handler, request: self._rpc(self.gcs_address, handler, request))
+                self._enhanced_publication_client = client
+            return client
+
+    def abort_owner_publication(self, request):
+        """Serialize a Node rollback fence with the existing owner adoption CAS."""
+        if type(request) is not enhanced.AbortOwnerPublication:
+            raise TypeError('owner abort requires its exact publication and rollback scope')
+        request = replace(request)
+        publication, scope = request.publication, request.rollback
+        identity = publication.manifest.publication_id
+        try:
+            with self._state_lock:
+                if publication.owner_worker_id != self.worker_id or publication.owner_address != self.owner_address:
+                    raise ValueError('owner abort changed its owner route')
+                previous = self._output_handoff_table().query(identity)
+                if previous is not None and previous.adoption is not None:
+                    return enhanced.AbortOwnerPublicationReply(request, False, adoption=previous.adoption,
+                                                               error='owner already adopted this publication')
+                if previous is not None and previous.complete is not None:
+                    raise ValueError('actual Complete cannot become a Node rollback')
+                if previous is None and (scope.prepare_intents or scope.promote_intents or scope.materialization_started):
+                    raise ValueError('unregistered owner cannot authorize publication effects')
+                self._output_handoff_table().abort_manifest(publication.manifest, 'node rollback:' + scope.rollback_id)
+                proof = enhanced.OwnerAbortReceipt(publication.reference, self.worker_id, scope.rollback_id)
+                self._publication_client().remember(publication)
+                return enhanced.AbortOwnerPublicationReply(request, True, proof)
+        except Exception as exc:
+            return enhanced.AbortOwnerPublicationReply(request, False, error=str(exc) or type(exc).__name__)
+
     def register_output_handoff(self, request):
         """Own the exact cleanup manifest before child effects can start."""
         from . import output_protocol as wire
@@ -4681,6 +4776,7 @@ class CoreWorker:
                 snapshot = self._output_handoff_table().register(manifest, state.current_attempt)
                 if snapshot.phase is not OutputHandoffPhase.PENDING:
                     raise ValueError("historical handoff is not a new forward permission")
+                self._publication_client().remember(enhanced.TaskPublication(manifest, self.owner_address))
                 return wire.OutputHandoffReply(request, True, snapshot)
         except Exception as exc:
             return wire.OutputHandoffReply(request, False, error=str(exc) or type(exc).__name__)
@@ -4924,6 +5020,12 @@ class CoreWorker:
                     pending_edges=set(plan.contained_releases),
                     output_plan=output_plan,
                 )
+                publication = self._publication_client().current(object_id)
+                if publication is not None:
+                    obligation.publication = publication
+                    obligation.publication_fence = enhanced.OwnerRetirementReceipt(
+                        publication.reference, self.worker_id, plan.collection_id, enhanced.RetirementReason.GC,
+                    )
                 # This assignment is the durable in-memory barrier.  Never
                 # issue Drop/Release before it becomes shutdown-visible.
                 obligations[object_id] = obligation
@@ -4944,6 +5046,9 @@ class CoreWorker:
                 contained_edge_count=len(started_plan.contained_releases),
             )
 
+        if obligation.publication is not None:
+            self._publication_client().fence(obligation.publication, obligation.publication_fence)
+
         # Outgoing edges represent real final child holds. Release every exact
         # hold before deleting bytes; values without child edges need only
         # their physical replica cleanup.
@@ -4962,6 +5067,10 @@ class CoreWorker:
                     continue
                 with self._state_lock:
                     if self._object_gc_obligations.get(object_id) is obligation:
+                        death = getattr(self, '_worker_death_records', {}).get(edge.contained_owner_worker_id)
+                        if death is None:
+                            continue
+                        obligation.child_deaths[death.worker_id] = death
                         obligation.pending_edges.discard(edge)
                 continue
             except Exception:
@@ -4975,6 +5084,7 @@ class CoreWorker:
             ):
                 with self._state_lock:
                     if self._object_gc_obligations.get(object_id) is obligation:
+                        obligation.child_receipts[request] = replace(reply)
                         obligation.pending_edges.discard(edge)
 
 
@@ -5012,6 +5122,11 @@ class CoreWorker:
                         status=reply.status.value,
                     )
 
+
+        if drops_admitted and obligation.publication is not None:
+            self._publication_client().retire(
+                obligation.publication, obligation.child_receipts.values(), obligation.child_deaths.values(),
+            )
 
         completed = False
         released_lineage_dependencies: list[ObjectID] = []
@@ -6977,7 +7092,12 @@ class CoreWorker:
                         if member.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE else ()
                     ),
                 )
-                current = _OutputRetirementWork(plan)
+                publication = enhanced.TaskPublication(member.manifest, self.owner_address)
+                current = _OutputRetirementWork(
+                    plan, publication=publication, fence=enhanced.OwnerRetirementReceipt(
+                        publication.reference, self.worker_id, plan.retirement_id, enhanced.RetirementReason.RECONSTRUCTION,
+                    ),
+                )
                 work[object_id] = current
             tickets = getattr(self, "_output_retirement_tickets", None)
             if tickets is None:
@@ -6988,6 +7108,7 @@ class CoreWorker:
             tickets.add(object_id)
         plan = current.plan
         try:
+            self._publication_client().fence(current.publication, current.fence)
             routes = {
                 (transfer.contained_object_id, transfer.final_hold): transfer.contained_owner_address
                 for transfer in plan.membership.manifest.value.transfers
@@ -7019,6 +7140,11 @@ class CoreWorker:
                         != (request.object_id, request.producer_attempt_id, request.owner_worker_id, request.node_id, request.checksum)):
                     raise SystemTaskError("output retirement replica ACK mismatch")
                 current.replica[request] = reply
+            self._publication_client().retire(
+                current.publication,
+                [proof for proof in current.child.values() if type(proof) is protocol.ReleaseContainedReferenceReply],
+                tuple(dict.fromkeys(proof for proof in current.child.values() if type(proof) is protocol.WorkerDeathRecord)),
+            )
             with self._state_lock:
                 if self._has_late_replica_cleanup_locked(plan.object_id):
                     self._schedule_late_replica_cleanup_locked()
@@ -11245,6 +11371,13 @@ class CoreWorker:
             with self._state_lock:
                 if self._output_replay_is_obsolete_locked(pending, identity):
                     return True
+                known_handoff = self._output_handoff_table().query(identity)
+                publication = None if known_handoff is None or known_handoff.manifest is None else enhanced.TaskPublication(
+                    known_handoff.manifest, self.owner_address)
+            central = None if publication is None else self._publication_client().query(publication)
+            with self._state_lock:
+                if self._output_replay_is_obsolete_locked(pending, identity):
+                    return True
                 self._mark_protocol_unresolved(pending, 'output_node_loss', obligation, target_node_id=obligation.node_death.node_id)
                 table = self._output_handoff_table()
                 handoff = table.query(identity)
@@ -11265,7 +11398,8 @@ class CoreWorker:
                     # the loss choice; a later envelope cannot reverse DISCARD.
                     envelope = self._locally_retained_output_completion(pending, handoff.complete)
                 complete = (latched.complete if latched is not None else
-                            handoff.complete or (None if envelope is None else envelope.complete))
+                            handoff.complete or (None if envelope is None else envelope.complete) or
+                            (None if central is None else central.complete))
                 if complete is not None and handoff.complete is None and handoff.phase is not OutputHandoffPhase.ABORTED:
                     table.record_complete(complete)
                 works = getattr(self, '_output_node_cleanup', None)
@@ -11280,13 +11414,22 @@ class CoreWorker:
                             manifest, 0, unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
                         )
                     ))
-                    work = _OutputNodeCleanupWork(manifest, complete, keep)
+                    work = _OutputNodeCleanupWork(manifest, complete, keep, publication=publication)
                     works[identity] = work
                     self._output_loss_choices = getattr(self, '_output_loss_choices', {})
                     self._output_loss_choices[identity] = keep
-                    if not keep and handoff.phase is not OutputHandoffPhase.ADOPTED:
-                        table.abort(identity, 'publishing Node died before payload adoption')
-            if not work.keep:
+                    if not keep:
+                        if handoff.phase is not OutputHandoffPhase.ADOPTED:
+                            table.abort(identity, 'publishing Node died before payload adoption')
+                        work.fence = enhanced.OwnerRetirementReceipt(
+                            publication.reference, self.worker_id, 'node-loss:' + identity.transaction_id,
+                            enhanced.RetirementReason.PAYLOAD_LOST,
+                        ) if complete is not None else enhanced.OwnerAbortReceipt(
+                            publication.reference, self.worker_id, 'node-loss:' + identity.transaction_id)
+            if work.keep:
+                self._publication_client().commit_task(work.publication, work.complete)
+            else:
+                self._publication_client().fence(work.publication, work.fence)
                 for transfer in manifest.value.transfers:
                     for hold in (transfer.final_hold, transfer.provisional_hold):
                         request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
@@ -11302,10 +11445,16 @@ class CoreWorker:
                                 or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
                             raise SystemTaskError('Node-loss child release changed exact identity')
                         work.acks[request] = replace(reply)
+                self._publication_client().retire(
+                    work.publication,
+                    [receipt for receipt in work.acks.values() if type(receipt) is protocol.ReleaseContainedReferenceReply],
+                    tuple(dict.fromkeys(receipt for receipt in work.acks.values() if type(receipt) is protocol.WorkerDeathRecord)),
+                )
             resolution = NodeLostOutputResolution(
                 identity, manifest.manifest_digest, self.worker_id, obligation.node_death,
                 complete=work.complete, keep=work.keep, cleanup=tuple(dict.fromkeys(work.acks.values())),
             )
+            proof = None
             with self._state_lock:
                 if self._output_replay_is_obsolete_locked(pending, identity):
                     return True
@@ -11322,6 +11471,8 @@ class CoreWorker:
                         'output-owner:{}:{}'.format(identity.transaction_id, manifest.manifest_digest),
                     )
                     self._output_handoff_table().adopt(proof)
+                elif work.keep:
+                    proof = self._output_handoff_table().query(identity).adoption
                 if current.state is ObjectState.READY_STORED and current.locations:
                     self._stored_descriptors[pending.object_id] = replace(current.canonical_stored_result, node_id=min(current.locations))
                 else:
@@ -11336,6 +11487,11 @@ class CoreWorker:
                         recovery.commit_validated_transition(transition)
                     self._reconstruction_coordinator().complete(pending.task_id, pending.spec.attempt_id)
                     self._wake_object(pending.object_id)
+            if proof is not None:
+                self._publication_client().adopt(proof)
+            with self._state_lock:
+                if self._output_replay_is_obsolete_locked(pending, identity):
+                    return True
                 self._clear_protocol_unresolved(pending)
                 self._output_loss_completed = getattr(self, '_output_loss_completed', set())
                 self._output_loss_completed.add(identity)
@@ -11456,6 +11612,8 @@ class CoreWorker:
                     raise SystemTaskError('output has no current registered owner handoff')
                 self._output_handoff_table().record_complete(envelope.complete)
                 previous = self._owner_table.output_owner_publication_receipt(plan)
+            publication = self._publication_client().remember(enhanced.TaskPublication(envelope.manifest, self.owner_address))
+            self._publication_client().commit_task(publication, envelope.complete)
             ready_observation = None
             with self._state_lock:
                 # This check is deliberately after every external step.  A
@@ -11521,7 +11679,8 @@ class CoreWorker:
                                manifest_digest=ready_digest, return_count=ready_count)
                 except BaseException:
                     pass
-            request = wire.AckOutputPublicationAdopted(proof)
+            gcs_adoption = self._publication_client().adopt(proof)
+            request = wire.AckOutputPublicationAdopted(proof, gcs_adoption)
             with causal_scope(current_cause_id()):
                 reply = self._rpc(self._resolve_node_address(obligation.node_id), wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, request)
                 if type(reply) is not wire.AckOutputPublicationAdoptedReply:

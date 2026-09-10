@@ -22,7 +22,7 @@ import pytest
 
 import miniray.core as core_module
 from miniray import (
-    node as node_module, output_protocol as output_wire, protocol,
+    enhanced_publication as ep, node as node_module, output_protocol as output_wire, protocol,
     transport as transport_module, worker as worker_module,
 )
 from miniray.core import _HomeRoute
@@ -195,13 +195,17 @@ class _PurePgAdmission:
         assert self.child.total == self.child.available == ResourceVector({"CPU": 1})
         assert node.resource_ledger.available == ResourceVector()
         self.journal = OutputPublicationJournal()
+        self.authority = core._test_publication_authority
+        self.publication_calls = []
 
         def no_reference_effect(*_args, **_kwargs):
-            pytest.fail("ref-free PG result attempted a child or graph effect")
+            pytest.fail("ref-free PG result attempted a child effect")
 
         self.adapter = OutputPublicationNodeAdapter(
             self.journal, register_owner=self.register_owner,
             report_complete=self.report_complete, report_rollback=self.report_rollback,
+            publication_value=lambda manifest: ep.TaskPublication(manifest, core.owner_address),
+            publication_rpc=self.publication_rpc, abort_owner=self.abort_owner,
             prepare_child=no_reference_effect, promote_child=no_reference_effect,
             release_child=no_reference_effect,
             seal_replica=node._seal_output_publication_replica,
@@ -211,6 +215,28 @@ class _PurePgAdmission:
         node._local_replica_write_claims = {}
         node._output_publication_journal, node._output_publications = self.journal, self.adapter
         core._rpc, core._push_task_rpc = self.rpc, self.push_rpc
+
+    def publication_rpc(self, request):
+        assert len(self.publication_calls) < 64
+        reply = self.authority.apply(request)
+        assert type(reply) is ep.PublicationReply and reply.request == request
+        self.publication_calls.append((request, reply))
+        return reply
+
+    def abort_owner(self, publication, scope):
+        assert scope == self.journal.rollback_scope(publication.manifest.publication_id)
+        request = ep.AbortOwnerPublication(publication, scope)
+        reply = self.core.abort_owner_publication(request)
+        assert type(reply) is ep.AbortOwnerPublicationReply and reply.request == request
+        assert reply.accepted and reply.receipt is not None, reply.error
+        return reply.receipt
+
+    def central(self, identity):
+        manifest = self.journal.snapshot(identity).manifest
+        request = ep.GetPublication(ep.PublicationRef(identity, manifest.manifest_digest))
+        reply = self.authority.query(request)
+        assert reply.accepted and reply.request == request and reply.snapshot is not None
+        return reply.snapshot
 
     def owner_call(self, request, method):
         reply = method(request)
@@ -290,6 +316,12 @@ class _PurePgAdmission:
 
     def rpc(self, address, handler, request):
         core, node = self.core, self.node
+        if handler == ep.PUBLICATION_HANDLER:
+            assert address == core.gcs_address
+            return self.publication_rpc(request)
+        if handler == "get_node_state":
+            assert address == core.gcs_address and type(request) is protocol.GetNodeState
+            return self.registry.get_state_reply(request)
         if handler == "get_node_address":
             assert address == core.gcs_address and request.node_id == node.node_id
             return protocol.GetNodeAddressReply(request.node_id, True, self.registry.get(request.node_id).address)
@@ -304,6 +336,10 @@ class _PurePgAdmission:
         if handler == output_wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER:
             assert address == self.target_address
             assert self.handoff(request.proof.complete.publication_id).adoption == request.proof
+            central = self.central(request.proof.complete.publication_id)
+            assert central.complete == request.proof.complete
+            assert central.receipt(ep.PublicationStage.COMMITTED) is not None
+            assert central.receipt(ep.PublicationStage.ADOPTED) == request.gcs_adoption
             return node._handle_ack_output_publication_adopted(request)
         if handler == "drop_object_replica":
             assert address == self.target_address and len(self.drops) < 4
@@ -346,6 +382,11 @@ class _PurePgAdmission:
             ))
             assert prepared.accepted and self.journal.snapshot(identity).ready_to_complete
             assert self.handoff(identity).manifest == outputs.manifest
+            central = self.central(identity)
+            assert central.prepared == self.journal.preparation_receipt(identity)
+            assert all(central.receipt(stage) is not None for stage in (
+                ep.PublicationStage.INTENT, ep.PublicationStage.PREPARED, ep.PublicationStage.ARMED))
+            assert central.complete is None and central.receipt(ep.PublicationStage.COMMITTED) is None
             discovery.release_sources_after_promotions()
         status = protocol.TaskReplyStatus.SYSTEM_ERROR if mode == "system" else protocol.TaskReplyStatus.SUCCEEDED
         complete = node._handle_complete_worker_lease(protocol.CompleteWorkerLease(
@@ -390,6 +431,12 @@ class _PurePgAdmission:
                 assert core.owner_table.collection_state(((identity.object_id,))[0]) is ObjectCollectionState.COLLECTED
                 assert not self.journal.snapshot(identity).result_retained
                 assert self.adapter.report_terminal(identity)
+                central = self.central(identity)
+                assert central.receipt(ep.PublicationStage.COMMITTED) is not None
+                assert central.receipt(ep.PublicationStage.ADOPTED) is not None
+                assert central.receipt(ep.PublicationStage.RETIRED) is not None
+                assert not central.graph_active and not central.forward_open
+                assert central.complete == self.publications[identity].complete
             assert not self.adapter.pending_terminal_reports()
             assert self.node.object_store.used_bytes == 0 and not self.node._sealed_metadata
             assert not self.node._local_replica_write_claims

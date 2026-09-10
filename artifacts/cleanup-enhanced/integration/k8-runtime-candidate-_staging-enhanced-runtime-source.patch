@@ -1,0 +1,3273 @@
+--- a/src/miniray/api.py
++++ b/src/miniray/api.py
+@@ -2448,6 +2448,7 @@
+                 and owner_death_candidate.request_id == drain.request_id
+                 and owner_death_candidate.clean
+                 and owner_death_candidate.active_fences == 0
++                and owner_death_candidate.active_publication_cleanups == 0
+             )
+         if control_called:
+             # Recheck membership at the top before treating these acknowledgments
+--- a/src/miniray/control.py
++++ b/src/miniray/control.py
+@@ -5,10 +5,10 @@
+ functions and Actor lifecycle state; it never queues or forwards ordinary
+ Task or Actor-method submissions.
+ 
+-Ordinary result publication belongs to the object owner and executing Node.
+-GCS holds no per-task publication manifest, result-stage history or contained
+-reference graph. It commits membership/owner-death facts and retries their
+-owner-wide Node fences until exact acknowledgements make Nodes safe to use.
++Object visibility and execution remain with the owner and Node. The enhanced
++teaching version adds central publication facts and reference-cycle admission.
++It keeps metadata only, with exact membership/death cleanup; this is neither
++production Ray behavior nor durable/replicated GCS recovery.
+ 
+ Placement groups use a small GCS-side runtime adapter around the pure
+ ``PlacementGroupCoordinator``.  GCS freezes the plan and converges participant
+@@ -27,6 +27,8 @@
+ from typing import Callable, Hashable, Mapping, Optional, Tuple
+ 
+ from . import protocol
++from . import enhanced_publication as ep
++from .enhanced_publication_control import EnhancedPublicationControl
+ from .errors import FunctionNotRegisteredError
+ from .function_registry import (
+     FunctionRegistrationConflictError,
+@@ -2593,6 +2595,7 @@
+         self._owner_death_progress_wakeup = Event()
+         self._owner_death_progress_stop = Event()
+         self._owner_death_progress_thread: Optional[Thread] = None
++        self._owner_death_progress_cursor = 0
+         self._owner_fence_progress_cursor = 0
+         self.nodes = NodeRegistry(scheduling_visible=lambda node_id: node_id in (
+             self.owner_death_fences.cleanup_safe_node_ids()
+@@ -2602,6 +2605,10 @@
+             raise TypeError("owner_fence_rpc must be callable or None")
+         self._owner_fence_rpc = (
+             owner_fence_rpc if owner_fence_rpc is not None else rpc_request
++        )
++        self.publication_control = EnhancedPublicationControl(
++            nodes=self.nodes, workers=self.workers, owner_fences=self.owner_death_fences,
++            lock=self._owner_death_control_lock, rpc=self._owner_fence_rpc,
+         )
+         self._on_node_dead = on_node_dead
+         self.functions = FunctionRegistry()
+@@ -2670,6 +2677,7 @@
+                 DRAIN_PLACEMENT_GROUPS_HANDLER: self.drain_placement_groups,
+                 DRAIN_ACTORS_HANDLER: self.drain_actors,
+                 DRAIN_OWNER_DEATH_FENCES_HANDLER: self.drain_owner_death_fences,
++                ep.PUBLICATION_HANDLER: self.enhanced_publication,
+             }
+         )
+ 
+@@ -2761,7 +2769,8 @@
+                     error="{}: {}".format(type(exc).__name__, exc),
+                 )
+             try:
+-                active = self._owner_fence_registry().has_active_operations()
++                active = (self._owner_fence_registry().has_active_operations()
++                          or bool(self.publication_control.pending_deaths()))
+             except Exception as exc:
+                 self._emit(
+                     "owner_death_fence_state_failed",
+@@ -2783,20 +2792,60 @@
+         if not isinstance(request, protocol.DrainOwnerDeathFences):
+             raise TypeError("drain_owner_death_fences expects DrainOwnerDeathFences")
+         self._drive_owner_death_fence_once()
+-        active = len(self._owner_fence_registry().pending())
+-        return protocol.DrainOwnerDeathFencesReply(request.request_id, active == 0, active)
++        with self._owner_fence_lock():
++            active = len(self._owner_fence_registry().pending())
++            publications = len(self.publication_control.pending_deaths())
++        return protocol.DrainOwnerDeathFencesReply(
++            request.request_id, active == 0 and publications == 0, active, publications)
++
++    def enhanced_publication(self, request):
++        reply = self.publication_control.handle(request)
++        try:
++            if reply.accepted and reply.receipt is not None and reply.snapshot is not None:
++                publication = reply.snapshot.publication
++                attributes = {
++                    "stage": reply.receipt.stage.value,
++                    "request_type": type(reply.request).__name__,
++                    "sequence": reply.receipt.sequence,
++                    "manifest_digest": reply.receipt.reference.digest,
++                    "object_id": str(publication.object_id),
++                    "owner_worker_id": str(publication.owner_worker_id),
++                    "accepted": True,
++                }
++                if type(publication) is ep.TaskPublication:
++                    identity = publication.manifest.publication_id
++                    attributes.update(
++                        task_id=str(identity.task_id), attempt_id=str(identity.attempt_id),
++                        lease_id=str(identity.lease_id),
++                    )
++                # The reducer has already returned outside its composition
++                # lock. Observation cannot turn its committed reply into error.
++                self._emit("enhanced_publication_stage", **attributes)
++        except BaseException:
++            # Trace formatting and observers own no publication authority.
++            pass
++        if self.publication_control.pending_deaths():
++            self._wake_owner_death_progress()
++        return reply
+ 
+     def _drive_owner_death_fence_once(self) -> bool:
+-        # Advance on attempts so a pinned or unreachable target cannot starve
+-        # independent owner fences. The remote call stays outside this lock.
++        # Alternate cleanup classes on attempts, then retain CF-004 rotation
++        # among owner fences. A blocked sweep must not starve publication work.
+         with self._owner_fence_lock():
+             pending = self._owner_fence_registry().pending()
+-            if not pending:
+-                return False
+-            cursor = getattr(self, "_owner_fence_progress_cursor", 0)
+-            effect = pending[cursor % len(pending)]
+-            self._owner_fence_progress_cursor = cursor + 1
+-        return self._drive_owner_death_fence(effect)
++            publications = self.publication_control.pending_deaths()
++            choice = self._owner_death_progress_cursor
++            self._owner_death_progress_cursor += 1
++            use_publication = bool(publications) and (not pending or choice % 2 == 1)
++            effect = None
++            if pending and not use_publication:
++                cursor = getattr(self, "_owner_fence_progress_cursor", 0)
++                effect = pending[cursor % len(pending)]
++                self._owner_fence_progress_cursor = cursor + 1
++        # Each driver performs its remote effect outside the composition lock.
++        if use_publication:
++            return self.publication_control.drive_one()
++        return bool(effect is not None and self._drive_owner_death_fence(effect))
+ 
+     def _drive_owner_death_fence(
+         self, effect: OwnerDeathFenceEffect,
+@@ -2917,10 +2966,11 @@
+     def unregister_node(self, message: object) -> UnregisterNodeReply:
+         if not isinstance(message, UnregisterNode):
+             raise TypeError("unregister_node expects UnregisterNode")
+-        death_reply = self.nodes.unregister(
+-            message.node_id, message.node_pid, message.registration_epoch,
+-            message.detection_id,
+-        )
++        with self._owner_fence_lock():
++            death_reply = self.nodes.unregister(
++                message.node_id, message.node_pid, message.registration_epoch,
++                message.detection_id,
++            )
+         removed = death_reply.disposition in (
+             protocol.NodeDeathDisposition.APPLIED,
+             protocol.NodeDeathDisposition.ALREADY_DEAD,
+@@ -2994,6 +3044,7 @@
+                     committed_worker_deaths = workers.fail_node(reply.death)
+                     for death in committed_worker_deaths:
+                         self._owner_fence_registry().commit_owner_death(death)
++                        self.publication_control.commit_owner_death(death)
+                 if (
+                     reply.death.reason
+                     is protocol.NodeDeathReason.PROCESS_EXIT
+@@ -3069,7 +3120,8 @@
+                 "register_worker_incarnation expects "
+                 "RegisterWorkerIncarnation"
+             )
+-        reply = self.workers.register(message)
++        with self._owner_fence_lock():
++            reply = self.workers.register(message)
+         self._emit(
+             "worker_registered" if reply.accepted
+             else "worker_registration_rejected",
+@@ -3097,6 +3149,7 @@
+                 )
+             ):
+                 self._owner_fence_registry().commit_owner_death(reply.death)
++                self.publication_control.commit_owner_death(reply.death)
+         if (
+             reply.death is not None
+             and reply.death.reason in (
+@@ -3233,6 +3286,7 @@
+             ):
+                 raise ValueError("GCS shutdown already has a different request ID")
+             self._shutdown_request_id = message.request_id
++        self.publication_control.close_admission()
+         actor_coordinator = getattr(self, "actor_coordinator", None)
+         if actor_coordinator is not None:
+             actor_coordinator.close_admission()
+@@ -3248,6 +3302,7 @@
+         )
+         owner_death_fences_clean = (
+             not self._owner_fence_registry().has_active_operations()
++            and not self.publication_control.has_active_operations()
+         )
+         with self._snapshot_lock:
+             schedule_exit = (
+@@ -3464,6 +3519,10 @@
+         boundary avoids importing control state into task submission.
+         """
+ 
++        if type(message) in (ep.BeginPublication, ep.PrepareGraph, ep.ArmTask,
++                ep.RecordTerminal, ep.CommitGraph, ep.RecordAdoption,
++                ep.FencePublication, ep.RetireGraph, ep.GetPublication):
++            return self.enhanced_publication(message)
+         name = type(message).__name__
+         dispatch: Mapping[str, Callable[[object], object]] = {
+             "RegisterNode": self.register_node,
+--- a/src/miniray/core.py
++++ b/src/miniray/core.py
+@@ -2,8 +2,8 @@
+ 
+ CoreWorker combines logical identity, dependency admission, owner handoff and
+ lineage recovery. Tasks obtain a Node lease and submit directly to its Worker.
+-Ordinary results are handed to their owner; GCS retains membership/Actor/PG
+-control only. Node resources and physical result custody remain Node duties.
++Ordinary results are handed to their owner through the enhanced GCS publication
++and graph protocol. Node resources and physical result custody remain Node duties.
+ """
+ 
+ from __future__ import annotations
+@@ -26,6 +26,7 @@
+ import cloudpickle
+ 
+ from . import protocol
++from . import enhanced_publication as enhanced
+ from .output_handoff import OutputHandoffTable, OutputHandoffPhase
+ from .actor_client import ActorCallFence, ActorClientTable
+ from .contained_edges import ContainedReferenceEdge, IncomingContainedReferenceHold, LineageReferenceEdge, ObjectMetadataCollectionPlan
+@@ -71,7 +72,7 @@
+     DeadWorkerReferenceRecord, NodeLocationRemoval, ObjectOwnerSnapshot, ObjectOwnerTable, ObjectState, UnknownObjectError,
+ )
+ from .ownership import OutputOwnerPublicationPlan, OutputOwnerPublicationCollectionPlan, OutputOwnerPublicationConflictError, OutputOwnerPublicationRetirementPlan
+-from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID, OutputPublicationManifest
++from .output_publication import OutputPublicationEnvelope, OutputPublicationCompleteWitness, OutputPublicationID, OutputPublicationManifest, OutputPublicationNodeIncarnation
+ from .output_publication_journal import OutputPublicationAdoptionProof
+ from .owner_service import (
+     REPLACE_RETAINED_OBJECT_FOR_TASK_HANDLER,
+@@ -373,6 +374,8 @@
+     manifest: OutputPublicationManifest
+     complete: OutputPublicationCompleteWitness | None
+     keep: bool
++    publication: enhanced.TaskPublication | None = None
++    fence: enhanced.OwnerRetirementReceipt | enhanced.OwnerAbortReceipt | None = None
+     acks: dict[protocol.ReleaseContainedReference,
+                protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
+ 
+@@ -382,6 +385,8 @@
+     """One exact owner retirement plan and its acknowledged cleanup work."""
+ 
+     plan: OutputOwnerPublicationRetirementPlan
++    publication: enhanced.TaskPublication | None = None
++    fence: enhanced.OwnerRetirementReceipt | None = None
+     child: dict[protocol.ReleaseContainedReference,
+                 protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
+     replica: dict[protocol.DropObjectReplica,
+@@ -398,6 +403,10 @@
+     output_plan: OutputOwnerPublicationCollectionPlan | None = None
+     retry_scheduled: bool = False
+     retry_round: int = 0
++    publication: enhanced.Publication | None = None
++    publication_fence: enhanced.OwnerRetirementReceipt | None = None
++    child_receipts: dict[protocol.ReleaseContainedReference, protocol.ReleaseContainedReferenceReply] = field(default_factory=dict)
++    child_deaths: dict[WorkerID, protocol.WorkerDeathRecord] = field(default_factory=dict)
+ 
+     @property
+     def object_id(self) -> ObjectID:
+@@ -2342,6 +2351,7 @@
+                 if dead_edges:
+                     contained_releases += len(dead_edges)
+                     obligation.pending_edges.difference_update(dead_edges)
++                    obligation.child_deaths[dead] = replace(death)
+                     collection_candidates.add(object_id)
+ 
+             retries = getattr(self, "_foreign_guard_release_retries", {})
+@@ -3249,11 +3259,14 @@
+                 self._owner_table.register(identity, current_attempt=attempt, producer_task_spec=None)
+                 self._objects[identity] = _ObjectWaiter(threading.Event())
+                 self._recovery_manager().register_put(identity)
+-                work = PutHandoff(prepared, attempt)
++                work = PutHandoff(prepared, attempt, publication=enhanced.PutPublication(
++                    self.job_id, self.owner_address, prepared.manifest,
++                ))
+                 obligations = getattr(self, '_put_handoffs', None)
+                 if obligations is None:
+                     obligations = self._put_handoffs = {}
+                 obligations[identity] = work
++            self._publication_client().begin(work.publication)
+             for stage, kind in (('prepare', protocol.PrepareStoredContainedPin), ('promote', protocol.PromoteStoredContainedPin)):
+                 for child in work.children:
+                     transfer = child.transfer
+@@ -3277,6 +3290,8 @@
+                 seal = protocol.SealObject.from_data(identity, attempt, self.worker_id, prepared.payload)
+                 route = self._require_home_route('explicit put')
+             while True:
++                seal_reply = None
++                incarnation = None
+                 if seal is not None:
+                     work.materialization = MaterializationWork(route, seal)
+                     try:
+@@ -3306,15 +3321,37 @@
+                         if not reply.sealed:
+                             raise SystemTaskError(reply.error or 'put seal was rejected')
+                         node_id = route.node_id
++                        seal_reply = reply
++                if seal is not None:
++                    incarnation = self._put_node_incarnation(route.node_id)
++                    with self._state_lock:
++                        if self._node_is_dead(route.node_id):
++                            next_route = self._home_route
++                            if next_route is None or next_route.node_id == route.node_id:
++                                raise NodeDiedError('put Node died without a survivor')
++                            route = next_route
++                            continue
++                preparation = enhanced.PutPreparedReceipt(
++                    work.publication.reference,
++                    tuple(child.prepare_receipt for child in work.children),
++                    tuple(child.promotion_receipt for child in work.children),
++                    enhanced.MaterializationReceipt(work.publication.reference, incarnation), seal_reply,
++                )
++                self._publication_client().commit_put(work.publication, preparation)
++                with self._state_lock:
++                    if seal is not None and self._node_is_dead(route.node_id):
++                        # C5 fixed this exact materialization. Do not reroute
++                        # an uninstalled committed put to another Node.
++                        raise NodeDiedError('put materialization was lost before owner installation')
+                     descriptor = protocol.ResultDescriptor(
+                         identity, manifest.tier, manifest.size_bytes, self.worker_id, node_id, manifest.checksum,
+                         prepared.payload if manifest.tier is protocol.ResultStorage.INLINE else None,
+                     )
+                     if work.choice is PutChoice.ABORTED:
+                         raise SystemTaskError('put was aborted before owner installation')
+-                    # Death handling and owner installation share this lock.
+-                    # A winning death reroutes above; a later death observes
+-                    # a real committed owner result and follows ordinary loss.
++                    # C5 bound materialization already; death and installation
++                    # share this lock. A later death sees a committed owner
++                    # result, while a winning death aborts without rebinding C5.
+                     if not self._owner_table.publish_put_value(identity, attempt, descriptor, manifest.edges):
+                         raise SystemTaskError('put owner installation was fenced')
+                     work.choice = PutChoice.COMMITTED
+@@ -3330,8 +3367,12 @@
+                 raise
+         except BaseException as exc:
+             if work is not None and work.choice is not PutChoice.COMMITTED:
+-                work.choice = PutChoice.ABORTED
+-                work.driving = False
++                with self._state_lock:
++                    work.choice = PutChoice.ABORTED
++                    work.driving = False
++                    work.abort_receipt = enhanced.OwnerAbortReceipt(
++                        work.publication.reference, self.worker_id, 'put-abort:' + identity.hex,
++                    )
+                 self._drive_put_handoff_cleanup(identity)
+                 self._publish_error(identity, attempt, exc)
+             raise
+@@ -3339,6 +3380,19 @@
+             if work is not None:
+                 work.driving = False
+             self._end_put()
++
++    def _put_node_incarnation(self, node_id):
++        """Read registered materialization identity, never infer it from a route."""
++        with self._state_lock:
++            snapshot = self._installed_cluster_snapshot
++            info = None if snapshot is None else next((node for node in snapshot.nodes if node.node_id == node_id), None)
++        if info is not None:
++            return OutputPublicationNodeIncarnation(node_id, info.node_pid, info.registration_epoch)
++        reply = self._rpc(self.gcs_address, 'get_node_state', protocol.GetNodeState(node_id))
++        if type(reply) is not protocol.GetNodeStateReply or not reply.found or reply.node_id != node_id:
++            raise SystemTaskError('put materialization lacks registered Node identity')
++        reply = replace(reply)
++        return OutputPublicationNodeIncarnation(node_id, reply.node_pid, reply.registration_epoch)
+ 
+     def _put_child_rpc(self, transfer, handler, request):
+         if transfer.contained_owner_worker_id == self.worker_id:
+@@ -3355,16 +3409,17 @@
+                 return False
+             work.driving = True
+         try:
++            self._publication_client().fence(work.publication, work.abort_receipt)
+             for child in work.children:
+-                if not child.has_sent_effect:
+-                    continue
++                # Graph reservation covers even transfers not yet sent. Their
++                # exact Release tombstones close delayed prepare/promote too.
+                 transfer = child.transfer
+                 for hold in (transfer.final_hold, transfer.provisional_hold):
+                     request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
+                     if request in child.releases:
+                         continue
+                     with self._state_lock:
+-                        death = self._owner_table.dead_worker_record(transfer.contained_owner_worker_id)
++                        death = getattr(self, '_worker_death_records', {}).get(transfer.contained_owner_worker_id)
+                     if death is not None:
+                         child.releases[request] = death
+                         continue
+@@ -3405,6 +3460,11 @@
+                             != (drop.object_id, drop.producer_attempt_id, drop.owner_worker_id, drop.node_id, drop.checksum)):
+                         return False
+                     materialization.drop_receipt = replace(dropped)
++            releases = [proof for child in work.children for proof in child.releases.values()
++                        if type(proof) is protocol.ReleaseContainedReferenceReply]
++            deaths = tuple(dict.fromkeys(proof for child in work.children for proof in child.releases.values()
++                                         if type(proof) is protocol.WorkerDeathRecord))
++            self._publication_client().retire(work.publication, releases, deaths)
+             with self._state_lock:
+                 self._put_handoffs.pop(identity, None)
+                 self._completion.notify_all()
+@@ -4658,6 +4718,41 @@
+             table = self._output_handoffs = OutputHandoffTable()
+         return table
+ 
++    def _publication_client(self):
++        from .enhanced_publication_client import PublicationClient
++        with self._state_lock:
++            client = getattr(self, '_enhanced_publication_client', None)
++            if client is None:
++                client = PublicationClient(lambda handler, request: self._rpc(self.gcs_address, handler, request))
++                self._enhanced_publication_client = client
++            return client
++
++    def abort_owner_publication(self, request):
++        """Serialize a Node rollback fence with the existing owner adoption CAS."""
++        if type(request) is not enhanced.AbortOwnerPublication:
++            raise TypeError('owner abort requires its exact publication and rollback scope')
++        request = replace(request)
++        publication, scope = request.publication, request.rollback
++        identity = publication.manifest.publication_id
++        try:
++            with self._state_lock:
++                if publication.owner_worker_id != self.worker_id or publication.owner_address != self.owner_address:
++                    raise ValueError('owner abort changed its owner route')
++                previous = self._output_handoff_table().query(identity)
++                if previous is not None and previous.adoption is not None:
++                    return enhanced.AbortOwnerPublicationReply(request, False, adoption=previous.adoption,
++                                                               error='owner already adopted this publication')
++                if previous is not None and previous.complete is not None:
++                    raise ValueError('actual Complete cannot become a Node rollback')
++                if previous is None and (scope.prepare_intents or scope.promote_intents or scope.materialization_started):
++                    raise ValueError('unregistered owner cannot authorize publication effects')
++                self._output_handoff_table().abort_manifest(publication.manifest, 'node rollback:' + scope.rollback_id)
++                proof = enhanced.OwnerAbortReceipt(publication.reference, self.worker_id, scope.rollback_id)
++                self._publication_client().remember(publication)
++                return enhanced.AbortOwnerPublicationReply(request, True, proof)
++        except Exception as exc:
++            return enhanced.AbortOwnerPublicationReply(request, False, error=str(exc) or type(exc).__name__)
++
+     def register_output_handoff(self, request):
+         """Own the exact cleanup manifest before child effects can start."""
+         from . import output_protocol as wire
+@@ -4681,6 +4776,7 @@
+                 snapshot = self._output_handoff_table().register(manifest, state.current_attempt)
+                 if snapshot.phase is not OutputHandoffPhase.PENDING:
+                     raise ValueError("historical handoff is not a new forward permission")
++                self._publication_client().remember(enhanced.TaskPublication(manifest, self.owner_address))
+                 return wire.OutputHandoffReply(request, True, snapshot)
+         except Exception as exc:
+             return wire.OutputHandoffReply(request, False, error=str(exc) or type(exc).__name__)
+@@ -4924,6 +5020,12 @@
+                     pending_edges=set(plan.contained_releases),
+                     output_plan=output_plan,
+                 )
++                publication = self._publication_client().current(object_id)
++                if publication is not None:
++                    obligation.publication = publication
++                    obligation.publication_fence = enhanced.OwnerRetirementReceipt(
++                        publication.reference, self.worker_id, plan.collection_id, enhanced.RetirementReason.GC,
++                    )
+                 # This assignment is the durable in-memory barrier.  Never
+                 # issue Drop/Release before it becomes shutdown-visible.
+                 obligations[object_id] = obligation
+@@ -4944,6 +5046,9 @@
+                 contained_edge_count=len(started_plan.contained_releases),
+             )
+ 
++        if obligation.publication is not None:
++            self._publication_client().fence(obligation.publication, obligation.publication_fence)
++
+         # Outgoing edges represent real final child holds. Release every exact
+         # hold before deleting bytes; values without child edges need only
+         # their physical replica cleanup.
+@@ -4962,6 +5067,10 @@
+                     continue
+                 with self._state_lock:
+                     if self._object_gc_obligations.get(object_id) is obligation:
++                        death = getattr(self, '_worker_death_records', {}).get(edge.contained_owner_worker_id)
++                        if death is None:
++                            continue
++                        obligation.child_deaths[death.worker_id] = death
+                         obligation.pending_edges.discard(edge)
+                 continue
+             except Exception:
+@@ -4975,6 +5084,7 @@
+             ):
+                 with self._state_lock:
+                     if self._object_gc_obligations.get(object_id) is obligation:
++                        obligation.child_receipts[request] = replace(reply)
+                         obligation.pending_edges.discard(edge)
+ 
+ 
+@@ -5012,6 +5122,11 @@
+                         status=reply.status.value,
+                     )
+ 
++
++        if drops_admitted and obligation.publication is not None:
++            self._publication_client().retire(
++                obligation.publication, obligation.child_receipts.values(), obligation.child_deaths.values(),
++            )
+ 
+         completed = False
+         released_lineage_dependencies: list[ObjectID] = []
+@@ -6977,7 +7092,12 @@
+                         if member.manifest.value.tier is protocol.ResultStorage.OBJECT_STORE else ()
+                     ),
+                 )
+-                current = _OutputRetirementWork(plan)
++                publication = enhanced.TaskPublication(member.manifest, self.owner_address)
++                current = _OutputRetirementWork(
++                    plan, publication=publication, fence=enhanced.OwnerRetirementReceipt(
++                        publication.reference, self.worker_id, plan.retirement_id, enhanced.RetirementReason.RECONSTRUCTION,
++                    ),
++                )
+                 work[object_id] = current
+             tickets = getattr(self, "_output_retirement_tickets", None)
+             if tickets is None:
+@@ -6988,6 +7108,7 @@
+             tickets.add(object_id)
+         plan = current.plan
+         try:
++            self._publication_client().fence(current.publication, current.fence)
+             routes = {
+                 (transfer.contained_object_id, transfer.final_hold): transfer.contained_owner_address
+                 for transfer in plan.membership.manifest.value.transfers
+@@ -7019,6 +7140,11 @@
+                         != (request.object_id, request.producer_attempt_id, request.owner_worker_id, request.node_id, request.checksum)):
+                     raise SystemTaskError("output retirement replica ACK mismatch")
+                 current.replica[request] = reply
++            self._publication_client().retire(
++                current.publication,
++                [proof for proof in current.child.values() if type(proof) is protocol.ReleaseContainedReferenceReply],
++                tuple(dict.fromkeys(proof for proof in current.child.values() if type(proof) is protocol.WorkerDeathRecord)),
++            )
+             with self._state_lock:
+                 if self._has_late_replica_cleanup_locked(plan.object_id):
+                     self._schedule_late_replica_cleanup_locked()
+@@ -11245,6 +11371,13 @@
+             with self._state_lock:
+                 if self._output_replay_is_obsolete_locked(pending, identity):
+                     return True
++                known_handoff = self._output_handoff_table().query(identity)
++                publication = None if known_handoff is None or known_handoff.manifest is None else enhanced.TaskPublication(
++                    known_handoff.manifest, self.owner_address)
++            central = None if publication is None else self._publication_client().query(publication)
++            with self._state_lock:
++                if self._output_replay_is_obsolete_locked(pending, identity):
++                    return True
+                 self._mark_protocol_unresolved(pending, 'output_node_loss', obligation, target_node_id=obligation.node_death.node_id)
+                 table = self._output_handoff_table()
+                 handoff = table.query(identity)
+@@ -11265,7 +11398,8 @@
+                     # the loss choice; a later envelope cannot reverse DISCARD.
+                     envelope = self._locally_retained_output_completion(pending, handoff.complete)
+                 complete = (latched.complete if latched is not None else
+-                            handoff.complete or (None if envelope is None else envelope.complete))
++                            handoff.complete or (None if envelope is None else envelope.complete) or
++                            (None if central is None else central.complete))
+                 if complete is not None and handoff.complete is None and handoff.phase is not OutputHandoffPhase.ABORTED:
+                     table.record_complete(complete)
+                 works = getattr(self, '_output_node_cleanup', None)
+@@ -11280,13 +11414,22 @@
+                             manifest, 0, unavailable_nodes=tuple(getattr(self, '_dead_nodes', {})),
+                         )
+                     ))
+-                    work = _OutputNodeCleanupWork(manifest, complete, keep)
++                    work = _OutputNodeCleanupWork(manifest, complete, keep, publication=publication)
+                     works[identity] = work
+                     self._output_loss_choices = getattr(self, '_output_loss_choices', {})
+                     self._output_loss_choices[identity] = keep
+-                    if not keep and handoff.phase is not OutputHandoffPhase.ADOPTED:
+-                        table.abort(identity, 'publishing Node died before payload adoption')
+-            if not work.keep:
++                    if not keep:
++                        if handoff.phase is not OutputHandoffPhase.ADOPTED:
++                            table.abort(identity, 'publishing Node died before payload adoption')
++                        work.fence = enhanced.OwnerRetirementReceipt(
++                            publication.reference, self.worker_id, 'node-loss:' + identity.transaction_id,
++                            enhanced.RetirementReason.PAYLOAD_LOST,
++                        ) if complete is not None else enhanced.OwnerAbortReceipt(
++                            publication.reference, self.worker_id, 'node-loss:' + identity.transaction_id)
++            if work.keep:
++                self._publication_client().commit_task(work.publication, work.complete)
++            else:
++                self._publication_client().fence(work.publication, work.fence)
+                 for transfer in manifest.value.transfers:
+                     for hold in (transfer.final_hold, transfer.provisional_hold):
+                         request = protocol.ReleaseContainedReference(transfer.contained_object_id, transfer.contained_owner_worker_id, hold)
+@@ -11302,10 +11445,16 @@
+                                 or (reply.object_id, reply.owner_worker_id, reply.hold) != (request.object_id, request.owner_worker_id, request.hold)):
+                             raise SystemTaskError('Node-loss child release changed exact identity')
+                         work.acks[request] = replace(reply)
++                self._publication_client().retire(
++                    work.publication,
++                    [receipt for receipt in work.acks.values() if type(receipt) is protocol.ReleaseContainedReferenceReply],
++                    tuple(dict.fromkeys(receipt for receipt in work.acks.values() if type(receipt) is protocol.WorkerDeathRecord)),
++                )
+             resolution = NodeLostOutputResolution(
+                 identity, manifest.manifest_digest, self.worker_id, obligation.node_death,
+                 complete=work.complete, keep=work.keep, cleanup=tuple(dict.fromkeys(work.acks.values())),
+             )
++            proof = None
+             with self._state_lock:
+                 if self._output_replay_is_obsolete_locked(pending, identity):
+                     return True
+@@ -11322,6 +11471,8 @@
+                         'output-owner:{}:{}'.format(identity.transaction_id, manifest.manifest_digest),
+                     )
+                     self._output_handoff_table().adopt(proof)
++                elif work.keep:
++                    proof = self._output_handoff_table().query(identity).adoption
+                 if current.state is ObjectState.READY_STORED and current.locations:
+                     self._stored_descriptors[pending.object_id] = replace(current.canonical_stored_result, node_id=min(current.locations))
+                 else:
+@@ -11336,6 +11487,11 @@
+                         recovery.commit_validated_transition(transition)
+                     self._reconstruction_coordinator().complete(pending.task_id, pending.spec.attempt_id)
+                     self._wake_object(pending.object_id)
++            if proof is not None:
++                self._publication_client().adopt(proof)
++            with self._state_lock:
++                if self._output_replay_is_obsolete_locked(pending, identity):
++                    return True
+                 self._clear_protocol_unresolved(pending)
+                 self._output_loss_completed = getattr(self, '_output_loss_completed', set())
+                 self._output_loss_completed.add(identity)
+@@ -11456,6 +11612,8 @@
+                     raise SystemTaskError('output has no current registered owner handoff')
+                 self._output_handoff_table().record_complete(envelope.complete)
+                 previous = self._owner_table.output_owner_publication_receipt(plan)
++            publication = self._publication_client().remember(enhanced.TaskPublication(envelope.manifest, self.owner_address))
++            self._publication_client().commit_task(publication, envelope.complete)
+             ready_observation = None
+             with self._state_lock:
+                 # This check is deliberately after every external step.  A
+@@ -11521,7 +11679,8 @@
+                                manifest_digest=ready_digest, return_count=ready_count)
+                 except BaseException:
+                     pass
+-            request = wire.AckOutputPublicationAdopted(proof)
++            gcs_adoption = self._publication_client().adopt(proof)
++            request = wire.AckOutputPublicationAdopted(proof, gcs_adoption)
+             with causal_scope(current_cause_id()):
+                 reply = self._rpc(self._resolve_node_address(obligation.node_id), wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER, request)
+                 if type(reply) is not wire.AckOutputPublicationAdoptedReply:
+--- /dev/null
++++ b/src/miniray/enhanced_publication.py
+@@ -0,0 +1,996 @@
++"""Single-output GCS publication facts and conservative contained graph.
++
++This pure reducer owns admission, accurate metadata history, and graph
++reservations. It owns no READY state, bytes, resource ledger, or child holds.
++Its trusted loopback callers supply receipts from real Node/owner transitions;
++constructing a receipt is not evidence that those transitions happened.
++Membership validation and death cleanup RPCs belong to the GCS adapter.
++
++Forward permission, execution/adoption history, and graph retirement remain
++independent. Exact historical replay never reinstalls a retired edge.
++"""
++
++from __future__ import annotations
++
++import hashlib
++from dataclasses import dataclass, fields, replace
++from enum import Enum
++from threading import RLock
++from typing import TYPE_CHECKING, TypeAlias
++
++from . import protocol
++from .contained_edges import ContainedReferenceHold
++from .death_proofs import owner_death
++from .ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
++from .output_publication import (
++    OutputPublicationID, OutputPublicationManifest, OutputPublicationHeader,
++    OutputValue, OutputPublicationCompleteWitness,
++    OutputPublicationNodeIncarnation,
++)
++from .publication_sources import (
++    OwnedContainedSource, BorrowedContainedSource, PreparedContainedTransfer,
++    prepared_contained_transfer_fingerprint,
++)
++from .put_handoff import PutManifest
++from .task_outputs import TaskExecution
++from .transport import Address
++
++if TYPE_CHECKING:
++    from .output_publication_journal import OutputPublicationAdoptionProof
++
++
++class PublicationErrorKind(str, Enum):
++    CONFLICT = "CONFLICT"
++    INVALID_STATE = "INVALID_STATE"
++    CYCLE = "CYCLE"
++    UNAVAILABLE = "UNAVAILABLE"
++
++
++class PublicationError(ValueError):
++    def __init__(self, kind: PublicationErrorKind, message: str):
++        self.kind = kind
++        super().__init__(message)
++
++
++def _conflict(message):
++    raise PublicationError(PublicationErrorKind.CONFLICT, message)
++
++
++def _state(message):
++    raise PublicationError(PublicationErrorKind.INVALID_STATE, message)
++
++
++def _text(value, label):
++    if type(value) is not str or not value:
++        raise TypeError(f"{label} must be a non-empty string")
++    return value
++
++
++def _digest(value):
++    if (type(value) is not str or len(value) != 64
++            or any(character not in "0123456789abcdef" for character in value)):
++        raise ValueError("digest must be lower-case SHA256 hex")
++    return value
++
++
++def _address(value):
++    if (type(value) is not tuple or len(value) != 2
++            or type(value[0]) is not str or not value[0]
++            or type(value[1]) is not int or not 0 < value[1] < 65536):
++        raise ValueError("owner address must be a bound (host, port) tuple")
++    return value
++
++
++_IDS = (JobID, LeaseID, NodeID, TaskID, WorkerID)
++_EXTERNAL = (
++    AttemptID, ObjectID, ContainedReferenceHold,
++    OutputPublicationID, OutputPublicationManifest, OutputPublicationHeader,
++    OutputValue, OutputPublicationCompleteWitness,
++    OutputPublicationNodeIncarnation, TaskExecution,
++    OwnedContainedSource, BorrowedContainedSource, PreparedContainedTransfer,
++    PutManifest, protocol.TaskReferenceHold, protocol.TaskHoldSource,
++    protocol.ContainedTransferSource, protocol.PrepareStoredContainedPin,
++    protocol.PromoteStoredContainedPin, protocol.StoredContainedPinReply,
++    protocol.ReleaseContainedReferenceReply, protocol.SealObjectReply,
++    protocol.WorkerIncarnation, protocol.WorkerDeathRecord,
++)
++
++
++def _copy(value, expected=None):
++    """Rebuild accepted metadata, including mutated frozen nested values."""
++    if expected is not None and type(value) not in (expected if type(expected) is tuple else (expected,)):
++        raise TypeError(f"expected {expected}, got {type(value).__name__}")
++    kind = type(value)
++    if value is None or kind in (str, int, bool):
++        return value
++    if kind in _IDS:
++        return kind(value.value)
++    if kind is tuple:
++        return tuple(_copy(item) for item in value)
++    if isinstance(value, Enum):
++        if kind.__module__ not in (__name__, protocol.__name__, "miniray.ownership"):
++            raise TypeError("invalid metadata enum")
++        return kind(value.value)
++    # The journal imports enhanced values only at local export boundaries.
++    from .output_publication_journal import OutputPublicationAdoptionProof
++    if kind in _WIRE_TYPES:
++        # Our constructors rebuild each nested field themselves. Recursively
++        # rebuilding here too doubles work at every receipt/snapshot layer.
++        return kind(**{item.name: getattr(value, item.name) for item in fields(value)})
++    if kind in _EXTERNAL + (OutputPublicationAdoptionProof,):
++        return kind(**{item.name: _copy(getattr(value, item.name)) for item in fields(value)})
++    raise TypeError(f"unsupported publication metadata: {kind.__name__}")
++
++
++def _set(value, name, expected):
++    object.__setattr__(value, name, _copy(getattr(value, name), expected))
++
++
++def _tuple(value, expected):
++    if type(value) is not tuple:
++        raise TypeError("receipt sequence must be a tuple")
++    return tuple(_copy(item, expected) for item in value)
++
++
++def _unique(values, label):
++    if len(values) != len(set(values)):
++        raise ValueError(f"{label} must not contain duplicates")
++
++
++def _death(value):
++    value = owner_death(_copy(value, protocol.WorkerDeathRecord))
++    if value.reason not in (protocol.WorkerDeathReason.PROCESS_EXIT, protocol.WorkerDeathReason.NODE_EXIT):
++        raise ValueError("cleanup requires confirmed owner death")
++    return value
++
++
++class _Wire:
++    def __reduce__(self):
++        return type(self), tuple(getattr(self, item.name) for item in fields(self))
++
++
++@dataclass(frozen=True)
++class PutPublicationID(_Wire):
++    job_id: JobID
++    owner_worker_id: WorkerID
++    object_id: ObjectID
++
++    def __post_init__(self):
++        _set(self, "job_id", JobID)
++        _set(self, "owner_worker_id", WorkerID)
++        _set(self, "object_id", ObjectID)
++        if self.object_id.return_index != 0:
++            raise ValueError("put publication requires one object at index zero")
++
++    @property
++    def attempt_id(self):
++        return AttemptID(self.object_id.task_id, 0)
++
++
++PublicationKey: TypeAlias = OutputPublicationID | PutPublicationID
++
++
++@dataclass(frozen=True)
++class PublicationRef(_Wire):
++    key: PublicationKey
++    digest: str
++
++    def __post_init__(self):
++        _set(self, "key", (OutputPublicationID, PutPublicationID))
++        _digest(self.digest)
++
++
++@dataclass(frozen=True)
++class TaskPublication(_Wire):
++    manifest: OutputPublicationManifest
++    owner_address: Address
++
++    def __post_init__(self):
++        _set(self, "manifest", OutputPublicationManifest)
++        object.__setattr__(self, "owner_address", _address(self.owner_address))
++
++    @property
++    def reference(self):
++        return PublicationRef(self.manifest.publication_id, self.manifest.manifest_digest)
++
++    @property
++    def object_id(self):
++        return self.manifest.publication_id.object_id
++
++    @property
++    def owner_worker_id(self):
++        return self.manifest.header.owner_worker_id
++
++    @property
++    def job_id(self):
++        return self.manifest.header.job_id
++
++    @property
++    def transfers(self):
++        return self.manifest.value.transfers
++
++
++@dataclass(frozen=True)
++class PutPublication(_Wire):
++    job_id: JobID
++    owner_address: Address
++    manifest: PutManifest
++
++    def __post_init__(self):
++        _set(self, "job_id", JobID)
++        _set(self, "manifest", PutManifest)
++        object.__setattr__(self, "owner_address", _address(self.owner_address))
++
++    @property
++    def reference(self):
++        digest = hashlib.sha256(b"miniray-enhanced-put-v1\0")
++        manifest = self.manifest
++        parts = (bytes(self.job_id), bytes(self.owner_worker_id),
++                 bytes(self.object_id.task_id), str(self.object_id.return_index).encode(),
++                 self.owner_address[0].encode(), str(self.owner_address[1]).encode(),
++                 manifest.tier.value.encode(), str(manifest.size_bytes).encode(),
++                 manifest.checksum.encode())
++        for part in parts + tuple(prepared_contained_transfer_fingerprint(item) for item in self.transfers):
++            digest.update(len(part).to_bytes(8, "big"))
++            digest.update(part)
++        return PublicationRef(PutPublicationID(self.job_id, self.owner_worker_id, self.object_id), digest.hexdigest())
++
++    @property
++    def object_id(self):
++        return self.manifest.object_id
++
++    @property
++    def owner_worker_id(self):
++        return self.manifest.owner_worker_id
++
++    @property
++    def transfers(self):
++        return self.manifest.transfers
++
++
++Publication: TypeAlias = TaskPublication | PutPublication
++
++
++@dataclass(frozen=True)
++class MaterializationReceipt(_Wire):
++    reference: PublicationRef
++    node_incarnation: OutputPublicationNodeIncarnation | None
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++        if self.node_incarnation is not None:
++            _set(self, "node_incarnation", OutputPublicationNodeIncarnation)
++
++
++def _prepared_fields(value, task):
++    _set(value, "reference", PublicationRef)
++    if isinstance(value.reference.key, OutputPublicationID) is not task:
++        raise ValueError("preparation kind changed publication identity")
++    for name, request_type in (("prepare_replies", protocol.PrepareStoredContainedPin),
++                               ("promote_replies", protocol.PromoteStoredContainedPin)):
++        replies = _tuple(getattr(value, name), protocol.StoredContainedPinReply)
++        for reply in replies:
++            if (type(reply.request) is not request_type or not reply.accepted
++                    or reply.error is not None or reply.error_kind is not None):
++                raise ValueError("preparation requires accepted exact child replies")
++        _unique(tuple(reply.request for reply in replies), name)
++        object.__setattr__(value, name, replies)
++    _set(value, "materialization", MaterializationReceipt)
++    if value.materialization.reference != value.reference:
++        raise ValueError("materialization changed publication reference")
++
++
++@dataclass(frozen=True)
++class TaskPreparedReceipt(_Wire):
++    reference: PublicationRef
++    prepare_replies: tuple[protocol.StoredContainedPinReply, ...]
++    promote_replies: tuple[protocol.StoredContainedPinReply, ...]
++    materialization: MaterializationReceipt
++
++    def __post_init__(self):
++        _prepared_fields(self, True)
++        if self.materialization.node_incarnation is None:
++            raise ValueError("Task materialization must name its publishing Node")
++
++
++@dataclass(frozen=True)
++class PutPreparedReceipt(_Wire):
++    reference: PublicationRef
++    prepare_replies: tuple[protocol.StoredContainedPinReply, ...]
++    promote_replies: tuple[protocol.StoredContainedPinReply, ...]
++    materialization: MaterializationReceipt
++    seal_reply: protocol.SealObjectReply | None
++
++    def __post_init__(self):
++        _prepared_fields(self, False)
++        if self.seal_reply is not None:
++            _set(self, "seal_reply", protocol.SealObjectReply)
++            if not self.seal_reply.sealed:
++                raise ValueError("put preparation requires successful Seal")
++
++
++PreparedReceipt: TypeAlias = TaskPreparedReceipt | PutPreparedReceipt
++
++
++@dataclass(frozen=True)
++class OwnerAbortReceipt(_Wire):
++    reference: PublicationRef
++    owner_worker_id: WorkerID
++    abort_id: str
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++        _set(self, "owner_worker_id", WorkerID)
++        _text(self.abort_id, "abort_id")
++
++
++class RetirementReason(str, Enum):
++    GC = "GC"
++    RECONSTRUCTION = "RECONSTRUCTION"
++    PAYLOAD_LOST = "PAYLOAD_LOST"
++
++
++@dataclass(frozen=True)
++class OwnerRetirementReceipt(_Wire):
++    reference: PublicationRef
++    owner_worker_id: WorkerID
++    retirement_id: str
++    reason: RetirementReason
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++        _set(self, "owner_worker_id", WorkerID)
++        _text(self.retirement_id, "retirement_id")
++        if type(self.reason) is not RetirementReason:
++            raise TypeError("reason must be RetirementReason")
++
++
++FenceProof: TypeAlias = OwnerAbortReceipt | OwnerRetirementReceipt | protocol.WorkerDeathRecord
++
++
++@dataclass(frozen=True)
++class TaskRollbackScope(_Wire):
++    reference: PublicationRef
++    rollback_id: str
++    prepare_intents: tuple[int, ...]
++    promote_intents: tuple[int, ...]
++    materialization_started: bool
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++        if type(self.reference.key) is not OutputPublicationID:
++            raise ValueError("Task rollback scope requires a Task publication")
++        _text(self.rollback_id, "rollback_id")
++        for values in (self.prepare_intents, self.promote_intents):
++            if (type(values) is not tuple or any(type(index) is not int or index < 0 for index in values)
++                    or tuple(sorted(set(values))) != values):
++                raise ValueError("rollback indices must be sorted unique non-negative integers")
++        if not set(self.promote_intents).issubset(self.prepare_intents):
++            raise ValueError("promotion intent requires corresponding prepare intent")
++        if type(self.materialization_started) is not bool:
++            raise TypeError("materialization_started must be bool")
++
++
++@dataclass(frozen=True)
++class ClosedContainedHolds(_Wire):
++    reference: PublicationRef
++    releases: tuple[protocol.ReleaseContainedReferenceReply, ...] = ()
++    child_deaths: tuple[protocol.WorkerDeathRecord, ...] = ()
++    rollback_scope: TaskRollbackScope | None = None
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++        releases = _tuple(self.releases, protocol.ReleaseContainedReferenceReply)
++        for reply in releases:
++            if reply.accepted is not True or type(reply.released) is not bool or reply.error is not None:
++                raise ValueError("closed holds require accepted exact Release replies")
++        _unique(tuple((reply.object_id, reply.owner_worker_id, reply.hold) for reply in releases), "releases")
++        object.__setattr__(self, "releases", releases)
++        deaths = tuple(_death(value) for value in _tuple(self.child_deaths, protocol.WorkerDeathRecord))
++        _unique(tuple(death.worker_id for death in deaths), "child deaths")
++        object.__setattr__(self, "child_deaths", deaths)
++        if self.rollback_scope is not None:
++            _set(self, "rollback_scope", TaskRollbackScope)
++            if self.rollback_scope.reference != self.reference:
++                raise ValueError("rollback scope changed publication reference")
++
++
++class PublicationStage(str, Enum):
++    INTENT = "INTENT"
++    PREPARED = "PREPARED"
++    ARMED = "ARMED"
++    TERMINAL = "TERMINAL"
++    COMMITTED = "COMMITTED"
++    ADOPTED = "ADOPTED"
++    FENCED = "FENCED"
++    RETIRED = "RETIRED"
++
++
++@dataclass(frozen=True)
++class PublicationReceipt(_Wire):
++    reference: PublicationRef
++    stage: PublicationStage
++    sequence: int
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++        if type(self.stage) is not PublicationStage:
++            raise TypeError("stage must be PublicationStage")
++        if type(self.sequence) is not int or self.sequence <= 0:
++            raise ValueError("receipt sequence must be positive")
++
++
++@dataclass(frozen=True)
++class BeginPublication(_Wire):
++    publication: Publication
++
++    def __post_init__(self):
++        _set(self, "publication", (TaskPublication, PutPublication))
++
++
++@dataclass(frozen=True)
++class PrepareGraph(_Wire):
++    reference: PublicationRef
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++
++
++@dataclass(frozen=True)
++class ArmTask(_Wire):
++    prepared: TaskPreparedReceipt
++
++    def __post_init__(self):
++        _set(self, "prepared", TaskPreparedReceipt)
++
++
++@dataclass(frozen=True)
++class RecordTerminal(_Wire):
++    complete: OutputPublicationCompleteWitness
++
++    def __post_init__(self):
++        _set(self, "complete", OutputPublicationCompleteWitness)
++
++
++@dataclass(frozen=True)
++class CommitGraph(_Wire):
++    reference: PublicationRef
++    put_prepared: PutPreparedReceipt | None = None
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++        if self.put_prepared is not None:
++            _set(self, "put_prepared", PutPreparedReceipt)
++            if self.put_prepared.reference != self.reference:
++                raise ValueError("put preparation changed commit reference")
++
++
++@dataclass(frozen=True)
++class RecordAdoption(_Wire):
++    proof: OutputPublicationAdoptionProof
++
++    def __post_init__(self):
++        from .output_publication_journal import OutputPublicationAdoptionProof
++        _set(self, "proof", OutputPublicationAdoptionProof)
++
++
++@dataclass(frozen=True)
++class FencePublication(_Wire):
++    publication: Publication
++    proof: FenceProof
++
++    def __post_init__(self):
++        _set(self, "publication", (TaskPublication, PutPublication))
++        _set(self, "proof", (OwnerAbortReceipt, OwnerRetirementReceipt, protocol.WorkerDeathRecord))
++        _validate_fence(self.publication, self.proof)
++
++
++@dataclass(frozen=True)
++class RetireGraph(_Wire):
++    closed_holds: ClosedContainedHolds
++
++    def __post_init__(self):
++        _set(self, "closed_holds", ClosedContainedHolds)
++
++
++@dataclass(frozen=True)
++class GetPublication(_Wire):
++    reference: PublicationRef
++
++    def __post_init__(self):
++        _set(self, "reference", PublicationRef)
++
++
++PublicationRequest: TypeAlias = (BeginPublication | PrepareGraph | ArmTask | RecordTerminal
++                               | CommitGraph | RecordAdoption | FencePublication | RetireGraph | GetPublication)
++_REQUEST_TYPES = (BeginPublication, PrepareGraph, ArmTask, RecordTerminal, CommitGraph,
++                  RecordAdoption, FencePublication, RetireGraph, GetPublication)
++
++
++def request_reference(request):
++    """Read the one exact reference shared by the request variants."""
++    if type(request) in (BeginPublication, FencePublication):
++        return request.publication.reference
++    if type(request) is ArmTask:
++        return request.prepared.reference
++    if type(request) is RetireGraph:
++        return request.closed_holds.reference
++    if type(request) in (RecordTerminal, RecordAdoption):
++        complete = request.complete if type(request) is RecordTerminal else request.proof.complete
++        return PublicationRef(complete.publication_id, complete.manifest_digest)
++    if type(request) in (PrepareGraph, CommitGraph, GetPublication):
++        return request.reference
++    raise TypeError("unknown publication request")
++
++
++@dataclass(frozen=True)
++class PublicationSnapshot(_Wire):
++    publication: Publication
++    receipts: tuple[PublicationReceipt, ...]
++    fence: FenceProof | None = None
++    prepared: PreparedReceipt | None = None
++    complete: OutputPublicationCompleteWitness | None = None
++    adoption: OutputPublicationAdoptionProof | None = None
++    closed_holds: ClosedContainedHolds | None = None
++
++    def __post_init__(self):
++        _set(self, "publication", (TaskPublication, PutPublication))
++        receipts = _tuple(self.receipts, PublicationReceipt)
++        _unique(tuple(receipt.stage for receipt in receipts), "receipt stages")
++        if any(receipt.reference != self.reference for receipt in receipts):
++            raise ValueError("snapshot receipt changed reference")
++        if tuple(sorted(receipts, key=lambda receipt: receipt.sequence)) != receipts:
++            raise ValueError("snapshot receipts must follow original acceptance order")
++        object.__setattr__(self, "receipts", receipts)
++        for name, expected in (("prepared", (TaskPreparedReceipt, PutPreparedReceipt)),
++                               ("complete", OutputPublicationCompleteWitness),
++                               ("closed_holds", ClosedContainedHolds)):
++            if getattr(self, name) is not None:
++                _set(self, name, expected)
++        if self.adoption is not None:
++            from .output_publication_journal import OutputPublicationAdoptionProof
++            _set(self, "adoption", OutputPublicationAdoptionProof)
++        if self.fence is not None:
++            _set(self, "fence", (OwnerAbortReceipt, OwnerRetirementReceipt, protocol.WorkerDeathRecord))
++            _validate_fence(self.publication, self.fence)
++        _validate_snapshot(self)
++
++    @property
++    def reference(self):
++        return self.publication.reference
++
++    @property
++    def forward_open(self):
++        return self.fence is None and self.receipt(PublicationStage.RETIRED) is None
++
++    @property
++    def graph_active(self):
++        return self.receipt(PublicationStage.PREPARED) is not None and self.receipt(PublicationStage.RETIRED) is None
++
++    def receipt(self, stage):
++        return next((receipt for receipt in self.receipts if receipt.stage is stage), None)
++
++
++@dataclass(frozen=True)
++class PublicationReply(_Wire):
++    request: PublicationRequest
++    accepted: bool
++    snapshot: PublicationSnapshot | None = None
++    receipt: PublicationReceipt | None = None
++    error_kind: PublicationErrorKind | None = None
++    error: str | None = None
++
++    def __post_init__(self):
++        _set(self, "request", _REQUEST_TYPES)
++        if type(self.accepted) is not bool:
++            raise TypeError("accepted must be bool")
++        if self.snapshot is not None:
++            _set(self, "snapshot", PublicationSnapshot)
++            if self.snapshot.reference != request_reference(self.request):
++                raise ValueError("reply snapshot changed request reference")
++        if self.receipt is not None:
++            _set(self, "receipt", PublicationReceipt)
++            if self.snapshot is None or self.receipt not in self.snapshot.receipts:
++                raise ValueError("reply receipt must belong to its exact snapshot")
++        if self.accepted:
++            if self.error_kind is not None or self.error is not None:
++                raise ValueError("accepted publication reply cannot carry an error")
++            if type(self.request) is not GetPublication and (self.snapshot is None or self.receipt is None):
++                raise ValueError("accepted mutation requires its snapshot and receipt")
++        elif type(self.error_kind) is not PublicationErrorKind or not self.error or self.receipt is not None:
++            raise ValueError("rejected publication reply requires typed error without success receipt")
++
++
++PUBLICATION_HANDLER = "enhanced_publication"
++
++
++@dataclass(frozen=True)
++class AbortOwnerPublication(_Wire):
++    publication: TaskPublication
++    rollback: TaskRollbackScope
++
++    def __post_init__(self):
++        _set(self, "publication", TaskPublication)
++        _set(self, "rollback", TaskRollbackScope)
++        if self.publication.reference != self.rollback.reference:
++            raise ValueError("owner abort changed rollback reference")
++        _validate_scope(self.publication, self.rollback)
++
++
++@dataclass(frozen=True)
++class AbortOwnerPublicationReply(_Wire):
++    request: AbortOwnerPublication
++    accepted: bool
++    receipt: OwnerAbortReceipt | None = None
++    adoption: OutputPublicationAdoptionProof | None = None
++    error: str | None = None
++
++    def __post_init__(self):
++        _set(self, "request", AbortOwnerPublication)
++        if type(self.accepted) is not bool:
++            raise TypeError("owner abort acceptance must be bool")
++        if self.receipt is not None:
++            _set(self, "receipt", OwnerAbortReceipt)
++            _validate_fence(self.request.publication, self.receipt)
++        if self.adoption is not None:
++            from .output_publication_journal import OutputPublicationAdoptionProof
++            _set(self, "adoption", OutputPublicationAdoptionProof)
++            if (self.adoption.complete.publication_id != self.request.publication.reference.key
++                    or self.adoption.complete.manifest_digest != self.request.publication.reference.digest
++                    or self.adoption.owner_worker_id != self.request.publication.owner_worker_id):
++                raise ValueError("owner abort response changed adoption identity")
++        if self.accepted:
++            if self.receipt is None or self.adoption is not None or self.error is not None:
++                raise ValueError("accepted abort needs only its actual local receipt")
++        elif self.receipt is not None or (self.adoption is None and not self.error):
++            raise ValueError("rejected abort needs adoption history or an error")
++
++
++ABORT_OWNER_PUBLICATION_HANDLER = "abort_owner_publication"
++
++
++def _validate_fence(publication, proof):
++    if type(proof) is protocol.WorkerDeathRecord:
++        if _death(proof).worker_id != publication.owner_worker_id:
++            raise ValueError("death fence names another publication owner")
++    elif proof.reference != publication.reference or proof.owner_worker_id != publication.owner_worker_id:
++        raise ValueError("owner fence changed publication identity")
++
++
++def _validate_prepared(publication, prepared):
++    if prepared.reference != publication.reference:
++        _conflict("preparation changed publication reference")
++    task = type(publication) is TaskPublication
++    if type(prepared) is not (TaskPreparedReceipt if task else PutPreparedReceipt):
++        _conflict("preparation kind changed")
++    transfers = publication.transfers
++    for replies, request_type in ((prepared.prepare_replies, protocol.PrepareStoredContainedPin),
++                                  (prepared.promote_replies, protocol.PromoteStoredContainedPin)):
++        expected = tuple(request_type(transfer, transfer.contained_owner_worker_id) for transfer in transfers)
++        if tuple(reply.request for reply in replies) != expected:
++            _conflict("preparation must cover every exact manifest child in order")
++    node = prepared.materialization.node_incarnation
++    if task:
++        if node != publication.manifest.header.node_incarnation:
++            _conflict("Task materialization changed publishing Node incarnation")
++    else:
++        manifest = publication.manifest
++        if manifest.tier is protocol.ResultStorage.INLINE:
++            if node is not None or prepared.seal_reply is not None:
++                _conflict("INLINE put materialization belongs to its owner")
++        else:
++            reply = prepared.seal_reply
++            if (node is None or reply is None or not reply.sealed
++                    or (reply.object_id, reply.node_id, reply.size_bytes, reply.checksum)
++                    != (publication.object_id, node.node_id, manifest.size_bytes, manifest.checksum)):
++                _conflict("STORED put preparation requires its exact successful Seal")
++
++
++def _validate_scope(publication, scope):
++    if type(publication) is not TaskPublication or scope.reference != publication.reference:
++        _conflict("rollback scope changed Task publication")
++    if any(index >= len(publication.transfers) for index in scope.prepare_intents + scope.promote_intents):
++        _conflict("rollback scope names an absent child")
++
++
++def _validate_closed(snapshot, closed):
++    publication = snapshot.publication
++    if closed.reference != snapshot.reference:
++        _conflict("hold cleanup changed publication identity")
++    scope = closed.rollback_scope
++    if scope is not None:
++        _validate_scope(publication, scope)
++        if snapshot.complete is not None or snapshot.adoption is not None:
++            _state("successful Complete cannot have a rollback scope")
++        if snapshot.prepared is not None and (
++                scope.prepare_intents != tuple(range(len(publication.transfers)))
++                or scope.promote_intents != tuple(range(len(publication.transfers)))
++                or not scope.materialization_started):
++            _conflict("rollback scope contradicts recorded complete preparation")
++        prepared_indices, promoted_indices = set(scope.prepare_intents), set(scope.promote_intents)
++    else:
++        prepared_indices = promoted_indices = set(range(len(publication.transfers)))
++    all_holds, required = set(), set()
++    for index, transfer in enumerate(publication.transfers):
++        provisional = (transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.provisional_hold)
++        final = (transfer.contained_object_id, transfer.contained_owner_worker_id, transfer.final_hold)
++        all_holds.update((provisional, final))
++        if index in prepared_indices:
++            required.add(provisional)
++        if index in promoted_indices:
++            required.add(final)
++        if snapshot.prepared is not None:
++            # Actual recorded promotion atomically tombstoned provisional hold.
++            required.discard(provisional)
++    released = {(reply.object_id, reply.owner_worker_id, reply.hold) for reply in closed.releases}
++    if not released.issubset(all_holds):
++        _conflict("cleanup includes a hold outside its manifest")
++    owners = {transfer.contained_owner_worker_id for transfer in publication.transfers}
++    dead = {death.worker_id for death in closed.child_deaths}
++    if not dead.issubset(owners):
++        _conflict("cleanup death names no manifest child owner")
++    if any(hold not in released and hold[1] not in dead for hold in required):
++        _state("graph retirement requires exact settlement of every possible child hold")
++
++
++def _validate_snapshot(snapshot):
++    has = lambda stage: snapshot.receipt(stage) is not None
++    S = PublicationStage
++    if (snapshot.fence is not None) != has(S.FENCED):
++        raise ValueError("fence fact and receipt must agree")
++    if (snapshot.complete is not None) != has(S.TERMINAL):
++        raise ValueError("Complete fact and terminal receipt must agree")
++    if (snapshot.adoption is not None) != has(S.ADOPTED):
++        raise ValueError("adoption fact and receipt must agree")
++    if (snapshot.closed_holds is not None) != has(S.RETIRED):
++        raise ValueError("closed holds and retired receipt must agree")
++    task = type(snapshot.publication) is TaskPublication
++    if has(S.PREPARED) and not has(S.INTENT):
++        raise ValueError("graph reservation requires INTENT history")
++    if has(S.ARMED) and (not task or not has(S.PREPARED) or snapshot.prepared is None):
++        raise ValueError("ARM requires Task graph and preparation history")
++    if snapshot.prepared is not None:
++        _validate_prepared(snapshot.publication, snapshot.prepared)
++        if not has(S.ARMED if task else S.COMMITTED):
++            raise ValueError("preparation has no matching acceptance receipt")
++    if snapshot.complete is not None:
++        complete = snapshot.complete
++        if (not task or not has(S.ARMED)
++                or (complete.publication_id, complete.manifest_digest) != (snapshot.reference.key, snapshot.reference.digest)):
++            raise ValueError("terminal fact changed armed Task publication")
++    if has(S.COMMITTED) and (not has(S.PREPARED) or (task and snapshot.complete is None)
++                            or (not task and snapshot.prepared is None)):
++        raise ValueError("graph commit lacks exact preparation or Complete")
++    if snapshot.adoption is not None and (not has(S.COMMITTED)
++            or snapshot.adoption.complete != snapshot.complete
++            or snapshot.adoption.owner_worker_id != snapshot.publication.owner_worker_id):
++        raise ValueError("adoption changed committed owner or Complete")
++    if snapshot.closed_holds is not None:
++        if snapshot.fence is None:
++            raise ValueError("retirement requires a forward fence")
++        _validate_closed(snapshot, snapshot.closed_holds)
++    # Facts can arrive after fencing, but causal stages cannot precede their
++    # prerequisites. Original acceptance sequences remain useful after GC.
++    for after, before in ((S.PREPARED, S.INTENT), (S.ARMED, S.PREPARED),
++                          (S.TERMINAL, S.ARMED), (S.COMMITTED, S.PREPARED),
++                          (S.ADOPTED, S.COMMITTED), (S.RETIRED, S.FENCED)):
++        if has(after) and snapshot.receipt(after).sequence <= snapshot.receipt(before).sequence:
++            raise ValueError("publication receipts violate causal acceptance order")
++    if task and has(S.COMMITTED) and snapshot.receipt(S.COMMITTED).sequence <= snapshot.receipt(S.TERMINAL).sequence:
++        raise ValueError("Task graph commit must follow actual terminal acceptance")
++
++
++class PublicationAuthority:
++    """One in-memory authority for publication facts and active graph edges.
++
++    GCS's composition lock surrounds membership checks and these operations.
++    The internal lock makes standalone reducer calls linearizable; no callback
++    or RPC executes here. The record map is history, not object visibility.
++    """
++
++    def __init__(self):
++        self._records: dict[PublicationKey, PublicationSnapshot] = {}
++        self._sequence = 0
++        self._lock = RLock()
++
++    def apply(self, request):
++        request = _copy(request, _REQUEST_TYPES)
++        reference = request_reference(request)
++        with self._lock:
++            try:
++                return self._apply_locked(request)
++            except PublicationError as exc:
++                snapshot = self._records.get(reference.key)
++                if snapshot is not None and snapshot.reference != reference:
++                    snapshot = None
++                return PublicationReply(request, False, snapshot, error_kind=exc.kind, error=str(exc))
++
++    def _apply_locked(self, request):
++        reference = request_reference(request)
++        previous = self._records.get(reference.key)
++        if previous is not None and previous.reference != reference:
++            _conflict("publication key was rebound to another digest")
++        if type(request) is GetPublication:
++            return PublicationReply(request, True, previous)
++        if type(request) in (BeginPublication, FencePublication):
++            publication = request.publication
++            if previous is not None and previous.publication != publication:
++                _conflict("publication request changed its complete manifest or owner route")
++            if previous is None:
++                self._validate_binding(publication, admitting=type(request) is BeginPublication)
++                previous = PublicationSnapshot(publication, ())
++        if previous is None:
++            _state("publication has not been registered")
++        S = PublicationStage
++        stage = {BeginPublication: S.INTENT, PrepareGraph: S.PREPARED, ArmTask: S.ARMED,
++                 RecordTerminal: S.TERMINAL, CommitGraph: S.COMMITTED, RecordAdoption: S.ADOPTED,
++                 FencePublication: S.FENCED, RetireGraph: S.RETIRED}[type(request)]
++        changes = {}
++        receipt = previous.receipt(stage)
++        if type(request) is BeginPublication:
++            self._require_forward(previous)
++        elif type(request) is PrepareGraph:
++            self._require_forward(previous)
++            self._require_stage(previous, S.INTENT)
++            if receipt is None and self._would_cycle(previous.publication):
++                raise PublicationError(PublicationErrorKind.CYCLE, "contained ObjectID edges would form a cycle")
++        elif type(request) is ArmTask:
++            _validate_prepared(previous.publication, request.prepared)
++            if previous.prepared is not None and previous.prepared != request.prepared:
++                _conflict("preparation receipt was rebound")
++            self._require_forward(previous)
++            self._require_stage(previous, S.PREPARED)
++            changes["prepared"] = request.prepared
++        elif type(request) is RecordTerminal:
++            if type(previous.publication) is not TaskPublication:
++                _state("put has no Task Complete")
++            self._require_stage(previous, S.ARMED)
++            if previous.complete is not None and previous.complete != request.complete:
++                _conflict("Complete history was rebound")
++            # Late accurate success is history, even after forward fence.
++            if previous.closed_holds is not None and previous.closed_holds.rollback_scope is not None:
++                _conflict("Complete contradicts the actual rollback decision")
++            changes["complete"] = request.complete
++        elif type(request) is CommitGraph:
++            if type(previous.publication) is PutPublication:
++                if request.put_prepared is None:
++                    _state("put graph commit requires actual preparation")
++                _validate_prepared(previous.publication, request.put_prepared)
++                if previous.prepared is not None and previous.prepared != request.put_prepared:
++                    _conflict("put preparation receipt was rebound")
++                changes["prepared"] = request.put_prepared
++            elif request.put_prepared is not None:
++                _conflict("Task commit cannot carry put preparation")
++            else:
++                self._require_stage(previous, S.TERMINAL)
++            self._require_stage(previous, S.PREPARED)
++            if receipt is None:
++                self._require_forward(previous)
++        elif type(request) is RecordAdoption:
++            self._require_stage(previous, S.COMMITTED)
++            if (request.proof.complete != previous.complete
++                    or request.proof.owner_worker_id != previous.publication.owner_worker_id):
++                _conflict("adoption changed exact owner or Complete")
++            if previous.adoption is not None and previous.adoption != request.proof:
++                _conflict("adoption history was rebound")
++            if receipt is None and type(previous.fence) is OwnerAbortReceipt:
++                _state("an owner abort cannot have an adoption")
++            # Genuine C6 may precede a delayed C7/death/retirement. Preserve
++            # that history without granting any current forward permission.
++            changes["adoption"] = request.proof
++        elif type(request) is FencePublication:
++            if previous.fence is not None and previous.fence != request.proof:
++                _conflict("first forward fence cannot be rebound")
++            if type(request.proof) is OwnerAbortReceipt and previous.adoption is not None:
++                _state("adopted output cannot be aborted")
++            changes["fence"] = request.proof
++        else:
++            if previous.fence is None:
++                _state("graph retirement requires an owner/death forward fence")
++            _validate_closed(previous, request.closed_holds)
++            if previous.closed_holds is not None and previous.closed_holds != request.closed_holds:
++                _conflict("retirement cleanup receipt was rebound")
++            changes["closed_holds"] = request.closed_holds
++        if receipt is not None:
++            return PublicationReply(request, True, previous, receipt)
++        next_sequence = self._sequence + 1
++        receipt = PublicationReceipt(reference, stage, next_sequence)
++        updated = replace(previous, receipts=previous.receipts + (receipt,), **changes)
++        # Reply validation/copy is fallible; prepare it before authority commit.
++        reply = PublicationReply(request, True, updated, receipt)
++        self._records[reference.key] = updated
++        self._sequence = next_sequence
++        return reply
++
++    def _validate_binding(self, publication, *, admitting):
++        for previous in self._records.values():
++            other = previous.publication
++            if other.job_id != publication.job_id:
++                _conflict("the teaching GCS supports one publication job")
++            if other.owner_worker_id == publication.owner_worker_id and other.owner_address != publication.owner_address:
++                _conflict("owner incarnation was rebound to another route")
++            if other.object_id == publication.object_id:
++                if other.owner_worker_id != publication.owner_worker_id:
++                    _conflict("one ObjectID cannot name two owners")
++                # An exact pre-Begin fence is cleanup history, not execution
++                # admission. It must be recordable beside a live successor,
++                # and must not itself claim that an object epoch was started.
++                if not admitting or previous.receipt(PublicationStage.INTENT) is None:
++                    continue
++                if previous.receipt(PublicationStage.RETIRED) is None:
++                    _state("old publication must retire before the next object epoch")
++                if publication.reference.key.attempt_id.attempt_number <= other.reference.key.attempt_id.attempt_number:
++                    _state("retired object publication requires a newer attempt")
++        owners = {}
++        for previous in tuple(self._records.values()) + (PublicationSnapshot(publication, ()),):
++            item = previous.publication
++            entries = ((item.object_id, item.owner_worker_id),) + tuple(
++                (transfer.contained_object_id, transfer.contained_owner_worker_id) for transfer in item.transfers)
++            for object_id, owner in entries:
++                if owners.setdefault(object_id, owner) != owner:
++                    _conflict("contained ObjectID owner credentials conflict")
++
++    def _would_cycle(self, publication):
++        adjacency = {}
++        for item in [record.publication for record in self._records.values() if record.graph_active] + [publication]:
++            adjacency.setdefault(item.object_id, set()).update(transfer.contained_object_id for transfer in item.transfers)
++        # Iterative DFS keeps graph size independent from Python call depth.
++        done, active = set(), set()
++        for vertex in adjacency:
++            if vertex in done:
++                continue
++            stack = [(vertex, False)]
++            while stack:
++                node, leaving = stack.pop()
++                if leaving:
++                    active.discard(node)
++                    done.add(node)
++                elif node in active:
++                    return True
++                elif node not in done:
++                    active.add(node)
++                    stack.append((node, True))
++                    stack.extend((child, False) for child in adjacency.get(node, ()))
++        return False
++
++    @staticmethod
++    def _require_forward(snapshot):
++        if not snapshot.forward_open:
++            _state("publication forward permission is fenced")
++
++    @staticmethod
++    def _require_stage(snapshot, stage):
++        if snapshot.receipt(stage) is None:
++            _state(f"publication requires {stage.value} history")
++
++    def snapshots(self):
++        with self._lock:
++            return tuple(_copy(snapshot) for snapshot in self._records.values())
++
++    def for_owner(self, owner_worker_id):
++        owner_worker_id = _copy(owner_worker_id, WorkerID)
++        return tuple(snapshot for snapshot in self.snapshots() if snapshot.publication.owner_worker_id == owner_worker_id)
++
++    def begin(self, request): return self._typed(request, BeginPublication)
++    def prepare(self, request): return self._typed(request, PrepareGraph)
++    def arm(self, request): return self._typed(request, ArmTask)
++    def terminal(self, request): return self._typed(request, RecordTerminal)
++    def commit(self, request): return self._typed(request, CommitGraph)
++    def adopt(self, request): return self._typed(request, RecordAdoption)
++    def fence(self, request): return self._typed(request, FencePublication)
++    def retire(self, request): return self._typed(request, RetireGraph)
++    def query(self, request): return self._typed(request, GetPublication)
++
++    def _typed(self, request, expected):
++        if type(request) is not expected:
++            raise TypeError(f"expected {expected.__name__}")
++        return self.apply(request)
++
++
++_WIRE_TYPES = tuple(value for value in tuple(globals().values())
++                    if isinstance(value, type) and issubclass(value, _Wire) and value is not _Wire)
++__all__ = [value.__name__ for value in _WIRE_TYPES] + [
++    "PublicationKey", "Publication", "PreparedReceipt", "FenceProof", "PublicationRequest",
++    "PublicationStage", "RetirementReason", "PublicationErrorKind", "PublicationError",
++    "PublicationAuthority", "PUBLICATION_HANDLER", "ABORT_OWNER_PUBLICATION_HANDLER", "request_reference",
++]
+--- /dev/null
++++ b/src/miniray/enhanced_publication_client.py
+@@ -0,0 +1,109 @@
++"""Owner-side exact RPC composition for the two teaching guarantees.
++
++This module owns no READY, reference-count, graph or resource authority. It
++retains metadata needed to address the GCS after local GC; each caller still
++serializes its local decision and rechecks it after RPC. Bytes never go here.
++"""
++from __future__ import annotations
++
++from dataclasses import replace
++from threading import RLock
++
++from . import enhanced_publication as wire
++from .errors import SystemTaskError
++
++
++class PublicationRejected(SystemTaskError):
++    def __init__(self, reply):
++        self.reply = reply
++        super().__init__(reply.error or 'GCS rejected publication')
++
++
++class PublicationClient:
++    def __init__(self, rpc):
++        self._rpc = rpc
++        self._publications = {}
++        self._current = {}
++        self._lock = RLock()
++
++    def remember(self, publication):
++        publication = replace(publication)
++        reference = publication.reference
++        with self._lock:
++            previous = self._publications.setdefault(reference, publication)
++            if previous != publication:
++                raise SystemTaskError('owner publication metadata changed')
++            current = self._current.get(publication.object_id)
++            if current is None or current.key.attempt_id.attempt_number <= reference.key.attempt_id.attempt_number:
++                self._current[publication.object_id] = reference
++        return replace(publication)
++
++    def current(self, object_id):
++        with self._lock:
++            reference = self._current.get(object_id)
++            publication = self._publications.get(reference)
++            return None if publication is None else replace(publication)
++
++    def call(self, request, stage=None):
++        request = replace(request)
++        reply = self._rpc(wire.PUBLICATION_HANDLER, request)
++        if type(reply) is not wire.PublicationReply:
++            raise SystemTaskError('invalid GCS publication reply')
++        reply = replace(reply)
++        if reply.request != request:
++            raise SystemTaskError('GCS publication reply changed its request')
++        if not reply.accepted:
++            raise PublicationRejected(reply)
++        if stage is not None and (reply.receipt is None or reply.receipt.stage is not stage):
++            raise SystemTaskError('GCS reply lacks its exact stage receipt')
++        return reply
++
++    def query(self, publication):
++        return self.call(wire.GetPublication(publication.reference)).snapshot
++
++    def begin(self, publication):
++        self.remember(publication)
++        self.call(wire.BeginPublication(publication), wire.PublicationStage.INTENT)
++        reply = self.call(wire.PrepareGraph(publication.reference), wire.PublicationStage.PREPARED)
++        if not reply.snapshot.forward_open:
++            raise SystemTaskError('historical graph reservation is not forward permission')
++        return reply
++
++    def commit_task(self, publication, complete):
++        if wire.PublicationRef(complete.publication_id, complete.manifest_digest) != publication.reference:
++            raise SystemTaskError('Task Complete changed the publication being committed')
++        self.call(wire.RecordTerminal(complete), wire.PublicationStage.TERMINAL)
++        reply = self.call(wire.CommitGraph(publication.reference), wire.PublicationStage.COMMITTED)
++        if not reply.snapshot.forward_open:
++            raise SystemTaskError('fenced graph commit cannot authorize owner publication')
++        return reply.receipt
++
++    def commit_put(self, publication, prepared):
++        reply = self.call(wire.CommitGraph(publication.reference, prepared), wire.PublicationStage.COMMITTED)
++        if not reply.snapshot.forward_open:
++            raise SystemTaskError('fenced put graph cannot authorize owner installation')
++        return reply.receipt
++
++    def adopt(self, proof):
++        return self.call(wire.RecordAdoption(proof), wire.PublicationStage.ADOPTED).receipt
++
++    def fence(self, publication, decision):
++        """Ensure an existing exact record is closed; do not ACK a new choice.
++
++GC can follow an earlier Node-loss abort. Returning that canonical history
++is a barrier only, never a receipt asserting this later decision committed.
++"""
++        snapshot = self.query(publication)
++        if snapshot is not None and snapshot.receipt(wire.PublicationStage.RETIRED) is not None:
++            return snapshot.receipt(wire.PublicationStage.RETIRED)
++        if snapshot is not None and snapshot.fence is not None:
++            return snapshot.receipt(wire.PublicationStage.FENCED)
++        return self.call(wire.FencePublication(publication, decision), wire.PublicationStage.FENCED).receipt
++
++    def retire(self, publication, releases, deaths=()):
++        """Ensure this membership is retired, preserving its first proof."""
++        snapshot = self.query(publication)
++        if snapshot is not None and snapshot.receipt(wire.PublicationStage.RETIRED) is not None:
++            return snapshot.receipt(wire.PublicationStage.RETIRED)
++        closed = wire.ClosedContainedHolds(publication.reference, tuple(releases), tuple(deaths))
++        return self.call(wire.RetireGraph(closed), wire.PublicationStage.RETIRED).receipt
+--- /dev/null
++++ b/src/miniray/enhanced_publication_control.py
+@@ -0,0 +1,324 @@
++"""GCS composition for the two teaching publication guarantees.
++
++Membership and the pure graph/fact reducer share GCS's existing lock. Remote
++cleanup runs outside that lock on the existing owner-death progress driver.
++This adapter records exact cleanup work, never bytes, READY or child refcounts.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field, replace
++
++from . import enhanced_publication as ep, output_protocol, protocol
++from .death_proofs import owner_death as copy_owner_death
++
++
++@dataclass
++class _DeathCleanup:
++    publication: ep.Publication
++    death: protocol.WorkerDeathRecord
++    releases: dict = field(default_factory=dict)
++    child_deaths: dict = field(default_factory=dict)
++    closed_holds: ep.ClosedContainedHolds | None = None
++    node_fenced: bool = False
++    node_finalized: bool = False
++    finished: bool = False
++    inflight: bool = False
++
++
++class EnhancedPublicationControl:
++    """Narrow membership adapter and replayable dead-owner cleanup outbox."""
++
++    def __init__(self, *, nodes, workers, owner_fences, lock, rpc, authority=None):
++        self.nodes, self.workers = nodes, workers
++        self.owner_fences, self.lock, self.rpc = owner_fences, lock, rpc
++        self.authority = authority if authority is not None else ep.PublicationAuthority()
++        self._deaths = {}
++        self._cursor = 0
++        self._admission_closed = False
++
++    def handle(self, request):
++        if type(request) not in (ep.BeginPublication, ep.PrepareGraph, ep.ArmTask,
++                ep.RecordTerminal, ep.CommitGraph, ep.RecordAdoption,
++                ep.FencePublication, ep.RetireGraph, ep.GetPublication):
++            raise TypeError('unsupported enhanced publication request')
++        request = replace(request)
++        with self.lock:
++            query = self.authority.query(ep.GetPublication(ep.request_reference(request)))
++            if not query.accepted:
++                return ep.PublicationReply(request, False, error_kind=query.error_kind, error=query.error)
++            snapshot = query.snapshot
++            if (type(request) is ep.BeginPublication and self._admission_closed
++                    and (snapshot is None or snapshot.receipt(ep.PublicationStage.INTENT) is None)):
++                return ep.PublicationReply(
++                    request, False, error_kind=ep.PublicationErrorKind.INVALID_STATE,
++                    error='GCS shutdown closed new publication admission',
++                )
++            publication = (request.publication if type(request) in
++                (ep.BeginPublication, ep.FencePublication) else
++                None if snapshot is None else snapshot.publication)
++            try:
++                if type(request) is ep.FencePublication and type(request.proof) is protocol.WorkerDeathRecord:
++                    death = self._validated_death(request.proof)
++                    if death.worker_id != publication.owner_worker_id:
++                        raise ValueError('publication death names another owner')
++                    # A later membership fact schedules cleanup without rebinding
++                    # the exact first owner GC/abort decision.
++                    if (snapshot is not None and snapshot.publication == publication
++                            and snapshot.fence is not None and snapshot.fence != death):
++                        self.commit_owner_death(death)
++                        return ep.PublicationReply(request, True, snapshot,
++                            snapshot.receipt(ep.PublicationStage.FENCED))
++                if type(request) is ep.RetireGraph:
++                    self._validate_closed_deaths(request.closed_holds)
++                stage = {ep.BeginPublication: ep.PublicationStage.INTENT,
++                         ep.PrepareGraph: ep.PublicationStage.PREPARED,
++                         ep.ArmTask: ep.PublicationStage.ARMED}.get(type(request))
++                if stage is not None and (snapshot is None or snapshot.receipt(stage) is None):
++                    if publication is not None:
++                        self._require_owner_open(publication.owner_worker_id)
++                        if type(publication) is ep.TaskPublication:
++                            self._require_publisher_open(publication)
++                if type(request) is ep.CommitGraph and (snapshot is None or snapshot.receipt(ep.PublicationStage.COMMITTED) is None):
++                    if publication is not None:
++                        self._require_owner_open(publication.owner_worker_id)
++                    if request.put_prepared is not None:
++                        incarnation = request.put_prepared.materialization.node_incarnation
++                        if incarnation is not None:
++                            self._require_node_open(incarnation)
++            except Exception as exc:
++                return ep.PublicationReply(request, False, error_kind=ep.PublicationErrorKind.UNAVAILABLE,
++                                           error=str(exc) or type(exc).__name__)
++            reply = self.authority.apply(request)
++            if reply.accepted and reply.snapshot is not None and type(request) is not ep.GetPublication:
++                death = self._owner_death(reply.snapshot.publication.owner_worker_id)
++                if death is not None:
++                    self.commit_owner_death(death)
++            return reply
++
++    def _require_node_open(self, incarnation):
++        node = self.nodes.get(incarnation.node_id)
++        if (node.state is not protocol.NodeMembershipState.ALIVE
++                or (node.node_pid, node.registration_epoch) !=
++                (incarnation.node_pid, incarnation.registration_epoch)):
++            raise ValueError('publishing Node is not the exact live incarnation')
++        return node
++
++    def _require_publisher_open(self, publication):
++        header = publication.manifest.header
++        self._require_node_open(header.node_incarnation)
++        worker = self.workers.get(header.executor_worker_id)
++        incarnation = worker.incarnation
++        node = header.node_incarnation
++        if (worker.state is not protocol.WorkerMembershipState.ALIVE
++                or (incarnation.node_id, incarnation.node_pid, incarnation.node_registration_epoch)
++                != (node.node_id, node.node_pid, node.registration_epoch)):
++            raise ValueError('publisher is not the exact registered live Worker')
++
++    def _require_owner_open(self, owner):
++        try:
++            worker = self.workers.get(owner)
++        except KeyError:
++            # First Begin freezes the actual owner-handoff/local-put route. An
++            # unmanaged endpoint is not a registered Driver or liveness proof.
++            return
++        if worker.state is not protocol.WorkerMembershipState.ALIVE:
++            raise ValueError('publication owner is death-fenced')
++        node = self.nodes.get(worker.incarnation.node_id)
++        if (node.state is not protocol.NodeMembershipState.ALIVE
++                or (node.node_pid, node.registration_epoch) !=
++                (worker.incarnation.node_pid, worker.incarnation.node_registration_epoch)):
++            raise ValueError('publication owner Node is not alive')
++
++    def _validated_death(self, death):
++        death = copy_owner_death(death)
++        worker = self.workers.get(death.worker_id)
++        if (worker.state is not protocol.WorkerMembershipState.DEAD
++                or worker.incarnation != death.incarnation or worker.death != death
++                or death.reason not in (protocol.WorkerDeathReason.PROCESS_EXIT,
++                                        protocol.WorkerDeathReason.NODE_EXIT)):
++            raise ValueError('cleanup lacks an exact committed owner death')
++        return death
++
++    def _owner_death(self, owner):
++        try:
++            worker = self.workers.get(owner)
++        except KeyError:
++            return None
++        if worker.state is protocol.WorkerMembershipState.DEAD and worker.death is not None:
++            if worker.death.reason in (protocol.WorkerDeathReason.PROCESS_EXIT, protocol.WorkerDeathReason.NODE_EXIT):
++                return self._validated_death(worker.death)
++        return None
++
++    def _validate_closed_deaths(self, closed):
++        for death in closed.child_deaths:
++            self._validated_death(death)
++
++    def commit_owner_death(self, death):
++        """Idempotent local admission; callers hold the membership lock."""
++        with self.lock:
++            death = self._validated_death(death)
++            for snapshot in self.authority.for_owner(death.worker_id):
++                publication = snapshot.publication
++                if snapshot.fence is None:
++                    reply = self.authority.fence(ep.FencePublication(publication, death))
++                    if not reply.accepted:
++                        raise ValueError(reply.error or 'owner death fence was rejected')
++                key = publication.reference
++                work = self._deaths.get(key)
++                if work is None:
++                    self._deaths[key] = _DeathCleanup(
++                        publication, death, closed_holds=snapshot.closed_holds,
++                    )
++                elif work.death != death or work.publication != publication:
++                    raise ValueError('publication owner death was rebound')
++
++    def pending_deaths(self):
++        with self.lock:
++            return tuple(key for key, work in self._deaths.items() if not work.finished)
++
++    def close_admission(self):
++        """Permanently reject new INTENT while preserving cleanup/history.
++
++        Existing unretired records already prevent final shutdown. Their
++        pending operations can converge while the process remains available;
++        no new publication can slip behind the final clean observation.
++        """
++        with self.lock:
++            self._admission_closed = True
++
++    def has_active_operations(self):
++        """Final shutdown only; live publications need normal owner GC first."""
++        with self.lock:
++            return (any(not work.finished for work in self._deaths.values())
++                    or any(snapshot.receipt(ep.PublicationStage.RETIRED) is None
++                           for snapshot in self.authority.snapshots()))
++
++    def drive_one(self):
++        with self.lock:
++            pending = [(key, work) for key, work in self._deaths.items()
++                       if not work.finished and not work.inflight]
++            if not pending:
++                return False
++            key, work = pending[self._cursor % len(pending)]
++            self._cursor += 1
++            work.inflight = True
++        try:
++            return self._drive(work)
++        except (KeyboardInterrupt, SystemExit):
++            raise
++        except Exception:
++            # Neither timeout nor rejected/malformed reply removes a duty.
++            return False
++        finally:
++            with self.lock:
++                work.inflight = False
++
++    def _node_death(self, publication):
++        incarnation = publication.manifest.header.node_incarnation
++        node = self.nodes.get(incarnation.node_id)
++        if ((node.node_pid, node.registration_epoch) !=
++                (incarnation.node_pid, incarnation.registration_epoch)):
++            raise ValueError('publishing Node incarnation changed')
++        if node.state is protocol.NodeMembershipState.DEAD:
++            death = node.death
++            if death is None or death.reason is not protocol.NodeDeathReason.PROCESS_EXIT:
++                raise ValueError('expected Node exit cannot hide publication cleanup')
++            return death
++        return None
++
++    def _drive(self, work):
++        publication = work.publication
++        if type(publication) is ep.TaskPublication and not work.node_finalized:
++            with self.lock:
++                node_death = self._node_death(publication)
++                if node_death is not None:
++                    work.node_finalized = True
++            if node_death is None:
++                node_id = publication.manifest.header.node_incarnation.node_id
++                # A narrow fence closes late writes without pretending to have
++                # completed the independent owner-wide physical sweep.
++                fence = protocol.InstallOwnerDeathFence(
++                    'publication-fence:' + publication.reference.digest + ':' + work.death.detection_id,
++                    work.death, node_id, (), protocol.OwnerDeathFenceScope.PUBLICATION_EXACT)
++                if not work.node_fenced:
++                    reply = self.rpc(self.nodes.address(node_id), 'install_owner_death_fence', fence)
++                    if type(reply) is not protocol.InstallOwnerDeathFenceReply or reply.request != fence or not reply.accepted:
++                        return False
++                    with self.lock:
++                        work.node_fenced = True
++                    return True
++                request = output_protocol.FinalizeOutputOwnerDeath(publication.manifest, work.death)
++                reply = self.rpc(self.nodes.address(node_id), output_protocol.FINALIZE_OUTPUT_OWNER_DEATH_HANDLER, request)
++                if type(reply) is not output_protocol.FinalizeOutputOwnerDeathReply:
++                    return False
++                reply = replace(reply)
++                if reply.request != request or not reply.cleaned or reply.closed_holds is None:
++                    return False
++                with self.lock:
++                    closed = replace(reply.closed_holds)
++                    if closed.reference != publication.reference:
++                        raise ValueError('Node cleanup changed publication')
++                    self._validate_closed_deaths(closed)
++                    work.closed_holds = closed
++                    work.node_finalized = True
++                return True
++        if work.closed_holds is None:
++            if self._release_one(work):
++                return True
++            with self.lock:
++                needed = self._release_requests(publication)
++                if any(request not in work.releases and request.owner_worker_id not in work.child_deaths
++                       for _, request in needed):
++                    return False
++                work.closed_holds = ep.ClosedContainedHolds(publication.reference,
++                    tuple(work.releases.values()), tuple(work.child_deaths.values()))
++        with self.lock:
++            snapshot = self.authority.query(ep.GetPublication(publication.reference)).snapshot
++            if snapshot is None:
++                raise ValueError('death cleanup lost publication history')
++            if snapshot.receipt(ep.PublicationStage.RETIRED) is None:
++                reply = self.authority.retire(ep.RetireGraph(work.closed_holds))
++                if not reply.accepted:
++                    return False
++            # Full publication death cleanup waits for the independently owned
++            # survivor byte sweep, even though graph edges may be retired first.
++            if self.owner_fences.pending_for_owner(work.death.worker_id):
++                return False
++            work.finished = True
++            return True
++
++    @staticmethod
++    def _release_requests(publication):
++        # RPC callers receive detached nested IDs, never references into this
++        # adapter's retained immutable manifest (including injected in-process
++        # transports used by the finite contract checks).
++        publication = replace(publication)
++        return tuple((transfer.contained_owner_address, protocol.ReleaseContainedReference(
++            transfer.contained_object_id, transfer.contained_owner_worker_id, hold))
++            for transfer in publication.transfers
++            for hold in (transfer.final_hold, transfer.provisional_hold))
++
++    def _release_one(self, work):
++        with self.lock:
++            for address, request in self._release_requests(work.publication):
++                if request in work.releases or request.owner_worker_id in work.child_deaths:
++                    continue
++                death = self._owner_death(request.owner_worker_id)
++                if death is not None:
++                    work.child_deaths[request.owner_worker_id] = death
++                    return True
++                break
++            else:
++                return False
++        expected = next(candidate for _, candidate in self._release_requests(work.publication)
++                        if candidate == request)
++        reply = self.rpc(address, 'release_contained_reference', request)
++        if type(reply) is not protocol.ReleaseContainedReferenceReply:
++            return False
++        reply = replace(reply)
++        if (not reply.accepted or (reply.object_id, reply.owner_worker_id, reply.hold)
++                != (expected.object_id, expected.owner_worker_id, expected.hold)):
++            return False
++        with self.lock:
++            work.releases[expected] = reply
++        return True
+--- a/src/miniray/golden_traces/ordinary_task_success.json
++++ b/src/miniray/golden_traces/ordinary_task_success.json
+@@ -1,9 +1,9 @@
+ {
+   "schema": "miniray.trace-contract/v1",
+   "name": "ordinary_task_success",
+-  "title": "ordinary task: direct submission, owner handoff, result readiness and custody retirement",
++  "title": "ordinary task: central publication receipts, owner readiness and reply custody retirement",
+   "participants": {
+-    "gcs": "GCS-lite",
++    "gcs": "GCS publication coordinator",
+     "core_worker": "Owner CoreWorker",
+     "node": "NodeServer",
+     "worker": "Execution Worker",
+@@ -180,6 +180,114 @@
+       "show_fields": [
+         "storage"
+       ]
++    },
++    {
++      "key": "gcs_intent",
++      "component": "gcs",
++      "event": "enhanced_publication_stage",
++      "fields": {
++        "task_id": "$task_id",
++        "attempt_id": "$attempt_id",
++        "lease_id": "$lease_id",
++        "manifest_digest": "$manifest_digest",
++        "object_id": "$object_id",
++        "stage": "INTENT",
++        "request_type": "BeginPublication"
++      },
++      "show_fields": [
++        "stage",
++        "request_type"
++      ]
++    },
++    {
++      "key": "gcs_prepared",
++      "component": "gcs",
++      "event": "enhanced_publication_stage",
++      "fields": {
++        "task_id": "$task_id",
++        "attempt_id": "$attempt_id",
++        "lease_id": "$lease_id",
++        "manifest_digest": "$manifest_digest",
++        "object_id": "$object_id",
++        "stage": "PREPARED",
++        "request_type": "PrepareGraph"
++      },
++      "show_fields": [
++        "stage",
++        "request_type"
++      ]
++    },
++    {
++      "key": "gcs_armed",
++      "component": "gcs",
++      "event": "enhanced_publication_stage",
++      "fields": {
++        "task_id": "$task_id",
++        "attempt_id": "$attempt_id",
++        "lease_id": "$lease_id",
++        "manifest_digest": "$manifest_digest",
++        "object_id": "$object_id",
++        "stage": "ARMED",
++        "request_type": "ArmTask"
++      },
++      "show_fields": [
++        "stage",
++        "request_type"
++      ]
++    },
++    {
++      "key": "gcs_terminal",
++      "component": "gcs",
++      "event": "enhanced_publication_stage",
++      "fields": {
++        "task_id": "$task_id",
++        "attempt_id": "$attempt_id",
++        "lease_id": "$lease_id",
++        "manifest_digest": "$manifest_digest",
++        "object_id": "$object_id",
++        "stage": "TERMINAL",
++        "request_type": "RecordTerminal"
++      },
++      "show_fields": [
++        "stage",
++        "request_type"
++      ]
++    },
++    {
++      "key": "gcs_committed",
++      "component": "gcs",
++      "event": "enhanced_publication_stage",
++      "fields": {
++        "task_id": "$task_id",
++        "attempt_id": "$attempt_id",
++        "lease_id": "$lease_id",
++        "manifest_digest": "$manifest_digest",
++        "object_id": "$object_id",
++        "stage": "COMMITTED",
++        "request_type": "CommitGraph"
++      },
++      "show_fields": [
++        "stage",
++        "request_type"
++      ]
++    },
++    {
++      "key": "gcs_adopted",
++      "component": "gcs",
++      "event": "enhanced_publication_stage",
++      "fields": {
++        "task_id": "$task_id",
++        "attempt_id": "$attempt_id",
++        "lease_id": "$lease_id",
++        "manifest_digest": "$manifest_digest",
++        "object_id": "$object_id",
++        "stage": "ADOPTED",
++        "request_type": "RecordAdoption"
++      },
++      "show_fields": [
++        "stage",
++        "request_type"
++      ]
+     }
+   ],
+   "rpcs": [
+@@ -256,6 +364,60 @@
+       "reply_event": "payload_retired",
+       "round_trip": true,
+       "reply_ok": "true"
++    },
++    {
++      "key": "gcs_intent_rpc",
++      "client": "node",
++      "server": "gcs",
++      "handler": "enhanced_publication",
++      "server_event": "gcs_intent",
++      "round_trip": true,
++      "reply_ok": "true"
++    },
++    {
++      "key": "gcs_prepared_rpc",
++      "client": "node",
++      "server": "gcs",
++      "handler": "enhanced_publication",
++      "server_event": "gcs_prepared",
++      "round_trip": true,
++      "reply_ok": "true"
++    },
++    {
++      "key": "gcs_armed_rpc",
++      "client": "node",
++      "server": "gcs",
++      "handler": "enhanced_publication",
++      "server_event": "gcs_armed",
++      "round_trip": true,
++      "reply_ok": "true"
++    },
++    {
++      "key": "gcs_terminal_rpc",
++      "client": "core_worker",
++      "server": "gcs",
++      "handler": "enhanced_publication",
++      "server_event": "gcs_terminal",
++      "round_trip": true,
++      "reply_ok": "true"
++    },
++    {
++      "key": "gcs_committed_rpc",
++      "client": "core_worker",
++      "server": "gcs",
++      "handler": "enhanced_publication",
++      "server_event": "gcs_committed",
++      "round_trip": true,
++      "reply_ok": "true"
++    },
++    {
++      "key": "gcs_adopted_rpc",
++      "client": "core_worker",
++      "server": "gcs",
++      "handler": "enhanced_publication",
++      "server_event": "gcs_adopted",
++      "round_trip": true,
++      "reply_ok": "true"
+     }
+   ],
+   "orders": [
+@@ -341,6 +503,42 @@
+     },
+     {
+       "before": "owner_ready",
++      "after": "retire_rpc.request_sent"
++    },
++    {
++      "before": "register_handoff_rpc.reply_received",
++      "after": "gcs_intent_rpc.request_sent"
++    },
++    {
++      "before": "gcs_intent_rpc.reply_received",
++      "after": "gcs_prepared_rpc.request_sent"
++    },
++    {
++      "before": "gcs_prepared_rpc.reply_received",
++      "after": "gcs_armed_rpc.request_sent"
++    },
++    {
++      "before": "gcs_armed_rpc.reply_received",
++      "after": "prepare_rpc.reply_sent"
++    },
++    {
++      "before": "push_rpc.reply_received",
++      "after": "gcs_terminal_rpc.request_sent"
++    },
++    {
++      "before": "gcs_terminal_rpc.reply_received",
++      "after": "gcs_committed_rpc.request_sent"
++    },
++    {
++      "before": "gcs_committed_rpc.reply_received",
++      "after": "owner_ready"
++    },
++    {
++      "before": "owner_ready",
++      "after": "gcs_adopted_rpc.request_sent"
++    },
++    {
++      "before": "gcs_adopted_rpc.reply_received",
+       "after": "retire_rpc.request_sent"
+     }
+   ],
+@@ -394,13 +592,31 @@
+     "prepare_rpc.request_sent",
+     "register_handoff_rpc.request_sent",
+     "register_handoff_rpc.reply_received",
++    "gcs_intent_rpc.request_sent",
++    "gcs_intent",
++    "gcs_intent_rpc.reply_received",
++    "gcs_prepared_rpc.request_sent",
++    "gcs_prepared",
++    "gcs_prepared_rpc.reply_received",
++    "gcs_armed_rpc.request_sent",
++    "gcs_armed",
++    "gcs_armed_rpc.reply_received",
+     "prepare_rpc.reply_received",
+     "complete_rpc.request_sent",
+     "node_complete",
+     "complete_rpc.reply_received",
+     "worker_succeeded",
+     "push_rpc.reply_received",
++    "gcs_terminal_rpc.request_sent",
++    "gcs_terminal",
++    "gcs_terminal_rpc.reply_received",
++    "gcs_committed_rpc.request_sent",
++    "gcs_committed",
++    "gcs_committed_rpc.reply_received",
+     "owner_ready",
++    "gcs_adopted_rpc.request_sent",
++    "gcs_adopted",
++    "gcs_adopted_rpc.reply_received",
+     "retire_rpc.request_sent",
+     "retire_rpc.reply_received",
+     "payload_retired",
+--- a/src/miniray/node.py
++++ b/src/miniray/node.py
+@@ -36,7 +36,7 @@
+     RELEASE_CONTAINED_REFERENCE_HANDLER,
+ )
+ from .publication_gate import (
+-    OutputPublicationGate, OutputPublicationGateArrival,
++    GraphReservationOutcome, OutputPublicationGate, OutputPublicationGateArrival,
+     OutputPublicationGateConfig, OutputPublicationGatePhase,
+ )
+ from .placement import Bundle, BundleReservationLedger, ReservationState
+@@ -1094,9 +1094,62 @@
+             if reply.snapshot.phase is not OutputHandoffPhase.ABORTED:
+                 raise OutputPublicationRemoteError('owner did not fence rolled-back handoff')
+ 
++        def publication_value(manifest):
++            from .enhanced_publication import TaskPublication
++            with self._state_lock:
++                record = self._output_lease_record_locked(manifest, allow_owner_dead=True)
++                address = record.request.requester_owner_address
++            if address is None:
++                raise OutputPublicationRemoteError('publication lease has no owner endpoint')
++            return TaskPublication(manifest, address)
++
++        def publication_rpc(request):
++            from .enhanced_publication import PUBLICATION_HANDLER, RecordTerminal, PublicationReply, PublicationStage
++            with self._state_lock:
++                address = self._gcs_address
++            if address is None:
++                raise OutputPublicationRemoteError('enhanced publication requires a GCS endpoint')
++            gate = getattr(self, '_output_publication_gate', None)
++            phase = None if gate is None else gate.config.phase
++            terminal_gate = type(request) is RecordTerminal and phase in (
++                OutputPublicationGatePhase.BEFORE_TERMINAL_REPORT,
++                OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK)
++            if terminal_gate:
++                manifest = self._output_publication_journal.snapshot(request.complete.publication_id).manifest
++                self._validate_terminal_gate_complete(manifest, request.complete)
++                if phase is OutputPublicationGatePhase.BEFORE_TERMINAL_REPORT:
++                    gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
++            reply = self._background_rpc(address, PUBLICATION_HANDLER, request)
++            if terminal_gate and phase is OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK:
++                if type(reply) is not PublicationReply:
++                    raise OutputPublicationConflictError('terminal gate requires the actual GCS reply')
++                reply = replace(reply)
++                if (reply.request != request or not reply.accepted or reply.snapshot.complete != request.complete
++                        or reply.receipt.stage is not PublicationStage.TERMINAL):
++                    raise OutputPublicationConflictError('terminal gate requires actual GCS acceptance')
++                # Intercept the real reply before the adapter records its ACK.
++                # Both direct-result and supervisor paths share this gate; a
++                # release deliberately drops the reply, never returns success.
++                gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
++                raise TimeoutError('test transport discarded accepted GCS terminal reply')
++            return reply
++
++        def abort_owner(publication, scope):
++            from .enhanced_publication import (AbortOwnerPublication, AbortOwnerPublicationReply,
++                                               ABORT_OWNER_PUBLICATION_HANDLER)
++            request = AbortOwnerPublication(publication, scope)
++            reply = self._background_rpc(publication.owner_address, ABORT_OWNER_PUBLICATION_HANDLER, request)
++            if type(reply) is not AbortOwnerPublicationReply:
++                raise OutputPublicationConflictError('owner returned invalid abort proof')
++            reply = replace(reply)
++            if reply.request != request or not reply.accepted or reply.receipt is None:
++                raise OutputPublicationRemoteError(reply.error or 'owner did not acknowledge exact abort')
++            return reply.receipt
++
+         return OutputPublicationNodeAdapter(
+             self._output_publication_journal, register_owner=register,
+             report_complete=complete, report_rollback=rollback,
++            publication_value=publication_value, publication_rpc=publication_rpc, abort_owner=abort_owner,
+             prepare_child=lambda address, request: self._background_rpc(address, PREPARE_STORED_CONTAINED_PIN_HANDLER, request),
+             promote_child=lambda address, request: self._background_rpc(address, PROMOTE_STORED_CONTAINED_PIN_HANDLER, request),
+             release_child=self._release_output_child_pin,
+@@ -1231,7 +1284,7 @@
+             )
+         return reply
+ 
+-    def _output_lease_record_locked(self, manifest: OutputPublicationManifest) -> _LeaseRecord:
++    def _output_lease_record_locked(self, manifest: OutputPublicationManifest, *, allow_owner_dead=False) -> _LeaseRecord:
+         header, identity = manifest.header, manifest.publication_id
+         record = self._leases.get(identity.lease_id)
+         if record is None:
+@@ -1242,7 +1295,7 @@
+             raise OutputPublicationConflictError("output manifest changed lease execution binding")
+         if record.output_publication_id not in (None, identity):
+             raise OutputPublicationConflictError("lease output publication was rebound")
+-        if header.owner_worker_id in getattr(self, "_owner_death_fences", {}):
++        if not allow_owner_dead and header.owner_worker_id in getattr(self, "_owner_death_fences", {}):
+             raise OutputPublicationJournalStateError("output owner is death-fenced")
+         return record
+ 
+@@ -1328,7 +1381,7 @@
+                 return self._completion_reply(request, record.state, accepted=False, released=False, error="successful output cannot roll back")
+             if (snapshot.complete is None and request.status is protocol.TaskReplyStatus.SUCCEEDED
+                     and not snapshot.ready_to_complete):
+-                return self._completion_reply(request, record.state, accepted=False, released=False, error="output Complete requires owner registration and every local/child effect ACK")
++                return self._completion_reply(request, record.state, accepted=False, released=False, error="output Complete requires owner registration, child/materialization and GCS ARM ACKs")
+             if (snapshot.complete is None and request.status is protocol.TaskReplyStatus.SUCCEEDED
+                     and record.state is not protocol.LeaseExecutionState.RUNNING):
+                 # A pre-boundary local exception may have left this proposal,
+@@ -1382,6 +1435,11 @@
+                     or record.completion is None
+                     or record.completion.status is not protocol.TaskReplyStatus.SUCCEEDED):
+                 raise OutputPublicationJournalStateError("output adoption preceded local lease completion")
++            from .enhanced_publication import PublicationReceipt, PublicationStage, PublicationRef
++            if (type(request.gcs_adoption) is not PublicationReceipt
++                    or request.gcs_adoption.stage is not PublicationStage.ADOPTED
++                    or request.gcs_adoption.reference != PublicationRef(identity, snapshot.manifest.manifest_digest)):
++                raise OutputPublicationJournalStateError("reply retirement requires exact GCS adoption receipt")
+             journal.retire_completed(request.proof)
+         return wire.AckOutputPublicationAdoptedReply(request, True)
+ 
+@@ -1471,7 +1529,8 @@
+             cleaned = adapter.finish_owner_death(manifest, death, cleanup=cleanup)
+         except OutputPublicationBusy:
+             cleaned = False
+-        return wire.FinalizeOutputOwnerDeathReply(request, cleaned)
++        closed = adapter.owner_death_closed_holds(manifest.publication_id) if cleaned else None
++        return wire.FinalizeOutputOwnerDeathReply(request, cleaned, closed)
+ 
+     def _finalize_output_owner_custody(self, request) -> bool:
+         """Local cleanup plus exact Worker ACK under the adapter's ticket."""
+@@ -6318,7 +6377,8 @@
+             # release marked the report pending; the Worker supervisor and
+             # drain driver flush it independently.
+ 
+-    def _test_output_publication_checkpoint(self, manifest, phase) -> None:
++    def _test_output_publication_checkpoint(self, manifest, phase,
++            graph_outcome=GraphReservationOutcome.UNOBSERVED) -> None:
+         """Observe one acknowledged preparation phase outside authority locks."""
+         gate = getattr(self, "_output_publication_gate", None)
+         if gate is None:
+@@ -6334,12 +6394,16 @@
+                 ready = (self._output_publication_journal.acknowledged(effect)
+                          and all(item.stage is OutputPublicationStage.OWNER_REGISTER for item in snapshot.intents))
+             elif phase is OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK:
+-                ready = snapshot.ready_to_complete
++                self._output_publication_journal.preparation_receipt(identity)
++                ready = True
++            elif phase in (OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
++                           OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY):
++                ready = all(item.stage is OutputPublicationStage.OWNER_REGISTER for item in snapshot.intents)
+             else:
+                 raise ValueError("preparation checkpoint cannot report Complete")
+             if not ready:
+                 raise RuntimeError("output gate preceded its acknowledged phase")
+-        gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase))
++        gate.checkpoint(OutputPublicationGateArrival.from_manifest(manifest, phase, graph_outcome))
+         with self._output_publication_journal.linearize(identity), self._state_lock:
+             self._output_lease_record_locked(manifest)
+             if self._output_publication_journal.snapshot(identity).state is not OutputPublicationJournalState.ACTIVE:
+@@ -6370,6 +6434,14 @@
+         identity = witness.publication_id
+         journal = self._output_publication_journal
+         manifest = journal.snapshot(identity).manifest
++        if gate.config.phase in (OutputPublicationGatePhase.BEFORE_TERMINAL_REPORT,
++                                  OutputPublicationGatePhase.AFTER_TERMINAL_ACCEPTED_BEFORE_ACK):
++            # The same outgoing terminal-report gate fences every Complete or
++            # outcome delivery. Neither the Worker nor owner can retain C3
++            # while the finite test observes GCS-only terminal knowledge.
++            self._validate_terminal_gate_complete(manifest, witness)
++            self._output_publications.report_terminal(identity)
++            return
+ 
+         def validate_delivery():
+             with journal.linearize(identity), self._state_lock:
+@@ -6395,6 +6467,18 @@
+             manifest, OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY,
+         ), ensure_terminal)
+         validate_delivery()
++
++
++    def _validate_terminal_gate_complete(self, manifest, witness):
++        """Observe actual C3 and local resource release before W2 I/O."""
++        identity = manifest.publication_id
++        with self._output_publication_journal.linearize(identity), self._state_lock:
++            record = self._output_lease_record_locked(manifest)
++            snapshot = self._output_publication_journal.snapshot(identity)
++            if (snapshot.complete != witness or record.state is not protocol.LeaseExecutionState.COMPLETED
++                    or record.completion is None or record.completion.status is not protocol.TaskReplyStatus.SUCCEEDED
++                    or record.output_complete_inflight is not None):
++                raise RuntimeError('terminal report checkpoint preceded actual local Complete')
+ 
+     def _handle_complete_worker_lease_inner(self, request: object) -> object:
+         if not isinstance(request, protocol.CompleteWorkerLease):
+--- a/src/miniray/output_protocol.py
++++ b/src/miniray/output_protocol.py
+@@ -241,6 +241,7 @@
+     """Owner proof permitting Node-local reply payload retirement after CAS."""
+ 
+     proof: "OutputPublicationAdoptionProof"
++    gcs_adoption: object = None
+ 
+     def __post_init__(self):
+         from .output_publication_journal import OutputPublicationAdoptionProof
+@@ -248,6 +249,13 @@
+         object.__setattr__(self, "proof", _copy(
+             self.proof, OutputPublicationAdoptionProof, "adoption proof"
+         ))
++        if self.gcs_adoption is not None:
++            from .enhanced_publication import PublicationReceipt, PublicationStage, PublicationRef
++            receipt = _copy(self.gcs_adoption, PublicationReceipt, "GCS adoption receipt")
++            if (receipt.stage is not PublicationStage.ADOPTED
++                    or receipt.reference != PublicationRef(self.proof.complete.publication_id, self.proof.complete.manifest_digest)):
++                raise ProtocolError('GCS adoption receipt must match the exact owner proof')
++            object.__setattr__(self, "gcs_adoption", receipt)
+ 
+     @property
+     def request_identity(self):
+@@ -305,8 +313,16 @@
+ class FinalizeOutputOwnerDeathReply(_WireValue):
+     request: FinalizeOutputOwnerDeath
+     cleaned: bool
++    closed_holds: object = None
+ 
+     def __post_init__(self):
+         object.__setattr__(self, "request", _copy(self.request, FinalizeOutputOwnerDeath, "request"))
+         if type(self.cleaned) is not bool:
+             raise ProtocolError("owner cleanup flag must be bool")
++        if self.closed_holds is not None:
++            from .enhanced_publication import ClosedContainedHolds, PublicationRef
++            closed = _copy(self.closed_holds, ClosedContainedHolds, "closed child holds")
++            manifest = self.request.manifest
++            if not self.cleaned or closed.reference != PublicationRef(manifest.publication_id, manifest.manifest_digest):
++                raise ProtocolError('owner cleanup child receipt changed publication identity')
++            object.__setattr__(self, "closed_holds", closed)
+--- a/src/miniray/output_publication_journal.py
++++ b/src/miniray/output_publication_journal.py
+@@ -246,6 +246,9 @@
+     retirement: Optional[OutputPublicationTombstone] = None
+     adoption_proof: Optional[OutputPublicationAdoptionProof] = None
+     owner_death: object = None
++    child_replies: dict[OutputPublicationEffect, object] = field(default_factory=dict)
++    cleanup_replies: dict[OutputPublicationEffect, object] = field(default_factory=dict)
++    publication_receipts: dict[object, object] = field(default_factory=dict)
+ 
+ 
+ class OutputPublicationJournal:
+@@ -293,8 +296,8 @@
+     def begin_prepare(self, publication_id: OutputPublicationID, transfer_index: int) -> OutputPublicationEffect:
+         return self._begin(publication_id, OutputPublicationStage.PREPARE, transfer_index)
+ 
+-    def ack_prepared(self, acknowledgement: OutputPublicationAck) -> bool:
+-        return self._ack_forward(acknowledgement, OutputPublicationStage.PREPARE)
++    def ack_prepared(self, acknowledgement: OutputPublicationAck, reply: object) -> bool:
++        return self._ack_forward(acknowledgement, OutputPublicationStage.PREPARE, child_reply=reply)
+ 
+     def begin_materialize(self, publication_id: OutputPublicationID) -> OutputPublicationEffect:
+         return self._begin(publication_id, OutputPublicationStage.MATERIALIZE)
+@@ -307,8 +310,91 @@
+     def begin_promote(self, publication_id: OutputPublicationID, transfer_index: int) -> OutputPublicationEffect:
+         return self._begin(publication_id, OutputPublicationStage.PROMOTE, transfer_index)
+ 
+-    def ack_promoted(self, acknowledgement: OutputPublicationAck) -> bool:
+-        return self._ack_forward(acknowledgement, OutputPublicationStage.PROMOTE)
++    def ack_promoted(self, acknowledgement: OutputPublicationAck, reply: object) -> bool:
++        return self._ack_forward(acknowledgement, OutputPublicationStage.PROMOTE, child_reply=reply)
++
++    def publication_receipt(self, publication_id, stage):
++        with self._lock:
++            receipt = self._record(publication_id).publication_receipts.get(stage)
++            return None if receipt is None else replace(receipt)
++
++
++    def record_publication_reply(self, publication_id, request, reply, stage, *, forward=False):
++        """Retain an exact server receipt, without another phase authority."""
++        from .enhanced_publication import PublicationRef, PublicationReply, PublicationStage
++        if type(reply) is not PublicationReply:
++            raise OutputPublicationConflictError("GCS returned an invalid publication reply")
++        reply = replace(reply)
++        with self._lock:
++            record = self._record(publication_id)
++            reference = PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest)
++            if (reply.request != request or not reply.accepted or reply.receipt is None
++                    or reply.snapshot is None or reply.receipt.reference != reference
++                    or reply.receipt.stage is not stage or reply.snapshot.reference != reference):
++                raise OutputPublicationConflictError("GCS did not acknowledge the exact publication stage")
++            if forward:
++                self._require_active(record)
++                if not reply.snapshot.forward_open:
++                    raise OutputPublicationJournalStateError("historical GCS receipt is not forward permission")
++                if stage is PublicationStage.INTENT and not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
++                    raise OutputPublicationJournalStateError("GCS INTENT follows actual owner registration")
++                if stage is PublicationStage.PREPARED and PublicationStage.INTENT not in record.publication_receipts:
++                    raise OutputPublicationJournalStateError("graph reservation follows exact INTENT receipt")
++                if stage is PublicationStage.ARMED and reply.snapshot.prepared != self.preparation_receipt(publication_id):
++                    raise OutputPublicationConflictError("ARM changed the actual journal preparation")
++            previous = record.publication_receipts.get(stage)
++            if previous is not None and previous != reply.receipt:
++                raise OutputPublicationConflictError("GCS stage receipt changed on replay")
++            record.publication_receipts[stage] = replace(reply.receipt)
++            return replace(reply.receipt)
++
++
++    def preparation_receipt(self, publication_id):
++        """Attest only to actual owner/child/materialization ACKs."""
++        from .enhanced_publication import MaterializationReceipt, PublicationRef, TaskPreparedReceipt
++        with self._lock:
++            record = self._record(publication_id)
++            self._require_active(record)
++            if not self._preparation_ready(record):
++                raise OutputPublicationJournalStateError("preparation receipt requires every actual effect ACK")
++            reference = PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest)
++            replies = lambda stage: tuple(replace(record.child_replies[self._effect(record, stage, index)])
++                                          for index in self._transfer_indices(record))
++            return TaskPreparedReceipt(reference, replies(OutputPublicationStage.PREPARE),
++                replies(OutputPublicationStage.PROMOTE),
++                MaterializationReceipt(reference, record.manifest.header.node_incarnation))
++
++
++    def rollback_scope(self, publication_id):
++        """Describe frozen possible effects, never infer absence from ARM."""
++        from .enhanced_publication import PublicationRef, TaskRollbackScope
++        with self._lock:
++            record = self._record(publication_id)
++            if record.rollback is None or record.complete is not None:
++                raise OutputPublicationJournalStateError("rollback scope requires an actual pre-Complete fence")
++            indices = lambda stage: tuple(index for index in self._transfer_indices(record)
++                                          if self._intended(record, stage, index))
++            return TaskRollbackScope(
++                PublicationRef(record.manifest.publication_id, record.manifest.manifest_digest),
++                record.rollback.rollback_id, indices(OutputPublicationStage.PREPARE),
++                indices(OutputPublicationStage.PROMOTE),
++                self._intended(record, OutputPublicationStage.MATERIALIZE))
++
++
++    def closed_rollback_holds(self, publication_id):
++        from .enhanced_publication import ClosedContainedHolds
++        from . import protocol
++        with self._lock:
++            record = self._record(publication_id)
++            if record.rollback_tombstone is None:
++                raise OutputPublicationJournalStateError("graph retirement requires completed compensation")
++            scope = self.rollback_scope(publication_id)
++            replies = [record.cleanup_replies[effect] for effect in record.rollback.effects
++                       if effect.stage in (OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE)]
++            return ClosedContainedHolds(scope.reference,
++                tuple(replace(value) for value in replies if type(value) is protocol.ReleaseContainedReferenceReply),
++                tuple(dict.fromkeys(replace(value.death) for value in replies if type(value) is protocol.GetWorkerStateReply)), scope)
++
+ 
+     def acknowledged(self, effect: OutputPublicationEffect) -> bool:
+         _require_type(effect, OutputPublicationEffect, "effect")
+@@ -391,10 +477,13 @@
+             record = self._record(publication_id)
+             if record.rollback is None:
+                 raise OutputPublicationJournalStateError("rollback was not begun")
++            from .enhanced_publication import PublicationStage
++            if PublicationStage.FENCED not in record.publication_receipts:
++                raise OutputPublicationJournalStateError("rollback requires the exact GCS forward fence")
+             value = self._next_rollback(record)
+             return None if value is None else replace(value)
+ 
+-    def ack_rollback(self, acknowledgement: OutputPublicationAck) -> bool:
++    def ack_rollback(self, acknowledgement: OutputPublicationAck, reply: object = None) -> bool:
+         _require_type(acknowledgement, OutputPublicationAck, "acknowledgement")
+         acknowledgement = replace(acknowledgement)
+         effect = acknowledgement.effect
+@@ -407,6 +496,11 @@
+                 return False
+             if self._next_rollback(record) != effect:
+                 raise OutputPublicationJournalStateError("rollback ACK arrived out of order")
++            from .enhanced_publication import PublicationStage
++            if PublicationStage.FENCED not in record.publication_receipts:
++                raise OutputPublicationJournalStateError("rollback ACK requires exact GCS fence")
++            if effect.stage in (OutputPublicationStage.FINAL_RELEASE, OutputPublicationStage.PROVISIONAL_RELEASE):
++                record.cleanup_replies[effect] = self._validate_cleanup_reply(record, effect, reply)
+             record.acknowledgements[effect] = acknowledgement
+             if effect.stage is OutputPublicationStage.SLOT_DROP:
+                 record.result = None
+@@ -481,7 +575,7 @@
+             record.intents.add(effect)
+             return replace(effect)
+ 
+-    def _ack_forward(self, acknowledgement, stage, *, descriptor=None):
++    def _ack_forward(self, acknowledgement, stage, *, descriptor=None, child_reply=None):
+         _require_type(acknowledgement, OutputPublicationAck, "acknowledgement")
+         acknowledgement = replace(acknowledgement)
+         effect = acknowledgement.effect
+@@ -496,12 +590,16 @@
+             self._require_stage_ready(record, stage)
+             if stage is OutputPublicationStage.MATERIALIZE:
+                 descriptor = self._validate_descriptor(record, descriptor)
++            if stage in (OutputPublicationStage.PREPARE, OutputPublicationStage.PROMOTE):
++                child_reply = self._validate_child_reply(record, effect, child_reply)
+             if effect in record.acknowledgements:
+                 if stage is OutputPublicationStage.MATERIALIZE and record.result != descriptor:
+                     raise OutputPublicationConflictError("materialized result changed on replay")
+                 return False
+             if stage is OutputPublicationStage.MATERIALIZE:
+                 record.result = descriptor
++            if child_reply is not None:
++                record.child_replies[effect] = child_reply
+             record.acknowledgements[effect] = acknowledgement
+             return True
+ 
+@@ -551,17 +649,26 @@
+     def _all_materialized(self, record):
+         return self._acked(record, OutputPublicationStage.MATERIALIZE)
+ 
+-    def _ready_to_complete(self, record):
++    def _preparation_ready(self, record):
+         return (self._acked(record, OutputPublicationStage.OWNER_REGISTER)
+                 and self._all_materialized(record)
+                 and all(self._acked(record, OutputPublicationStage.PROMOTE, index)
+                         for index in self._transfer_indices(record)))
++
++    def _ready_to_complete(self, record):
++        from .enhanced_publication import PublicationStage
++        return (self._preparation_ready(record)
++                and PublicationStage.ARMED in record.publication_receipts)
++
+ 
+     def _require_stage_ready(self, record, stage):
+         if stage is OutputPublicationStage.OWNER_REGISTER:
+             return
+         if not self._acked(record, OutputPublicationStage.OWNER_REGISTER):
+             raise OutputPublicationJournalStateError("operation requires the exact owner registration ACK")
++        from .enhanced_publication import PublicationStage
++        if PublicationStage.PREPARED not in record.publication_receipts:
++            raise OutputPublicationJournalStateError("child/data effects require the GCS graph reservation")
+         if stage is OutputPublicationStage.PREPARE:
+             return
+         self._require_all_prepared(record)
+@@ -569,6 +676,41 @@
+             return
+         if not self._all_materialized(record):
+             raise OutputPublicationJournalStateError("promotion requires every materialization ACK")
++
++    @staticmethod
++    def _validate_child_reply(record, effect, reply):
++        from . import protocol
++        if type(reply) is not protocol.StoredContainedPinReply:
++            raise TypeError("child ACK requires its concrete received reply")
++        reply = replace(reply)
++        transfer = record.manifest.value.transfers[effect.transfer_index]
++        kind = (protocol.PrepareStoredContainedPin if effect.stage is OutputPublicationStage.PREPARE
++                else protocol.PromoteStoredContainedPin)
++        if reply.request != kind(transfer, transfer.contained_owner_worker_id) or not reply.accepted:
++            raise OutputPublicationConflictError("child ACK does not match the journal effect")
++        return reply
++
++
++    @staticmethod
++    def _validate_cleanup_reply(record, effect, reply):
++        from . import protocol
++        from .death_proofs import owner_death
++        transfer = record.manifest.value.transfers[effect.transfer_index]
++        if type(reply) is protocol.GetWorkerStateReply:
++            death = owner_death(reply.death)
++            if (reply.worker_id != transfer.contained_owner_worker_id or death.worker_id != reply.worker_id
++                    or reply.state is not protocol.WorkerMembershipState.DEAD):
++                raise OutputPublicationConflictError("cleanup death does not match the child owner")
++            return replace(reply)
++        if type(reply) is not protocol.ReleaseContainedReferenceReply:
++            raise TypeError("child cleanup requires the actual release or death reply")
++        reply = replace(reply)
++        hold = transfer.final_hold if effect.stage is OutputPublicationStage.FINAL_RELEASE else transfer.provisional_hold
++        if ((reply.object_id, reply.owner_worker_id, reply.hold)
++                != (transfer.contained_object_id, transfer.contained_owner_worker_id, hold) or not reply.accepted):
++            raise OutputPublicationConflictError("cleanup ACK does not match the journal effect")
++        return reply
++
+ 
+     @staticmethod
+     def _validate_descriptor(record, descriptor):
+--- a/src/miniray/output_publication_node.py
++++ b/src/miniray/output_publication_node.py
+@@ -40,7 +40,7 @@
+     OutputPublicationRollbackTombstone, OutputPublicationStage,
+ )
+ from .ownership import StoredContainedReferenceDisposition
+-from .publication_gate import OutputPublicationGatePhase
++from .publication_gate import OutputPublicationGatePhase, GraphReservationOutcome
+ from .transport import Address
+ 
+ 
+@@ -68,6 +68,9 @@
+         register_owner: Callable[[OutputPublicationManifest], None],
+         report_complete: Callable[[OutputPublicationCompleteWitness], None],
+         report_rollback: Callable[..., None],
++        publication_value: Callable[[OutputPublicationManifest], object],
++        publication_rpc: Callable[[object], object],
++        abort_owner: Callable[[object, object], object],
+         prepare_child: Callable[[Address, protocol.PrepareStoredContainedPin], protocol.StoredContainedPinReply],
+         promote_child: Callable[[Address, protocol.PromoteStoredContainedPin], protocol.StoredContainedPinReply],
+         release_child: Callable[[Address, protocol.ReleaseContainedReference],
+@@ -79,7 +82,8 @@
+         _require_type(journal, OutputPublicationJournal, "journal")
+         callbacks = {
+             "register_owner": register_owner, "report_complete": report_complete,
+-            "report_rollback": report_rollback,
++            "report_rollback": report_rollback, "publication_value": publication_value,
++            "publication_rpc": publication_rpc, "abort_owner": abort_owner,
+             "prepare_child": prepare_child, "promote_child": promote_child,
+             "release_child": release_child, "seal_replica": seal_replica,
+             "drop_replica": drop_replica,
+@@ -93,6 +97,9 @@
+         self._register_owner = register_owner
+         self._report_complete = report_complete
+         self._report_rollback = report_rollback
++        self._publication_value = publication_value
++        self._publication_rpc = publication_rpc
++        self._abort_owner = abort_owner
+         self._prepare_child = prepare_child
+         self._promote_child = promote_child
+         self._release_child = release_child
+@@ -168,6 +175,12 @@
+                     and all(item.stage is OutputPublicationStage.OWNER_REGISTER
+                             for item in self.journal.snapshot(publication_id).intents)):
+                 self._test_checkpoint(replace(manifest), OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK)
++            from .enhanced_publication import BeginPublication, PrepareGraph, PublicationStage
++            publication = self._publication_value(replace(manifest))
++            for request, stage in ((BeginPublication(publication), PublicationStage.INTENT),
++                                   (PrepareGraph(publication.reference), PublicationStage.PREPARED)):
++                if self.journal.publication_receipt(publication_id, stage) is None:
++                    self._record_gcs(publication_id, request, stage, forward=True)
+             for transfer_index in range(len(value.transfers)):
+                 self._prepare_pin(publication_id, transfer_index)
+             self._materialize(publication_id, payload)
+@@ -175,6 +188,32 @@
+                 self._promote_pin(publication_id, transfer_index)
+             if self._test_checkpoint is not None:
+                 self._test_checkpoint(replace(manifest), OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
++            from .enhanced_publication import ArmTask
++            if self.journal.publication_receipt(publication_id, PublicationStage.ARMED) is None:
++                self._record_gcs(publication_id, ArmTask(self.journal.preparation_receipt(publication_id)),
++                                 PublicationStage.ARMED, forward=True)
++
++    def _record_gcs(self, publication_id, request, stage, *, forward=False):
++        from .enhanced_publication import PublicationReply, PrepareGraph, PublicationErrorKind
++        is_graph = type(request) is PrepareGraph
++        if is_graph and self._test_checkpoint is not None:
++            self._test_checkpoint(self._manifest(publication_id), OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE)
++        reply = self._publication_rpc(request)
++        if type(reply) is not PublicationReply:
++            raise OutputPublicationConflictError("GCS returned an invalid publication reply")
++        reply = replace(reply)
++        if reply.request != request:
++            raise OutputPublicationConflictError("GCS publication reply changed request")
++        if is_graph and self._test_checkpoint is not None:
++            outcome = (GraphReservationOutcome.ACCEPTED if reply.accepted
++                       else GraphReservationOutcome.CYCLE if reply.error_kind is PublicationErrorKind.CYCLE
++                       else GraphReservationOutcome.REJECTED)
++            self._test_checkpoint(self._manifest(publication_id),
++                                  OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY, outcome)
++        if not reply.accepted:
++            raise OutputPublicationRemoteError(reply.error or "GCS rejected publication progress")
++        return self.journal.record_publication_reply(publication_id, request, reply, stage, forward=forward)
++
+ 
+     def _prepare_pin(self, publication_id, transfer_index):
+         effect = self.journal.begin_prepare(publication_id, transfer_index)
+@@ -187,7 +226,7 @@
+         expected_request = protocol.PrepareStoredContainedPin(expected, expected.contained_owner_worker_id)
+         self._require_pin_reply(reply, expected_request)
+         replay = reply.disposition is StoredContainedReferenceDisposition.ALREADY_PREPARED
+-        self.journal.ack_prepared(self._journal_ack(effect, replay=replay))
++        self.journal.ack_prepared(self._journal_ack(effect, replay=replay), reply)
+ 
+     def _materialize(self, publication_id, payload):
+         # All work inside this scope is local.  A failure after seal but before
+@@ -218,7 +257,7 @@
+         expected_request = protocol.PromoteStoredContainedPin(expected, expected.contained_owner_worker_id)
+         self._require_pin_reply(reply, expected_request)
+         replay = reply.disposition is StoredContainedReferenceDisposition.ALREADY_PROMOTED
+-        self.journal.ack_promoted(self._journal_ack(effect, replay=replay))
++        self.journal.ack_promoted(self._journal_ack(effect, replay=replay), reply)
+ 
+     def complete(
+         self, publication_id: OutputPublicationID, *,
+@@ -300,6 +339,8 @@
+             if witness is None:
+                 return False
+             witness = replace(witness)
++        from .enhanced_publication import RecordTerminal, PublicationStage
++        self._record_gcs(publication_id, RecordTerminal(witness), PublicationStage.TERMINAL)
+         self._report_complete(replace(witness))
+         with self._lock:
+             pending = self._terminal_pending.get(publication_id)
+@@ -323,6 +364,12 @@
+         _uint(max_effects, "max_effects", positive=True)
+         with self._ticket(publication_id):
+             self.journal.begin_rollback(publication_id, rollback_id)
++            from .enhanced_publication import FencePublication, RetireGraph, PublicationStage
++            publication = self._publication_value(self._manifest(publication_id))
++            scope = self.journal.rollback_scope(publication_id)
++            if self.journal.publication_receipt(publication_id, PublicationStage.FENCED) is None:
++                owner_abort = self._abort_owner(publication, scope)
++                self._record_gcs(publication_id, FencePublication(publication, owner_abort), PublicationStage.FENCED)
+             for _ in range(max_effects):
+                 effect = self.journal.next_rollback_effect(publication_id)
+                 if effect is None:
+@@ -332,6 +379,8 @@
+             tombstone = snapshot.rollback_tombstone
+             if tombstone is None:
+                 return None
++            self._record_gcs(publication_id, RetireGraph(self.journal.closed_rollback_holds(publication_id)),
++                             PublicationStage.RETIRED)
+             with self._lock:
+                 already_reported = self._rollback_reported.get(publication_id)
+             if already_reported is not None:
+@@ -402,6 +451,13 @@
+                         raise OutputPublicationConflictError("owner-death cleanup was rebound")
+                     return True
+                 self._owner_cleanup_deaths[replace(publication_id)] = death
++            from .enhanced_publication import FencePublication, PublicationStage, RecordTerminal
++            publication = self._publication_value(manifest)
++            if self.journal.publication_receipt(publication_id, PublicationStage.FENCED) is None:
++                self._record_gcs(publication_id, FencePublication(publication, death), PublicationStage.FENCED)
++            complete = self.journal.snapshot(publication_id).complete
++            if complete is not None:
++                self._record_gcs(publication_id, RecordTerminal(complete), PublicationStage.TERMINAL)
+             # Complete forbids rollback, but owner death still removes every
+             # exact hold. Unknown effects require releases as well as ACKed ones.
+             for stage in (OutputPublicationStage.FINAL_RELEASE,
+@@ -430,6 +486,20 @@
+     def owner_death_finished(self, publication_id):
+         with self._lock:
+             return publication_id in self._owner_cleaned
++
++    def owner_death_closed_holds(self, publication_id):
++        """Actual child closure; GCS retires graph after this Node reply."""
++        from .enhanced_publication import ClosedContainedHolds
++        with self._lock:
++            if publication_id not in self._owner_cleaned:
++                return None
++            values = [value for effect, value in self._owner_cleanup_acks.items()
++                      if effect.publication_id == publication_id]
++        publication = self._publication_value(self._manifest(publication_id))
++        return ClosedContainedHolds(publication.reference,
++            tuple(replace(value) for value in values if type(value) is protocol.ReleaseContainedReferenceReply),
++            tuple(dict.fromkeys(replace(value.death) for value in values if type(value) is protocol.GetWorkerStateReply)))
++
+ 
+     def _compensate(self, effect: OutputPublicationEffect) -> None:
+         publication_id = effect.publication_id
+@@ -460,7 +530,7 @@
+             raise OutputPublicationJournalStateError("unknown compensation effect")
+         reply = self._release_child_hold(effect)
+         replay = type(reply) is protocol.ReleaseContainedReferenceReply and not reply.released
+-        self.journal.ack_rollback(self._journal_ack(effect, replay=replay))
++        self.journal.ack_rollback(self._journal_ack(effect, replay=replay), reply)
+ 
+     def _release_child_hold(self, effect: OutputPublicationEffect):
+         """Release one exact manifest hold, retaining real reply/death evidence."""
+--- a/src/miniray/owner_service.py
++++ b/src/miniray/owner_service.py
+@@ -13,6 +13,7 @@
+ from typing import Callable, Mapping, Protocol
+ 
+ from . import output_protocol as output_wire, protocol
++from .enhanced_publication import ABORT_OWNER_PUBLICATION_HANDLER
+ from .ownership import (
+     ConflictingBorrowerTokenError,
+     InvalidObjectTransitionError,
+@@ -68,6 +69,7 @@
+     def report_output_handoff_complete(self, request: object) -> object: ...
+     def report_output_handoff_rollback(self, request: object) -> object: ...
+     def get_output_handoff(self, request: object) -> object: ...
++    def abort_owner_publication(self, request: object) -> object: ...
+     worker_id: object
+     event_sink: EventSink
+ 
+@@ -205,6 +207,7 @@
+             output_wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: core.report_output_handoff_complete,
+             output_wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: core.report_output_handoff_rollback,
+             output_wire.GET_OUTPUT_HANDOFF_HANDLER: core.get_output_handoff,
++            ABORT_OWNER_PUBLICATION_HANDLER: core.abort_owner_publication,
+             PREPARE_STORED_CONTAINED_PIN_HANDLER: core.prepare_stored_contained_pin,
+             PROMOTE_STORED_CONTAINED_PIN_HANDLER: core.promote_stored_contained_pin,
+             REPORT_ABANDONED_DEPENDENCY_REPLICA_HANDLER: self._handle_report_abandoned_dependency_replica,
+--- a/src/miniray/protocol.py
++++ b/src/miniray/protocol.py
+@@ -410,6 +410,7 @@
+     request_id: str
+     clean: bool
+     active_fences: int
++    active_publication_cleanups: int = 0
+ 
+     def __post_init__(self) -> None:
+         DrainOwnerDeathFences(self.request_id)
+@@ -418,7 +419,10 @@
+         _validate_non_negative_integer(
+             self.active_fences, "active_fences"
+         )
+-        if self.clean != (self.active_fences == 0):
++        _validate_non_negative_integer(
++            self.active_publication_cleanups, "active_publication_cleanups"
++        )
++        if self.clean != (self.active_fences == 0 and self.active_publication_cleanups == 0):
+             raise ProtocolError(
+                 "owner-death drain clean flag must match active publications"
+             )
+--- a/src/miniray/publication_gate.py
++++ b/src/miniray/publication_gate.py
+@@ -31,13 +31,25 @@
+     AFTER_OWNER_REGISTER_ACK = "AFTER_OWNER_REGISTER_ACK"
+     AFTER_PROMOTIONS_ACK = "AFTER_PROMOTIONS_ACK"
+     AFTER_COMPLETE_BEFORE_TASK_REPLY = "AFTER_COMPLETE_BEFORE_TASK_REPLY"
++    BEFORE_GRAPH_PREPARE = "BEFORE_GRAPH_PREPARE"
++    AFTER_GRAPH_PREPARE_REPLY = "AFTER_GRAPH_PREPARE_REPLY"
++    BEFORE_TERMINAL_REPORT = "BEFORE_TERMINAL_REPORT"
++    AFTER_TERMINAL_ACCEPTED_BEFORE_ACK = "AFTER_TERMINAL_ACCEPTED_BEFORE_ACK"
++
++
++class GraphReservationOutcome(str, Enum):
++    UNOBSERVED = "UNOBSERVED"
++    ACCEPTED = "ACCEPTED"
++    CYCLE = "CYCLE"
++    REJECTED = "REJECTED"
+ 
+ 
+ OUTPUT_PUBLICATION_GATE_RELEASE = b"G"
+-_MAGIC = b"MROPG002"
++_MAGIC = b"MROPG003"
+ # The output is always ObjectID(task_id, 0), so the frame needs no slot scope.
+-_FRAME = struct.Struct("!8s16sQQ16s16sQ32sB")
++_FRAME = struct.Struct("!8s16sQQ16s16sQ32sBB")
+ _PHASES = tuple(OutputPublicationGatePhase)
++_GRAPH_OUTCOMES = tuple(GraphReservationOutcome)
+ 
+ 
+ @dataclass(frozen=True)
+@@ -46,6 +58,8 @@
+     address: Tuple[str, int]
+     phase: OutputPublicationGatePhase = OutputPublicationGatePhase.AFTER_COMPLETE_BEFORE_TASK_REPLY
+     timeout_seconds: float = 10.0
++    graph_reservation_barrier: bool = False
++    attempt_number: Optional[int] = None
+ 
+     def __post_init__(self) -> None:
+         if type(self.node_index) is not int:
+@@ -63,6 +77,12 @@
+                 or not math.isfinite(timeout) or not 0 < timeout <= 10.0):
+             raise ValueError("output gate timeout_seconds must be in (0, 10]")
+         object.__setattr__(self, "timeout_seconds", float(timeout))
++        if type(self.graph_reservation_barrier) is not bool:
++            raise TypeError("graph reservation barrier must be boolean")
++        if self.attempt_number is not None:
++            _uint(self.attempt_number, "gate attempt_number")
++        if self.graph_reservation_barrier and self.attempt_number != 1:
++            raise ValueError("graph reservation barrier selects reconstruction attempt one")
+ 
+ 
+ @dataclass(frozen=True)
+@@ -73,6 +93,7 @@
+     publication_id: OutputPublicationID
+     manifest_digest: str
+     phase: OutputPublicationGatePhase
++    graph_outcome: GraphReservationOutcome = GraphReservationOutcome.UNOBSERVED
+ 
+     def __post_init__(self) -> None:
+         object.__setattr__(self, "node_id", _opaque(self.node_id, NodeID, "output gate Node"))
+@@ -84,15 +105,29 @@
+         object.__setattr__(self, "manifest_digest", _checksum(self.manifest_digest, "manifest_digest"))
+         if type(self.phase) is not OutputPublicationGatePhase:
+             raise TypeError("output gate arrival requires an exact phase")
++        if type(self.graph_outcome) is not GraphReservationOutcome:
++            raise TypeError("graph gate requires an exact observed outcome")
++        if ((self.phase is OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY)
++                != (self.graph_outcome is not GraphReservationOutcome.UNOBSERVED)):
++            raise ValueError("only graph reply checkpoint carries an observed outcome")
++
++    @property
++    def graph_accepted(self):
++        return None if self.graph_outcome is GraphReservationOutcome.UNOBSERVED else self.graph_outcome is GraphReservationOutcome.ACCEPTED
++
++    @property
++    def graph_cycle_rejected(self):
++        return self.graph_outcome is GraphReservationOutcome.CYCLE
+ 
+     @classmethod
+-    def from_manifest(cls, manifest: OutputPublicationManifest, phase: OutputPublicationGatePhase):
++    def from_manifest(cls, manifest: OutputPublicationManifest, phase: OutputPublicationGatePhase,
++                      graph_outcome: GraphReservationOutcome = GraphReservationOutcome.UNOBSERVED):
+         if type(manifest) is not OutputPublicationManifest:
+             raise TypeError("output gate requires an OutputPublicationManifest")
+         manifest = replace(manifest)
+         node = manifest.header.node_incarnation
+         return cls(node.node_id, node.node_pid, node.registration_epoch,
+-                   manifest.publication_id, manifest.manifest_digest, phase)
++                   manifest.publication_id, manifest.manifest_digest, phase, graph_outcome)
+ 
+     def to_bytes(self) -> bytes:
+         arrival = replace(self)
+@@ -100,23 +135,25 @@
+         return _FRAME.pack(
+             _MAGIC, bytes(arrival.node_id), arrival.node_pid, arrival.registration_epoch,
+             bytes(publication.lease_id), bytes(publication.task_id), publication.attempt_id.attempt_number,
+-            bytes.fromhex(arrival.manifest_digest), _PHASES.index(arrival.phase),
++            bytes.fromhex(arrival.manifest_digest), _PHASES.index(arrival.phase), _GRAPH_OUTCOMES.index(arrival.graph_outcome),
+         )
+ 
+     @classmethod
+     def from_bytes(cls, data: bytes):
+         if type(data) is not bytes or len(data) != _FRAME.size:
+             raise ValueError("output gate frame has the wrong type or size")
+-        magic, node, pid, epoch, lease, task, attempt, digest, phase = _FRAME.unpack(data)
++        magic, node, pid, epoch, lease, task, attempt, digest, phase, outcome = _FRAME.unpack(data)
+         if magic != _MAGIC:
+             raise ValueError("output gate frame has the wrong magic")
+         if phase >= len(_PHASES):
+             raise ValueError("output gate frame has an invalid phase")
++        if outcome >= len(_GRAPH_OUTCOMES):
++            raise ValueError("output gate frame has an invalid graph outcome")
+         task_id = TaskID(task)
+         attempt_id = AttemptID(task_id, attempt)
+         execution = TaskExecution(attempt_id)
+         return cls(NodeID(node), pid, epoch, OutputPublicationID(LeaseID(lease), execution),
+-                   digest.hex(), _PHASES[phase])
++                   digest.hex(), _PHASES[phase], _GRAPH_OUTCOMES[outcome])
+ 
+ 
+ def recv_output_publication_gate_arrival(connection: socket.socket) -> OutputPublicationGateArrival:
+@@ -153,12 +190,25 @@
+         self._started = False
+         self._deadline: Optional[float] = None
+         self._error: Optional[str] = None
++        self._graph_gates = ({phase: OutputPublicationGate(replace(self.config,
++            graph_reservation_barrier=False, phase=phase)) for phase in (
++                OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE,
++                OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY)}
++            if self.config.graph_reservation_barrier else None)
+ 
+     def checkpoint(self, arrival: OutputPublicationGateArrival,
+                    ensure_terminal: Optional[Callable[[float], None]] = None) -> None:
+         if type(arrival) is not OutputPublicationGateArrival:
+             raise TypeError("output gate requires typed arrival")
+         arrival = replace(arrival)
++        if (self.config.attempt_number is not None
++                and arrival.publication_id.attempt_id.attempt_number != self.config.attempt_number):
++            return
++        if self._graph_gates is not None:
++            gate = self._graph_gates.get(arrival.phase)
++            if gate is not None:
++                gate.checkpoint(arrival, ensure_terminal)
++            return
+         if ensure_terminal is not None and not callable(ensure_terminal):
+             raise TypeError("output gate preparation must be callable")
+         leader = False
+@@ -167,7 +217,7 @@
+                 self._selected = arrival
+             elif self._selected.publication_id != arrival.publication_id:
+                 return
+-            elif replace(self._selected, phase=arrival.phase) != arrival:
++            elif replace(self._selected, phase=arrival.phase, graph_outcome=arrival.graph_outcome) != arrival:
+                 raise RuntimeError("output gate publication incarnation or manifest changed")
+             if arrival.phase is not self.config.phase:
+                 return
+@@ -210,5 +260,6 @@
+ __all__ = [
+     "OUTPUT_PUBLICATION_GATE_RELEASE", "OutputPublicationGateConfig",
+     "OutputPublicationGatePhase", "OutputPublicationGateArrival",
++    "GraphReservationOutcome",
+     "OutputPublicationGate", "recv_output_publication_gate_arrival",
+ ]
+--- a/src/miniray/put_work.py
++++ b/src/miniray/put_work.py
+@@ -14,10 +14,10 @@
+ from .ids import AttemptID
+ from .publication_sources import PreparedContainedTransfer
+ from .put_handoff import PutPrepared
++from .enhanced_publication import PutPublication, OwnerAbortReceipt
+ 
+ if TYPE_CHECKING:
+     from .core import _HomeRoute
+-    from .ownership import DeadWorkerReferenceRecord
+ 
+ 
+ class PutChoice(Enum):
+@@ -36,7 +36,7 @@
+     promotion_request: protocol.PromoteStoredContainedPin | None = None
+     promotion_receipt: protocol.StoredContainedPinReply | None = None
+     releases: dict[protocol.ReleaseContainedReference,
+-                   protocol.ReleaseContainedReferenceReply | DeadWorkerReferenceRecord] = field(default_factory=dict)
++                   protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
+ 
+     @property
+     def has_sent_effect(self) -> bool:
+@@ -65,6 +65,8 @@
+ 
+     prepared: PutPrepared
+     attempt: AttemptID
++    publication: PutPublication | None = None
++    abort_receipt: OwnerAbortReceipt | None = None
+     children: tuple[ChildTransferProgress, ...] = field(init=False)
+     materialization: MaterializationWork | None = None
+     choice: PutChoice = PutChoice.OPEN
+--- a/src/miniray/worker.py
++++ b/src/miniray/worker.py
+@@ -405,6 +405,7 @@
+                 "report_output_handoff_complete": lambda request: self._handle_output_handoff("report_output_handoff_complete", request),
+                 "report_output_handoff_rollback": lambda request: self._handle_output_handoff("report_output_handoff_rollback", request),
+                 "get_output_handoff": lambda request: self._handle_output_handoff("get_output_handoff", request),
++                "abort_owner_publication": lambda request: self._handle_output_handoff("abort_owner_publication", request),
+                 REQUEST_OWNED_OBJECT_RECONSTRUCTION_HANDLER: (
+                     self._handle_request_owned_object_reconstruction
+                 ),
+@@ -1455,6 +1456,9 @@
+         from .output_protocol import OutputHandoffReply, OutputHandoffCompleteAck, ReportOutputHandoffComplete
+         core = self._borrow_owner_core()
+         if core is None:
++            if method == "abort_owner_publication":
++                from .enhanced_publication import AbortOwnerPublicationReply
++                return AbortOwnerPublicationReply(request, False, error="object owner CoreWorker is not available")
+             if type(request) is ReportOutputHandoffComplete:
+                 return OutputHandoffCompleteAck(request.witness, False, error="object owner CoreWorker is not available")
+             return OutputHandoffReply(request, False, error="object owner CoreWorker is not available")

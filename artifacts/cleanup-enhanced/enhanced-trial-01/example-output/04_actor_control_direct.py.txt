@@ -1,0 +1,2 @@
+counter values: [1, 2, 3]
+dedicated Actor PID: 50636

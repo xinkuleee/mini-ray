@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Callable, Mapping, Protocol
 
 from . import output_protocol as output_wire, protocol
+from .enhanced_publication import ABORT_OWNER_PUBLICATION_HANDLER
 from .ownership import (
     ConflictingBorrowerTokenError,
     InvalidObjectTransitionError,
@@ -68,6 +69,7 @@ class OwnerAuthority(Protocol):
     def report_output_handoff_complete(self, request: object) -> object: ...
     def report_output_handoff_rollback(self, request: object) -> object: ...
     def get_output_handoff(self, request: object) -> object: ...
+    def abort_owner_publication(self, request: object) -> object: ...
     worker_id: object
     event_sink: EventSink
 
@@ -205,6 +207,7 @@ class OwnerService:
             output_wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: core.report_output_handoff_complete,
             output_wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: core.report_output_handoff_rollback,
             output_wire.GET_OUTPUT_HANDOFF_HANDLER: core.get_output_handoff,
+            ABORT_OWNER_PUBLICATION_HANDLER: core.abort_owner_publication,
             PREPARE_STORED_CONTAINED_PIN_HANDLER: core.prepare_stored_contained_pin,
             PROMOTE_STORED_CONTAINED_PIN_HANDLER: core.promote_stored_contained_pin,
             REPORT_ABANDONED_DEPENDENCY_REPLICA_HANDLER: self._handle_report_abandoned_dependency_replica,

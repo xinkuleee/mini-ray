@@ -14,10 +14,10 @@ from . import protocol
 from .ids import AttemptID
 from .publication_sources import PreparedContainedTransfer
 from .put_handoff import PutPrepared
+from .enhanced_publication import PutPublication, OwnerAbortReceipt
 
 if TYPE_CHECKING:
     from .core import _HomeRoute
-    from .ownership import DeadWorkerReferenceRecord
 
 
 class PutChoice(Enum):
@@ -36,7 +36,7 @@ class ChildTransferProgress:
     promotion_request: protocol.PromoteStoredContainedPin | None = None
     promotion_receipt: protocol.StoredContainedPinReply | None = None
     releases: dict[protocol.ReleaseContainedReference,
-                   protocol.ReleaseContainedReferenceReply | DeadWorkerReferenceRecord] = field(default_factory=dict)
+                   protocol.ReleaseContainedReferenceReply | protocol.WorkerDeathRecord] = field(default_factory=dict)
 
     @property
     def has_sent_effect(self) -> bool:
@@ -65,6 +65,8 @@ class PutHandoff:
 
     prepared: PutPrepared
     attempt: AttemptID
+    publication: PutPublication | None = None
+    abort_receipt: OwnerAbortReceipt | None = None
     children: tuple[ChildTransferProgress, ...] = field(init=False)
     materialization: MaterializationWork | None = None
     choice: PutChoice = PutChoice.OPEN

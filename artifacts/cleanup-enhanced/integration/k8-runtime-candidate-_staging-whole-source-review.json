@@ -1,0 +1,135 @@
+{
+  "status": "complete-source import-ready isolated E candidate; no E branch or tests/registry acceptance",
+  "input_candidate": "base-k6-01",
+  "input_archive_sha256": "f5206dea5b429be8796c860ad85e72f37704f8c23d4073ecfe266c9eb210490a",
+  "patch_sha256": "3bc839e144357ae8f0ee11eb52ddb629e32b6849ee3bab3ae1863e9b7d833a96",
+  "changed_source_paths": [
+    {
+      "path": "src/miniray/api.py",
+      "before_sha256": "869879702a4075514e09a80f8ba2ac9da72baa9848e47b87129169523114b990",
+      "after_sha256": "c648ddb5e86888607d3c4a0c873a3aaac14b8a6d6fbd26346e51c90d3bacd883",
+      "line_delta": 1
+    },
+    {
+      "path": "src/miniray/control.py",
+      "before_sha256": "04d3e180836cf2577ceb3ac2684950512a8fb82e45fca535f1f9dc777cace56f",
+      "after_sha256": "883d6befb006002823d3dc50a6b9872812ee79a154e6d46cd39b002b29b63321",
+      "line_delta": 59
+    },
+    {
+      "path": "src/miniray/core.py",
+      "before_sha256": "0720f615a9cd250a46dfda95addbfcfcee165f5f0c8cd6351cd8ad84b03a27ae",
+      "after_sha256": "325ad0463f36f56481ae8c110a11bcdfa073307c9f5ae01ad3cc9a5bb05f9f25",
+      "line_delta": 159
+    },
+    {
+      "path": "src/miniray/enhanced_publication.py",
+      "before_sha256": null,
+      "after_sha256": "a262879b65b7e54b4d6bcf280b32d7fce081d08351e017f1974870373f681d47",
+      "line_delta": 996
+    },
+    {
+      "path": "src/miniray/enhanced_publication_client.py",
+      "before_sha256": null,
+      "after_sha256": "659c11e18a62c21bbaea58eaeb40305d14e87a9d4ebc29883042e7c46677d4f5",
+      "line_delta": 109
+    },
+    {
+      "path": "src/miniray/enhanced_publication_control.py",
+      "before_sha256": null,
+      "after_sha256": "28fc68d9865dc2701f3a214a0d63265095d81b71138f10740a7db199867136cc",
+      "line_delta": 324
+    },
+    {
+      "path": "src/miniray/golden_traces/ordinary_task_success.json",
+      "before_sha256": "c32319966575ee25bafca99cd2dfc59d5db8d10e269ebe99c42e0a4ea06457e8",
+      "after_sha256": "c59696e8d441743dd9158ef151de64da29d9aea6177fbc6c5c71687e065dc7ce",
+      "line_delta": 216
+    },
+    {
+      "path": "src/miniray/node.py",
+      "before_sha256": "04bce9542a6d58ce5ad8bd878c3bb488dc3e2ad51511ebaea7d2cead8a2b057d",
+      "after_sha256": "94db6273b6c779f6d827044b274dee83fc9bdbd71d679287528b207c131c4fa4",
+      "line_delta": 84
+    },
+    {
+      "path": "src/miniray/output_protocol.py",
+      "before_sha256": "ea5992c8144adb043e89ccc9c20e916b1bf9d09c45d31fb16cdbf9903903fccd",
+      "after_sha256": "2ad3a6ad260f121e93e0d5eeeef25e425c39c628d5099cf6bee19027e7a0484f",
+      "line_delta": 16
+    },
+    {
+      "path": "src/miniray/output_publication_journal.py",
+      "before_sha256": "8e4ad38d68fec5ef419ee81d647a337c7ab14200a089ddb4fb6ac4704ee51fb8",
+      "after_sha256": "1d779393f18266c7b2c7581361ba0ae1f78c5b6851acb55da644a35e33f171e6",
+      "line_delta": 142
+    },
+    {
+      "path": "src/miniray/output_publication_node.py",
+      "before_sha256": "f3ba7d4583b3e594703694373cf5de43a683d49907031017e031335be7e95245",
+      "after_sha256": "8a16c9ae81be8e47a0e50a6bdd2211ad801df5675ec4af60ec0534ace0ba79f2",
+      "line_delta": 70
+    },
+    {
+      "path": "src/miniray/owner_service.py",
+      "before_sha256": "e70151968603894ae417b6f0d503018f3c7614d7669ae610f689d0369e8dcf4b",
+      "after_sha256": "ffcf5105db5a07d866c39e819178dfd3f6222f65236811ae1b7bc25b40f86bc0",
+      "line_delta": 3
+    },
+    {
+      "path": "src/miniray/protocol.py",
+      "before_sha256": "eb865e807e514bee660605bfd32051165e60b36660a3f4206ac8f3158622e708",
+      "after_sha256": "e4f9ebaff3c041f6f8ac03fb1de86e9ea8c3ddabfed40fca003b45474c9da87d",
+      "line_delta": 4
+    },
+    {
+      "path": "src/miniray/publication_gate.py",
+      "before_sha256": "ab721d3d6b3f63d3205c304d2b58b324aec4191d4589b2e0b4db0c43e14d0b54",
+      "after_sha256": "811b2311a28c57f4cbce75f8b60d74191ea671905511f623ac555d189971469c",
+      "line_delta": 51
+    },
+    {
+      "path": "src/miniray/put_work.py",
+      "before_sha256": "3bc597a5750476cab1df5bab12b68682b9b3f0a4fb6b3336d6e167c8e9eccd9b",
+      "after_sha256": "2f9144313fd30d39cfc1e815216da0f7e640d91e4fdfcbb52244ecd690b413ba",
+      "line_delta": 2
+    },
+    {
+      "path": "src/miniray/worker.py",
+      "before_sha256": "5fb52ef06ac352b88ec27fed27447ecc04b14443c482929322d3b63bd243c1b8",
+      "after_sha256": "97a998a0204b2d8d56bcce4c038e3761229d9fb3684a5879ce243619bac1dc6a",
+      "line_delta": 4
+    }
+  ],
+  "unchanged_common_ownership": true,
+  "manifest_unchanged_sha256": "d53442fc7f60b83e681f92b44e07ab08cf95fddb9b6f0e0d6abda3fdf1153cf1",
+  "source_import_probe": {
+    "status": "actual import-only closure passed",
+    "modules": [
+      "miniray",
+      "miniray.enhanced_publication",
+      "miniray.enhanced_publication_client",
+      "miniray.enhanced_publication_control",
+      "miniray.node",
+      "miniray.control",
+      "miniray.core",
+      "miniray.worker",
+      "miniray.output_protocol",
+      "miniray.output_publication_journal",
+      "miniray.output_publication_node",
+      "miniray.publication_gate",
+      "miniray.put_work"
+    ],
+    "source_root": "C:\\Users\\t-hdong\\Desktop\\gao\\audit\\k8-runtime-candidate\\files",
+    "runtime_tripwires": true,
+    "tests_run": false,
+    "runtime_objects_constructed": false
+  },
+  "CF_and_K3_fixes": "inherited from latest B; no wholesale fixed-E source replacement",
+  "shape": "P1 scalar; P2 no-slot effect and scalar snapshot; P3 one membership; P4 typedwork; P5 Complete ACK",
+  "extra_non_common_required_paths": [
+    "put_work.py extension carries E-only publication/abort proof; ownership.py fixed delta already inherited CF002"
+  ],
+  "test_and_helper_work": "parallel agents; excluded from this source-only patch",
+  "final_source_may_need_sync": "K7 B delivery after runtime changes must be reviewed before E branch creation/application"
+}

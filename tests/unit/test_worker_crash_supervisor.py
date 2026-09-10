@@ -22,7 +22,9 @@ from types import SimpleNamespace
 import cloudpickle
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import enhanced_publication as ep, output_protocol as wire, protocol
+from miniray.core import CoreWorker
+from miniray.enhanced_publication_client import PublicationClient
 from miniray.errors import ProtocolError
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.node import NodeServer, _LeaseOutcome, _LeaseRecord, _WorkerSlot
@@ -230,6 +232,38 @@ def _attach_output_publication(node):
     node._object_localization_locks = {}
     journal = node._output_publication_journal = OutputPublicationJournal()
     handoffs = OutputHandoffTable()
+    authority = ep.PublicationAuthority()
+    owner_address = ("owner.invalid", 27002)
+    owner = object.__new__(CoreWorker)
+    owner.worker_id = next(iter(node._leases.values())).request.requester_worker_id
+    owner.owner_address = owner_address
+    owner._state_lock = threading.RLock()
+    owner._completion = threading.Condition(owner._state_lock)
+    owner._owner_protocol_open = True
+    owner._output_handoffs = handoffs
+    publication_calls = []
+
+    def publication_rpc(request):
+        assert len(publication_calls) < 24
+        reply = authority.apply(request)
+        assert type(reply) is ep.PublicationReply and reply.request == request
+        publication_calls.append((request, reply))
+        return reply
+
+    def owner_publication_rpc(handler, request):
+        assert handler == ep.PUBLICATION_HANDLER
+        return publication_rpc(request)
+
+    owner._enhanced_publication_client = PublicationClient(owner_publication_rpc)
+
+    def abort_owner(publication, scope):
+        assert publication == ep.TaskPublication(journal.snapshot(publication.reference.key).manifest, owner_address)
+        assert scope == journal.rollback_scope(publication.reference.key)
+        request = ep.AbortOwnerPublication(publication, scope)
+        reply = owner.abort_owner_publication(request)
+        assert type(reply) is ep.AbortOwnerPublicationReply and reply.request == request
+        assert reply.accepted and reply.receipt is not None, reply.error
+        return reply.receipt
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("ref-free publication attempted child/graph/RPC effects")
@@ -240,23 +274,28 @@ def _attach_output_publication(node):
         assert reply.snapshot.manifest == manifest
 
     def report_complete(witness):
-        snapshot = handoffs.record_complete(witness)
-        reply = wire.OutputHandoffCompleteAck(snapshot.complete, True)
+        reply = owner.report_output_handoff_complete(wire.ReportOutputHandoffComplete(witness))
+        assert type(reply) is wire.OutputHandoffCompleteAck
         assert reply.accepted and reply.witness == witness
 
     def report_rollback(tombstone, *, manifest):
         assert journal.snapshot(manifest.publication_id).rollback_tombstone == tombstone
-        snapshot = handoffs.abort_manifest(manifest, tombstone.plan.rollback_id)
-        reply = wire.OutputHandoffReply(wire.ReportOutputHandoffRollback(manifest, tombstone), True, snapshot)
+        request = wire.ReportOutputHandoffRollback(manifest, tombstone)
+        reply = owner.report_output_handoff_rollback(request)
+        assert type(reply) is wire.OutputHandoffReply and reply.request == request and reply.accepted, reply.error
         assert reply.snapshot.phase is OutputHandoffPhase.ABORTED
+        assert reply.snapshot.abort_reason == "node rollback:" + tombstone.plan.rollback_id
 
     adapter = node._output_publications = OutputPublicationNodeAdapter(
         journal, register_owner=register_owner, report_complete=report_complete,
         report_rollback=report_rollback, prepare_child=forbidden, promote_child=forbidden,
+        publication_value=lambda manifest: ep.TaskPublication(manifest, owner_address),
+        publication_rpc=publication_rpc, abort_owner=abort_owner,
         release_child=forbidden, seal_replica=node._seal_output_publication_replica,
         drop_replica=node._drop_output_publication_replica,
     )
-    return SimpleNamespace(journal=journal, handoffs=handoffs, adapter=adapter)
+    return SimpleNamespace(journal=journal, handoffs=handoffs, adapter=adapter,
+                           authority=authority, owner=owner, publication_calls=publication_calls)
 
 
 def _prepare_one_output(node, request, grant, publication, payload, *, stored):

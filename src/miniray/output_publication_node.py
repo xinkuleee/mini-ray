@@ -40,7 +40,7 @@ from .output_publication_journal import (
     OutputPublicationRollbackTombstone, OutputPublicationStage,
 )
 from .ownership import StoredContainedReferenceDisposition
-from .publication_gate import OutputPublicationGatePhase
+from .publication_gate import OutputPublicationGatePhase, GraphReservationOutcome
 from .transport import Address
 
 
@@ -68,6 +68,9 @@ class OutputPublicationNodeAdapter:
         register_owner: Callable[[OutputPublicationManifest], None],
         report_complete: Callable[[OutputPublicationCompleteWitness], None],
         report_rollback: Callable[..., None],
+        publication_value: Callable[[OutputPublicationManifest], object],
+        publication_rpc: Callable[[object], object],
+        abort_owner: Callable[[object, object], object],
         prepare_child: Callable[[Address, protocol.PrepareStoredContainedPin], protocol.StoredContainedPinReply],
         promote_child: Callable[[Address, protocol.PromoteStoredContainedPin], protocol.StoredContainedPinReply],
         release_child: Callable[[Address, protocol.ReleaseContainedReference],
@@ -79,7 +82,8 @@ class OutputPublicationNodeAdapter:
         _require_type(journal, OutputPublicationJournal, "journal")
         callbacks = {
             "register_owner": register_owner, "report_complete": report_complete,
-            "report_rollback": report_rollback,
+            "report_rollback": report_rollback, "publication_value": publication_value,
+            "publication_rpc": publication_rpc, "abort_owner": abort_owner,
             "prepare_child": prepare_child, "promote_child": promote_child,
             "release_child": release_child, "seal_replica": seal_replica,
             "drop_replica": drop_replica,
@@ -93,6 +97,9 @@ class OutputPublicationNodeAdapter:
         self._register_owner = register_owner
         self._report_complete = report_complete
         self._report_rollback = report_rollback
+        self._publication_value = publication_value
+        self._publication_rpc = publication_rpc
+        self._abort_owner = abort_owner
         self._prepare_child = prepare_child
         self._promote_child = promote_child
         self._release_child = release_child
@@ -168,6 +175,12 @@ class OutputPublicationNodeAdapter:
                     and all(item.stage is OutputPublicationStage.OWNER_REGISTER
                             for item in self.journal.snapshot(publication_id).intents)):
                 self._test_checkpoint(replace(manifest), OutputPublicationGatePhase.AFTER_OWNER_REGISTER_ACK)
+            from .enhanced_publication import BeginPublication, PrepareGraph, PublicationStage
+            publication = self._publication_value(replace(manifest))
+            for request, stage in ((BeginPublication(publication), PublicationStage.INTENT),
+                                   (PrepareGraph(publication.reference), PublicationStage.PREPARED)):
+                if self.journal.publication_receipt(publication_id, stage) is None:
+                    self._record_gcs(publication_id, request, stage, forward=True)
             for transfer_index in range(len(value.transfers)):
                 self._prepare_pin(publication_id, transfer_index)
             self._materialize(publication_id, payload)
@@ -175,6 +188,32 @@ class OutputPublicationNodeAdapter:
                 self._promote_pin(publication_id, transfer_index)
             if self._test_checkpoint is not None:
                 self._test_checkpoint(replace(manifest), OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
+            from .enhanced_publication import ArmTask
+            if self.journal.publication_receipt(publication_id, PublicationStage.ARMED) is None:
+                self._record_gcs(publication_id, ArmTask(self.journal.preparation_receipt(publication_id)),
+                                 PublicationStage.ARMED, forward=True)
+
+    def _record_gcs(self, publication_id, request, stage, *, forward=False):
+        from .enhanced_publication import PublicationReply, PrepareGraph, PublicationErrorKind
+        is_graph = type(request) is PrepareGraph
+        if is_graph and self._test_checkpoint is not None:
+            self._test_checkpoint(self._manifest(publication_id), OutputPublicationGatePhase.BEFORE_GRAPH_PREPARE)
+        reply = self._publication_rpc(request)
+        if type(reply) is not PublicationReply:
+            raise OutputPublicationConflictError("GCS returned an invalid publication reply")
+        reply = replace(reply)
+        if reply.request != request:
+            raise OutputPublicationConflictError("GCS publication reply changed request")
+        if is_graph and self._test_checkpoint is not None:
+            outcome = (GraphReservationOutcome.ACCEPTED if reply.accepted
+                       else GraphReservationOutcome.CYCLE if reply.error_kind is PublicationErrorKind.CYCLE
+                       else GraphReservationOutcome.REJECTED)
+            self._test_checkpoint(self._manifest(publication_id),
+                                  OutputPublicationGatePhase.AFTER_GRAPH_PREPARE_REPLY, outcome)
+        if not reply.accepted:
+            raise OutputPublicationRemoteError(reply.error or "GCS rejected publication progress")
+        return self.journal.record_publication_reply(publication_id, request, reply, stage, forward=forward)
+
 
     def _prepare_pin(self, publication_id, transfer_index):
         effect = self.journal.begin_prepare(publication_id, transfer_index)
@@ -187,7 +226,7 @@ class OutputPublicationNodeAdapter:
         expected_request = protocol.PrepareStoredContainedPin(expected, expected.contained_owner_worker_id)
         self._require_pin_reply(reply, expected_request)
         replay = reply.disposition is StoredContainedReferenceDisposition.ALREADY_PREPARED
-        self.journal.ack_prepared(self._journal_ack(effect, replay=replay))
+        self.journal.ack_prepared(self._journal_ack(effect, replay=replay), reply)
 
     def _materialize(self, publication_id, payload):
         # All work inside this scope is local.  A failure after seal but before
@@ -218,7 +257,7 @@ class OutputPublicationNodeAdapter:
         expected_request = protocol.PromoteStoredContainedPin(expected, expected.contained_owner_worker_id)
         self._require_pin_reply(reply, expected_request)
         replay = reply.disposition is StoredContainedReferenceDisposition.ALREADY_PROMOTED
-        self.journal.ack_promoted(self._journal_ack(effect, replay=replay))
+        self.journal.ack_promoted(self._journal_ack(effect, replay=replay), reply)
 
     def complete(
         self, publication_id: OutputPublicationID, *,
@@ -300,6 +339,8 @@ class OutputPublicationNodeAdapter:
             if witness is None:
                 return False
             witness = replace(witness)
+        from .enhanced_publication import RecordTerminal, PublicationStage
+        self._record_gcs(publication_id, RecordTerminal(witness), PublicationStage.TERMINAL)
         self._report_complete(replace(witness))
         with self._lock:
             pending = self._terminal_pending.get(publication_id)
@@ -323,6 +364,12 @@ class OutputPublicationNodeAdapter:
         _uint(max_effects, "max_effects", positive=True)
         with self._ticket(publication_id):
             self.journal.begin_rollback(publication_id, rollback_id)
+            from .enhanced_publication import FencePublication, RetireGraph, PublicationStage
+            publication = self._publication_value(self._manifest(publication_id))
+            scope = self.journal.rollback_scope(publication_id)
+            if self.journal.publication_receipt(publication_id, PublicationStage.FENCED) is None:
+                owner_abort = self._abort_owner(publication, scope)
+                self._record_gcs(publication_id, FencePublication(publication, owner_abort), PublicationStage.FENCED)
             for _ in range(max_effects):
                 effect = self.journal.next_rollback_effect(publication_id)
                 if effect is None:
@@ -332,6 +379,8 @@ class OutputPublicationNodeAdapter:
             tombstone = snapshot.rollback_tombstone
             if tombstone is None:
                 return None
+            self._record_gcs(publication_id, RetireGraph(self.journal.closed_rollback_holds(publication_id)),
+                             PublicationStage.RETIRED)
             with self._lock:
                 already_reported = self._rollback_reported.get(publication_id)
             if already_reported is not None:
@@ -402,6 +451,13 @@ class OutputPublicationNodeAdapter:
                         raise OutputPublicationConflictError("owner-death cleanup was rebound")
                     return True
                 self._owner_cleanup_deaths[replace(publication_id)] = death
+            from .enhanced_publication import FencePublication, PublicationStage, RecordTerminal
+            publication = self._publication_value(manifest)
+            if self.journal.publication_receipt(publication_id, PublicationStage.FENCED) is None:
+                self._record_gcs(publication_id, FencePublication(publication, death), PublicationStage.FENCED)
+            complete = self.journal.snapshot(publication_id).complete
+            if complete is not None:
+                self._record_gcs(publication_id, RecordTerminal(complete), PublicationStage.TERMINAL)
             # Complete forbids rollback, but owner death still removes every
             # exact hold. Unknown effects require releases as well as ACKed ones.
             for stage in (OutputPublicationStage.FINAL_RELEASE,
@@ -430,6 +486,20 @@ class OutputPublicationNodeAdapter:
     def owner_death_finished(self, publication_id):
         with self._lock:
             return publication_id in self._owner_cleaned
+
+    def owner_death_closed_holds(self, publication_id):
+        """Actual child closure; GCS retires graph after this Node reply."""
+        from .enhanced_publication import ClosedContainedHolds
+        with self._lock:
+            if publication_id not in self._owner_cleaned:
+                return None
+            values = [value for effect, value in self._owner_cleanup_acks.items()
+                      if effect.publication_id == publication_id]
+        publication = self._publication_value(self._manifest(publication_id))
+        return ClosedContainedHolds(publication.reference,
+            tuple(replace(value) for value in values if type(value) is protocol.ReleaseContainedReferenceReply),
+            tuple(dict.fromkeys(replace(value.death) for value in values if type(value) is protocol.GetWorkerStateReply)))
+
 
     def _compensate(self, effect: OutputPublicationEffect) -> None:
         publication_id = effect.publication_id
@@ -460,7 +530,7 @@ class OutputPublicationNodeAdapter:
             raise OutputPublicationJournalStateError("unknown compensation effect")
         reply = self._release_child_hold(effect)
         replay = type(reply) is protocol.ReleaseContainedReferenceReply and not reply.released
-        self.journal.ack_rollback(self._journal_ack(effect, replay=replay))
+        self.journal.ack_rollback(self._journal_ack(effect, replay=replay), reply)
 
     def _release_child_hold(self, effect: OutputPublicationEffect):
         """Release one exact manifest hold, retaining real reply/death evidence."""

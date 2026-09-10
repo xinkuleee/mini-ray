@@ -13,7 +13,9 @@ from dataclasses import replace
 import cloudpickle
 import pytest
 
-from miniray import output_protocol as wire, protocol
+from miniray import output_protocol as wire, protocol, enhanced_publication as ep
+from miniray.core import CoreWorker
+from miniray.enhanced_publication_client import PublicationClient
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, TaskID, WorkerID
 from miniray.resources import ResourceVector
 from miniray.output_handoff import OutputHandoffTable
@@ -42,19 +44,49 @@ class _SingleOutputRPC:
         self.completions = {}
         self.journal = OutputPublicationJournal()
         self.handoffs = OutputHandoffTable()
+        self.authority = ep.PublicationAuthority()
+        self.publication_calls = []
+        self.owner = None
         self.adapter = OutputPublicationNodeAdapter(
             self.journal, register_owner=self._register_owner,
             report_complete=self._report_complete, report_rollback=self._forbidden,
+            publication_value=self._publication_value, publication_rpc=self._publication_rpc,
+            abort_owner=self._abort_owner,
             prepare_child=self._forbidden, promote_child=self._forbidden,
             release_child=self._forbidden, seal_replica=self._forbidden,
             drop_replica=self._forbidden,
         )
+
+    def _publication_value(self, manifest):
+        return ep.TaskPublication(manifest, ("worker-completion-owner.invalid", 1))
+
+    def _publication_rpc(self, request):
+        assert len(self.publication_calls) < 20
+        self.publication_calls.append(request)
+        return self.authority.apply(request)
+
+    def _abort_owner(self, publication, scope):
+        reply = self.owner.abort_owner_publication(ep.AbortOwnerPublication(publication, scope))
+        assert reply.accepted and reply.receipt is not None, reply.error
+        return reply.receipt
 
     @staticmethod
     def _forbidden(*_args, **_kwargs):
         raise AssertionError("small INLINE completion fixture attempted child/store/rollback work")
 
     def _register_owner(self, manifest):
+        publication = self._publication_value(manifest)
+        if self.owner is None:
+            self.owner = owner = object.__new__(CoreWorker)
+            owner.worker_id = manifest.header.owner_worker_id
+            owner.owner_address = publication.owner_address
+            owner._owner_protocol_open = True
+            owner._state_lock = threading.RLock()
+            owner._completion = threading.Condition(owner._state_lock)
+            owner._output_handoffs = self.handoffs
+            owner._enhanced_publication_client = PublicationClient(
+                lambda handler, message: self._publication_rpc(message))
+        assert self.owner.worker_id == publication.owner_worker_id
         snapshot = self.handoffs.register(manifest, manifest.publication_id.attempt_id)
         reply = wire.OutputHandoffReply(wire.RegisterOutputHandoff(manifest), True, snapshot)
         assert reply.accepted and reply.snapshot.manifest == manifest
@@ -81,6 +113,8 @@ class _SingleOutputRPC:
         self.prepared[key] = request
         self.prepare_requests.append(request)
         assert self.journal.snapshot(identity).ready_to_complete
+        publication = self._publication_value(request.manifest)
+        assert self.authority.query(ep.GetPublication(publication.reference)).snapshot.receipt(ep.PublicationStage.ARMED) is not None
         return wire.PreparedOutputPublicationReply(request.request_identity, True)
 
     def complete(self, request):

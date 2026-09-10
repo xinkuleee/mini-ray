@@ -4,7 +4,8 @@ Real Core methods, owner/recovery tables, and FIFO admission are composed
 synchronously.  No Core constructor, mailbox, thread, process, socket, or
 wall-clock wait is started.  Interleaving hooks model the finalizer races.
 Successful results use real OutputDiscovery, a Node publication adapter and
-journal, actual Core owner handoffs, and real Node storage/drop handlers. Per case:
+journal, one real GCS publication authority, actual Core owner handoffs, and
+real Node prepare/Complete/retirement/storage handlers. Per case:
 at most three logical tasks, six publications, one output per task, 128 bytes
 per serialized output and one 4 KiB in-memory store. No output contains refs.
 """
@@ -22,30 +23,34 @@ from types import SimpleNamespace
 import cloudpickle
 import pytest
 
-from miniray import core as core_module, output_protocol as wire, protocol
+from miniray import core as core_module, enhanced_publication as ep, output_protocol as wire, protocol
 from miniray.core import _HomeRoute
 from miniray.core import (
     CoreWorker, ObjectRef, RemoteFunctionDefinition, _ForeignDependencyGuard,
     _PendingTask,
 )
+from miniray.control import NodeRegistry
 from miniray.errors import SystemTaskError
 from miniray.foreign_lineage_runtime import (
     ForeignLineageRenewalDisposition, ForeignLineageRenewalResult,
 )
 from miniray.ids import JobID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
-from miniray.node import NodeServer
+from miniray.node import NodeServer, _LeaseRecord, _WorkerSlot
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
 from miniray.output_discovery import OutputDiscoverySession
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.output_publication import (
     OutputPublicationHeader, OutputPublicationID, OutputPublicationNodeIncarnation,
 )
 from miniray.output_publication_journal import OutputPublicationJournal
 from miniray.output_publication_node import OutputPublicationNodeAdapter
-from miniray.ownership import ObjectCollectionState, ObjectOwnerTable, ObjectState
+from miniray.ownership import (
+    ObjectCollectionState, ObjectOwnerTable, ObjectState, OutputOwnerPublicationPlan,
+)
 from miniray.reconstruction_runtime import ReconstructionDisposition
 from miniray.recovery import RecoveryManager, TaskState
-from miniray.resources import AllocationToken, ResourceLedger, ResourceVector
+from miniray.resources import AllocationToken, NodeSnapshot, ResourceLedger, ResourceVector
 from miniray.trace import MemoryEventSink
 from miniray.transport import TransportTimeout
 from tests.unit._pure_output_runtime import _metadata as _assert_metadata
@@ -105,14 +110,27 @@ class _OutputBackend:
     def __init__(self, core, no_rpc):
         self.core, self.no_rpc = core, no_rpc
         self.journal = OutputPublicationJournal()
+        self.authority = getattr(core, "_test_publication_authority", None)
+        if self.authority is None:
+            self.authority = core._test_publication_authority = ep.PublicationAuthority()
+        self.nodes = getattr(core, "_test_publication_nodes", None)
+        if self.nodes is None:
+            self.nodes = core._test_publication_nodes = NodeRegistry()
+            assert self.nodes.register(core.node_id, core.node_address, ResourceVector({"CPU": 1}), node_pid=3001)
+        registered = self.nodes.get_state_reply(protocol.GetNodeState(core.node_id))
+        assert registered.found and registered.node_pid is not None
+        self.incarnation = OutputPublicationNodeIncarnation(
+            core.node_id, registered.node_pid, registered.registration_epoch)
         self.store = ObjectStore(4096)
         self.ledger = ResourceLedger(ResourceVector({"CPU": 1}))
         self.completed = {}
-        self.calls = []
+        self.envelopes = {}
+        self.calls, self.gcs_calls = [], []
         self.executor = WorkerID(bytes.fromhex("ef" * 16))
         node = object.__new__(NodeServer)
         self.node = node
-        node.node_id, node._node_pid, node._registration_epoch = core.node_id, 3001, 1
+        node.node_id = core.node_id
+        node._node_pid, node._registration_epoch = self.incarnation.node_pid, self.incarnation.registration_epoch
         node._state_lock = threading.RLock()
         node._object_store = self.store
         node._object_manager = ObjectManager(node.node_id, self.store)
@@ -122,14 +140,22 @@ class _OutputBackend:
         node._object_localization_locks = {}
         node._owner_death_fences = {}
         node._output_publication_journal = self.journal
+        node._ledger = self.ledger
+        node._cluster_nodes = (NodeSnapshot(node.node_id, ResourceVector({"CPU": 1}), ResourceVector()),)
+        node._leases = {}
+        node._workers = {self.executor: _WorkerSlot(self.executor)}
         self.adapter = OutputPublicationNodeAdapter(
             self.journal, register_owner=self._register_owner,
             report_complete=self._report_complete,
             report_rollback=self._report_rollback,
+            publication_value=lambda manifest: ep.TaskPublication(manifest, core.owner_address),
+            publication_rpc=lambda request: self.rpc(core.gcs_address, ep.PUBLICATION_HANDLER, request),
+            abort_owner=self._abort_owner,
             prepare_child=no_rpc, promote_child=no_rpc, release_child=no_rpc,
             seal_replica=node._seal_output_publication_replica,
             drop_replica=node._drop_output_publication_replica,
         )
+        node._output_publications = self.adapter
 
     def address(self, node_id, *, home_route=None):
         if node_id != self.core.node_id:
@@ -150,24 +176,61 @@ class _OutputBackend:
 
     def _report_complete(self, witness):
         assert self.journal.snapshot(witness.publication_id).complete == witness
+        terminal = self.publication_snapshot(witness.publication_id)
+        assert terminal.complete == witness
+        assert terminal.receipt(ep.PublicationStage.TERMINAL) is not None
+        assert terminal.receipt(ep.PublicationStage.COMMITTED) is None
         request = wire.ReportOutputHandoffComplete(witness)
         _assert_metadata(request)
         reply = self.core.report_output_handoff_complete(request)
         assert type(reply) is wire.OutputHandoffCompleteAck and reply.accepted, reply.error
         assert reply.witness == witness
         _assert_metadata(reply)
+        assert self.core.owner_table.snapshot(witness.publication_id.object_id).state is ObjectState.PENDING
 
     def _report_rollback(self, tombstone, *, manifest):
         snapshot = self._owner_call(wire.ReportOutputHandoffRollback(manifest, tombstone),
                                    self.core.report_output_handoff_rollback)
         assert snapshot.manifest == manifest and snapshot.adoption is None
 
+    def _abort_owner(self, publication, scope):
+        request = ep.AbortOwnerPublication(publication, scope)
+        _assert_metadata(request)
+        reply = self.core.abort_owner_publication(request)
+        assert type(reply) is ep.AbortOwnerPublicationReply
+        assert reply.request == request and reply.accepted, reply.error
+        assert reply.receipt is not None
+        _assert_metadata(reply)
+        return reply.receipt
+
     def handoff_snapshot(self, identity):
         snapshot = self._owner_call(wire.GetOutputHandoff(identity), self.core.get_output_handoff)
         assert snapshot.publication_id == identity
         return snapshot
 
+    def publication_snapshot(self, identity):
+        manifest = self.journal.snapshot(identity).manifest
+        request = ep.GetPublication(ep.PublicationRef(identity, manifest.manifest_digest))
+        reply = self.authority.query(request)
+        assert reply.accepted and reply.snapshot is not None
+        _assert_metadata(reply)
+        return reply.snapshot
+
     def rpc(self, address, handler, request):
+        lock = self.core._state_lock
+        assert lock.depth == 0 if isinstance(lock, _Composition) else not lock._is_owned()
+        if address == self.core.gcs_address:
+            if handler == "get_node_state":
+                assert type(request) is protocol.GetNodeState
+                return self.nodes.get_state_reply(request)
+            assert handler == ep.PUBLICATION_HANDLER
+            assert len(self.gcs_calls) < 128
+            _assert_metadata(request)
+            reply = self.authority.apply(request)
+            assert type(reply) is ep.PublicationReply and reply.request == request
+            _assert_metadata(reply)
+            self.gcs_calls.append((request, reply))
+            return reply
         self.calls.append((handler, request))
         assert len(self.calls) <= 32
         if handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER:
@@ -176,8 +239,20 @@ class _OutputBackend:
             identity = request.proof.complete.publication_id
             assert self.completed[identity] == request.proof.complete
             assert self.handoff_snapshot(identity).adoption == request.proof
-            self.journal.retire_completed(request.proof)
-            return wire.AckOutputPublicationAdoptedReply(request, True)
+            envelope = self.envelopes[identity]
+            owner = self.core.owner_table.output_owner_publication_receipt(
+                OutputOwnerPublicationPlan(envelope.manifest.execution, envelope))
+            assert owner is not None and owner.committed
+            gcs = self.publication_snapshot(identity)
+            assert gcs.adoption == request.proof
+            assert gcs.receipt(ep.PublicationStage.COMMITTED) is not None
+            assert request.gcs_adoption == gcs.receipt(ep.PublicationStage.ADOPTED)
+            assert self.journal.snapshot(identity).result_retained
+            reply = self.node._handle_ack_output_publication_adopted(request)
+            assert type(reply) is wire.AckOutputPublicationAdoptedReply
+            assert reply.request == request and reply.accepted
+            assert not self.journal.snapshot(identity).result_retained
+            return reply
         if handler == "drop_object_replica":
             assert address == self.core.node_address
             return self.node._handle_drop_object_replica(request)
@@ -190,7 +265,7 @@ class _OutputBackend:
         )
         header = OutputPublicationHeader(
             identity, self.core.job_id, self.executor, self.core.worker_id,
-            OutputPublicationNodeIncarnation(self.core.node_id, 3001, 1),
+            self.incarnation,
         )
         discovery = OutputDiscoverySession(header, inline_threshold=0 if stored else 128)
         outputs = discovery.discover(value)
@@ -200,22 +275,61 @@ class _OutputBackend:
         assert discovery.source_references == ()
         token = AllocationToken("finish-lease-{}".format(len(self.completed)))
         self.ledger.allocate(ResourceVector({"CPU": 1}), token)
-        self.adapter.prepare(outputs.manifest, (outputs.payload))
+        lease = protocol.RequestWorkerLease(
+            identity.lease_id, pending.task_id, pending.spec.attempt_id,
+            ResourceVector({"CPU": 1}), self.core.node_id, self.core.worker_id,
+            return_ids=pending.output_ids, requester_owner_address=self.core.owner_address,
+        )
+        grant = protocol.GrantWorkerLease(
+            identity.lease_id, pending.task_id, pending.spec.attempt_id,
+            self.core.node_id, self.executor, ("worker.invalid", 1), token,
+        )
+        record = _LeaseRecord(lease, token, grant, state=protocol.LeaseExecutionState.RUNNING)
+        self.node._leases[identity.lease_id] = record
+        slot = self.node._workers[self.executor]
+        assert slot.active_lease_id is None
+        slot.active_lease_id = identity.lease_id
+        prepared = self.node._handle_prepare_output_publication(
+            wire.PrepareOutputPublication(outputs.manifest, outputs.payload))
+        assert prepared.accepted and record.output_publication_id == identity
+        armed = self.publication_snapshot(identity)
+        assert tuple(receipt.stage for receipt in armed.receipts) == (
+            ep.PublicationStage.INTENT, ep.PublicationStage.PREPARED, ep.PublicationStage.ARMED,
+        )
+        assert armed.prepared == self.journal.preparation_receipt(identity)
+        assert armed.complete is None and armed.adoption is None
+        assert self.journal.snapshot(identity).complete is None
         discovery.release_sources_after_promotions()
-
-        def complete_lease(witness):
-            assert witness.publication_id == identity
-            assert witness.manifest_digest == outputs.manifest.manifest_digest
-            assert self.journal.snapshot(identity).complete == witness
-            assert identity not in self.completed
-            assert self.ledger.release(token)
-            self.completed[identity] = witness
-
-        envelope = self.adapter.complete(identity, commit_lease=complete_lease)
+        complete = protocol.CompleteWorkerLease(
+            identity.lease_id, pending.task_id, pending.spec.attempt_id, self.executor,
+            protocol.TaskReplyStatus.SUCCEEDED,
+        )
+        completed = self.node._handle_complete_output_worker_lease(complete, identity)
+        assert completed.accepted and completed.released
+        envelope = completed.output_publication
+        assert envelope is not None and envelope.complete == self.journal.snapshot(identity).complete
+        assert record.state is protocol.LeaseExecutionState.COMPLETED and record.completion == complete
+        assert slot.active_lease_id is None
+        assert identity not in self.completed
+        self.completed[identity] = envelope.complete
+        self.envelopes[identity] = envelope
+        replay = self.node._handle_complete_output_worker_lease(complete, identity)
+        assert replay.accepted and not replay.released and replay.output_publication == envelope
         assert self.ledger.available == ResourceVector({"CPU": 1})
+        # C3 releases the physical lease while GCS still has only C1/ARM.
+        assert self.publication_snapshot(identity) == armed
         assert self.handoff_snapshot(identity).complete is None
+        assert self.core.owner_table.snapshot(pending.object_id).state is ObjectState.PENDING
+        assert self.journal.snapshot(identity).result_retained
         assert self.adapter.report_terminal(identity)
-        _assert_metadata(self.handoff_snapshot(identity))
+        handoff = self.handoff_snapshot(identity)
+        _assert_metadata(handoff)
+        assert handoff.complete == envelope.complete and handoff.phase is OutputHandoffPhase.PENDING
+        terminal = self.publication_snapshot(identity)
+        assert terminal.complete == envelope.complete
+        assert terminal.receipt(ep.PublicationStage.TERMINAL) is not None
+        assert terminal.receipt(ep.PublicationStage.COMMITTED) is None
+        assert terminal.adoption is None
         reply = protocol.TaskReply(
             pending.task_id, pending.spec.attempt_id, self.executor,
             protocol.TaskReplyStatus.SUCCEEDED, ((envelope.result,)),
@@ -227,6 +341,12 @@ class _OutputBackend:
         )
         assert not self.journal.snapshot(identity).result_retained
         assert self.handoff_snapshot(identity).adoption.complete == envelope.complete
+        adopted = self.publication_snapshot(identity)
+        assert adopted.adoption == self.handoff_snapshot(identity).adoption
+        assert adopted.receipt(ep.PublicationStage.COMMITTED) is not None
+        assert adopted.receipt(ep.PublicationStage.ADOPTED) is not None
+        assert adopted.receipt(ep.PublicationStage.RETIRED) is None
+        assert adopted.graph_active
         assert self.core._recovery.task_record(pending.task_id).state is TaskState.SUCCEEDED
         return ((envelope.result,))
 

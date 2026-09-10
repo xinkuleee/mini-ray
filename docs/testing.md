@@ -1,6 +1,8 @@
-# 基础版测试指南
+# 协议增强版测试指南
 
-运行入口是[scripts/run_baseline.py](../scripts/run_baseline.py)，选择权威是本分支[scripts/baseline_manifest.json](../scripts/baseline_manifest.json)。测试结果必须绑定实际源码、测试、工具、manifest和依赖身份；当前完成状态见[current-status](current-status.md)，旧318/32记录见[基础账本](acceptance-baseline.md)。
+运行入口是[scripts/run_baseline.py](../scripts/run_baseline.py)，选择权威是本分支[scripts/baseline_manifest.json](../scripts/baseline_manifest.json)。测试结果必须绑定实际源码、测试、工具、manifest和依赖身份；当前完成状态见[current-status](current-status.md)，历史B318/32与E377/37分别见[基础账本](acceptance-baseline.md)、[增强账本](acceptance-enhanced.md)，不认证本次后继源码。
+
+当前E隔离候选清单为30个pure文件和37个smoke，enhanced-trial-01取得392 passed / 1 deselected及37smoke通过；这只属于候选archive，不是已创建正式E分支的最终HEAD验收。正式E已从验收B派生，仍须在增量应用后冻结自身manifest、源码和依赖重新建立映射，见[状态页](current-status.md)。
 
 ## 安装与列出范围
 
@@ -36,6 +38,8 @@ smoke逐个串行执行。不要透传目录、glob、-k或任意pytest参数；
 reviewed_migrations与gate分开：一项记录selector、marker、工作包、审查来源提交、导入闭包及配置输入hash、有限资源/超时/退出成本。清单解析不执行测试；--case执行迁移项前会重算其受审输入身份，变化则拒绝，必须核对变化后更新登记。文本登记仅将CRLF归一为LF；其它内容变化仍拒绝，原始证据hash不归一。
 
 整文件只用于明确受审的unit文件；含进程/并发场景按精确case与marker登记。不能为了消除拒绝而盲目刷新hash，也不能把全部旧108/455项注册成新gate。确需提升为gate时，记录原因、旧新选择差额与成本，移出migration登记，保持单一选择权威。
+
+本版额外覆盖发布事实、联合预留判环和有限C0–C7故障窗口；保持原30/37候选范围，不扩成任意storage×owner×fault矩阵。B结果不替代E自己的trace和实际GCS阶段。
 
 项目的历史测试树包含旧协议与失效夹具。未进入gate不代表测试无价值；已退出multi-return、targeted或旧runtime facade也不应为旧测试恢复。保留反例迁到真实权威后，以“旧断言→现行合同→新selector→本版证据”记账。
 
