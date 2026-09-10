@@ -72,11 +72,9 @@ class ContainedOutput:
         self.grant = protocol.GrantWorkerLease(request.lease_id, p.task_id, p.spec.attempt_id,
             node.node_id, executor, self.child_owner.owner_address, token)
         self.request = request
-        node.worker_id = executor
         node._worker_order = (executor,)
         node._workers = {executor: _WorkerSlot(executor, process=SimpleNamespace(is_alive=lambda: True),
             address=self.child_owner.owner_address, active_lease_id=request.lease_id)}
-        node._sync_first_worker_compat_locked()
         node._leases[request.lease_id] = _LeaseRecord(request, token, self.grant)
         node._lease_outcomes[request.lease_id] = _LeaseOutcome(request, self.grant)
         node._refresh_local_cached_availability_locked()

@@ -315,7 +315,7 @@ def test_dead_child_retirement_blocks_reconstruction_until_replica_ack():
         assert f.install_death()
         f.core._borrow_rpc = _forbidden_rpc
         first, drops = [True], []
-        f.core._resolve_node_address = lambda node_id: ("replica.invalid", 1234)
+        f.core._resolve_node_address = lambda node_id, *, home_route=None: ("replica.invalid", 1234)
 
         def replica_rpc(address, handler, request):
             assert address == ("replica.invalid", 1234) and handler == "drop_object_replica"

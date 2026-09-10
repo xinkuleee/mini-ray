@@ -8,8 +8,8 @@ with new physical attempts while preserving every logical ObjectID.
 This is an explicitly reviewed composite experiment, not a single-fault smoke:
 one two-CPU Node, two ordinary Workers, three physical drops, and one
 reconstruction per producer (three initial plus three reconstructed executions).
-Its exact two-CPU/three-drop/three-reconstruction exception must be approved
-before running this node ID through ``scripts/run_bounded_test.py``.
+Its exact two-CPU/three-drop/three-reconstruction exception is included in
+the registered smoke. Run it through ``scripts/run_baseline.py --smoke EXACT``.
 
 Four managed children, five runtime/owner endpoints, one 1 MiB store and three
 tiny stored objects bound the workload. All get/drop/finish observations share

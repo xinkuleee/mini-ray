@@ -30,6 +30,7 @@ def _core_with_object(*, start: bool = True) -> tuple[CoreWorker, ObjectID]:
     core.worker_id = WorkerID.random()
     core._owner_table = ObjectOwnerTable()
     core._state_lock = threading.RLock()
+    core._object_gc_obligations = {}
     core._completion = threading.Condition(core._state_lock)
     task_id = TaskID.derive(core.job_id, TaskID.for_driver(core.job_id), 0)
     attempt_id = AttemptID(task_id, 0)

@@ -71,8 +71,8 @@ def _running_lease(
     )
     record.request = request
     grant = record.grant
-    node.worker_id = grant.worker_id
-    node._active_lease_id = request.lease_id
+    assert node.worker_id == grant.worker_id
+    node._workers[node.worker_id].active_lease_id = request.lease_id
     node._lease_outcomes = {request.lease_id: _LeaseOutcome(request, grant)}
     baseline = node._ledger.snapshot()
     prepared = node._handle_prepare_output_publication(
@@ -447,7 +447,7 @@ def test_concurrent_block_and_completion_linearize_without_leaking(
         assert allocation.held_resources == ResourceVector.empty()
         assert ledger.snapshot().allocations == (allocation,)
         assert node._workers[grant.worker_id].active_lease_id is None
-        assert node._active_lease_id is None
+        assert node._workers[node.worker_id].active_lease_id is None
 
         envelope = completion.output_publication
         assert envelope is not None and envelope.publication_id == identity

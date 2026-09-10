@@ -47,7 +47,6 @@ def _lease_fixture() -> tuple[
 
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = worker_id
     node._node_pid = 4101
     node._registration_epoch = 1
     node._state_lock = threading.RLock()
@@ -58,7 +57,6 @@ def _lease_fixture() -> tuple[
     node._cluster_nodes = (
         NodeSnapshot(node_id, node._ledger.total, node._ledger.available),
     )
-    node._active_lease_id = lease_id
     node._leases = {}
     node._lease_outcomes = {}
 
@@ -128,7 +126,7 @@ def test_start_and_complete_are_idempotent_and_release_once() -> None:
     assert repeated_complete.accepted and not repeated_complete.released
     assert repeated_complete.state is protocol.LeaseExecutionState.COMPLETED
     assert node.resource_ledger.available == node.resource_ledger.total
-    assert node._active_lease_id is None
+    assert node._workers[node.worker_id].active_lease_id is None
 
     changed = _complete(
         request, grant.worker_id, protocol.TaskReplyStatus.APPLICATION_ERROR
@@ -225,22 +223,20 @@ class _PassiveExitWorker:
 def _worker_exit_lease_fixture():
     """The same logical IDs as the old fixture, but a genuinely granted lease."""
     node = object.__new__(NodeServer)
-    node.node_id, node.worker_id = _id(NodeID, 1), _id(WorkerID, 2)
+    node.node_id, worker_id = _id(NodeID, 1), _id(WorkerID, 2)
     node._node_pid, node._registration_epoch = 4101, 1
     node._state_lock, node._scheduling_lock = threading.RLock(), threading.Lock()
     node._stop_event = threading.Event()
-    node._shutdown_request_id, node._active_lease_id = None, None
+    node._shutdown_request_id = None
     node._ledger = ResourceLedger(ResourceVector({"CPU": 1}))
     node._cluster_nodes = (NodeSnapshot(node.node_id, node._ledger.total, node._ledger.total),)
     node._cluster_addresses = {}
     node._gcs_address, node._registered_with_gcs = None, False
-    node._worker_process = _PassiveExitWorker()
-    node._worker_address = ("worker-exit.invalid", 1)
-    node._worker_pid = node._worker_process.pid
-    node._worker_exitcode, node._worker_forced = None, False
-    node._worker_order = (node.worker_id,)
-    node._workers = {node.worker_id: _WorkerSlot(node.worker_id, process=node._worker_process,
-        address=node._worker_address, pid=node._worker_pid)}
+    process = _PassiveExitWorker()
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(
+        worker_id, process=process, address=("worker-exit.invalid", 1), pid=process.pid,
+    )}
     node.num_workers_per_node = 1
     node._leases, node._lease_outcomes, node._lease_cancellations = {}, {}, {}
     node._lease_request_locks, node._inflight_lease_requests = {}, 0
@@ -304,7 +300,7 @@ def test_worker_exit_reclaims_running_lease_and_fences_late_completion(monkeypat
     assert released_ledger.allocations[0].state is AllocationState.RELEASED
     assert record.state is protocol.LeaseExecutionState.WORKER_LOST
     assert record.completion is None and record.output_complete_inflight is None
-    assert slot.active_lease_id is None and node._active_lease_id is None
+    assert slot.active_lease_id is None
     assert node.resource_ledger.available == node.resource_ledger.total
     assert node._lease_outcomes[request.lease_id] == outcome
 

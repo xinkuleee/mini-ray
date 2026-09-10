@@ -23,6 +23,7 @@ import cloudpickle
 import pytest
 
 from miniray import core as core_module, output_protocol as wire, protocol
+from miniray.core import _HomeRoute
 from miniray.core import (
     CoreWorker, ObjectRef, RemoteFunctionDefinition, _ForeignDependencyGuard,
     _PendingTask,
@@ -130,7 +131,7 @@ class _OutputBackend:
             drop_replica=node._drop_output_publication_replica,
         )
 
-    def address(self, node_id):
+    def address(self, node_id, *, home_route=None):
         if node_id != self.core.node_id:
             self.no_rpc("unexpected Node route", node_id)
         return self.core.node_address
@@ -256,6 +257,9 @@ class _Fixture:
         core.gcs_address = ("127.0.0.1", 39930)
         core.event_sink = MemoryEventSink()
         core._state_lock = _Composition()
+        core._membership_epoch = 0
+        core._installed_cluster_snapshot = None
+        core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
         core._completion = core._state_lock
         core._owner_table = ObjectOwnerTable()
         core._recovery = RecoveryManager()

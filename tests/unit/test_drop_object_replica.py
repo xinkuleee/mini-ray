@@ -18,6 +18,7 @@ import cloudpickle
 import pytest
 
 from miniray import core as core_module, node as node_module, protocol, transport
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _WAKE_COORDINATOR
 from miniray.errors import ProtocolError, SystemTaskError, UnreconstructableObjectError
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
@@ -517,6 +518,7 @@ def test_core_drop_marks_put_lost_and_get_reports_unreconstructable() -> None:
     core = make_pure_core()
     core.node_id = node.node_id
     core.node_address = ("put-drop.invalid", 1)
+    core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
     core.inline_threshold = 1
     value = {"large": "enough"}
     payload = cloudpickle.dumps(value)
@@ -636,6 +638,10 @@ def test_core_does_not_remove_owner_location_after_rejected_drop() -> None:
     core._objects = {}
     core._stored_descriptors = {}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
+    core._dead_nodes = {}
     core._completion = threading.Condition(core._state_lock)
     core.event_sink = EventSink()
     object_id, attempt_id, _ = _identity()

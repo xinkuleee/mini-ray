@@ -41,7 +41,7 @@ from miniray.core import (
     _WAKE_COORDINATOR,
 )
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, TaskID, WorkerID
-from miniray.node import NodeServer
+from miniray.node import NodeServer, _WorkerSlot
 from miniray.object_store import ObjectStore
 from miniray.ownership import ObjectCollectionState, ObjectState
 from miniray.recovery import TaskState
@@ -91,19 +91,21 @@ def _identity():
 def _node(node_id=None):
     node = object.__new__(NodeServer)
     node.node_id = NodeID.random() if node_id is None else node_id
-    node.worker_id = WorkerID.random()
+    worker_id = WorkerID.random()
     total = ResourceVector({"CPU": 1})
     node._ledger = ResourceLedger(total)
     node._gcs_address = None
     node._cluster_nodes = (NodeSnapshot(node.node_id, total, total),)
     node._cluster_addresses = {}
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 19001)
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(
+        worker_id, process=_AliveWorker(), address=("127.0.0.1", 19001),
+    )}
+    node.num_workers_per_node = 1
     node._shutdown_request_id = None
     node._leases = {}
     node._lease_outcomes = {}
     node._lease_cancellations = {}
-    node._active_lease_id = None
     node._lease_request_locks = {}
     node._inflight_lease_requests = 0
     node._state_lock = threading.RLock()
@@ -274,7 +276,7 @@ class _CancellationFixture:
         assert record.dependency_pins == () and record.completion is None
         assert node._lease_outcomes[self.request.lease_id].reply == self.grant
         assert node._workers[self.grant.worker_id].active_lease_id is None
-        assert node._active_lease_id is None
+        assert node._workers[node.worker_id].active_lease_id is None
         query = protocol.GetWorkerLeaseOutcome(
             self.grant.lease_id, self.grant.task_id, self.grant.attempt_id,
             self.grant.worker_id, self.core.worker_id, self.pending.output_ids,

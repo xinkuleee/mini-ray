@@ -149,7 +149,7 @@ class _OutputBackend(PureOutputRuntime):
         self.adapter._seal_replica = node._seal_output_publication_replica
         self.adapter._drop_replica = node._drop_output_publication_replica
 
-    def address(self, node_id):
+    def address(self, node_id, *, home_route=None):
         assert node_id == self.core.node_id
         return self.node_address
 

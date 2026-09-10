@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 import socket
 import time
+from dataclasses import replace
 
 import cloudpickle
 import pytest
@@ -27,8 +28,10 @@ from miniray.worker import (
     START_WORKER_LEASE_HANDLER,
     WorkerServer,
 )
-from tests.unit._unified_worker_rpc import UnifiedWorkerRPC
+from tests.unit.test_worker_completion_paths import _SingleOutputRPC
 
+
+from tests.support._worker_protocol import initialize_worker_protocol, complete_boundary as _complete_boundary
 
 @pytest.fixture(autouse=True)
 def _pure_cases_do_not_wait(request, monkeypatch):
@@ -71,6 +74,7 @@ def _push(worker_id: WorkerID, function: object) -> protocol.PushTask:
 
 def _worker() -> WorkerServer:
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = WorkerID.random()
     worker.node_id = NodeID.random()
     worker.node_address = ("127.0.0.1", 22001)
@@ -133,7 +137,7 @@ def test_start_ack_loss_then_closed_exact_replay_executes_once(
     push = _push(worker.worker_id, function)
     key = (push.spec.attempt_id, push.lease_id)
     start_calls = 0
-    outputs = UnifiedWorkerRPC()
+    outputs = _SingleOutputRPC()
     original_loads = cloudpickle.loads
 
     def rpc(_address, handler, message):
@@ -147,7 +151,7 @@ def test_start_ack_loss_then_closed_exact_replay_executes_once(
         if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
             return outputs.prepare(message)
         assert handler == COMPLETE_WORKER_LEASE_HANDLER
-        return outputs.complete(message)
+        return _complete_boundary(outputs, message)
 
     monkeypatch.setattr("miniray.worker.rpc_request", rpc)
     monkeypatch.setattr("miniray.worker.cloudpickle.loads", lambda _payload: function)
@@ -180,7 +184,7 @@ def test_unresolved_obligation_blocks_clean_shutdown_then_late_replay_resolves(
     push = _push(worker.worker_id, lambda: 9)
     key = (push.spec.attempt_id, push.lease_id)
     lose_start = True
-    outputs = UnifiedWorkerRPC()
+    outputs = _SingleOutputRPC()
 
     def rpc(_address, handler, message):
         if handler == START_WORKER_LEASE_HANDLER:
@@ -190,7 +194,7 @@ def test_unresolved_obligation_blocks_clean_shutdown_then_late_replay_resolves(
         if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
             return outputs.prepare(message)
         assert handler == COMPLETE_WORKER_LEASE_HANDLER
-        return outputs.complete(message)
+        return _complete_boundary(outputs, message)
 
     monkeypatch.setattr("miniray.worker.rpc_request", rpc)
     with pytest.raises(TransportTimeout):
@@ -258,8 +262,8 @@ def test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it(
     push = _push(worker.worker_id, function)
     key = (push.spec.attempt_id, push.lease_id)
     completion_calls = 0
-    outputs = UnifiedWorkerRPC()
-    lost_completions = []
+    outputs = _SingleOutputRPC()
+    completion_requests, completions = [], []
 
     def rpc(_address, handler, message):
         nonlocal completion_calls
@@ -269,9 +273,10 @@ def test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it(
             return outputs.prepare(message)
         assert handler == COMPLETE_WORKER_LEASE_HANDLER
         completion_calls += 1
-        actual = outputs.complete(message)
+        actual = _complete_boundary(outputs, message)
+        completion_requests.append(message)
+        completions.append(actual)
         if completion_calls <= 3:
-            lost_completions.append(actual)
             raise TransportTimeout("completion acknowledgement was lost")
         return actual
 
@@ -286,8 +291,22 @@ def test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it(
     retained = worker._prepared_output_replies[key]
     assert retained.request == push and retained.prepare_acked
     assert retained.complete_envelope is None
-    assert len(outputs.prepare_requests) == 1 and len(lost_completions) == 3
-    assert all(reply == lost_completions[0] for reply in lost_completions)
+    assert len(outputs.prepare_requests) == 1 and len(completions) == 3
+    completion = protocol.CompleteWorkerLease(
+        push.lease_id, push.spec.task_id, push.spec.attempt_id, push.worker_id,
+        protocol.TaskReplyStatus.SUCCEEDED, push.spec.scheduling_key,
+    )
+    assert completion_requests == [completion] * 3
+    # released describes this call's effect, not an immutable completion fact:
+    # only the first Complete commits; exact replays retain the same envelope.
+    assert tuple(reply.released for reply in completions) == (True, False, False)
+    assert all(replace(reply, released=True) == completions[0] for reply in completions)
+    envelope = completions[0].output_publication
+    assert envelope is not None and envelope.manifest == retained.outputs.manifest
+    committed = {(completion.lease_id, completion.task_id, completion.attempt_id,
+                  completion.worker_id): (completion, envelope.complete)}
+    assert outputs.completions == committed
+    assert outputs.journal.snapshot(envelope.publication_id).complete == envelope.complete
     assert key not in worker._completion_acked
     assert worker._push_obligations == {key}
 
@@ -296,10 +315,14 @@ def test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it(
     cached = worker._handle_push_task(push)
     assert cached is worker._replies[key]
     assert worker._cached_pushes[key] == push and key not in worker._prepared_output_replies
-    assert cached.output_publication == lost_completions[0].output_publication
+    assert cached.output_publication == envelope
     assert cached.output_publication.manifest == retained.outputs.manifest
     assert len(outputs.prepare_requests) == 1
     assert executions == 1
     assert completion_calls == 4
+    assert completion_requests == [completion] * 4
+    assert tuple(reply.released for reply in completions) == (True, False, False, False)
+    assert all(replace(reply, released=True) == completions[0] for reply in completions)
+    assert outputs.completions == committed
     assert worker._completion_acked == {key}
     assert worker._push_obligations == set()

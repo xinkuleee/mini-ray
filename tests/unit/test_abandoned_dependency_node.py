@@ -18,6 +18,7 @@ import threading
 import pytest
 
 from miniray import node as node_module, protocol
+from miniray.core import _HomeRoute
 from miniray.core import _ObjectWaiter, _worker_death_reference_id
 from miniray.ids import WorkerID
 from miniray.ownership import ObjectCollectionState, ObjectState
@@ -45,6 +46,7 @@ class _Fixture:
         if self.owner is not None:
             self.owner.worker_id = descriptors[0].owner_worker_id
             self.owner.node_id, self.owner.node_address = self.source.node_id, f.source_address
+            self.owner._home_route = _HomeRoute(self.owner.node_id, self.owner.node_address, self.owner._membership_epoch)
             self.owner.owner_address = self.owner_address
             self.owner.gcs_address = self.gcs_address
             self.owner._resolve_node_address = self.address
@@ -128,7 +130,7 @@ class _Fixture:
         with self.target._state_lock:
             return self.target._dependency_custody_registry_locked()
 
-    def address(self, node_id):
+    def address(self, node_id, *, home_route=None):
         assert node_id in (self.source.node_id, self.target.node_id)
         return self.nodes.source_address if node_id == self.source.node_id else ("target.invalid", 2404)
 

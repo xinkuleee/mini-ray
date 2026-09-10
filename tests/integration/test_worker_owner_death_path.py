@@ -1,6 +1,6 @@
 """Bounded proof that a foreign ObjectRef fails with its owner Worker.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+Run only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Static
 bounds are one GCS, two NodeManagers and one ordinary Worker per Node, with
 two 1-MiB stores. One owner Worker is killed and reaped before one replacement
 is spawned: five live children at peak, six child PIDs over the expected

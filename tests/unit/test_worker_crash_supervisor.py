@@ -46,6 +46,8 @@ from miniray.worker import (
 )
 
 
+from tests.support._worker_protocol import initialize_worker_protocol
+
 @pytest.fixture(autouse=True)
 def _pure_cases_have_no_runtime(request, monkeypatch):
     if request.node.get_closest_marker("heavy") is not None:
@@ -112,7 +114,6 @@ def _node_fixture() -> tuple[
 
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = executor
     node.num_workers_per_node = 1
     node._worker_order = (executor,)
     node._workers = {
@@ -121,13 +122,6 @@ def _node_fixture() -> tuple[
             pid=process.pid, active_lease_id=lease,
         )
     }
-    node._legacy_worker_compat = False
-    node._worker_process = process
-    node._worker_address = ("127.0.0.1", 27101)
-    node._worker_pid = process.pid
-    node._worker_exitcode = None
-    node._worker_forced = False
-    node._active_lease_id = lease
     node._ledger = _CountingLedger(total)
     node._ledger.allocate(total, allocation)
     node._cluster_nodes = (NodeSnapshot(node_id, total, ResourceVector()),)
@@ -818,6 +812,7 @@ def test_crash_failpoint_exits_after_complete_before_task_reply(
     )
     push = protocol.PushTask(request.lease_id, worker_id, spec)
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = worker_id
     worker.node_id = node_id
     worker.node_address = ("127.0.0.1", 27001)

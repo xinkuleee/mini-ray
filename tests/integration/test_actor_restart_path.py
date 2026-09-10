@@ -2,7 +2,7 @@
 
 The Actor itself exits only after a test-owned loopback gate proves that its
 generation-0 method entered user code.  No raw PID is ever used as a signal
-target.  Run this exact node ID only through ``scripts/run_bounded_test.py``.
+target.  Run this exact node ID only through ``scripts/run_baseline.py --smoke EXACT``.
 The hard bounds are one GCS, one NodeManager, one ordinary Worker, one live
 Actor Worker per generation, one injected exit, and one permitted restart.
 Four children are live at once; five distinct managed PIDs are observed. Four

@@ -24,6 +24,7 @@ import cloudpickle
 import pytest
 
 from miniray import protocol
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, ObjectRef
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.errors import ProtocolError, SystemTaskError
@@ -63,6 +64,7 @@ def _bare_core(
     core.worker_id = worker_id or core.worker_id
     core.node_id = node_id or core.node_id
     core.node_address = node_address
+    core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
     return core
 
 
@@ -541,7 +543,7 @@ def test_borrower_rejects_every_stored_reply_identity_or_integrity_mismatch(
 
     monkeypatch.setattr(
         core, "_resolve_node_address",
-        lambda node_id: source_address if node_id == descriptor.node_id else None,
+        lambda node_id, *, home_route=None: source_address if node_id == descriptor.node_id else None,
     )
 
     def rpc(address: object, handler: str, request: object) -> object:
@@ -564,13 +566,13 @@ def test_stored_fetch_subtracts_resolution_time_and_never_starts_after_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     descriptor = _descriptor(payload=cloudpickle.dumps("stored"))
-    core = object.__new__(CoreWorker)
-    core.node_id = NodeID.random()
+    core = make_pure_core()
     source_address = ("127.0.0.1", 27006)
     resolutions: list[tuple[NodeID, float | None]] = []
     object_rpcs: list[object] = []
 
-    def resolve(node_id: NodeID, timeout: float | None) -> tuple[str, int]:
+    def resolve(node_id: NodeID, timeout: float | None, *, home_route) -> tuple[str, int]:
+        assert home_route == core._home_route
         resolutions.append((node_id, timeout))
         return source_address
 

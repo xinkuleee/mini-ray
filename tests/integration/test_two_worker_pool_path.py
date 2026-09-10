@@ -4,8 +4,8 @@ Both tiny tasks connect to a test-owned loopback barrier and remain blocked.
 The Driver accepts and identifies both Worker connections before releasing
 either, proving overlap without sleeps or elapsed-time assertions.
 
-Run only its exact allowlisted ID through ``scripts/run_bounded_test.py`` after
-review. One GCS, one Node, two Workers, one 1 MiB store, two logical CPUs and
+Run its registered exact ID through ``scripts/run_baseline.py --smoke EXACT``.
+One GCS, one Node, two Workers, one 1 MiB store, two logical CPUs and
 two tiny Tasks fit the 30-second process-tree bound. The single barrier and
 all gets share ten seconds after init. Both reference receipts and gate
 release share three seconds in finally, before unconditional shutdown and

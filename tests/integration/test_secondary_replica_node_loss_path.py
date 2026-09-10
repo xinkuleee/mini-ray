@@ -7,10 +7,14 @@ locations are authoritative does the test crash the source Node.  The same
 ObjectRef must remain READY on the target replica with attempt zero and no retry or
 reconstruction.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static bounds
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static bounds
 are one GCS, two NodeManagers, one Worker per Node, two logical tasks, two 1 MiB
 object stores, one exact managed Node crash, no tracing or test-owned listener, and
 the runner's 30-second process-tree deadline.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

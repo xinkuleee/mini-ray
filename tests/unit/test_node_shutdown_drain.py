@@ -85,7 +85,6 @@ def _node() -> tuple[NodeServer, WorkerID]:
 
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = worker_id
     node.num_workers_per_node = 1
     node._worker_order = (worker_id,)
     node._workers = {
@@ -93,13 +92,6 @@ def _node() -> tuple[NodeServer, WorkerID]:
             worker_id, process=process, address=("127.0.0.1", 19101), pid=4101
         )
     }
-    node._legacy_worker_compat = False
-    node._worker_process = process
-    node._worker_address = ("127.0.0.1", 19101)
-    node._worker_pid = 4101
-    node._worker_exitcode = None
-    node._worker_forced = False
-    node._active_lease_id = None
     node._ledger = ResourceLedger(total)
     node._leases = {}
     node._lease_outcomes = {}

@@ -1,7 +1,7 @@
 """Bounded smoke for a foreign stored ObjectRef data path.
 
-This test is statically allowlisted and may be run only by exact node ID through
-``scripts/run_bounded_test.py``.  Its fixed bounds are one GCS, one NodeManager,
+After review and registration, run only this exact node ID through
+``scripts/run_baseline.py --case EXACT``.  Its fixed bounds are one GCS, one NodeManager,
 two ordinary Workers, exactly two tasks, one INLINE outer result containing one
 stored child ref, and no Actor/trace or test-owned server.
 One 1 MiB store, ten seconds of shared post-init work, at most sixteen observed
@@ -9,6 +9,10 @@ owner/fetch replies and a three-second reference-close budget in finally. All
 four PIDs and five endpoints, including the Driver owner, are checked even
 after a work or close failure. Only the outer process-tree runner bounds
 startup/shutdown; reference receipt timeouts do not cancel remote cleanup.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

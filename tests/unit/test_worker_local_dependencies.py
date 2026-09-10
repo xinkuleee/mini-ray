@@ -18,14 +18,17 @@ from miniray.worker import (
     START_WORKER_LEASE_HANDLER,
     WorkerServer,
 )
-from tests.unit._unified_worker_rpc import UnifiedWorkerRPC
+from tests.unit.test_worker_completion_paths import _SingleOutputRPC
 
 
 pytestmark = pytest.mark.unit
 
 
+from tests.support._worker_protocol import initialize_worker_protocol, complete_boundary as _complete_boundary
+
 def _worker() -> WorkerServer:
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = WorkerID.random()
     worker.node_id = NodeID.random()
     worker.node_address = ("127.0.0.1", 19000)
@@ -90,7 +93,7 @@ def test_worker_reads_only_verified_local_dependency_before_execution(
     push = _push(worker, payload)
     events: list[str] = []
     completions: list[protocol.CompleteWorkerLease] = []
-    publication = UnifiedWorkerRPC()
+    publication = _SingleOutputRPC()
 
     def fake_rpc(address, handler, message):
         assert address == worker.node_address
@@ -151,7 +154,7 @@ def test_worker_reads_only_verified_local_dependency_before_execution(
         if handler == COMPLETE_WORKER_LEASE_HANDLER:
             events.append("complete")
             completions.append(message)
-            return publication.complete(message)
+            return _complete_boundary(publication, message)
         raise AssertionError(handler)
 
     monkeypatch.setattr("miniray.worker.rpc_request", fake_rpc)

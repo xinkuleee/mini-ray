@@ -2,7 +2,7 @@
 
 These tests construct the real Node lease authority around two in-memory Worker
 slots. The surviving slot completes through real in-memory output discovery,
-Prepare/ARM and Complete; its original allocation is released only by that
+owner handoff registration and Complete; its original allocation is released only by that
 Complete transition. They create no listener, background thread, or child
 process. A one-slot INLINE journal and at most a 1 KiB empty store stay local.
 """
@@ -21,7 +21,7 @@ from miniray.ids import AttemptID, JobID, LeaseID, NodeID, ObjectID, TaskID, Wor
 from miniray.node import NodeServer, _WorkerSlot
 from miniray.output_publication import OutputPublicationCompleteWitness
 from miniray.resources import NodeSnapshot, ResourceLedger, ResourceVector
-from tests.unit._pure_node_output import prepare_ref_free_output
+from tests.unit._pure_node_output_current import prepare_ref_free_output
 
 
 pytestmark = pytest.mark.unit
@@ -68,7 +68,6 @@ def _two_slot_node() -> tuple[NodeServer, tuple[WorkerID, WorkerID]]:
 
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = worker_ids[0]
     node.num_workers_per_node = 2
     node._worker_order = worker_ids
     node._workers = {
@@ -85,13 +84,6 @@ def _two_slot_node() -> tuple[NodeServer, tuple[WorkerID, WorkerID]]:
             pid=4102,
         ),
     }
-    node._legacy_worker_compat = False
-    node._worker_process = node._workers[worker_ids[0]].process
-    node._worker_address = node._workers[worker_ids[0]].address
-    node._worker_pid = node._workers[worker_ids[0]].pid
-    node._worker_exitcode = None
-    node._worker_forced = False
-    node._active_lease_id = None
     node._ledger = ResourceLedger(total)
     node._gcs_address = None
     node._registered_with_gcs = False
@@ -212,6 +204,9 @@ def test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot() -> N
     )
     assert node._workers[worker_ids[0]].active_lease_id is None
     assert node._workers[worker_ids[0]].address is None
+    assert (node.worker_id, node.worker_ids) == (worker_ids[0], worker_ids)
+    assert (node.worker_address, node.worker_pid) == (None, 4101)
+    assert node.worker_addresses == () and node.worker_pids == (4101, 4102)
 
     # The surviving slot and allocation remain authoritative and untouched.
     assert node._leases[second.lease_id].state is (
@@ -237,7 +232,9 @@ def test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot() -> N
     record = node._leases[second.lease_id]
     assert record.output_publication_id == identity
     assert publication.journal.snapshot(identity).ready_to_complete
-    assert publication.recovery.snapshot(identity).armed
+    handoff = publication.handoffs.query(identity)
+    assert handoff.manifest == publication.manifest
+    assert handoff.complete is None
     assert publication.journal.snapshot(identity).complete is None
     assert record.state is protocol.LeaseExecutionState.RUNNING
     assert node._workers[worker_ids[1]].active_lease_id == second.lease_id
@@ -252,6 +249,12 @@ def test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot() -> N
     assert completed.output_publication.manifest == publication.manifest
     witness = OutputPublicationCompleteWitness.for_manifest(publication.manifest)
     assert completed.output_publication.complete == publication.journal.snapshot(identity).complete == witness
+    # Local Complete releases the lease before its independent owner outbox.
+    assert publication.handoffs.query(identity).complete is None
+    assert publication.adapter.pending_terminal_reports() == (witness,)
+    assert publication.adapter.report_terminal(identity)
+    assert publication.handoffs.query(identity).complete == witness
+    assert publication.adapter.pending_terminal_reports() == ()
     after_complete = node.resource_ledger.snapshot()
     replay = node._handle_complete_worker_lease(_complete(second, second_grant))
     assert replay.accepted and not replay.released

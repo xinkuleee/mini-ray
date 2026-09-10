@@ -29,6 +29,7 @@ import pytest
 
 from miniray import control, core as core_module, node as node_module, protocol, transport
 from miniray.control import NodeRegistry, PlacementGroupControlCoordinator
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _DelayedReadyTask, _ObjectWaiter, _RPC_CALL_DEADLINE
 from miniray.errors import SystemTaskError
 from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
@@ -87,7 +88,6 @@ class _Case:
             node._node_pid = 31401 + index
             node._server = SimpleNamespace(address=("locality-{}.invalid".format(index), 1))
             node._workers[node.worker_id].address = ("locality-worker-{}.invalid".format(index), 1)
-            node._worker_address = node._workers[node.worker_id].address
             node._object_manager = ObjectManager(node.node_id, node.object_store)
             node._scheduling_policy = HybridPolicy()
             node._gcs_address = ("locality-control.invalid", 1)
@@ -103,6 +103,7 @@ class _Case:
         for node in self.nodes:
             assert node._handle_install_cluster_snapshot(self.snapshot).installed
         core.node_id, core.node_address = self.home.node_id, self.home.address
+        core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
         core.gcs_address = ("locality-control.invalid", 1)
         core._membership_epoch = epoch
         core._installed_cluster_snapshot = self.snapshot if snapshot else None
@@ -249,7 +250,7 @@ class _Case:
 
     def push(self, address, handler, push):
         assert not self.pushes and handler == "push_task"
-        node = next(item for item in self.nodes if item._worker_address == address)
+        node = next(item for item in self.nodes if item._workers[item.worker_id].address == address)
         record = node._leases[push.lease_id]
         assert record.grant.worker_id == push.worker_id
         assert push.dependencies == record.grant.dependencies
@@ -419,7 +420,7 @@ def test_cold_lookup_has_short_deadline_positive_cache_and_restores_context(monk
     try:
         descriptor = case.foreign(case.peer.node_id)
 
-        def resolve(node_id):
+        def resolve(node_id, *, home_route=None):
             assert not case.core._state_lock._is_owned()
             deadline = _RPC_CALL_DEADLINE.get()
             assert time.monotonic() <= deadline <= parent
@@ -446,7 +447,7 @@ def test_cold_lookup_failure_or_malformed_endpoint_is_only_a_missing_hint(monkey
         calls = []
         # Three fixed observations, no retry loop or negative death cache.
         for answer in (SystemTaskError("address unavailable"), ("peer.invalid", 0), ("", 1)):
-            def resolve(node_id):
+            def resolve(node_id, *, home_route=None):
                 deadline = _RPC_CALL_DEADLINE.get()
                 assert deadline is not None and deadline <= time.monotonic() + 0.75
                 calls.append(node_id)
@@ -471,7 +472,7 @@ def test_death_during_cold_lookup_fences_its_successful_address(monkeypatch):
         calls = []
         owner_identity = case.core.worker_id
 
-        def resolve(node_id):
+        def resolve(node_id, *, home_route=None):
             assert not case.core._state_lock._is_owned()
             calls.append(node_id)
             case.lose(case.peer)
@@ -491,7 +492,7 @@ def test_snapshot_installed_during_lookup_wins_over_optional_address(monkeypatch
     try:
         descriptor = case.foreign(case.peer.node_id)
 
-        def resolve(node_id):
+        def resolve(node_id, *, home_route=None):
             assert node_id == case.peer.node_id and not case.core._state_lock._is_owned()
             # The Node copies were already installed by the real handlers at
             # construction. Deliver their same authoritative view to Core now.

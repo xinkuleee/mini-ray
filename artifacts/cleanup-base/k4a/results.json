@@ -1,0 +1,131 @@
+[
+  {
+    "mode": "pure",
+    "selector": null,
+    "exit_code": 0,
+    "seconds": 6.759,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--pure"
+    ],
+    "log": "000-pure.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_owner_service.py",
+    "exit_code": 0,
+    "seconds": 2.873,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_owner_service.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_pool_node.py",
+    "exit_code": 2,
+    "seconds": 3.068,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_pool_node.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_completion_paths.py",
+    "exit_code": 0,
+    "seconds": 5.64,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_completion_paths.py"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_local_dependencies.py",
+    "exit_code": 0,
+    "seconds": 3.46,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_local_dependencies.py"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_push_obligations.py",
+    "exit_code": 1,
+    "seconds": 3.787,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_push_obligations.py"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_retry_failpoint.py",
+    "exit_code": 0,
+    "seconds": 6.048,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_retry_failpoint.py"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_abandoned_dependency_protocol.py",
+    "exit_code": 0,
+    "seconds": 4.676,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_abandoned_dependency_protocol.py"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_task_output_seal_cleanup.py",
+    "exit_code": 0,
+    "seconds": 4.013,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_task_output_seal_cleanup.py"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_core_node_death_recovery.py",
+    "exit_code": 0,
+    "seconds": 5.782,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4a-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_core_node_death_recovery.py"
+    ],
+    "log": "009-case.log"
+  }
+]

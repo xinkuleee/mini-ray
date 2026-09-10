@@ -6,7 +6,7 @@ owner-led publication with one OBJECT_STORE output and contained edge. The
 test proves the real owner handoff/Node adoption barrier, then closes both
 public handles and proves the reverse child-pin/replica/metadata barrier.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+Run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static
 bounds are one GCS, one NodeManager, two ordinary Workers, exactly two tasks,
 one 1 MiB ObjectStore, no Actor, trace collector, test-owned server, or sleep,
 and the runner's 30-second process-tree deadline. All work after init shares

@@ -1,0 +1,86 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot _____
+
+    def test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot() -> None:
+        node, worker_ids = _two_slot_node()
+        node._node_pid, node._registration_epoch = 4000, 1
+        first = _request(node, 0)
+        second = _request(node, 1)
+        second = replace(second, return_ids=(ObjectID.for_task(second.task_id),))
+        waiting = _request(node, 2)
+        first_grant = node._handle_request_lease(first)
+        second_grant = node._handle_request_lease(second)
+        assert isinstance(first_grant, protocol.GrantWorkerLease)
+        assert isinstance(second_grant, protocol.GrantWorkerLease)
+        assert node._handle_start_worker_lease(_start(first, first_grant)).accepted
+        assert node._handle_start_worker_lease(_start(second, second_grant)).accepted
+    
+        exited = _ExitedWorker(pid=4101, exitcode=-9)
+        node._workers[worker_ids[0]].process = exited
+        result = node._stop_worker_slot(worker_ids[0])
+    
+        assert result.worker_id == worker_ids[0]
+        assert result.exitcode == -9 and not result.clean and not result.forced
+        assert exited.closed
+        assert node._leases[first.lease_id].state is (
+            protocol.LeaseExecutionState.WORKER_LOST
+        )
+        assert node._workers[worker_ids[0]].active_lease_id is None
+        assert node._workers[worker_ids[0]].address is None
+        assert (node.worker_id, node.worker_ids) == (worker_ids[0], worker_ids)
+        assert (node.worker_address, node.worker_pid) == (None, 4101)
+        assert node.worker_addresses == () and node.worker_pids == (4101, 4102)
+    
+        # The surviving slot and allocation remain authoritative and untouched.
+        assert node._leases[second.lease_id].state is (
+            protocol.LeaseExecutionState.RUNNING
+        )
+        assert node._workers[worker_ids[1]].active_lease_id == second.lease_id
+        assert node._workers[worker_ids[1]].address == second_grant.worker_address
+        assert node.resource_ledger.available == ResourceVector({"CPU": 2})
+    
+        late = node._handle_complete_worker_lease(_complete(first, first_grant))
+        assert not late.accepted and not late.released
+        assert late.state is protocol.LeaseExecutionState.WORKER_LOST
+    
+        # The dead endpoint is not grantable while the surviving Worker is busy.
+        pending = node._handle_request_lease(waiting)
+        assert isinstance(pending, protocol.RejectWorkerLease)
+        assert pending.reason is protocol.LeaseRejectReason.PENDING_CAPACITY
+    
+        allocation_before = node.resource_ledger.record(second_grant.allocation_token)
+        before_prepare = node.resource_ledger.snapshot()
+        publication = prepare_ref_free_output(node, second, second_grant, values=(7,))
+        identity = publication.manifest.publication_id
+        record = node._leases[second.lease_id]
+        assert record.output_publication_id == identity
+        assert publication.journal.snapshot(identity).ready_to_complete
+        handoff = publication.handoffs.query(identity)
+        assert handoff.manifest == publication.manifest
+        assert handoff.complete is None
+        assert publication.journal.snapshot(identity).complete is None
+        assert record.state is protocol.LeaseExecutionState.RUNNING
+        assert node._workers[worker_ids[1]].active_lease_id == second.lease_id
+        assert node.resource_ledger.snapshot() == before_prepare
+        assert node.resource_ledger.record(second_grant.allocation_token) == allocation_before
+    
+        completed = node._handle_complete_worker_lease(_complete(second, second_grant))
+        assert completed.accepted and completed.released
+        assert record.state is protocol.LeaseExecutionState.COMPLETED
+        assert node.resource_ledger.available == node.resource_ledger.total
+        assert node._workers[worker_ids[1]].active_lease_id is None
+        assert completed.output_publication.manifest == publication.manifest
+        witness = OutputPublicationCompleteWitness.for_manifest(publication.manifest)
+        assert completed.output_publication.complete == publication.journal.snapshot(identity).complete == witness
+>       assert publication.handoffs.query(identity).complete == witness
+E       AssertionError: assert None == OutputPublicationCompleteWitness(publication_id=OutputPublicationID(lease_id=LeaseID('0f4708ab7575b57b28708a7c9a241a82...st='46597abe8f9429c863ac3a0eec39eeda646257bd9e8bc0ac1bf94f0951aea64a', status=<TaskReplyStatus.SUCCEEDED: 'SUCCEEDED'>)
+E        +  where None = OutputHandoffSnapshot(publication_id=OutputPublicationID(lease_id=LeaseID('0f4708ab7575b57b28708a7c9a241a82'), executi...c0ac1bf94f0951aea64a'), phase=<OutputHandoffPhase.PENDING: 'PENDING'>, complete=None, adoption=None, abort_reason=None).complete
+E        +    where OutputHandoffSnapshot(publication_id=OutputPublicationID(lease_id=LeaseID('0f4708ab7575b57b28708a7c9a241a82'), executi...c0ac1bf94f0951aea64a'), phase=<OutputHandoffPhase.PENDING: 'PENDING'>, complete=None, adoption=None, abort_reason=None) = query(OutputPublicationID(lease_id=LeaseID('0f4708ab7575b57b28708a7c9a241a82'), execution=TaskExecutionKey(manifest=TaskOutp...ccd'), return_index=0),)), attempt_id=AttemptID(task_id=TaskID('35af69b48c2713e53397c281d68cdccd'), attempt_number=0))))
+E        +      where query = <miniray.output_handoff.OutputHandoffTable object at 0x73f60294c410>.query
+E        +        where <miniray.output_handoff.OutputHandoffTable object at 0x73f60294c410> = namespace(manifest=OutputPublicationManifest(header=OutputPublicationHeader(publication_id=OutputPublicationID(lease_i...0>, report_rollback=<function prepare_ref_free_output.<locals>.report_rollback at 0x73f601b64cc0>, rollback_reports=[]).handoffs
+
+tests/unit/test_worker_pool_node.py:252: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_worker_pool_node.py::test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot
+1 failed, 1 passed in 4.34s

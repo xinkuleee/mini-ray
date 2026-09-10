@@ -19,6 +19,7 @@ import threading
 import pytest
 
 from miniray import node as node_module, protocol
+from miniray.core import _HomeRoute
 from miniray.core import (
     ObjectRef, _DelayedReadyTask, _ForeignDependencyGuard, _LeaseCancellationState,
     _LeaseRequestState, _LocationReportState, _ObjectWaiter, _PendingTask, _ReadyTask,
@@ -53,11 +54,13 @@ class _Fixture:
             node._object_store = ObjectStore(1024)
             node._object_manager = ObjectManager(node.node_id, node._object_store)
             node.event_sink = None
-        self.target._worker_process = SimpleNamespace(is_alive=lambda: True)
-        self.target._worker_address = ("worker.invalid", 3)
+        self.target._workers[self.target.worker_id].process = SimpleNamespace(is_alive=lambda: True)
+        self.target._workers[self.target.worker_id].address = ("worker.invalid", 3)
         self.target._cluster_addresses = {self.source.node_id: self.source_address}
         self.consumer.node_id, self.consumer.node_address = self.target.node_id, self.target_address
+        self.consumer._home_route = _HomeRoute(self.consumer.node_id, self.consumer.node_address, self.consumer._membership_epoch)
         self.foreign.node_id, self.foreign.node_address = self.source.node_id, self.source_address
+        self.foreign._home_route = _HomeRoute(self.foreign.node_id, self.foreign.node_address, self.foreign._membership_epoch)
         self.foreign.owner_address = ("foreign-owner.invalid", 4)
         self.requests, self.cancels, self.acks, self.reports, self.releases = [], [], [], [], []
         self.transfers, self.source_release_replies, self.drops, self.states = [], [], [], []
@@ -159,7 +162,7 @@ class _Fixture:
             assert type(self.probe_grant) is protocol.GrantWorkerLease and self.probe_grant.dependencies == ()
             self.consumer._capacity_retry_rounds = 0
 
-    def address(self, node_id):
+    def address(self, node_id, *, home_route=None):
         assert node_id in (self.source.node_id, self.target.node_id)
         return self.source_address if node_id == self.source.node_id else self.target_address
 

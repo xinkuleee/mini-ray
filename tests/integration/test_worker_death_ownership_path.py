@@ -6,13 +6,17 @@ and the same logical task hold authorizes attempt 1 on the fresh Worker.  The
 Driver then consumes GCS's ordered death journal to remove the dead attempt's
 borrower without shortening the logical hold.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static
 bounds are one GCS, one Node, one live ordinary Worker slot, one dead Worker,
 one task with at most two attempts, two tiny objects, one 1 MiB store and one
 loopback gate. Three managed children at peak, four lifetime PIDs and at most
 six distinct endpoints. Work shares fifteen seconds; all final gate/reference
 cleanup shares three seconds before unconditional shutdown. Passive records
 are capped at 64 RPCs/four acquisitions; cleanup polls are finite.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

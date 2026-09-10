@@ -22,6 +22,7 @@ import cloudpickle
 import pytest
 
 from miniray import core as core_module, node as node_module, output_protocol as wire, protocol, worker as worker_module
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _DelayedReadyTask, _PendingTask, _PushRequestState
 from miniray.ids import LeaseID, WorkerID
 from miniray.node import NodeServer, _LeaseOutcome, _LeaseRecord, _WorkerSlot
@@ -37,6 +38,8 @@ from tests.unit._pure_core import close_pure_core, make_pure_core
 
 pytestmark = pytest.mark.unit
 
+
+from tests.support._worker_protocol import initialize_worker_protocol
 
 @pytest.fixture(autouse=True)
 def no_runtime(monkeypatch):
@@ -81,7 +84,7 @@ def _composition():
     grant = protocol.GrantWorkerLease(lease, pending.task_id, pending.spec.attempt_id,
         core.node_id, executor, ('worker.invalid', 2), token)
     node = object.__new__(NodeServer)
-    node.node_id, node.worker_id = core.node_id, executor
+    node.node_id = core.node_id
     node._node_pid, node._registration_epoch = 21001, 1
     node._registered_with_gcs, node._gcs_address = True, None
     node._state_lock, node._scheduling_lock = threading.RLock(), threading.Lock()
@@ -96,7 +99,6 @@ def _composition():
     node._owner_death_fences, node._actor_workers, node._pinned_transfers = {}, {}, {}
     node._worker_order = (executor,)
     node._workers = {executor: _WorkerSlot(executor, _LiveInput(), grant.worker_address, 9101, active_lease_id=lease)}
-    node._sync_first_worker_compat_locked()
     node._leases = {lease: _LeaseRecord(request, token, grant)}
     node._lease_outcomes = {lease: _LeaseOutcome(request, grant)}
     node._lease_cancellations, node._lease_request_locks = {}, {}
@@ -111,6 +113,7 @@ def _composition():
     node._background_rpc = owner_rpc
     node._output_publications = node._make_output_publication_adapter()
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id, worker.node_id, worker.node_address = executor, core.node_id, core.node_address
     worker.inline_threshold, worker._worker_core_enabled = 0, False
     worker._execution_lock = threading.Lock()
@@ -121,7 +124,7 @@ def _composition():
     push = protocol.PushTask(lease, executor, pending.spec)
     state = _PushRequestState(push, grant, core.node_address, grant.worker_address, 1, True)
     core._mark_protocol_unresolved(pending, 'push_replay_wait', target_node_id=node.node_id)
-    core._resolve_node_address = lambda node_id: core.node_address
+    core._resolve_node_address = lambda node_id, *, home_route=None: core.node_address
     return core, node, worker, pending, ref, state
 
 
@@ -255,6 +258,7 @@ def test_worker_drain_retains_real_source_until_local_release_and_same_publicati
     core, node, worker, pending, ref, state = _composition()
     child = make_pure_core()
     child.job_id, child.node_id = core.job_id, node.node_id
+    child._home_route = _HomeRoute(child.node_id, child.node_address, child._membership_epoch)
     child.worker_id = worker.worker_id
     child.owner_address = ('child.invalid', 3)
     worker._server = SimpleNamespace(address=child.owner_address)

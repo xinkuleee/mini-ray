@@ -6,7 +6,7 @@ with the same ObjectID.  The smoke proves that A is a lifetime handle rather
 than a readiness/DFS edge, while the replay still imports and dereferences A
 through a fresh task hold and a fresh physical-attempt borrower.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static
 bounds are one GCS, one NodeManager, one ordinary Worker, one ordinary task
 with one reconstruction attempt, a 1 MiB store, tiny values, no Actor or
 tracing, no test-owned listener, and no sleeps. Driver operations/observations
@@ -17,6 +17,10 @@ shutdown and three-PID/four-endpoint checks. The nested container is INLINE;
 2 KiB source/result padding keeps both actual values store-backed.
 At most eight Acquire records and 256 passive checks per observation are kept.
 The outer 30-second runner bounds calls whose internal RPC policy is unchanged.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

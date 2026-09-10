@@ -32,6 +32,7 @@ import pytest
 
 from miniray import control, core as core_module, node as node_module, protocol, transport
 from miniray.control import NodeRegistry, PlacementGroupControlCoordinator
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _NodeDeathObserved, _PendingTask, _ReadyTask, _STOP, _WAKE_COORDINATOR
 from miniray.errors import PlacementGroupLostError, SystemTaskError
 from miniray.ids import LeaseID
@@ -127,6 +128,7 @@ class _Scenario:
             node._registration_epoch = self.registry.get(node.node_id).registration_epoch
         self.pg = PlacementGroupControlCoordinator(self.registry, participant_rpc=self.participant_rpc)
         core.node_id, core.node_address = self.home.node_id, self.home.address
+        core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
         core.gcs_address = ("pg-control.invalid", 1)
         core._rpc = self.control_rpc
         epoch, infos = self.registry.live_snapshot()

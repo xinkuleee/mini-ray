@@ -69,7 +69,7 @@ class _ActorProcess:
 def _node(node_id: NodeID) -> NodeServer:
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = WorkerID.random()
+    worker_id = WorkerID.random()
     node._state_lock = threading.RLock()
     node._ledger = ResourceLedger(ResourceVector({"CPU": 2}))
     node._cluster_nodes = ()
@@ -80,12 +80,11 @@ def _node(node_id: NodeID) -> NodeServer:
     node._actor_creation_locks = {}
     node._actor_finalize_request_id = None
     node._actor_finalize_results = {}
-    node._worker_process = None
-    node._worker_address = None
-    node._worker_pid = 8000
-    node._worker_exitcode = 0
-    node._worker_forced = False
-    node._active_lease_id = None
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(
+        worker_id, process=None, address=None, pid=8000, exitcode=0,
+    )}
+    node.num_workers_per_node = 1
     node._pinned_transfers = {}
     node._dependency_pin_cleanups = {}
     node._scheduling_policy = HybridPolicy(seed=0)
@@ -285,20 +284,12 @@ def test_forced_actor_stop_reclaims_token_but_node_finalize_is_unclean(
     node = _node(NodeID.random())
     request, process, _record = _install_actor(node, 13)
     worker_id = WorkerID.random()
-    node.worker_id = worker_id
     node._worker_order = (worker_id,)
     node._workers = {
         worker_id: _WorkerSlot(
             worker_id, process=None, address=None, pid=8100, exitcode=0
         )
     }
-    node._legacy_worker_compat = False
-    node._worker_process = None
-    node._worker_address = None
-    node._worker_pid = 8100
-    node._worker_exitcode = 0
-    node._worker_forced = False
-    node._active_lease_id = None
     node._worker_drain_statuses = {
         worker_id: protocol.DrainStatus(
             "epoch", "worker:{}".format(worker_id), True, True

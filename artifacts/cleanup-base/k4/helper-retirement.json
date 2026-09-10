@@ -1,0 +1,11 @@
+{
+  "path": "tests/unit/_pure_node_output.py",
+  "raw_sha256_before": "df4cb692d184a74e6e090eb11233870841665e48a7c82f5bd91731cd5278c216",
+  "reason": "Old output_recovery/GCS/multi-slot helper has no retained Python caller; current owner-led helper is used instead.",
+  "replacement": "tests/unit/_pure_node_output_current.py",
+  "evidence": [
+    "base-k4c-01: pool 2 passed; spillback 11 pure passed",
+    "base-k4d-01: original spillback L1 passed after deleting retired target_execution comparison"
+  ],
+  "remaining": "Revalidate pool review binding after removing obsolete extra input; full K4 checkpoint still in progress."
+}

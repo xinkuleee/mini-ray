@@ -1,0 +1,197 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_pool_node.py",
+    "exit_code": 0,
+    "seconds": 7.631,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_pool_node.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_node_membership_snapshot.py",
+    "exit_code": 0,
+    "seconds": 6.185,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_node_membership_snapshot.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_node_worker_death_runtime.py",
+    "exit_code": 0,
+    "seconds": 7.575,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_node_worker_death_runtime.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_core_preserves_identity_and_does_not_release_from_submitter",
+    "exit_code": 0,
+    "seconds": 14.321,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_core_preserves_identity_and_does_not_release_from_submitter"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_core_does_not_release_after_ambiguous_push_timeout",
+    "exit_code": 0,
+    "seconds": 11.367,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_core_does_not_release_after_ambiguous_push_timeout"
+    ],
+    "log": "004-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_push_task_rpc_has_no_user_task_timeout",
+    "exit_code": 0,
+    "seconds": 13.752,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_push_task_rpc_has_no_user_task_timeout"
+    ],
+    "log": "005-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_explicit_worker_rejection_requeues_exact_push",
+    "exit_code": 0,
+    "seconds": 19.619,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_explicit_worker_rejection_requeues_exact_push"
+    ],
+    "log": "006-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_connection_failure_abandons_but_receive_timeout_does_not",
+    "exit_code": 0,
+    "seconds": 13.441,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_connection_failure_abandons_but_receive_timeout_does_not"
+    ],
+    "log": "007-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_stored_dependency_preparation_keeps_bytes_out_of_driver_path",
+    "exit_code": 0,
+    "seconds": 13.468,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_stored_dependency_preparation_keeps_bytes_out_of_driver_path"
+    ],
+    "log": "008-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_death_before_local_replica_report_restores_ready_route_atomically",
+    "exit_code": 0,
+    "seconds": 16.756,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_death_before_local_replica_report_restores_ready_route_atomically"
+    ],
+    "log": "009-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_target_node_rechecks_local_capacity_instead_of_stale_gcs_hint",
+    "exit_code": 0,
+    "seconds": 13.459,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_target_node_rechecks_local_capacity_instead_of_stale_gcs_hint"
+    ],
+    "log": "010-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_pending_capacity_reuses_one_node_record_until_eventual_grant",
+    "exit_code": 0,
+    "seconds": 17.165,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_pending_capacity_reuses_one_node_record_until_eventual_grant"
+    ],
+    "log": "011-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_cancelled_pending_capacity_lease_can_never_grant_later",
+    "exit_code": 0,
+    "seconds": 19.394,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_cancelled_pending_capacity_lease_can_never_grant_later"
+    ],
+    "log": "012-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_shutdown_freezes_replayed_pending_lease_without_a_late_grant",
+    "exit_code": 0,
+    "seconds": 9.702,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_shutdown_freezes_replayed_pending_lease_without_a_late_grant"
+    ],
+    "log": "013-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_spillback_runtime.py::test_concurrent_duplicate_spillback_uses_one_cached_snapshot",
+    "exit_code": 1,
+    "seconds": 5.633,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/base-k4c-01/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_spillback_runtime.py::test_concurrent_duplicate_spillback_uses_one_cached_snapshot"
+    ],
+    "log": "014-case.log"
+  }
+]

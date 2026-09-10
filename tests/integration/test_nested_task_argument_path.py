@@ -7,7 +7,7 @@ consumer is still unable to obtain a lease or receive ``PushTask``.  Once the
 blockers are released, the Worker restores the repeated nested reference as a
 public ObjectRef and resolves it through the Driver owner endpoint.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static
 bounds are one GCS, one NodeManager, two ordinary Workers, three tiny tasks,
 one Driver-owned inline object, one test-owned loopback barrier, no Actor and
 no trace collector. The Node has two CPUs and a 1-MiB store. This source is an
@@ -21,6 +21,10 @@ shutdown. Listener setup is inside that cleanup domain; four PIDs and six
 endpoints, including the Driver owner, are checked even after failure. No
 additional Task, fault, observer thread or sleep is introduced. Startup and
 shutdown retain the exact node ID's external 30-second process-tree bound.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

@@ -27,6 +27,7 @@ import pytest
 from miniray import protocol
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import ObjectID, TaskID
+from miniray.core import _HomeRoute
 from miniray.core import (
     CoreWorker, ObjectRef, _PendingTask, _ReleaseBorrowedReference,
     _RetryInlineGc, _WAKE_COORDINATOR,
@@ -169,6 +170,7 @@ class _WaitDrop:
                 setattr(core, name, self.forbidden)
         self.owner, self.borrower = self.cores
         self.owner.node_address = ("127.0.0.1", 29201)
+        self.owner._home_route = _HomeRoute(self.owner.node_id, self.owner.node_address, self.owner._membership_epoch)
         self.owner.owner_address = ("127.0.0.1", 29202)
         self.owner.gcs_address = ("wait-drop-control.invalid", 1)
         self.backend = _OutputBackend(self.owner, self.forbidden)

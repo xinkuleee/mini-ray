@@ -6,7 +6,11 @@ objects.  No Node, Worker, process, listener, Actor, or real RPC is started.
 Send/grant gates time out after 2 s; request joins share a 2 s deadline; finally
 releases gates before bounded joins and structurally stops residual threads
 without rewriting accepted counts or owner/recovery authority.
-Run one reviewed exact node ID through scripts/run_bounded_test.py.
+After review and registration, run one exact node ID through scripts/run_baseline.py --case EXACT.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 from __future__ import annotations
 

@@ -10,7 +10,11 @@ cleanup.  Gate waits and get calls have one-second bounds.  Finalizer events
 share a one-second budget; normal shutdown gets one second and last-resort
 structural joins get one further second.  Structural cleanup never changes
 accepted counts or protocol authorities to make a failed drain look clean.
-Run only one reviewed exact node ID through scripts/run_bounded_test.py.
+After review and registration, run one exact node ID through scripts/run_baseline.py --case EXACT.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

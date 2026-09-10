@@ -56,6 +56,8 @@ def _core() -> CoreWorker:
     core._stored_descriptors = {}
     core._registered_functions = set()
     core._state_lock = threading.RLock()
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._completion = threading.Condition(core._state_lock)
     core._submissions = queue.Queue()
     core._ready_tasks = queue.Queue()
@@ -68,7 +70,6 @@ def _core() -> CoreWorker:
     core._owner_protocol_open = True
     core._inflight_borrow_ops = 0
     core._object_gc_obligations = {}
-    core._inline_gc_obligations = core._object_gc_obligations
     return core
 
 
@@ -256,14 +257,14 @@ def test_death_replay_is_exact_and_stale_or_malformed_proof_mutates_nothing() ->
     node = NodeID.random()
     death = _death(node, 2)
 
-    first = core.handle_node_death(death, 2, True)
-    replay = core.handle_node_death(death, 2, True)
+    first = core.handle_node_death(death, _snapshot(2, _node_info(core.node_id, core.node_address)))
+    replay = core.handle_node_death(death, _snapshot(2, _node_info(core.node_id, core.node_address)))
     assert first.node_id == replay.node_id == node
     assert core._dead_nodes == {node: death}
 
     other = NodeID.random()
     with pytest.raises(ValueError, match="stale membership epoch"):
-        core.handle_node_death(_death(other, 1), 1, True)
+        core.handle_node_death(_death(other, 1), _snapshot(1, _node_info(core.node_id, core.node_address)))
     assert other not in core._dead_nodes
 
     malformed = object.__new__(protocol.NodeDeathRecord)
@@ -276,7 +277,7 @@ def test_death_replay_is_exact_and_stale_or_malformed_proof_mutates_nothing() ->
     object.__setattr__(malformed, "reason", protocol.NodeDeathReason.PROCESS_EXIT)
     object.__setattr__(malformed, "detail", "bad")
     with pytest.raises(Exception):
-        core.handle_node_death(malformed, 3, True)
+        core.handle_node_death(malformed, _snapshot(3, _node_info(core.node_id, core.node_address)))
     assert malformed.node_id not in core._dead_nodes
 
     pending = _pending(core)
@@ -303,14 +304,14 @@ def test_death_removes_only_dead_replica_then_final_replica_becomes_lost() -> No
         _stored_reply(core, pending, dead).results[0]
     )
 
-    removal = core.handle_node_death(_death(dead, 1), 1, True)
+    removal = core.handle_node_death(_death(dead, 1), _snapshot(1, _node_info(core.node_id, core.node_address), _node_info(survivor, ("replica.invalid", 28132))))
     snapshot = core.owner_table.snapshot(pending.object_id)
     assert removal.surviving == (pending.object_id,)
     assert snapshot.state is ObjectState.READY_STORED
     assert snapshot.locations == frozenset({survivor})
     assert core._stored_descriptors[pending.object_id].node_id == survivor
 
-    removal = core.handle_node_death(_death(survivor, 2), 2, True)
+    removal = core.handle_node_death(_death(survivor, 2), _snapshot(2, _node_info(core.node_id, core.node_address)))
     snapshot = core.owner_table.snapshot(pending.object_id)
     assert removal.lost == (pending.object_id,)
     assert snapshot.state is ObjectState.LOST
@@ -395,7 +396,7 @@ def test_dead_location_and_late_stored_result_cannot_resurrect(monkeypatch) -> N
         pending.object_id, (core.worker_id, "borrow"),
         hold,
     )
-    core.handle_node_death(_death(dead, 1), 1, True)
+    core.handle_node_death(_death(dead, 1), _snapshot(1, _node_info(core.node_id, core.node_address)))
     descriptor = protocol.ObjectStoreDescriptor(
         pending.object_id, core.worker_id, pending.spec.attempt_id, dead,
         result.size_bytes, result.checksum,
@@ -487,7 +488,7 @@ def test_push_replay_consumes_death_before_rpc_and_uses_new_attempt_and_lease() 
         pending, "push_replay_wait", target_node_id=dead
     )
     death = _death(dead, 1)
-    core.handle_node_death(death, 1, True)
+    core.handle_node_death(death, _snapshot(1, _node_info(core.node_id, core.node_address)))
     core._classify_node_death(_NodeDeathObserved(death, 1))
 
     core._push_task_rpc = lambda *_args: (_ for _ in ()).throw(
@@ -777,7 +778,7 @@ def test_pg_is_terminal_but_foreign_attempt_uses_normal_system_retry(mode: str) 
     core._mark_protocol_unresolved(
         pending, "push_replay_wait", target_node_id=dead
     )
-    core.handle_node_death(_death(dead, 1), 1, True)
+    core.handle_node_death(_death(dead, 1), _snapshot(1, _node_info(core.node_id, core.node_address)))
 
     terminal = core._consume_node_death_at_lane(pending, dead)
     snapshot = core.owner_table.snapshot(pending.object_id)

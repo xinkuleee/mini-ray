@@ -48,6 +48,8 @@ from tests.unit.test_worker_unified_output import _install_no_runtime
 pytestmark = pytest.mark.unit
 
 
+from tests.support._worker_protocol import initialize_worker_protocol
+
 @pytest.fixture(autouse=True)
 def _no_runtime(monkeypatch):
     _install_no_runtime(monkeypatch)
@@ -187,6 +189,7 @@ def _push(
 
 def _worker() -> WorkerServer:
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = WorkerID.random()
     worker.node_id = NodeID.random()
     worker.node_address = ("127.0.0.1", 23998)

@@ -374,9 +374,6 @@ class NodeServer:
             worker: _WorkerSlot(worker) for worker in worker_ids
         }
         self.num_workers_per_node = num_workers_per_node
-        # Singular fields are compatibility mirrors for the first deterministic
-        # slot.  Real pool scheduling and cleanup use ``_workers`` exclusively.
-        self.worker_id = first_worker_id
         self._host = host
         self._context = multiprocessing_context or mp.get_context("spawn")
         self._ledger = resources.ResourceLedger(total_resources)
@@ -483,11 +480,6 @@ class NodeServer:
         self._actor_lifecycle_lock = threading.Lock()
         self._actor_finalize_request_id: Optional[str] = None
         self._actor_finalize_results: dict[ids.ActorID, _ActorStopResult] = {}
-        self._worker_process: Optional[mp.Process] = None
-        self._worker_address: Optional[Address] = None
-        self._worker_pid: Optional[int] = None
-        self._worker_exitcode: Optional[int] = None
-        self._worker_forced = False
         self._shutdown_request_id: Optional[str] = None
         self._worker_drain_statuses: dict[ids.WorkerID, protocol.DrainStatus] = {}
         self._worker_finalize_results: dict[ids.WorkerID, _WorkerStopResult] = {}
@@ -509,7 +501,6 @@ class NodeServer:
         self._leases: dict[ids.LeaseID, _LeaseRecord] = {}
         self._lease_outcomes: dict[ids.LeaseID, _LeaseOutcome] = {}
         self._lease_cancellations: dict[ids.LeaseID, _LeaseCancellation] = {}
-        self._active_lease_id: Optional[ids.LeaseID] = None
         self._lease_request_locks: dict[ids.LeaseID, threading.Lock] = {}
         self._inflight_lease_requests = 0
         self._state_lock = threading.RLock()
@@ -572,53 +563,41 @@ class NodeServer:
         return self._server.address
 
     @property
+    def worker_id(self) -> ids.WorkerID:
+        """Read the first deterministic pool slot's current incarnation."""
+        with self._state_lock:
+            return self._worker_order[0]
+
+    @property
     def worker_address(self) -> Optional[Address]:
         with self._state_lock:
-            if hasattr(self, "_workers"):
-                return self._workers[self._worker_order[0]].address
-            return self._worker_address
+            return self._workers[self._worker_order[0]].address
 
     @property
     def worker_pid(self) -> Optional[int]:
         with self._state_lock:
-            if hasattr(self, "_workers"):
-                return self._workers[self._worker_order[0]].pid
-            return self._worker_pid
+            return self._workers[self._worker_order[0]].pid
 
     @property
     def worker_ids(self) -> tuple[ids.WorkerID, ...]:
         with self._state_lock:
-            if hasattr(self, "_workers"):
-                return tuple(self._worker_order)
-            return (self.worker_id,)
+            return tuple(self._worker_order)
 
     @property
     def worker_pids(self) -> tuple[int, ...]:
         with self._state_lock:
-            if hasattr(self, "_workers"):
-                pids = tuple(
-                    self._workers[worker_id].pid
-                    for worker_id in self._worker_order
-                )
-                if any(pid is None for pid in pids):
-                    return ()
-                return tuple(pid for pid in pids if pid is not None)
-            return () if self._worker_pid is None else (self._worker_pid,)
+            pids = tuple(self._workers[worker_id].pid for worker_id in self._worker_order)
+            if any(pid is None for pid in pids):
+                return ()
+            return tuple(pid for pid in pids if pid is not None)
 
     @property
     def worker_addresses(self) -> tuple[Address, ...]:
         with self._state_lock:
-            if hasattr(self, "_workers"):
-                addresses = tuple(
-                    self._workers[worker_id].address
-                    for worker_id in self._worker_order
-                )
-                if any(address is None for address in addresses):
-                    return ()
-                return tuple(
-                    address for address in addresses if address is not None
-                )
-            return () if self._worker_address is None else (self._worker_address,)
+            addresses = tuple(self._workers[worker_id].address for worker_id in self._worker_order)
+            if any(address is None for address in addresses):
+                return ()
+            return tuple(address for address in addresses if address is not None)
 
     @property
     def is_running(self) -> bool:
@@ -2091,50 +2070,12 @@ class NodeServer:
         with self._state_lock:
             return GetInstalledNodeDeathsReply(request, getattr(self, "_certified_node_deaths", None))
 
-    def _ensure_worker_slots_locked(self) -> None:
-        """Promote a narrow legacy fixture into a one-slot pool once.
 
-        Runtime construction always creates ``_workers``.  A few pure tests use
-        ``object.__new__`` and populate the former singular fields; this adapter
-        imports that state into the same slot representation used by production
-        paths instead of maintaining a second scheduling authority.
-        """
-
-        if hasattr(self, "_workers"):
-            return
-        worker_id = self.worker_id
-        slot = _WorkerSlot(
-            worker_id=worker_id,
-            process=getattr(self, "_worker_process", None),
-            address=getattr(self, "_worker_address", None),
-            pid=getattr(self, "_worker_pid", None),
-            exitcode=getattr(self, "_worker_exitcode", None),
-            forced=getattr(self, "_worker_forced", False),
-            active_lease_id=getattr(self, "_active_lease_id", None),
-        )
-        self._worker_order = (worker_id,)
-        self._workers = {worker_id: slot}
-        self.num_workers_per_node = 1
-
-    def _sync_first_worker_compat_locked(self) -> None:
-        """Mirror the first slot for old diagnostics; never read it in pool mode."""
-
-        self._ensure_worker_slots_locked()
-        first = self._workers[self._worker_order[0]]
-        self.worker_id = first.worker_id
-        self._worker_process = first.process
-        self._worker_address = first.address
-        self._worker_pid = first.pid
-        self._worker_exitcode = first.exitcode
-        self._worker_forced = first.forced
-        self._active_lease_id = first.active_lease_id
 
     def _worker_slot_locked(self, worker_id: ids.WorkerID) -> Optional[_WorkerSlot]:
-        self._ensure_worker_slots_locked()
         return self._workers.get(worker_id)
 
     def _idle_worker_slot_locked(self) -> Optional[_WorkerSlot]:
-        self._ensure_worker_slots_locked()
         for worker_id in self._worker_order:
             slot = self._workers[worker_id]
             process = slot.process
@@ -2147,7 +2088,6 @@ class NodeServer:
         return None
 
     def _all_worker_slots_idle_locked(self) -> bool:
-        self._ensure_worker_slots_locked()
         return all(
             slot.active_lease_id is None for slot in self._workers.values()
         )
@@ -2367,7 +2307,6 @@ class NodeServer:
         """Start every bounded slot, rolling back the exact successful prefix."""
 
         with self._state_lock:
-            self._ensure_worker_slots_locked()
             worker_ids = tuple(self._worker_order)
         started: list[ids.WorkerID] = []
         try:
@@ -2529,7 +2468,6 @@ class NodeServer:
                     slot.exitcode = None
                     slot.forced = False
                     slot.incarnation = incarnation
-                    self._sync_first_worker_compat_locked()
             if stop_unpublished:
                 self._stop_unpublished_worker(process, address)
                 raise RuntimeError(
@@ -2914,7 +2852,6 @@ class NodeServer:
             now = time.monotonic()
             wait_seconds = WORKER_REPLACEMENT_RETRY_BASE_SECONDS
             with self._state_lock:
-                self._ensure_worker_slots_locked()
                 incarnations = tuple(
                     (
                         worker_id,
@@ -2963,11 +2900,6 @@ class NodeServer:
         """Synchronously reduce exact children that already exited."""
 
         with self._state_lock:
-            # Some membership-only object.__new__ fixtures intentionally omit
-            # the entire ordinary-Worker plane.
-            if not hasattr(self, "_workers") and not hasattr(self, "worker_id"):
-                return
-            self._ensure_worker_slots_locked()
             incarnations = tuple(
                 (worker_id, self._workers[worker_id].process)
                 for worker_id in self._worker_order
@@ -3068,7 +3000,6 @@ class NodeServer:
                 # A missing OS exit status is not an admissible death proof.
                 return False
             with self._state_lock:
-                self._ensure_worker_slots_locked()
                 slot = self._workers.get(worker_id)
                 if slot is None or slot.process is not process:
                     return False
@@ -3115,7 +3046,6 @@ class NodeServer:
                     and not self._stop_event.is_set()
                     and not self._worker_supervisor_stop.is_set()
                 )
-                self._sync_first_worker_compat_locked()
             self._close_exited_process(process)
             self._emit(
                 "worker_exited", worker_id=str(worker_id),
@@ -3154,7 +3084,6 @@ class NodeServer:
             replacement_id = None
             try:
                 with self._state_lock:
-                    self._ensure_worker_slots_locked()
                     slot = self._workers.get(worker_id)
                     if (
                         slot is not expected_slot
@@ -3210,7 +3139,6 @@ class NodeServer:
                         del self._workers[worker_id]
                         self._workers[replacement_id] = replacement
                         self._worker_order = tuple(order)
-                        self._sync_first_worker_compat_locked()
                 if not publish:
                     self._stop_unpublished_worker(
                         replacement_process, replacement_address
@@ -3329,7 +3257,6 @@ class NodeServer:
 
     def _stop_worker_slot(self, worker_id: ids.WorkerID) -> _WorkerStopResult:
         with self._state_lock:
-            self._ensure_worker_slots_locked()
             slot = self._workers[worker_id]
             process = slot.process
             address = slot.address
@@ -3337,7 +3264,6 @@ class NodeServer:
             # rollback, before the normal shutdown fence exists.
             slot.process = None
             slot.address = None
-            self._sync_first_worker_compat_locked()
 
         if process is None:
             with self._state_lock:
@@ -3376,7 +3302,6 @@ class NodeServer:
             slot.exitcode = exitcode
             slot.forced = forced
             self._reclaim_active_lease_after_worker_exit_locked(worker_id)
-            self._sync_first_worker_compat_locked()
         return _WorkerStopResult(
             worker_id, child_pid, exitcode, exitcode == 0 and not forced, forced
         )
@@ -3387,7 +3312,6 @@ class NodeServer:
         """Stop ordinary Workers concurrently and return slot-ordered results."""
 
         with self._state_lock:
-            self._ensure_worker_slots_locked()
             order = tuple(self._worker_order if worker_ids is None else worker_ids)
         results: dict[ids.WorkerID, _WorkerStopResult] = {}
         result_lock = threading.Lock()
@@ -5627,7 +5551,6 @@ class NodeServer:
                 # worker-loss cleanup use the same state lock, so no caller can
                 # observe a grant whose pins were already terminally released.
                 self._lease_outcomes[lease_id] = _LeaseOutcome(request, grant)
-                self._sync_first_worker_compat_locked()
                 self._refresh_local_cached_availability_locked()
                 if allocation_ledger is self._ledger:
                     self._mark_resource_report_pending_locked()
@@ -5647,7 +5570,6 @@ class NodeServer:
                             object_id, pin_token
                         )
                     allocation_ledger.release(allocated)
-                    self._sync_first_worker_compat_locked()
                     self._refresh_local_cached_availability_locked()
                 return self._rejected(
                     request, protocol.LeaseRejectReason.DEPENDENCY_UNAVAILABLE,
@@ -6065,7 +5987,6 @@ class NodeServer:
             raise AssertionError("lease grant names an unknown ordinary Worker")
         if slot.active_lease_id == record.request.lease_id:
             slot.active_lease_id = None
-        self._sync_first_worker_compat_locked()
         self._finalize_removing_placement_groups_locked()
         self._refresh_local_cached_availability_locked()
         return released
@@ -6304,7 +6225,6 @@ class NodeServer:
         therefore the only one that can call the ledger release operation.
         """
 
-        self._ensure_worker_slots_locked()
         selected_worker_id = worker_id or self._worker_order[0]
         slot = self._workers.get(selected_worker_id)
         if slot is None:
@@ -6328,7 +6248,6 @@ class NodeServer:
             protocol.LeaseExecutionState.WORKER_LOST,
         ):
             slot.active_lease_id = None
-            self._sync_first_worker_compat_locked()
             return False
         raise AssertionError("unknown lease execution state: {!r}".format(record.state))
 
@@ -6713,7 +6632,6 @@ class NodeServer:
         """Poll every idle ordinary Worker concurrently, without stopping it."""
 
         with self._state_lock:
-            self._ensure_worker_slots_locked()
             slots = tuple(
                 (worker_id, self._workers[worker_id])
                 for worker_id in self._worker_order
@@ -6992,7 +6910,6 @@ class NodeServer:
                         current.address = None
                         current.exitcode = exitcode
                         current.forced = False
-                        self._sync_first_worker_compat_locked()
             if clean:
                 with self._state_lock:
                     finalized = getattr(self, "_worker_finalize_results", None)
@@ -7164,7 +7081,6 @@ class NodeServer:
         self._drive_abandoned_dependency_custody(force=True)
         with self._state_lock:
             requested = self._shutdown_request_id == request.request_id
-            self._ensure_worker_slots_locked()
             slots = tuple(
                 self._workers[worker_id] for worker_id in self._worker_order
             )

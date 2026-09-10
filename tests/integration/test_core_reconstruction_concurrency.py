@@ -38,6 +38,7 @@ import pytest
 
 from miniray import control, core as core_module, node as node_module, output_protocol as wire, protocol, transport
 from miniray.control import NodeRegistry
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _PendingTask, _WAKE_COORDINATOR
 from miniray.errors import SystemTaskError
 from miniray.ids import LeaseID, NodeID, ObjectID, WorkerID
@@ -101,11 +102,11 @@ def _snapshot_queue(fifo):
 def _node():
     """One real local lease/bytes authority, with a passive existing Worker."""
     node = object.__new__(NodeServer)
-    node.node_id, node.worker_id = NodeID.random(), WorkerID.random()
+    node.node_id, worker_id = NodeID.random(), WorkerID.random()
     node.num_workers_per_node = 1
     process = SimpleNamespace(pid=7301, exitcode=None, is_alive=lambda: True)
-    node._worker_order = (node.worker_id,)
-    node._workers = {node.worker_id: _WorkerSlot(node.worker_id, process=process,
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(worker_id, process=process,
         address=("worker.invalid", 7301), pid=process.pid)}
     node._ledger = ResourceLedger(ResourceVector({"CPU": 1}))
     node._cluster_nodes = (NodeSnapshot(node.node_id, node._ledger.total, node._ledger.available),)
@@ -153,6 +154,7 @@ class _Case:
         node._register_with_gcs()
         node._output_publications = node._make_output_publication_adapter()
         core.node_id, core.node_address = node.node_id, node.address
+        core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
         core.gcs_address, core._rpc = self.gcs_address, self.rpc
 
     def control_rpc(self, address, handler, request, **_options):

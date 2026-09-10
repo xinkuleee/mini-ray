@@ -9,7 +9,7 @@ The GCS resource hint is polled passively within the original work deadline,
 not treated as a synchronous part of the survivor's successful Task reply.
 
 Run only by this test's exact allowlisted node ID through the 30-second
-``scripts/run_bounded_test.py`` process-tree runner. Bounds are five startup
+``scripts/run_baseline.py --smoke EXACT`` process-tree runner. Bounds are five startup
 children (one GCS, two one-Worker Nodes), 1 MiB per Node store, one gated PG
 task, one ordinary survivor probe and one exact Node crash. Test-owned work
 shares fifteen seconds after init; both real reference finalizers share three

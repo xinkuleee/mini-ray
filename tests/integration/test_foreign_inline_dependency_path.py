@@ -7,10 +7,14 @@ logical consumer task's independently retained hold must keep the object alive;
 after the child gate opens, the dependency is materialized as an ``InlineArg``
 and the consumer executes exactly once.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static
 bounds are one GCS, one NodeManager, two ordinary Workers, exactly four tiny
 tasks, one test-owned loopback gate, no Actor Worker, no trace collector, and
 the runner's 30-second process-group deadline.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

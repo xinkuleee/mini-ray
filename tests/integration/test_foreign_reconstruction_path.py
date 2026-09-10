@@ -6,7 +6,7 @@ then drops its sole replica through the same embedded Core. The Driver's
 still-active borrower must request reconstruction from that Worker owner, keep
 the same logical ObjectID and borrower token, and fetch attempt 1.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+Run only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Static
 bounds are one GCS, two NodeManagers, one ordinary Worker each, three logical
 Tasks/four physical executions, two 1 MiB stores and one 64 KiB result per
 producer attempt. Gets, state observations and the owner-local Node drop

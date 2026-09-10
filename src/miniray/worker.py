@@ -732,35 +732,12 @@ class WorkerServer:
         work, not admission of a new task.
         """
 
-        condition = getattr(self, "_lifecycle", None)
-        if condition is None:
-            # Narrow object.__new__ state-machine fixtures predate lifecycle
-            # coordination and intentionally execute without background state.
-            return True
-        with condition:
-            # Some narrow object.__new__ tests exercise only lifecycle ordering
-            # and replace the entire execution handler; they intentionally have
-            # no reply-cache protocol state.  Preserve that fixture seam without
-            # weakening real Workers, whose constructor always creates _replies.
-            if not hasattr(self, "_replies"):
-                if not self._accepting_tasks:
-                    return False
-                self._active_tasks += 1
-                return True
+        with self._lifecycle:
             key = _attempt_key(request)
-            accepted = getattr(self, "_accepted_pushes", None)
-            if key in getattr(self, "_owner_abandoned_outputs", {}):
+            accepted = self._accepted_pushes
+            if key in self._owner_abandoned_outputs:
                 raise RuntimeError("output owner died; accepted execution is terminally abandoned")
-            if accepted is None:
-                # Fixture compatibility: a cached reply proves that this exact
-                # push was accepted before lifecycle bookkeeping existed.
-                accepted = dict(getattr(self, "_cached_pushes", {}))
-                self._accepted_pushes = accepted
-            obligations = getattr(self, "_push_obligations", None)
-            if obligations is None:
-                acknowledged = getattr(self, "_completion_acked", set())
-                obligations = {item for item in accepted if item not in acknowledged}
-                self._push_obligations = obligations
+            obligations = self._push_obligations
 
             previous = accepted.get(key)
             if previous is not None:
@@ -782,37 +759,31 @@ class WorkerServer:
             return True
 
     def _end_task(self) -> None:
-        condition = getattr(self, "_lifecycle", None)
-        if condition is None:
-            return
-        with condition:
+        with self._lifecycle:
             self._active_tasks -= 1
             if self._active_tasks < 0:
                 raise AssertionError("worker active-task count became negative")
-            condition.notify_all()
+            self._lifecycle.notify_all()
 
     def _resolve_push_obligation(
         self, request: protocol.PushTask, key: Tuple[Hashable, Hashable]
     ) -> None:
         """Clear one obligation only after reply cache and completion ACK."""
 
-        condition = getattr(self, "_lifecycle", None)
-        if condition is None:
-            return
-        with condition:
-            accepted = getattr(self, "_accepted_pushes", {})
+        with self._lifecycle:
+            accepted = self._accepted_pushes
             previous = accepted.get(key)
             if previous is not None and previous != request:
                 raise RuntimeError(
                     "accepted PushTask replay changed the original request"
                 )
             if (
-                key not in getattr(self, "_replies", {})
-                or key not in getattr(self, "_completion_acked", set())
+                key not in self._replies
+                or key not in self._completion_acked
             ):
                 return
-            getattr(self, "_push_obligations", set()).discard(key)
-            condition.notify_all()
+            self._push_obligations.discard(key)
+            self._lifecycle.notify_all()
 
     def _execution_binding(self, request: protocol.PushTask) -> object:
         """Bind the current task to this Worker's lazily-created CoreWorker."""
@@ -988,11 +959,9 @@ class WorkerServer:
     def _shutdown_embedded_core(
         self, timeout: float, *, preserve_owner_protocol: bool = False
     ) -> bool:
-        """Drain accepted child work once; safe for fixture and finalizer calls."""
+        """Drain accepted child work with the current Core shutdown contract."""
 
-        lock = getattr(self, "_embedded_core_lock", None)
-        if lock is None:
-            return True
+        lock = self._embedded_core_lock
         with lock:
             if self._embedded_core_stopped and not preserve_owner_protocol:
                 return True
@@ -1000,10 +969,7 @@ class WorkerServer:
             if core is None:
                 self._embedded_core_stopped = True
                 return True
-            drain_lock = getattr(self, "_embedded_core_drain_lock", None)
-            if drain_lock is None:
-                drain_lock = threading.Lock()
-                self._embedded_core_drain_lock = drain_lock
+            drain_lock = self._embedded_core_drain_lock
 
         # Never hold the owner lookup lock across CoreWorker.shutdown().  Peer
         # release/query handlers use that lock to obtain ``core`` and may be
@@ -1015,15 +981,10 @@ class WorkerServer:
                 if self._embedded_core_stopped and not preserve_owner_protocol:
                     return True
             try:
-                try:
-                    stopped = core.shutdown(
-                        timeout=max(0.001, timeout),
-                        preserve_owner_protocol=preserve_owner_protocol,
-                    )
-                except TypeError:
-                    # Small test doubles and older fixtures model only the
-                    # original one-argument shutdown contract.
-                    stopped = core.shutdown(timeout=max(0.001, timeout))
+                stopped = core.shutdown(
+                    timeout=max(0.001, timeout),
+                    preserve_owner_protocol=preserve_owner_protocol,
+                )
             except Exception:
                 stopped = False
             # A timed-out drain may later complete; only cache actual success so

@@ -1,12 +1,16 @@
 """Bounded smoke for a Worker-owned child ObjectRef escaping to Driver.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds:
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Bounds:
 one GCS, two NodeManagers, one ordinary Worker per node, exactly two tiny tasks,
 one escaping inline ObjectRef, two outer deserializations, two owner gets, and
 the runner's 30-second process-tree deadline. Each Node has a 1 MiB store. All
 gets share one ten-second work deadline; real public close waits share three
 seconds in finally before unconditional shutdown and five-PID/seven-endpoint
 hygiene checks, including failure paths. Worker owners reuse Worker endpoints.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

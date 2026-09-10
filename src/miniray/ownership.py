@@ -1788,36 +1788,6 @@ class ObjectOwnerTable:
                 return None
         return plan
 
-    def commit_publish_task_outputs(
-        self, plan: TaskOutputPublicationPlan
-    ) -> bool:
-        """Publish all task outputs under one owner lock or publish none."""
-
-        if not isinstance(plan, TaskOutputPublicationPlan):
-            raise TypeError("plan must be a TaskOutputPublicationPlan")
-        with self._lock:
-            self._require_no_output_retirements_locked(tuple(
-                self._entries[object_id]
-                for object_id in plan.execution.output_ids
-            ))
-            if not self._validate_publish_task_outputs_locked(plan):
-                return False
-            for descriptor in plan.results:
-                entry = self._entries[descriptor.object_id]
-                if descriptor.storage is ResultStorage.INLINE:
-                    entry.state = ObjectState.READY_INLINE
-                    entry.inline_data = descriptor.inline_data
-                    entry.error = None
-                    entry.canonical_stored_result = None
-                else:
-                    entry.state = ObjectState.READY_STORED
-                    entry.inline_data = None
-                    entry.error = None
-                    entry.canonical_stored_result = descriptor
-                    entry.location_attempts[descriptor.node_id] = (
-                        plan.execution.attempt_id
-                    )
-            return True
 
     def commit_validated_publish_task_outputs(
         self, plan: TaskOutputPublicationPlan
@@ -1843,13 +1813,6 @@ class ObjectOwnerTable:
                     plan.execution.attempt_id
                 )
 
-    def publish_task_outputs(
-        self,
-        execution: TaskExecutionKey,
-        results: tuple[ResultDescriptor, ...],
-    ) -> bool:
-        plan = self.validate_publish_task_outputs(execution, results)
-        return False if plan is None else self.commit_publish_task_outputs(plan)
 
     def validate_output_publication(
         self, plan: OutputOwnerPublicationPlan,
@@ -3579,131 +3542,13 @@ class ObjectOwnerTable:
         del self._task_lineage[task_id]
         return True
 
-    def add_outgoing_contained_edge(
-        self, object_id: ObjectID, edge: ContainedReferenceEdge
-    ) -> bool:
-        """Record release work owned by a container's logical metadata."""
 
-        _require_object_id(object_id)
-        if not isinstance(edge, ContainedReferenceEdge):
-            raise TypeError("edge must be a ContainedReferenceEdge")
-        if edge.container_object_id != object_id:
-            raise ValueError(
-                "contained edge must name the entry as its container"
-            )
-        with self._lock:
-            entry = self._entry(object_id)
-            if entry.collection_pending:
-                raise ObjectCollectionInProgressError(
-                    f"object metadata collection is pending for {object_id!r}"
-                )
-            if entry.output_publication is not None:
-                if edge in entry.output_publication.slot.edges:
-                    return False
-                raise OutputOwnerPublicationConflictError(
-                    "cannot change edges of an adopted output slot"
-                )
-            edges = entry.outgoing_contained_edges
-            old_size = len(edges)
-            edges.add(edge)
-            return len(edges) != old_size
-
-    def add_outgoing_contained_edges(
-        self, object_id: ObjectID, edges: tuple[ContainedReferenceEdge, ...]
-    ) -> int:
-        """Atomically install a deduplicated batch; return new edge count."""
-
-        values = tuple(edges)
-        if any(not isinstance(edge, ContainedReferenceEdge) for edge in values):
-            raise TypeError(
-                "edges must contain only ContainedReferenceEdge values"
-            )
-        if any(edge.container_object_id != object_id for edge in values):
-            raise ValueError(
-                "every contained edge must name the entry as its container"
-            )
-        with self._lock:
-            entry = self._entry(object_id)
-            if entry.collection_pending:
-                raise ObjectCollectionInProgressError(
-                    f"object metadata collection is pending for {object_id!r}"
-                )
-            if entry.output_publication is not None:
-                if set(values).issubset(entry.output_publication.slot.edges):
-                    return 0
-                raise OutputOwnerPublicationConflictError(
-                    "cannot change edges of an adopted output slot"
-                )
-            target = entry.outgoing_contained_edges
-            old_size = len(target)
-            target.update(values)
-            return len(target) - old_size
 
     def is_live(self, object_id: ObjectID) -> bool:
         with self._lock:
             return self._entry(object_id).is_live
 
-    def collect_if_unused(self, object_id: ObjectID) -> bool:
-        """Forget only metadata that has no references or release work.
 
-        Callers that can retain outgoing contained-release obligations must use
-        :meth:`collect_unused_with_edges`.  Returning ``False`` here instead of
-        silently dropping edges keeps boolean collection callers safe.
-        """
-
-        with self._lock:
-            entry = self._entry(object_id)
-            if (
-                entry.is_live
-                or entry.outgoing_contained_edges
-                or entry.outgoing_lineage_edges
-                or object_id.task_id in self._task_lineage
-                or entry.collection_pending
-                or entry.output_publication is not None
-                or entry.output_retirement_id is not None
-                or entry.state is ObjectState.READY_STORED
-                or entry.location_attempts
-            ):
-                return False
-            del self._entries[object_id]
-            return True
-
-    def collect_unused_with_edges(
-        self, object_id: ObjectID
-    ) -> ObjectMetadataCollection:
-        """Atomically remove unused metadata and return all edge releases.
-
-        The returned edges are durable work for a future runtime composition
-        layer.  This pure owner table does not contact contained-object owners
-        and does not claim physical object-store collection.
-        """
-
-        with self._lock:
-            entry = self._entry(object_id)
-            if entry.collection_pending:
-                raise ObjectCollectionInProgressError(
-                    f"object metadata collection is pending for {object_id!r}"
-                )
-            if (
-                entry.state in (ObjectState.READY_STORED, ObjectState.LOST)
-                or entry.location_attempts
-            ):
-                # Stored metadata must pass through begin/complete_collection
-                # so every physical replica and lineage edge is discharged.
-                return ObjectMetadataCollection(object_id, collected=False)
-            if entry.is_live:
-                return ObjectMetadataCollection(object_id, collected=False)
-            if entry.output_publication is not None:
-                # Published values require a frozen cleanup claim so a late
-                # result replay cannot revive metadata after collection.
-                return ObjectMetadataCollection(object_id, collected=False)
-            releases = tuple(sorted(entry.outgoing_contained_edges))
-            lineage_releases = self._take_final_task_lineage_locked(object_id)
-            del self._entries[object_id]
-            return ObjectMetadataCollection(
-                object_id, collected=True, contained_releases=releases,
-                lineage_releases=lineage_releases,
-            )
 
     def begin_collection(
         self, object_id: ObjectID, *,

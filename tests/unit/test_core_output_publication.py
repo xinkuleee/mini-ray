@@ -13,6 +13,7 @@ import time
 import pytest
 
 from miniray import output_protocol as wire, protocol
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _DelayedReadyTask, _ObjectWaiter, _PendingTask, _PushRequestState, _WAKE_COORDINATOR
 from miniray.errors import SystemTaskError
 from miniray.output_handoff import OutputHandoffPhase
@@ -44,6 +45,7 @@ def _fixture(*, refs=True, stored=True, report_complete=True):
     core = make_pure_core()
     core.job_id, core.worker_id, core.node_id = values.job, values.owner, values.node
     core.node_address, core.owner_address = ("node.invalid", 1), ("owner.invalid", 1)
+    core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
     core.gcs_address = None
     spec = protocol.TaskSpec(
         values.job, values.task, values.attempt,
@@ -61,7 +63,7 @@ def _fixture(*, refs=True, stored=True, report_complete=True):
     assert core._submissions.get_nowait() is pending
     core._submissions.task_done()
     core._registered_functions = set()
-    core._resolve_node_address = lambda node_id: core.node_address if node_id == values.node else pytest.fail("other node")
+    core._resolve_node_address = lambda node_id, *, home_route=None: core.node_address if node_id == values.node else pytest.fail("other node")
     calls, owner_calls = [], []
 
     def rpc(address, handler, request):

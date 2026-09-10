@@ -12,7 +12,7 @@ from dataclasses import replace
 from types import MappingProxyType
 from typing import Callable, Mapping, Protocol
 
-from . import protocol
+from . import output_protocol as output_wire, protocol
 from .ownership import (
     ConflictingBorrowerTokenError,
     InvalidObjectTransitionError,
@@ -64,6 +64,11 @@ class OwnerAuthority(Protocol):
     def install_actor_state(self, request: object) -> object: ...
     def prepare_stored_contained_pin(self, request: object) -> object: ...
     def promote_stored_contained_pin(self, request: object) -> object: ...
+    def register_output_handoff(self, request: object) -> object: ...
+    def report_output_handoff_complete(self, request: object) -> object: ...
+    def report_output_handoff_rollback(self, request: object) -> object: ...
+    def get_output_handoff(self, request: object) -> object: ...
+    worker_id: object
     event_sink: EventSink
 
 
@@ -195,28 +200,18 @@ class OwnerService:
                     core.release_contained_reference,
                 INSTALL_ACTOR_STATE_HANDLER: core.install_actor_state,
         }
-        from . import output_protocol as output_wire
-        for handler, method in (
-            (output_wire.REGISTER_OUTPUT_HANDOFF_HANDLER, "register_output_handoff"),
-            (output_wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER, "report_output_handoff_complete"),
-            (output_wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER, "report_output_handoff_rollback"),
-            (output_wire.GET_OUTPUT_HANDOFF_HANDLER, "get_output_handoff"),
-        ):
-            callback = getattr(core, method, None)
-            if callable(callback):
-                handlers[handler] = callback
-        # Phase C1 makes these operations optional until CoreWorker adopts the
-        # new business methods.  Absence means no advertised RPC surface; it
-        # must never make an otherwise valid OwnerService fail construction.
-        prepare = getattr(core, "prepare_stored_contained_pin", None)
-        promote = getattr(core, "promote_stored_contained_pin", None)
-        if callable(prepare) and callable(promote):
-            handlers.update({
-                PREPARE_STORED_CONTAINED_PIN_HANDLER: prepare,
-                PROMOTE_STORED_CONTAINED_PIN_HANDLER: promote,
-            })
-        if callable(getattr(core, "report_abandoned_dependency_replica", None)):
-            handlers[REPORT_ABANDONED_DEPENDENCY_REPLICA_HANDLER] = self._handle_report_abandoned_dependency_replica
+        handlers.update({
+            output_wire.REGISTER_OUTPUT_HANDOFF_HANDLER: core.register_output_handoff,
+            output_wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: core.report_output_handoff_complete,
+            output_wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: core.report_output_handoff_rollback,
+            output_wire.GET_OUTPUT_HANDOFF_HANDLER: core.get_output_handoff,
+            PREPARE_STORED_CONTAINED_PIN_HANDLER: core.prepare_stored_contained_pin,
+            PROMOTE_STORED_CONTAINED_PIN_HANDLER: core.promote_stored_contained_pin,
+            REPORT_ABANDONED_DEPENDENCY_REPLICA_HANDLER: self._handle_report_abandoned_dependency_replica,
+        })
+        if (any(not callable(handler) for handler in handlers.values())
+                or not callable(core.report_abandoned_dependency_replica)):
+            raise TypeError("OwnerService requires the complete current owner handler interface")
         self._server = TCPServer(
             handlers,
             host=host,
@@ -231,11 +226,11 @@ class OwnerService:
             raise TypeError("abandoned replica report requires its exact typed request")
         request = replace(request)
         core = self._core
-        if core is None or not callable(getattr(core, "report_abandoned_dependency_replica", None)):
+        if core is None:
             return protocol.ReportAbandonedDependencyReplicaReply(
                 request, protocol.RetainedLocationReportStatus.REJECTED, "object owner CoreWorker is not available",
             )
-        if request.descriptor.owner_worker_id != getattr(core, "worker_id", None):
+        if request.descriptor.owner_worker_id != core.worker_id:
             return protocol.ReportAbandonedDependencyReplicaReply(
                 request, protocol.RetainedLocationReportStatus.REJECTED, "request targets a different object owner",
             )

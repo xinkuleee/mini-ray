@@ -216,7 +216,7 @@ def test_worker_lost_inventory_and_legacy_empty_cancel_reply_roundtrip():
 
 def _node(node_id, worker_id):
     node = object.__new__(NodeServer)
-    node.node_id, node.worker_id = node_id, worker_id
+    node.node_id = node_id
     node._state_lock = threading.RLock()
     node._scheduling_lock = threading.Lock()
     node._ledger = ResourceLedger(ResourceVector({"CPU": 1}))
@@ -228,15 +228,12 @@ def _node(node_id, worker_id):
     node._leases, node._lease_outcomes, node._lease_cancellations = {}, {}, {}
     node._lease_request_locks = {}
     node._inflight_lease_requests = 0
-    node._active_lease_id = None
     node._stop_event = threading.Event()
     node._shutdown_request_id = None
     node._gcs_address = None
     node._cluster_nodes, node._cluster_addresses = (), {}
-    node._worker_process = SimpleNamespace(is_alive=lambda: True)
-    node._worker_address = ("worker.invalid", 31)
-    node._workers = {worker_id: _WorkerSlot(worker_id, process=node._worker_process,
-        address=node._worker_address, pid=3131)}
+    node._workers = {worker_id: _WorkerSlot(worker_id, process=SimpleNamespace(is_alive=lambda: True),
+        address=("worker.invalid", 31), pid=3131)}
     node._worker_order = (worker_id,)
     node._gcs_lifecycle_lock = threading.Lock()
     node._registered_with_gcs = False

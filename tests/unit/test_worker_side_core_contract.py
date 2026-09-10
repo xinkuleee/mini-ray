@@ -49,6 +49,8 @@ from miniray.trace import EventSink, MemoryEventSink, NonOwningEventSink
 from miniray.worker import WorkerServer
 
 
+from tests.support._worker_protocol import initialize_worker_protocol
+
 def _plus_one(value: int) -> int:
     return value + 1
 
@@ -90,6 +92,7 @@ def _push_for_job(worker_id: WorkerID, job_id: JobID) -> protocol.PushTask:
 
 def _bare_embedded_worker() -> WorkerServer:
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = WorkerID.random()
     worker.node_id = NodeID.random()
     worker.node_address = ("127.0.0.1", 19002)
@@ -647,7 +650,7 @@ def test_worker_lazily_constructs_one_embedded_core_and_fences_other_jobs(
         def _sync_node_deaths(self) -> bool:
             return True
 
-        def shutdown(self, timeout: float) -> bool:
+        def shutdown(self, timeout: float, *, preserve_owner_protocol: bool = False) -> bool:
             self.shutdown_calls.append(timeout)
             return True
 
@@ -800,7 +803,7 @@ class _DrainCore:
     def close_owner_retain_admission(self) -> None:
         self.retain_admission_closes += 1
 
-    def shutdown(self, timeout: float) -> bool:
+    def shutdown(self, timeout: float, *, preserve_owner_protocol: bool = False) -> bool:
         self.events.append("core_shutdown")
         self.calls.append(timeout)
         return self.result
@@ -808,7 +811,9 @@ class _DrainCore:
 
 def _draining_worker(core: _DrainCore) -> WorkerServer:
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = WorkerID.random()
+    worker.node_id = NodeID.random()
     worker._lifecycle = threading.Condition(threading.RLock())
     worker._accepting_tasks = True
     worker._active_tasks = 0
@@ -947,7 +952,7 @@ def test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack(
             if len(errors) < 16:
                 errors.append(exc)
 
-    def admitted(request: protocol.PushTask) -> str:
+    def admitted(request: protocol.PushTask) -> protocol.TaskReply:
         assert request is push
         assert not events and worker._active_tasks == 1
         events.append("task_entered")
@@ -956,8 +961,36 @@ def test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack(
         # task-gate timeout masquerade as orderly parent completion.
         assert release.wait(2.0)
         assert events == ["task_entered"] and core.calls == []
+        # The original test replaces user execution, not Worker protocol
+        # custody. Obtain one real journal/owner Complete and cache that reply
+        # before the accepted obligation can drain.
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+        from miniray.output_publication import OutputPublicationHeader, OutputPublicationID, OutputPublicationNodeIncarnation
+        from miniray.output_discovery import OutputDiscoverySession
+        from miniray.task_outputs import TaskExecutionKey
+        from miniray import output_protocol as protocol_output
+        peer = _SingleOutputRPC()
+        session = OutputDiscoverySession(OutputPublicationHeader(
+            OutputPublicationID(request.lease_id, TaskExecutionKey.from_task_spec(request.spec)),
+            request.spec.job_id, worker.worker_id, request.spec.owner_worker_id,
+            OutputPublicationNodeIncarnation(worker.node_id, 21001, 3)), inline_threshold=1024)
+        outputs = session.discover(("reply",))
+        peer.prepare(protocol_output.PrepareOutputPublication(outputs.manifest, outputs.slot_payloads))
+        session.release_sources_after_promotions()
+        completion = protocol.CompleteWorkerLease(request.lease_id, request.spec.task_id,
+            request.spec.attempt_id, worker.worker_id, protocol.TaskReplyStatus.SUCCEEDED,
+            request.spec.scheduling_key)
+        complete = peer.complete(completion)
+        result = protocol.TaskReply(request.spec.task_id, request.spec.attempt_id, worker.worker_id,
+            protocol.TaskReplyStatus.SUCCEEDED, complete.output_publication.results,
+            output_publication=complete.output_publication)
+        key = request.spec.attempt_id, request.lease_id
+        with worker._lifecycle:
+            assert worker._accepted_pushes[key] == request and key in worker._push_obligations
+            worker._completion_acked.add(key)
+            worker._cache_complete_and_return(request, result, key)
         events.append("task_completed")
-        return "reply"
+        return result
 
     def run_task():
         try:
@@ -1018,7 +1051,7 @@ def test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack(
             thread.join(max(0.0, join_deadline - time.monotonic()))
         assert all(not thread.is_alive() for thread in threads)
         assert not errors and failed == [False]
-        assert task_result == ["reply"]
+        assert len(task_result) == 1 and cloudpickle.loads(task_result[0].results[0].inline_data) == "reply"
         assert len(shutdown_result) == 1 and shutdown_result[0].clean
         assert shutdown_result[0].request_id == shutdown_request.request_id
         assert worker._stop_event.is_set() and worker._embedded_core_stopped
@@ -1026,7 +1059,8 @@ def test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack(
         assert core.retain_admission_closes == 1
         assert events == ["task_entered", "task_completed", "core_shutdown"]
         assert all(result is not None for _timeout, result in observations)
-        assert not hasattr(worker, "_replies")  # original lifecycle-only seam
+        assert worker._replies and not worker._push_obligations
+        assert set(worker._replies) == set(worker._accepted_pushes) == worker._completion_acked
     finally:
         release.set()
         cleanup_deadline = time.monotonic() + 2.0
@@ -1488,6 +1522,7 @@ def test_closed_admission_still_serves_exact_completed_push_replay() -> None:
     """Shutdown rejects new work, not idempotent recovery of old replies."""
 
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = WorkerID.random()
     worker._execution_lock = threading.Lock()
     worker._lifecycle = threading.Condition(threading.RLock())
@@ -1567,3 +1602,33 @@ def test_worker_binding_rejects_driver_lifecycle_operations_without_mutation(
         assert current_binding() is previous_binding
         assert api._runtime is driver_runtime and vars(driver_runtime) == before
         assert not vars(worker_core)
+
+
+@pytest.mark.unit
+def test_worker_shutdown_internal_typeerror_is_not_retried_as_an_old_signature():
+    worker = _bare_embedded_worker()
+    calls = []
+    class BrokenCore:
+        def shutdown(self, timeout, *, preserve_owner_protocol=False):
+            calls.append((timeout, preserve_owner_protocol))
+            raise TypeError("internal drain bug")
+    worker._embedded_core = BrokenCore()
+    assert not worker._shutdown_embedded_core(0.25, preserve_owner_protocol=True)
+    assert calls == [(0.25, True)]
+    assert not worker._embedded_core_stopped
+
+
+@pytest.mark.unit
+def test_cached_push_does_not_reconstruct_missing_acceptance_or_reopen_admission():
+    worker = _bare_embedded_worker()
+    push = _push_for_job(worker.worker_id, JobID.random())
+    key = push.spec.attempt_id, push.lease_id
+    worker._cached_pushes[key] = push
+    worker._accepting_tasks = False
+    assert not worker._begin_task(push)
+    assert worker._accepted_pushes == {} and worker._push_obligations == set()
+    assert worker._active_tasks == 0
+    del worker._accepted_pushes
+    with pytest.raises(AttributeError, match="_accepted_pushes"):
+        worker._begin_task(push)
+    assert worker._active_tasks == 0

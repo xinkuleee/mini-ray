@@ -39,6 +39,8 @@ from tests.unit._pure_node_output_current import prepare_ref_free_output
 pytestmark = pytest.mark.unit
 
 
+from tests.support._worker_protocol import initialize_worker_protocol
+
 @pytest.fixture
 def _no_worker_runtime(monkeypatch):
     """Guard explicit Node/Worker publication cases without a file-wide fixture."""
@@ -88,7 +90,6 @@ def _node_without_transport(
 ) -> NodeServer:
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = worker_id
     node._ledger = _CountingLedger(total)
     node._gcs_address = None
     node._registered_with_gcs = True
@@ -96,16 +97,13 @@ def _node_without_transport(
     node._registration_epoch = 3
     node._cluster_nodes = (NodeSnapshot(node_id, total, total),)
     node._cluster_addresses = {}
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 19001)
-    node._workers = {worker_id: _WorkerSlot(worker_id, process=node._worker_process,
-        address=node._worker_address, pid=21002)}
+    node._workers = {worker_id: _WorkerSlot(worker_id, process=_AliveWorker(),
+        address=("127.0.0.1", 19001), pid=21002)}
     node._worker_order = (worker_id,)
     node._next_worker_cursor = 0
     node._shutdown_request_id = None
     node._leases = {}
     node._lease_outcomes = {}
-    node._active_lease_id = None
     node._lease_request_locks = {}
     node._inflight_lease_requests = 0
     node._state_lock = threading.RLock()
@@ -300,7 +298,7 @@ def test_granted_running_completed_releases_exactly_once() -> None:
     assert publication.handoffs.query(publication.manifest.publication_id).complete is None
     assert node._ledger.release_calls == 1
     assert node.resource_ledger.available == resources
-    assert node._active_lease_id is None
+    assert node._workers[node.worker_id].active_lease_id is None
 
     post_complete_release = node._handle_release_lease(
         protocol.ReleaseWorkerLease(
@@ -394,6 +392,7 @@ def test_worker_retries_cached_completion_without_rerunning_callable(
     push = protocol.PushTask(request.lease_id, grant.worker_id, spec)
 
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = grant.worker_id
     worker.node_id = node.node_id
     worker.node_address = ("127.0.0.1", 19000)

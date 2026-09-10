@@ -6,7 +6,7 @@ The test inspects only the Driver's outgoing immutable messages: object bytes
 must move NodeManager-to-NodeManager, while lease and direct-task messages
 carry descriptors and ``RefArg`` handles only.
 
-Run this exact node ID only through ``scripts/run_bounded_test.py``.  The hard
+Run this exact node ID only through ``scripts/run_baseline.py --smoke EXACT``.  The hard
 bounds are one GCS, two NodeManagers, one Worker per node, two tasks, a 1 MiB
 store per node, and the runner's 30 second process-tree deadline. Init and gate
 setup are covered by finally; API/gate work shares ten seconds, public close

@@ -5,7 +5,7 @@ method through Driver Core -> dedicated ActorWorker.  Transport sidecars prove
 all three cross-PID request edges without timestamp ordering, while the absence
 of ``actor_call`` at GCS proves that the steady-state call bypasses control.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds are
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Bounds are
 one GCS, one Node, one ordinary Worker, one dedicated Actor Worker, one Actor,
 one tiny call, one trace collector and a 1 MiB Node store. Work shares ten seconds
 after init; trace delivery uses at most two seconds of that same budget and the
@@ -15,6 +15,10 @@ under the runner's 30-second outer bound, not deadline-triggered cancellation.
 All observed PIDs/endpoints (four/six on success) are checked after failures;
 create before route installation still relies on Node/outer-runner cleanup.
 The test starts no helper thread/listener; trace polling uses bounded Event waits.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

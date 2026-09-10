@@ -24,6 +24,7 @@ from miniray import (
     node as node_module, output_protocol as output_wire, protocol,
     transport as transport_module, worker as worker_module,
 )
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, RemoteFunctionDefinition
 from miniray.control import NodeRegistry, PlacementGroupControlCoordinator
 from miniray.errors import (
@@ -82,6 +83,8 @@ def _core() -> CoreWorker:
     core._stored_descriptors = {}
     core._registered_functions = set()
     core._state_lock = threading.RLock()
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._completion = threading.Condition(core._state_lock)
     core._submissions = queue.Queue()
     core._accepting = True
@@ -505,6 +508,7 @@ def test_committed_participant_death_fences_complete_manifest_and_queued_task(
         dead = next(node for node in nodes if node.node_id == dead_key.node_id)
         survivor = next(node for node in nodes if node.node_id == survivor_key.node_id)
         core.node_id, core.node_address = survivor.node_id, survivor.address
+        core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
         identity = created.placement_group_id, created.attempt
         assert created.attempt == 0 and len(creates) == 1 and len(participant_calls) == 4
         assert core._placement_group_manifests[identity] == (dead_key, survivor_key)
@@ -623,7 +627,16 @@ def test_unrelated_or_expected_node_death_does_not_mark_pg_lost() -> None:
     )
     core._placement_group_manifests[identity] = (key,)
 
-    core.handle_node_death(_death(NodeID.random()), 2, True)
+    live = protocol.NodeInfo(
+        core.node_id, 4100, 1, core.node_address,
+        ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1}),
+    )
+    peer = protocol.NodeInfo(
+        participant, 4102, 1, ("participant.invalid", 21005),
+        ResourceVector({"CPU": 1}), ResourceVector({"CPU": 1}),
+    )
+    core.handle_node_death(_death(NodeID.random()),
+                           protocol.InstallClusterSnapshot(2, "unrelated-death", (live, peer)))
     assert core._placement_group_states[identity] is (
         protocol.PlacementGroupPhaseStatus.CREATED
     )
@@ -631,7 +644,7 @@ def test_unrelated_or_expected_node_death_does_not_mark_pg_lost() -> None:
         "expected-pg-node", participant, 4102, 1, 3, 0,
         protocol.NodeDeathReason.EXPECTED, "clean shutdown",
     )
-    core.handle_node_death(expected, 3, True)
+    core.handle_node_death(expected, protocol.InstallClusterSnapshot(3, "expected-exit", (live,)))
     assert core._placement_group_states[identity] is (
         protocol.PlacementGroupPhaseStatus.CREATED
     )

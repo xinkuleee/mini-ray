@@ -42,23 +42,17 @@ def _rv(cpu: int) -> ResourceVector:
 def _node() -> NodeServer:
     node = object.__new__(NodeServer)
     node.node_id = NodeID.random()
-    node.worker_id = WorkerID.random()
+    worker_id = WorkerID.random()
     node.num_workers_per_node = 1
     process = _AliveProcess()
     slot = _WorkerSlot(
-        node.worker_id,
+        worker_id,
         process=process,
         address=("127.0.0.1", 27301),
         pid=process.pid,
     )
-    node._worker_order = (node.worker_id,)
-    node._workers = {node.worker_id: slot}
-    node._worker_process = process
-    node._worker_address = slot.address
-    node._worker_pid = process.pid
-    node._worker_exitcode = None
-    node._worker_forced = False
-    node._active_lease_id = None
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: slot}
 
     node._ledger = ResourceLedger(_rv(2))
     node._bundle_reservations = BundleReservationLedger(node._ledger)

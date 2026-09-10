@@ -1,0 +1,627 @@
+{
+  "schema": "mini-ray.k4-validation-audit/v1",
+  "audit_date": "2026-09-10",
+  "workspace": "C:/Users/t-hdong/Desktop/gao/mini-ray-base",
+  "head": "42ed62d7231d17d3b7f703670a357c509183e853",
+  "mode": "read-only source/test/manifest; audit artifacts only; no imports, collection or pytest",
+  "scope": "Applied K4 formal-construction compatibility cleanup (REP-001/002/003/004/005/010/011); isolated P1 DTO candidate is NOT applied evidence.",
+  "result": "validation closure identified; current worktree still requires per-selector execution and frozen input registration",
+  "groups": [
+    {
+      "id": "worker_authority",
+      "rep": [
+        "REP-004",
+        "REP-010"
+      ],
+      "priority": "required",
+      "targets": [
+        "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_internal_typeerror_is_not_retried_as_an_old_signature",
+        "tests/unit/test_worker_side_core_contract.py::test_cached_push_does_not_reconstruct_missing_acceptance_or_reopen_admission",
+        "tests/unit/test_worker_side_core_contract.py::test_closed_admission_still_serves_exact_completed_push_replay",
+        "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_is_unclean_when_embedded_core_cannot_drain",
+        "tests/unit/test_worker_side_core_contract.py::test_embedded_core_prepublication_failure_uses_local_abort",
+        "tests/unit/test_worker_push_obligations.py::test_start_ack_loss_then_closed_exact_replay_executes_once",
+        "tests/unit/test_worker_push_obligations.py::test_closed_admission_rejects_changed_and_new_pushes",
+        "tests/unit/test_worker_push_obligations.py::test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it"
+      ],
+      "marker": "unit",
+      "why": "Current shutdown signature propagates internal TypeError as failed drain, missing acceptance is not reconstructed from cache, exact accepted retries retain obligations until actual completion.",
+      "cost": "Unstarted Worker; one tiny Push or one fake Core per case. Start/Complete transport boundaries are in-memory. The heavy unresolved-shutdown function in test_worker_push_obligations is not selected by unit.",
+      "registrations": [
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_internal_typeerror_is_not_retried_as_an_old_signature",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_internal_typeerror_is_not_retried_as_an_old_signature",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_cached_push_does_not_reconstruct_missing_acceptance_or_reopen_admission",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_cached_push_does_not_reconstruct_missing_acceptance_or_reopen_admission",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_closed_admission_still_serves_exact_completed_push_replay",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_closed_admission_still_serves_exact_completed_push_replay",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_is_unclean_when_embedded_core_cannot_drain",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_is_unclean_when_embedded_core_cannot_drain",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_embedded_core_prepublication_failure_uses_local_abort",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_embedded_core_prepublication_failure_uses_local_abort",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_push_obligations.py::test_start_ack_loss_then_closed_exact_replay_executes_once",
+          "registered_selector": "tests/unit/test_worker_push_obligations.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_push_obligations.py::test_closed_admission_rejects_changed_and_new_pushes",
+          "registered_selector": "tests/unit/test_worker_push_obligations.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_push_obligations.py::test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it",
+          "registered_selector": "tests/unit/test_worker_push_obligations.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        }
+      ]
+    },
+    {
+      "id": "worker_lifecycle",
+      "rep": [
+        "REP-004",
+        "REP-010"
+      ],
+      "priority": "required",
+      "targets": [
+        "tests/unit/test_worker_side_core_contract.py::test_runtime_binding_isolates_worker_thread_and_restores_driver",
+        "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack",
+        "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_timeout_keeps_core_open_for_inflight_parent",
+        "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_fences_only_new_owner_retains"
+      ],
+      "marker": "loopback_smoke",
+      "why": "Preserve existing real thread-local binding and drain/retain fence contracts after removing lifecycle fallback.",
+      "cost": "1 thread for binding, at most2 owned threads for drain; no process/socket; entry1s/user gate2s, shutdown1s or1ms, bounded joins2s/finally2s. Each exact via30s runner.",
+      "limit": "Drain case uses a user-execution stub, backed by real publication reducers and explicit completion ACK bookkeeping; complementary worker_push_obligations cases prove the production completion path.",
+      "registrations": [
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_runtime_binding_isolates_worker_thread_and_restores_driver",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_runtime_binding_isolates_worker_thread_and_restores_driver",
+          "source": "reviewed_migration",
+          "declared_marker": "loopback_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_drains_task_before_embedded_core_and_clean_ack",
+          "source": "reviewed_migration",
+          "declared_marker": "loopback_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_timeout_keeps_core_open_for_inflight_parent",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_timeout_keeps_core_open_for_inflight_parent",
+          "source": "reviewed_migration",
+          "declared_marker": "loopback_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_fences_only_new_owner_retains",
+          "registered_selector": "tests/unit/test_worker_side_core_contract.py::test_worker_shutdown_fences_only_new_owner_retains",
+          "source": "reviewed_migration",
+          "declared_marker": "loopback_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        }
+      ]
+    },
+    {
+      "id": "node_pool_and_partial_startup",
+      "rep": [
+        "REP-001"
+      ],
+      "priority": "required",
+      "targets": [
+        "tests/unit/test_worker_pool_node.py::test_two_slots_each_hold_one_active_lease_and_third_waits",
+        "tests/unit/test_worker_pool_node.py::test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot",
+        "tests/unit/test_node_worker_death_runtime.py::test_ready_worker_is_published_only_after_exact_registration_ack",
+        "tests/unit/test_node_worker_death_runtime.py::test_rejected_registration_stops_child_without_publishing_it",
+        "tests/unit/test_node_worker_death_runtime.py::test_startup_pool_registration_failure_rolls_back_published_prefix",
+        "tests/unit/test_node_membership_snapshot.py::test_generic_stop_does_not_publish_expected_membership_death"
+      ],
+      "marker": "unit",
+      "why": "Pool is sole storage; derived public first-worker views track published/unpublished/stopped slots. Partial startup rolls back the exact published prefix. Generic stop does not publish expected membership death.",
+      "cost": "Fake process handles and typed RPC callbacks;2slot pool,3 tiny lease requests; real1KiB publication/store only in survivor completion. No runtime threads/processes.",
+      "registrations": [
+        {
+          "target": "tests/unit/test_worker_pool_node.py::test_two_slots_each_hold_one_active_lease_and_third_waits",
+          "registered_selector": "tests/unit/test_worker_pool_node.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_worker_pool_node.py::test_one_worker_loss_reclaims_only_its_lease_and_preserves_other_slot",
+          "registered_selector": "tests/unit/test_worker_pool_node.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_node_worker_death_runtime.py::test_ready_worker_is_published_only_after_exact_registration_ack",
+          "registered_selector": "tests/unit/test_node_worker_death_runtime.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_node_worker_death_runtime.py::test_rejected_registration_stops_child_without_publishing_it",
+          "registered_selector": "tests/unit/test_node_worker_death_runtime.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_node_worker_death_runtime.py::test_startup_pool_registration_failure_rolls_back_published_prefix",
+          "registered_selector": "tests/unit/test_node_worker_death_runtime.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_node_membership_snapshot.py::test_generic_stop_does_not_publish_expected_membership_death",
+          "registered_selector": "tests/unit/test_node_membership_snapshot.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        }
+      ]
+    },
+    {
+      "id": "core_route_and_deadline",
+      "rep": [
+        "REP-003",
+        "REP-005"
+      ],
+      "priority": "required",
+      "targets": [
+        "tests/unit/test_core_node_death_recovery.py::test_death_atomically_installs_snapshot_migrates_home_and_removes_locations",
+        "tests/unit/test_core_node_death_recovery.py::test_conflicting_installed_snapshot_is_rejected_before_death_mutation",
+        "tests/unit/test_core_node_death_recovery.py::test_death_replay_is_exact_and_stale_or_malformed_proof_mutates_nothing",
+        "tests/unit/test_core_node_death_recovery.py::test_new_lease_uses_one_migrated_home_snapshot",
+        "tests/unit/test_core_node_death_recovery.py::test_known_grant_cancel_keeps_frozen_requester_after_home_migration",
+        "tests/unit/test_core_node_death_recovery.py::test_running_remote_push_is_not_rebound_when_home_changes",
+        "tests/unit/test_foreign_stored_object_refs.py::test_stored_fetch_subtracts_resolution_time_and_never_starts_after_deadline"
+      ],
+      "marker": "unit",
+      "why": "Complete InstallClusterSnapshot and explicit HomeRoute replace integer/boolean/id-only fakes; immutable old requester remains bound for cancel/push while new leases use new home. Expired original timeout performs no object RPC.",
+      "cost": "Threadless Core; finite queues; small typed Node/custody combinations; deadline uses fake clock, no real wait.",
+      "registrations": [
+        {
+          "target": "tests/unit/test_core_node_death_recovery.py::test_death_atomically_installs_snapshot_migrates_home_and_removes_locations",
+          "registered_selector": "tests/unit/test_core_node_death_recovery.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_core_node_death_recovery.py::test_conflicting_installed_snapshot_is_rejected_before_death_mutation",
+          "registered_selector": "tests/unit/test_core_node_death_recovery.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_core_node_death_recovery.py::test_death_replay_is_exact_and_stale_or_malformed_proof_mutates_nothing",
+          "registered_selector": "tests/unit/test_core_node_death_recovery.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_core_node_death_recovery.py::test_new_lease_uses_one_migrated_home_snapshot",
+          "registered_selector": "tests/unit/test_core_node_death_recovery.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_core_node_death_recovery.py::test_known_grant_cancel_keeps_frozen_requester_after_home_migration",
+          "registered_selector": "tests/unit/test_core_node_death_recovery.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_core_node_death_recovery.py::test_running_remote_push_is_not_rebound_when_home_changes",
+          "registered_selector": "tests/unit/test_core_node_death_recovery.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_foreign_stored_object_refs.py::test_stored_fetch_subtracts_resolution_time_and_never_starts_after_deadline",
+          "registered_selector": "tests/unit/test_foreign_stored_object_refs.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        }
+      ]
+    },
+    {
+      "id": "gc_and_owner_service",
+      "rep": [
+        "REP-002",
+        "REP-011"
+      ],
+      "priority": "required",
+      "targets": [
+        "tests/unit/test_put_reference_runtime.py::test_unknown_seal_and_lost_drop_ack_keep_cleanup_until_exact_drop_replay",
+        "tests/unit/test_put_reference_runtime.py::test_plain_large_put_keeps_exact_cleanup_after_seal_and_drop_ack_loss",
+        "tests/unit/test_put_home_failover.py::test_put_reseals_exact_bytes_on_installed_survivor_after_original_seal",
+        "tests/unit/test_put_home_failover.py::test_inline_put_uses_owner_bytes_after_home_death_without_node_access",
+        "tests/unit/test_put_home_failover.py::test_unknown_seal_does_not_change_home_or_discard_cleanup_identity",
+        "tests/unit/test_owner_service.py::test_owner_service_exposes_only_live_core_handlers",
+        "tests/unit/test_owner_service.py::test_missing_required_owner_handler_fails_before_server_creation",
+        "tests/unit/test_owner_service.py::test_required_stored_pin_handlers_echo_exact_requests_and_dispositions",
+        "tests/unit/test_owner_service.py::test_retired_inline_pin_is_not_advertised_even_if_a_core_has_that_method"
+      ],
+      "marker": "unit",
+      "why": "One GC table retains exact Seal/Drop/child cleanup; route changes do not lose bytes or obligations. Required owner protocol is advertised before server construction, with retired inline handler absent.",
+      "cost": "At most2 threadless owner Cores and16KiB store; finite transport callbacks; fake server adapter, no listener.",
+      "registrations": [
+        {
+          "target": "tests/unit/test_put_reference_runtime.py::test_unknown_seal_and_lost_drop_ack_keep_cleanup_until_exact_drop_replay",
+          "registered_selector": "tests/unit/test_put_reference_runtime.py",
+          "source": "delivery_pure",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_put_reference_runtime.py::test_plain_large_put_keeps_exact_cleanup_after_seal_and_drop_ack_loss",
+          "registered_selector": "tests/unit/test_put_reference_runtime.py",
+          "source": "delivery_pure",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_put_home_failover.py::test_put_reseals_exact_bytes_on_installed_survivor_after_original_seal",
+          "registered_selector": "tests/unit/test_put_home_failover.py",
+          "source": "delivery_pure",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_put_home_failover.py::test_inline_put_uses_owner_bytes_after_home_death_without_node_access",
+          "registered_selector": "tests/unit/test_put_home_failover.py",
+          "source": "delivery_pure",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_put_home_failover.py::test_unknown_seal_does_not_change_home_or_discard_cleanup_identity",
+          "registered_selector": "tests/unit/test_put_home_failover.py",
+          "source": "delivery_pure",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_owner_service.py::test_owner_service_exposes_only_live_core_handlers",
+          "registered_selector": "tests/unit/test_owner_service.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_owner_service.py::test_missing_required_owner_handler_fails_before_server_creation",
+          "registered_selector": "tests/unit/test_owner_service.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_owner_service.py::test_required_stored_pin_handlers_echo_exact_requests_and_dispositions",
+          "registered_selector": "tests/unit/test_owner_service.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_owner_service.py::test_retired_inline_pin_is_not_advertised_even_if_a_core_has_that_method",
+          "registered_selector": "tests/unit/test_owner_service.py",
+          "source": "reviewed_migration",
+          "declared_marker": "unit",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        }
+      ]
+    },
+    {
+      "id": "real_retained_wiring",
+      "rep": [
+        "REP-001",
+        "REP-002",
+        "REP-003",
+        "REP-004",
+        "REP-005",
+        "REP-010",
+        "REP-011"
+      ],
+      "priority": "required_reuse_existing_delivery_gate",
+      "targets": [
+        "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process",
+        "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently",
+        "tests/integration/test_blocking_get_cpu_yield_path.py::test_nested_get_yields_cpu_to_child_on_second_worker",
+        "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas",
+        "tests/integration/test_driver_local_node_recovery_path.py::test_driver_local_node_death_migrates_home_and_retries_on_survivor"
+      ],
+      "marker": "multiprocess_smoke",
+      "why": "Reuse finite real-process gate for startup rollback,2slot concurrency,Worker/Core owner route during blocking,actual remote bytes/owner GC,home failover. No new fault Cartesian product.",
+      "cost": "Existing registered exact cost reviews; one selector/isolated30s invocation, serial; latest fixture/source hashes must be refreshed and checked.",
+      "registrations": [
+        {
+          "target": "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process",
+          "registered_selector": "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process",
+          "source": "delivery_smoke",
+          "declared_marker": "multiprocess_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently",
+          "registered_selector": "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently",
+          "source": "delivery_smoke",
+          "declared_marker": "multiprocess_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/integration/test_blocking_get_cpu_yield_path.py::test_nested_get_yields_cpu_to_child_on_second_worker",
+          "registered_selector": null,
+          "source": "not_registered",
+          "declared_marker": "multiprocess_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas",
+          "registered_selector": "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas",
+          "source": "delivery_smoke",
+          "declared_marker": "multiprocess_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/integration/test_driver_local_node_recovery_path.py::test_driver_local_node_death_migrates_home_and_retries_on_survivor",
+          "registered_selector": null,
+          "source": "not_registered",
+          "declared_marker": "multiprocess_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        }
+      ]
+    },
+    {
+      "id": "partial_core_constructor_insurance",
+      "rep": [
+        "REP-002",
+        "REP-003",
+        "REP-004",
+        "REP-005"
+      ],
+      "priority": "conditional_if_constructor_abort_inputs_changed_or_no_post_K4_evidence",
+      "targets": [
+        "tests/unit/test_core_startup_rollback.py::test_lane_start_failure_stops_all_started_local_threads_without_rpc",
+        "tests/unit/test_core_startup_rollback.py::test_lane_start_raise_after_start_is_still_joined",
+        "tests/unit/test_core_startup_rollback.py::test_unpublished_abort_is_idempotent_and_never_syncs_gcs"
+      ],
+      "marker": "loopback_smoke",
+      "why": "Keep genuine partial-constructor cleanup despite deleting old fixture fields. Not evidence that every missing-field getattr is removable.",
+      "cost": "Actual Core threads only; at most4 constructor thread objects/3started before injected failure; no socket/process,joins1s/finally2s; finite event budgets. These3 cases are not currently registered; if selected, full current review and registration are required before execution.",
+      "registrations": [
+        {
+          "target": "tests/unit/test_core_startup_rollback.py::test_lane_start_failure_stops_all_started_local_threads_without_rpc",
+          "registered_selector": null,
+          "source": "not_registered",
+          "declared_marker": "loopback_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_core_startup_rollback.py::test_lane_start_raise_after_start_is_still_joined",
+          "registered_selector": null,
+          "source": "not_registered",
+          "declared_marker": "loopback_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        },
+        {
+          "target": "tests/unit/test_core_startup_rollback.py::test_unpublished_abort_is_idempotent_and_never_syncs_gcs",
+          "registered_selector": null,
+          "source": "not_registered",
+          "declared_marker": "loopback_smoke",
+          "changed_review_inputs": [],
+          "missing_review_inputs": []
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "resolved_during_audit",
+      "detail": "Two new Worker pure regressions initially lacked registrations; final static registry check finds them registered with current reviewed input hashes. Root reports all20 Worker side exact cases (including2newpure and4L1) passed in k4b; this auditor did not execute them.",
+      "refs": [
+        "tests/unit/test_worker_side_core_contract.py:1608",
+        "tests/unit/test_worker_side_core_contract.py:1622"
+      ]
+    },
+    {
+      "id": "F2",
+      "severity": "resolved_during_audit",
+      "detail": "Node pool and spillback migrated to _pure_node_output_current; old helper has zero direct Python import callers. Root reports pool2 and membership6 and NodeWorkerDeath8 passed in k4c, spillback12 progressing. Old helper still occurs as extra reviewed_files input for test_worker_pool_node.py, so deleting it requires reviewed closure rebinding, not source-only removal.",
+      "refs": [
+        "tests/unit/test_worker_pool_node.py:24",
+        "tests/unit/test_spillback_runtime.py:56",
+        "tests/unit/_pure_node_output.py:21",
+        "scripts/baseline_manifest.json"
+      ]
+    },
+    {
+      "id": "F3",
+      "severity": "resolved_during_audit",
+      "detail": "_sweep_exited_workers missing-pool guard only served membership fixture. Node constructor creates pool before external effects; genuine start rollback always owns that state. Root removed guard and migrated membership fixture to1 process=None slot.",
+      "refs": [
+        "src/miniray/node.py:372",
+        "src/miniray/node.py:614",
+        "src/miniray/node.py:2899",
+        "tests/unit/test_node_membership_snapshot.py:29",
+        "tests/unit/test_node_membership_snapshot.py:209"
+      ]
+    },
+    {
+      "id": "F4",
+      "severity": "evidence_limit",
+      "detail": "Do not require handoff.complete immediately after local Node Complete; actual outbox reporting is separate. Root corrected pool to assert local released, handoff None, pending witness, then explicit report_terminal yields same witness.",
+      "refs": [
+        "tests/unit/test_worker_pool_node.py:243"
+      ]
+    },
+    {
+      "id": "F5",
+      "severity": "evidence_limit",
+      "detail": "K3 historical passes and stored reviewed hashes are not K4 current snapshot passes. run_baseline --case only accepts exact registry keys; a function inside a whole-file registration is not an executable registered subselector.",
+      "refs": [
+        "scripts/run_baseline.py:280",
+        "scripts/run_baseline.py:222"
+      ]
+    },
+    {
+      "id": "F6",
+      "severity": "not_p1_evidence",
+      "detail": "Current base still uses singleton DTO fields slots/results/output_ids. Those are P1 candidate scope, not residual REP fallback or reason to delete retained tests before P1 applies."
+    }
+  ],
+  "helper_closure": {
+    "obsolete_helper": "tests/unit/_pure_node_output.py",
+    "obsolete_direct_callers": [],
+    "obsolete_contents": [
+      "miniray.output_recovery import (deleted module)",
+      "request.target_execution",
+      "report_intent/arm_complete/prepare_graph callbacks"
+    ],
+    "current_helper": "tests/unit/_pure_node_output_current.py",
+    "current_direct_callers": [
+      "tests/unit/test_lease_completion_handshake.py:36",
+      "tests/unit/test_node_lease_execution.py:27",
+      "tests/unit/test_node_placement_group_runtime.py:24",
+      "tests/unit/test_spillback_runtime.py:56",
+      "tests/unit/test_worker_pool_node.py:24"
+    ],
+    "deleted_worker_helper": "tests/unit/_unified_worker_rpc.py",
+    "deleted_worker_helper_direct_callers": [],
+    "replacement_worker_helper": "tests/support/_worker_protocol.py",
+    "retirement_checks": [
+      "no direct or dynamic import caller",
+      "all retained caller contracts have explicit new helper path and current exact ACK semantics",
+      "newpool/spillback validation passes before oldhelper delete",
+      "remove obsolete helper extra reviewed_files hash without dropping real transitive dependencies",
+      "then registry validates without old file and caller hashes match"
+    ]
+  },
+  "residual_scan": {
+    "checked": [
+      "_ensure_worker_slots_locked",
+      "_sync_first_worker_compat_locked",
+      "_inline_gc_obligations",
+      "_gc_obligations(",
+      "_requester_route_or_legacy_id",
+      "_make_message(",
+      "snapshot_installed="
+    ],
+    "source_and_test_exact_hits": [],
+    "limit": "Text scan of current src/tests; optional fields and partial startup must be judged semantically, not by all-getattr deletion. Old helper retains retired target/GCS wire until deletion preconditions close."
+  },
+  "non_execution_statement": "No runtime/test imports, no pytest collection, no test or cluster execution. Artifact JSON registry statuses/hashes are static observations, not execution approval or pass results.",
+  "audit_input_sha256_raw": {
+    "src/miniray/node.py": "6a9f922b36aa29af6c8684c577f656fc62afe3276ca833f331447960e90aeea0",
+    "tests/unit/test_worker_side_core_contract.py": "8d7de6726fcbaa994b099fae369b45ba6f904f1a84058d3027304aa955a5216d",
+    "tests/unit/_pure_node_output_current.py": "5c72a3a6306e48e2b8d257f4d41524a9d9cb3f191b16a84a1ec02a9c17d16dbd",
+    "src/miniray/worker.py": "01de1449ad0028712d9b6b61a630908649816309b48eb39ca6618edb7b9fe1b4",
+    "tests/unit/_pure_node_output.py": "df4cb692d184a74e6e090eb11233870841665e48a7c82f5bd91731cd5278c216",
+    "src/miniray/owner_service.py": "e70151968603894ae417b6f0d503018f3c7614d7669ae610f689d0369e8dcf4b",
+    "tests/support/_worker_protocol.py": "15609a8c56c570cb7c76fdba49818d6d57ff2ba05e09d701ebac6d0b6f28d8f2",
+    "tests/unit/test_node_membership_snapshot.py": "4ca2908c7fde261f95830f9cad4ee739d6ece8dde42a690cd75dbb87c166ff8d",
+    "docs/project-cleanup-plan.md": "c1e9a475141edc839a1898920d7fb38ff4a63eb8626c546b7a18118b5d28ba03",
+    "tests/unit/test_worker_pool_node.py": "82e38908f976f29e5fcd9c309ed56df58a5a8e026270e0f47038e90250e12976",
+    "scripts/baseline_manifest.json": "f37bca671bcb6582a5fb1e50b37a9b54c634e3c1cdc7817dbef31f3b8a98be28",
+    "src/miniray/core.py": "4d611007703c353b23cb90a4f068b46ccea70fb90a0d6f89e60f9343fd854d2a",
+    "tests/unit/test_spillback_runtime.py": "e4dcbae229a76aea8badbc0e31f0340d4fdd3aa617cb3bd8aae5e88a545c7b42"
+  },
+  "generated_at": "2026-09-10T11:37:20.0478351+08:00",
+  "root_execution_updates": [
+    {
+      "source": "root message, no raw logs inspected by this auditor",
+      "checkpoint": "k4b",
+      "result": "Worker side20exact passed including2newpure and4L1"
+    },
+    {
+      "source": "root message, no raw logs inspected by this auditor",
+      "checkpoint": "k4c",
+      "result": "pool2 membership6 NodeWorkerDeath8 passed; spillback12 stillrunning at report cutoff"
+    }
+  ],
+  "static_registry_result": "All34 required pure/loopback target contracts resolve to existing exact or whole-file registrations and normalized reviewed-file hashes match at final check.5real-wiring suggestions:3registered,2needregistration (CPUyield specificexact/homefailover exact);3conditional corestartupL1 also needregistration. No pytest executed."
+}

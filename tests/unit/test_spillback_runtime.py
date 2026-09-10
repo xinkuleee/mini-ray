@@ -2,8 +2,9 @@
 
 The three original Core submission cases now compose one threadless Core,
 one or two real Node reducers, a NodeRegistry, and one selected INLINE output.
-Hybrid spillback, Grant/Start/Complete, publication INTENT/ARM/adoption and owner
-GC are real; the transport supplies one tiny scalar without running user code.
+Hybrid spillback, Grant/Start/Complete, owner handoff/adoption and owner GC
+are real; the transport supplies one tiny scalar without running user code.
+GCS supplies only membership/resource/routing facts, not output publication.
 Timeout and explicit Worker rejection retain the same Push for one manual replay.
 At most one 1 KiB store is allocated and no pure case waits or starts runtime
 infrastructure. This does not replace live Worker or shutdown coverage.
@@ -33,9 +34,11 @@ import pytest
 
 from miniray import core as core_module, node as node_module, output_protocol as wire, protocol
 from miniray.control import NodeRegistry
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _DelayedReadyTask, _ReadyTask, _RetryInlineGc, _WAKE_COORDINATOR
 from miniray.ids import AttemptID, JobID, LeaseID, NodeID, TaskID, WorkerID
-from miniray.node import NodeServer, RELEASE_LEASE_HANDLER, REQUEST_LEASE_HANDLER
+from miniray.node import NodeServer, RELEASE_LEASE_HANDLER, REQUEST_LEASE_HANDLER, _WorkerSlot
+from miniray.output_handoff import OutputHandoffPhase
 from miniray.ownership import ObjectCollectionState, ObjectOwnerTable, ObjectState, OutputOwnerPublicationPlan
 from miniray.recovery import TaskState
 from miniray.resources import (
@@ -49,7 +52,8 @@ from miniray.trace import MemoryEventSink
 from miniray.transport import RemoteCallError, TransportConnectionError
 from miniray.worker import PUSH_TASK_HANDLER
 from tests.unit._pure_core import close_pure_core, make_pure_core
-from tests.unit._pure_node_output import prepare_ref_free_output
+from tests.unit import _pure_node_output_current as node_output_fixture
+from tests.unit._pure_node_output_current import prepare_ref_free_output
 
 
 _REMOTE_ONLY_RESOURCE = "node2_only"
@@ -92,7 +96,6 @@ def _node_without_transport(
 ) -> NodeServer:
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = worker_id
     node._ledger = ResourceLedger(total)
     # A non-None address selects the cluster scheduling path for first-hop
     # requests.  Tests replace _get_cluster_nodes, so no RPC is performed.
@@ -101,12 +104,14 @@ def _node_without_transport(
     node._registered_with_gcs = False
     node._cluster_nodes = (NodeSnapshot(node_id, total, total),)
     node._cluster_addresses = {}
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 19001)
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(
+        worker_id, process=_AliveWorker(), address=("127.0.0.1", 19001),
+    )}
+    node.num_workers_per_node = 1
     node._shutdown_request_id = None
     node._leases = {}
     node._lease_outcomes = {}
-    node._active_lease_id = None
     node._lease_request_locks = {}
     node._inflight_lease_requests = 0
     node._state_lock = threading.RLock()
@@ -188,6 +193,47 @@ def _release_submission_ref(ref):
     assert not finalizer.alive and done.is_set()
 
 
+class _CoreHandoffEndpoint:
+    """Route the small Node fixture's callbacks to the actual owning Core.
+
+    This endpoint has no handoff table: every returned snapshot comes from
+    a typed, accepted Core reply. It cannot independently grant registration.
+    """
+
+    def __init__(self, core):
+        self.core = core
+        self.registrations, self.completions = [], []
+
+    def register(self, manifest, current_attempt):
+        assert current_attempt == manifest.publication_id.attempt_id
+        request = wire.RegisterOutputHandoff(manifest)
+        reply = self.core.register_output_handoff(request)
+        assert type(reply) is wire.OutputHandoffReply and reply.request == request
+        assert reply.accepted and reply.error is None
+        assert reply.snapshot.phase is OutputHandoffPhase.PENDING
+        self.registrations.append((request, reply))
+        return reply.snapshot
+
+    def record_complete(self, witness):
+        request = wire.ReportOutputHandoffComplete(witness)
+        reply = self.core.report_output_handoff_complete(request)
+        assert type(reply) is wire.OutputHandoffReply and reply.request == request
+        assert reply.accepted and reply.error is None
+        assert reply.snapshot.complete == witness
+        self.completions.append((request, reply))
+        return reply.snapshot
+
+    def query(self, identity):
+        request = wire.GetOutputHandoff(identity)
+        reply = self.core.get_output_handoff(request)
+        assert type(reply) is wire.OutputHandoffReply and reply.request == request
+        assert reply.accepted and reply.error is None
+        return reply.snapshot
+
+    def abort_manifest(self, *_args):
+        pytest.fail("successful spillback publication attempted rollback")
+
+
 class _SubmissionFixture:
     """A finite real routing/publication composition; only Push is delivery."""
 
@@ -195,6 +241,25 @@ class _SubmissionFixture:
         assert first_failure in (None, "timeout", "rejected")
         assert not spillback or first_failure is None
         self.core = core = make_pure_core()
+        self.owner_handoffs = _CoreHandoffEndpoint(core)
+        self.collection_receipts = []
+        self.monkeypatch = monkeypatch
+        real_collect = core.owner_table.complete_output_publication_collection
+
+        def observe_collection(plan):
+            # Observe the real collector's frozen claim and result without
+            # substituting an ACK or deleting any pending cleanup obligation.
+            assert core._state_lock._is_owned()
+            obligation = core._object_gc_obligations[plan.object_id]
+            assert obligation.output_plan == plan
+            assert not obligation.pending_drops and not obligation.pending_edges
+            assert core.owner_table.collection_state(plan.object_id) is ObjectCollectionState.COLLECTING
+            receipt = real_collect(plan)
+            assert receipt.plan == plan and receipt.collection.collected
+            self.collection_receipts.append(receipt)
+            return receipt
+
+        monkeypatch.setattr(core.owner_table, "complete_output_publication_collection", observe_collection)
         self.registry = NodeRegistry()
         self.calls, self.node_control_calls = [], []
         self.lease_requests, self.pushes, self.start_replies = [], [], []
@@ -219,7 +284,7 @@ class _SubmissionFixture:
             node._node_pid = 31601 + index
             node._membership_epoch = 0
             node._server = SimpleNamespace(address=("spillback-{}.invalid".format(index), 1))
-            node._worker_address = ("spillback-worker-{}.invalid".format(index), 1)
+            node._workers[node.worker_id].address = ("spillback-worker-{}.invalid".format(index), 1)
             node._gcs_address = core.gcs_address
             monkeypatch.setattr(node, "_background_rpc", self.node_control)
             node._register_with_gcs()
@@ -230,6 +295,7 @@ class _SubmissionFixture:
         for node in self.nodes:
             assert node._handle_install_cluster_snapshot(snapshot).installed
         core.node_address = self.home.address
+        core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
         core._membership_epoch, core._installed_cluster_snapshot = epoch, snapshot
         core._registered_functions = set()
         monkeypatch.setattr(core, "_rpc", self.rpc)
@@ -303,28 +369,28 @@ class _SubmissionFixture:
         assert self.publication is not None and self.task_reply is not None
         envelope = self.task_reply.output_publication
         plan = OutputOwnerPublicationPlan(self.pending.execution, envelope)
-        if handler == wire.REPORT_OUTPUT_PUBLICATION_HANDLER:
-            assert address == self.core.gcs_address
-            recovery = self.publication.recovery
-            if type(request) is wire.ReportOutputPublicationTerminal:
-                self.assert_pending()
-                assert request.witness == envelope.complete
-                ack = recovery.report_terminal(request.witness)
-            elif type(request) is wire.ReportOutputPublicationAdopted:
-                assert self.core.owner_table.output_owner_publication_receipt(plan).committed
-                assert request.proof.complete == envelope.complete
-                ack = recovery.report_adopted(request.proof)
-            else:
-                assert type(request) is wire.ReportOutputPublicationSlotCollected
-                assert request.proof.complete == envelope.complete and request.proof.slot_index == 0
-                assert self.core.owner_table.collection_state(request.proof.object_id) is ObjectCollectionState.COLLECTING
-                ack = recovery.report_slot_collected(request.proof)
-            return wire.OutputRecoveryReply(request, ack)
         assert handler == wire.ACK_OUTPUT_PUBLICATION_ADOPTED_HANDLER
         assert address == self.target.address
-        assert self.publication.recovery.snapshot(envelope.publication_id).adopted == request.proof
-        assert self.core.owner_table.output_owner_publication_receipt(plan).committed
-        return self.target._handle_ack_output_publication_adopted(request)
+        assert type(request) is wire.AckOutputPublicationAdopted
+        handoff = self.owner_handoffs.query(envelope.publication_id)
+        assert handoff.manifest == envelope.manifest and handoff.complete == envelope.complete
+        assert handoff.phase is OutputHandoffPhase.ADOPTED and handoff.adoption == request.proof
+        receipt = self.core.owner_table.output_owner_publication_receipt(plan)
+        assert receipt.plan == plan and receipt.committed
+        assert self.core.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.ACTIVE
+        before = self.publication.journal.snapshot(envelope.publication_id)
+        assert before.complete == request.proof.complete and before.retained_result_slots == (0,)
+        reply = self.target._handle_ack_output_publication_adopted(request)
+        assert type(reply) is wire.AckOutputPublicationAdoptedReply
+        assert reply.request == request and reply.accepted
+        after = self.publication.journal.snapshot(envelope.publication_id)
+        assert after.complete == before.complete and not after.retained_result_slots
+        (retired,) = after.retired_slots
+        assert retired.publication_id == envelope.publication_id and retired.proof == request.proof
+        assert retired.object_id == self.pending.object_id and retired.slot_index == 0
+        # Retiring Node reply custody cannot collect the owner's live ObjectRef.
+        assert self.core.owner_table.collection_state(self.pending.object_id) is ObjectCollectionState.ACTIVE
+        return reply
 
     def push(self, address, handler, push):
         assert self.grant is not None and len(self.pushes) < 2
@@ -362,10 +428,20 @@ class _SubmissionFixture:
             # and its CPU, with neither a success reply nor a completion.
             raise TimeoutError("reply was lost after an ambiguous send")
         assert self.publication is None
-        self.publication = prepare_ref_free_output(
-            node, self.lease_requests[-1], self.grant,
-            job_id=self.core.job_id, values=(self.value,),
-        )
+        # The shared Node-only helper normally owns an isolated reducer. For
+        # this Core composition, bind its callbacks to Core's real endpoint;
+        # leave no second table that could disagree about registration.
+        with self.monkeypatch.context() as local_patch:
+            local_patch.setattr(node_output_fixture, "OutputHandoffTable", lambda: self.owner_handoffs)
+            self.publication = prepare_ref_free_output(
+                node, self.lease_requests[-1], self.grant,
+                job_id=self.core.job_id, values=(self.value,),
+            )
+        assert self.publication.handoffs is self.owner_handoffs
+        ((registration, registered),) = self.owner_handoffs.registrations
+        assert registration.manifest == self.publication.manifest
+        assert registered.snapshot == self.owner_handoffs.query(self.publication.manifest.publication_id)
+        assert registered.snapshot.complete is None and not self.owner_handoffs.completions
         assert self.publication.manifest.header.node_incarnation == start.node_incarnation
         assert node.resource_ledger.available.is_zero()
         self.complete_request = protocol.CompleteWorkerLease(
@@ -380,6 +456,9 @@ class _SubmissionFixture:
         assert envelope.manifest == self.publication.manifest
         assert len(envelope.results) == 1 and envelope.results[0].storage is protocol.ResultStorage.INLINE
         assert envelope.complete == self.publication.journal.snapshot(envelope.publication_id).complete
+        # Node Complete releases resources independently of report delivery.
+        assert self.publication.adapter.pending_terminal_reports() == (envelope.complete,)
+        assert self.owner_handoffs.query(envelope.publication_id).complete is None
         assert node.object_store.used_bytes == 0
         self.assert_pending()
         self.task_reply = protocol.TaskReply(
@@ -458,8 +537,14 @@ class _SubmissionFixture:
         assert self.target.resource_ledger.snapshot() == before
         assert self.target._resource_report_version == version == 2
         identity = self.completed.output_publication.publication_id
-        assert not self.publication.journal.snapshot(identity).retained_result_slots
-        assert self.publication.recovery.snapshot(identity).adopted is not None
+        node_receipt = self.publication.journal.snapshot(identity)
+        assert not node_receipt.retained_result_slots
+        handoff = self.owner_handoffs.query(identity)
+        assert handoff.phase is OutputHandoffPhase.ADOPTED
+        assert handoff.complete == self.completed.output_publication.complete
+        assert handoff.adoption == node_receipt.retired_slots[0].proof
+        assert not self.owner_handoffs.completions and not self.collection_receipts
+        assert core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.ACTIVE
         if self.home is not self.target:
             assert not self.home._leases
             assert self.home.resource_ledger.available == self.home.resource_ledger.total
@@ -494,9 +579,28 @@ class _SubmissionFixture:
         assert core._recovery.lineage_for_object(pending.object_id) is None
         assert not core._objects and not core._stored_descriptors and not core._object_gc_obligations
         identity = self.completed.output_publication.publication_id
-        assert len(self.publication.recovery.snapshot(identity).slot_collections) == 1
+        (collected,) = self.collection_receipts
+        assert collected.plan.object_id == pending.object_id
+        assert collected.plan.membership.manifest == self.completed.output_publication.manifest
+        assert collected.plan.metadata_plan.producer_task_spec == pending.spec
+        assert collected.plan.metadata_plan.locations == collected.plan.metadata_plan.contained_releases == ()
+        assert collected.collection.contained_releases == collected.collection.lineage_releases == ()
+        exact_replay = core.owner_table.output_publication_collection_receipt(collected.plan)
+        assert exact_replay.plan == collected.plan and exact_replay.collection == collected.collection
+        handoff_before = self.owner_handoffs.query(identity)
+        node_before = self.publication.journal.snapshot(identity)
+        assert handoff_before.phase is OutputHandoffPhase.ADOPTED
+        assert handoff_before.adoption == node_before.retired_slots[0].proof
+        # A late metadata-only Complete report replays owner history after GC.
+        # It cannot recreate result bytes, a local reference, or object state.
         assert self.publication.adapter.report_terminal(identity)
         assert not self.publication.adapter.pending_terminal_reports()
+        ((completion, reported),) = self.owner_handoffs.completions
+        assert completion.witness == self.completed.output_publication.complete
+        assert reported.snapshot == handoff_before == self.owner_handoffs.query(identity)
+        assert self.publication.journal.snapshot(identity) == node_before
+        assert core.owner_table.collection_state(pending.object_id) is ObjectCollectionState.COLLECTED
+        assert not core._objects and not core._stored_descriptors and not core._object_gc_obligations
         assert self.target.object_store.used_bytes == 0
         # Resource reporting is independent of Complete delivery; reduce its
         # already-pending notice explicitly rather than starting a supervisor.
@@ -531,7 +635,7 @@ def test_core_preserves_identity_and_does_not_release_from_submitter(
         )
         assert targeted_request == replace(first_request, target_node_id=f.target.node_id)
         push_calls = [call for call in f.calls if call[1] == PUSH_TASK_HANDLER]
-        assert len(push_calls) == 1 and push_calls[0][0] == f.target._worker_address
+        assert len(push_calls) == 1 and push_calls[0][0] == f.target._workers[f.target.worker_id].address
         push = push_calls[0][2]
         assert isinstance(push, protocol.PushTask)
         assert push.lease_id == first_request.lease_id
@@ -1028,7 +1132,7 @@ def test_concurrent_duplicate_spillback_uses_one_cached_snapshot(
         assert (reply.lease_id, reply.task_id, reply.attempt_id, reply.target_node_id, reply.target_address) == (
             request.lease_id, request.task_id, request.attempt_id, target_node_id, target_address,
         )
-        assert reply.scheduling_key == request.scheduling_key and reply.target_execution == request.target_execution
+        assert reply.scheduling_key == request.scheduling_key
         assert len(probe.snapshots) == len(probe.decisions) == 1
         snapshot_thread, (snapshots, addresses) = probe.snapshots[0]
         decision_thread, resources, policy_nodes, options, decision = probe.decisions[0]
@@ -1216,7 +1320,7 @@ def test_cancelled_pending_capacity_lease_can_never_grant_later() -> None:
     assert isinstance(late, protocol.RejectWorkerLease)
     assert late.reason is protocol.LeaseRejectReason.STALE_ATTEMPT
     assert waiting.lease_id not in node._leases
-    assert node._active_lease_id is None
+    assert node._workers[node.worker_id].active_lease_id is None
     assert node._ledger.available == capacity
 
 
@@ -1229,7 +1333,7 @@ def test_shutdown_freezes_replayed_pending_lease_without_a_late_grant() -> None:
     )
     # Model an earlier capacity observation without retaining a second live
     # lease: the retry must re-evaluate Node lifecycle before allocating.
-    node._active_lease_id = LeaseID.random()
+    node._workers[node.worker_id].active_lease_id = LeaseID.random()
     waiting = _lease_request(
         requester_node_id=node_id,
         requester_worker_id=WorkerID.random(),
@@ -1240,7 +1344,7 @@ def test_shutdown_freezes_replayed_pending_lease_without_a_late_grant() -> None:
     assert isinstance(pending, protocol.RejectWorkerLease)
     assert pending.reason is protocol.LeaseRejectReason.PENDING_CAPACITY
 
-    node._active_lease_id = None
+    node._workers[node.worker_id].active_lease_id = None
     node._shutdown_request_id = "shutdown-capacity-test"
     stopped = node._handle_request_lease(waiting)
     replay = node._handle_request_lease(waiting)

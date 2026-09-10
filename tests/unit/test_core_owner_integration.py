@@ -22,6 +22,7 @@ import cloudpickle
 import pytest
 
 from miniray import protocol
+from miniray.core import _HomeRoute
 from miniray.core import (
     CoreWorker,
     ObjectRef,
@@ -68,6 +69,7 @@ def _core_without_runtime() -> CoreWorker:
     core.job_id = JobID(bytes.fromhex("11" * 16))
     core.worker_id = WorkerID(bytes.fromhex("22" * 16))
     core.node_id = NodeID(bytes.fromhex("33" * 16))
+    core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
     core.driver_task_id = TaskID.for_driver(core.job_id)
     return core
 
@@ -112,7 +114,7 @@ class _AliveLeaseWorker:
 def _cancellation_node(node_id, worker_id):
     """Empty-dependency lease authority with one passive, existing Worker."""
     node = object.__new__(NodeServer)
-    node.node_id, node.worker_id = node_id, worker_id
+    node.node_id = node_id
     node._state_lock = threading.RLock()
     node._scheduling_lock = threading.Lock()
     node._gcs_lifecycle_lock = threading.Lock()

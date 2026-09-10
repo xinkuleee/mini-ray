@@ -18,6 +18,7 @@ import pytest
 
 from miniray import protocol
 from miniray.contained_edges import ContainedReferenceEdge, ContainedReferenceHold
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _ObjectWaiter, _PendingTask
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.ownership import (
@@ -68,9 +69,12 @@ def _stored_core(
     core._objects = {}
     core._stored_descriptors = {}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
+    core._dead_nodes = {}
     core._completion = threading.Condition(core._state_lock)
     core._object_gc_obligations = {}
-    core._inline_gc_obligations = core._object_gc_obligations
     core._gc_retry_timers = set()
     core._owner_protocol_open = True
     core._inflight_borrow_ops = 0
@@ -196,7 +200,7 @@ def test_two_node_partial_ack_replays_only_missing_drop() -> None:
         )
 
     core._rpc = rpc
-    core._resolve_node_address = lambda _node: ("127.0.0.1", 27100)
+    core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27100)
     try:
         core._reference_released(object_id)
         obligation = core._object_gc_obligations[object_id]
@@ -228,7 +232,7 @@ def test_wrong_drop_ack_identity_is_ignored_until_exact_replay() -> None:
         return replace(reply, owner_worker_id=WorkerID.random()) if calls == 1 else reply
 
     core._rpc = rpc
-    core._resolve_node_address = lambda _node: ("127.0.0.1", 27101)
+    core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27101)
     try:
         core._reference_released(object_id)
         first = core._object_gc_obligations[object_id]
@@ -259,7 +263,7 @@ def test_shutdown_reports_unclean_then_second_convergence_is_clean() -> None:
         return _drop_reply(request, protocol.DropObjectReplicaStatus.ALREADY_DROPPED)
 
     core._rpc = rpc
-    core._resolve_node_address = lambda _node: ("127.0.0.1", 27102)
+    core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27102)
     try:
         core._reference_released(object_id)
         assert not core._retry_gc_obligations_for_shutdown()
@@ -326,7 +330,7 @@ def test_close_before_stored_success_records_lineage_before_gc() -> None:
     core._rpc = lambda _address, _handler, request: _drop_reply(
         request, protocol.DropObjectReplicaStatus.DROPPED
     )
-    core._resolve_node_address = lambda _node: ("127.0.0.1", 27103)
+    core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27103)
     try:
         assert core._publish_reply(
             pending, reply, expected_node_id=core.node_id
@@ -346,7 +350,7 @@ def test_owner_completion_failure_never_deletes_recovery_lineage(
     core._rpc = lambda _address, _handler, request: _drop_reply(
         request, protocol.DropObjectReplicaStatus.DROPPED
     )
-    core._resolve_node_address = lambda _node: ("127.0.0.1", 27104)
+    core._resolve_node_address = lambda _node, *, home_route=None: ("127.0.0.1", 27104)
     original = core.owner_table.complete_collection
 
     def fail_once(_plan: object) -> object:

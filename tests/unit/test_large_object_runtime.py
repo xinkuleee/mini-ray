@@ -16,6 +16,7 @@ import cloudpickle
 import pytest
 
 from miniray import protocol
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, ObjectRef, _ObjectWaiter, _PendingTask
 from miniray.errors import SystemTaskError
 from miniray.ids import AttemptID, JobID, NodeID, ObjectID, TaskID, WorkerID
@@ -147,6 +148,7 @@ def test_core_publishes_stored_location_then_fetches_from_node(
     core.driver_task_id = TaskID.for_driver(spec.job_id)
     core.node_id = node_id
     core.node_address = fixture.worker.node_address
+    core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
     core.gcs_address = ("large-output-gcs.invalid", 1)
     core.owner_table.register(
         object_id, current_attempt=spec.attempt_id, producer_task_spec=spec,
@@ -268,6 +270,9 @@ def test_owner_fetch_retries_only_after_authoritative_same_attempt_route_change(
     core._owner_table.add_location(object_id, spec.attempt_id, target)
     core._stored_descriptors = {object_id: canonical}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._dead_nodes = {}
     core._resolve_node_address = lambda node, **_kwargs: {
         source: source_address, target: target_address,
@@ -334,6 +339,9 @@ def test_owner_fetch_reads_owner_snapshot_and_route_as_one_atomic_pair() -> None
     )
     core._stored_descriptors = {object_id: canonical}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._dead_nodes = {}
 
     # The caller hands fetch an older snapshot.  Before fetch takes its first
@@ -391,6 +399,9 @@ def test_owner_fetch_discards_reply_after_attempt_advances_in_flight() -> None:
     )
     core._stored_descriptors = {object_id: descriptor}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._dead_nodes = {}
 
     def fetch(*_args):
@@ -439,6 +450,9 @@ def test_owner_stored_get_zero_timeout_never_starts_network_io() -> None:
     core._objects = {object_id: _ObjectWaiter(threading.Event())}
     core._stored_descriptors = {object_id: descriptor}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._dead_nodes = {}
     core._loads_owned_value = cloudpickle.loads
     core._resolve_node_address_with_timeout_at_route = (
@@ -475,6 +489,9 @@ def test_owner_fetch_does_not_retry_transport_error_without_route_change() -> No
     )
     core._stored_descriptors = {object_id: descriptor}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._dead_nodes = {}
     calls = []
 
@@ -512,6 +529,9 @@ def test_owner_fetch_does_not_spin_when_unchanged_route_resolution_fails() -> No
     )
     core._stored_descriptors = {object_id: descriptor}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core._dead_nodes = {}
     calls = []
 
@@ -558,6 +578,10 @@ def test_owner_local_fetch_rejects_malformed_or_drifted_reply(
     core._owner_table._entries[object_id].canonical_stored_result = descriptor
     core._stored_descriptors = {object_id: descriptor}
     core._state_lock = threading.RLock()
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
+    core._dead_nodes = {}
     base = protocol.GetObjectReply(
         object_id, node_id, True, True, payload, checksum,
         producer_attempt_id=spec.attempt_id, owner_worker_id=owner,

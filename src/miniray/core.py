@@ -19,7 +19,7 @@ import weakref
 from contextlib import nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
@@ -1296,17 +1296,6 @@ class _ObjectWaiter:
     event: threading.Event
 
 
-def _make_message(message_type: type, **values: object) -> object:
-    """Construct a protocol message across the small v0.1 naming transition.
-
-    Protocol dataclasses are the real boundary.  The aliases here only let the
-    Driver land independently while ``spec``/``task_spec`` field names settle.
-    """
-
-    names = {field.name for field in fields(message_type)}
-    return message_type(**{name: value for name, value in values.items() if name in names})
-
-
 def _remote_error(reply: object) -> BaseException:
     error = getattr(reply, "error", None)
     remote_type = getattr(
@@ -1553,8 +1542,6 @@ class CoreWorker:
         ] = {}
         self._inflight_submissions = 0
         self._object_gc_obligations: dict[ObjectID, _ObjectGcObligation] = {}
-        # Compatibility alias for the earlier inline-only teaching slice.
-        self._inline_gc_obligations = self._object_gc_obligations
         self._late_replica_cleanup = ReplicaCleanupQueue()
         self._late_replica_cleanup_scheduled = False
         self._foreign_lineage_collection_receipts: dict[
@@ -1759,24 +1746,8 @@ class CoreWorker:
         )
 
     def _home_route_snapshot(self) -> _HomeRoute | None:
-        """Read one non-torn physical home route.
-
-        The lazy branch preserves small ``object.__new__`` teaching fixtures; a
-        real Core always installs ``_home_route`` in ``__init__``.
-        """
-
-        lock = getattr(self, "_state_lock", None)
-        with (lock if lock is not None else nullcontext()):
-            if not hasattr(self, "_home_route"):
-                if not hasattr(self, "node_address"):
-                    # A few transport-only object.__new__ fixtures carry only
-                    # the requester NodeID.  Real Cores always install both the
-                    # address and an explicit route (including explicit None).
-                    return None
-                self._home_route = _HomeRoute(
-                    self.node_id, self.node_address,
-                    getattr(self, "_membership_epoch", 0),
-                )
+        """Read the explicitly initialized physical route under its lock."""
+        with self._state_lock:
             return self._home_route
 
     def _require_home_route(self, operation: str) -> _HomeRoute:
@@ -1885,20 +1856,6 @@ class CoreWorker:
             cache[selected] = address
             return selected, address
 
-    def _requester_route_or_legacy_id(
-        self, operation: str
-    ) -> tuple[_HomeRoute | None, NodeID]:
-        """Return a real route, with a narrow ID-only fixture fallback."""
-
-        route = self._home_route_snapshot()
-        if route is not None:
-            return route, route.node_id
-        if not hasattr(self, "_home_route") and hasattr(self, "node_id"):
-            return None, self.node_id
-        raise NodeDiedError(
-            "{} requires a live requester Node".format(operation)
-        )
-
     def _preflight_home_snapshot_locked(
         self,
         snapshot: protocol.InstallClusterSnapshot,
@@ -1906,7 +1863,7 @@ class CoreWorker:
     ) -> _HomeRoute | None:
         """Validate a survivor snapshot and compute its route without mutation."""
 
-        current_epoch = getattr(self, "_membership_epoch", 0)
+        current_epoch = self._membership_epoch
         if snapshot.membership_epoch < death.death_epoch:
             raise ValueError(
                 "cluster snapshot does not include the committed death epoch"
@@ -1915,11 +1872,11 @@ class CoreWorker:
             raise ValueError("node-death snapshot has a stale membership epoch")
         if any(node.node_id == death.node_id for node in snapshot.nodes):
             raise ValueError("survivor snapshot still contains the dead Node")
-        dead_nodes = getattr(self, "_dead_nodes", {})
+        dead_nodes = self._dead_nodes
         if any(node.node_id in dead_nodes for node in snapshot.nodes):
             raise ValueError("survivor snapshot resurrects a committed DEAD Node")
 
-        previous = getattr(self, "_installed_cluster_snapshot", None)
+        previous = self._installed_cluster_snapshot
         if previous is not None:
             if snapshot.membership_epoch < previous.membership_epoch:
                 raise ValueError("node-death snapshot is older than the installed view")
@@ -1951,18 +1908,12 @@ class CoreWorker:
                             "survivor snapshot changed a live Node incarnation"
                         )
 
-        current_home = getattr(self, "_home_route", None)
-        if current_home is None and not hasattr(self, "_home_route"):
-            current_home = _HomeRoute(
-                self.node_id, self.node_address, current_epoch
-            )
-        return _select_home_route(current_home, snapshot)
+        return _select_home_route(self._home_route, snapshot)
 
     def handle_node_death(
         self,
         death: protocol.NodeDeathRecord,
-        installed_snapshot: protocol.InstallClusterSnapshot | int,
-        snapshot_installed: Optional[bool] = None,
+        installed_snapshot: protocol.InstallClusterSnapshot,
     ) -> NodeLocationRemoval:
         """Install one committed Node death and enqueue Core-side cleanup.
 
@@ -1979,38 +1930,12 @@ class CoreWorker:
         # Pickle can instantiate a dataclass without running ``__post_init__``.
         # Rebuild the proof before touching either membership or owner state.
         death = replace(death)
-        snapshot: protocol.InstallClusterSnapshot | None
-        if isinstance(installed_snapshot, protocol.InstallClusterSnapshot):
-            if snapshot_installed not in (None, True):
-                raise ValueError(
-                    "a complete installed snapshot cannot be marked uninstalled"
-                )
-            snapshot = self._validated_cluster_snapshot(installed_snapshot)
-            membership_epoch = snapshot.membership_epoch
-        else:
-            # Temporary compatibility for narrow reducer fixtures.  Runtime
-            # orchestration must pass the complete installed survivor view.
-            membership_epoch = installed_snapshot
-            snapshot = None
-            if (
-                isinstance(membership_epoch, bool)
-                or not isinstance(membership_epoch, int)
-                or membership_epoch < death.death_epoch
-            ):
-                raise ValueError(
-                    "membership_epoch must include the committed death epoch"
-                )
-            if snapshot_installed is not True:
-                raise ValueError(
-                    "surviving NodeManagers must install the membership snapshot first"
-                )
+        snapshot = self._validated_cluster_snapshot(installed_snapshot)
+        membership_epoch = snapshot.membership_epoch
 
         with self._state_lock:
-            current_epoch = getattr(self, "_membership_epoch", 0)
-            dead_nodes = getattr(self, "_dead_nodes", None)
-            if dead_nodes is None:
-                dead_nodes = {}
-                self._dead_nodes = dead_nodes
+            current_epoch = self._membership_epoch
+            dead_nodes = self._dead_nodes
             previous = dead_nodes.get(death.node_id)
             if previous is not None:
                 if previous != death:
@@ -2019,15 +1944,10 @@ class CoreWorker:
                     )
                 if membership_epoch < current_epoch:
                     raise ValueError("node-death replay has a stale membership epoch")
-                next_home = (
-                    None
-                    if snapshot is None
-                    else self._preflight_home_snapshot_locked(snapshot, death)
-                )
+                next_home = self._preflight_home_snapshot_locked(snapshot, death)
                 self._membership_epoch = max(current_epoch, membership_epoch)
-                if snapshot is not None:
-                    self._home_route = next_home
-                    self._installed_cluster_snapshot = snapshot
+                self._home_route = next_home
+                self._installed_cluster_snapshot = snapshot
                 newly_lost = self._mark_placement_groups_lost_locked(death)
                 if newly_lost:
                     self._submissions.put(_WAKE_COORDINATOR)
@@ -2037,11 +1957,7 @@ class CoreWorker:
                     return NodeLocationRemoval(death.node_id)
             if membership_epoch < current_epoch:
                 raise ValueError("node death has a stale membership epoch")
-            next_home = (
-                None
-                if snapshot is None
-                else self._preflight_home_snapshot_locked(snapshot, death)
-            )
+            next_home = self._preflight_home_snapshot_locked(snapshot, death)
 
             pending_removals = getattr(self, "_node_death_removals", None)
             if pending_removals is None:
@@ -2049,9 +1965,8 @@ class CoreWorker:
             affected = pending_removals.setdefault(death.node_id, set())
             dead_nodes[death.node_id] = death
             self._membership_epoch = membership_epoch
-            if snapshot is not None:
-                self._home_route = next_home
-                self._installed_cluster_snapshot = snapshot
+            self._home_route = next_home
+            self._installed_cluster_snapshot = snapshot
             lost_placement_groups = self._mark_placement_groups_lost_locked(
                 death
             )
@@ -2071,7 +1986,7 @@ class CoreWorker:
             # A committed process death proves that bytes on this Node are gone.
             # Preserve the immutable collection plan but discharge its physical
             # drop operation without manufacturing a DropObjectReplica ACK.
-            for obligation in self._gc_obligations().values():
+            for obligation in self._object_gc_obligations.values():
                 obligation.pending_drops.pop(death.node_id, None)
 
             for object_id in removal.surviving:
@@ -2896,7 +2811,7 @@ class CoreWorker:
         if mailbox is None:
             return
         with self._state_lock:
-            obligation = self._gc_obligations().get(object_id)
+            obligation = self._object_gc_obligations.get(object_id)
             if (
                 obligation is None
                 or obligation.retry_scheduled
@@ -2912,18 +2827,6 @@ class CoreWorker:
 
 
 
-
-    def _gc_obligations(self) -> dict[ObjectID, _ObjectGcObligation]:
-        """Lazily normalize narrow fixtures onto the unified GC table."""
-
-        obligations = getattr(self, "_object_gc_obligations", None)
-        if obligations is None:
-            obligations = getattr(self, "_inline_gc_obligations", None)
-        if obligations is None:
-            obligations = {}
-        self._object_gc_obligations = obligations
-        self._inline_gc_obligations = obligations
-        return obligations
 
     def _schedule_reference_event(
         self, mailbox: _ReferenceEventMailbox, event: object, delay: float
@@ -4876,7 +4779,7 @@ class CoreWorker:
             self._reference_released(object_id)
         except Exception:
             try:
-                if object_id in self._gc_obligations():
+                if object_id in self._object_gc_obligations:
                     self._schedule_inline_gc_retry(object_id)
             except Exception:
                 # The frozen owner metadata/obligation remains the authority;
@@ -4918,7 +4821,7 @@ class CoreWorker:
                 # has fully crossed the forward barrier.  Successful adoption
                 # enqueues this same check after clearing the obligation.
                 return
-            obligations = self._gc_obligations()
+            obligations = self._object_gc_obligations
             obligation = obligations.get(object_id)
             if obligation is None:
                 try:
@@ -5027,7 +4930,7 @@ class CoreWorker:
                 if not self._owner_is_dead(edge.contained_owner_worker_id):
                     continue
                 with self._state_lock:
-                    if self._gc_obligations().get(object_id) is obligation:
+                    if self._object_gc_obligations.get(object_id) is obligation:
                         obligation.pending_edges.discard(edge)
                 continue
             except Exception:
@@ -5040,7 +4943,7 @@ class CoreWorker:
                 and reply.accepted
             ):
                 with self._state_lock:
-                    if self._gc_obligations().get(object_id) is obligation:
+                    if self._object_gc_obligations.get(object_id) is obligation:
                         obligation.pending_edges.discard(edge)
 
 
@@ -5067,7 +4970,7 @@ class CoreWorker:
                     protocol.DropObjectReplicaStatus.ALREADY_DROPPED,
                 ):
                     with self._state_lock:
-                        if self._gc_obligations().get(object_id) is obligation:
+                        if self._object_gc_obligations.get(object_id) is obligation:
                             obligation.pending_drops.pop(node_id, None)
                     self._emit(
                         "object_replica_collection_acknowledged",
@@ -5082,7 +4985,7 @@ class CoreWorker:
         completed = False
         released_lineage_dependencies: list[ObjectID] = []
         with self._state_lock:
-            current = self._gc_obligations().get(object_id)
+            current = self._object_gc_obligations.get(object_id)
             if (
                 current is obligation
                 and not self._has_late_replica_cleanup_locked(object_id)
@@ -5179,7 +5082,7 @@ class CoreWorker:
                         released_lineage_dependencies.append(
                             edge.dependency_object_id
                         )
-                self._gc_obligations().pop(object_id, None)
+                self._object_gc_obligations.pop(object_id, None)
                 getattr(self, "_objects", {}).pop(object_id, None)
                 getattr(self, "_stored_descriptors", {}).pop(object_id, None)
                 completed = True
@@ -5263,7 +5166,7 @@ class CoreWorker:
 
         self._drive_late_replica_cleanup(schedule_retry=False)
         with self._state_lock:
-            object_ids = tuple(self._gc_obligations())
+            object_ids = tuple(self._object_gc_obligations)
         for object_id in object_ids:
             self._reference_released(object_id)
         with self._state_lock:
@@ -5292,7 +5195,7 @@ class CoreWorker:
             self._drive_borrowed_reference_release(key)
         with self._state_lock:
             return not bool(
-                self._gc_obligations()
+                self._object_gc_obligations
                 or self._has_late_replica_cleanup_locked()
                 or getattr(self, "_attempt_borrow_releases", {})
                 or getattr(self, "_borrowed_release_obligations", {})
@@ -7808,11 +7711,8 @@ class CoreWorker:
         deadline = _RPC_CALL_DEADLINE.get()
         if deadline is None and timeout is not None:
             deadline = time.monotonic() + timeout
-        requester_route, requester_node_id = (
-            self._requester_route_or_legacy_id(
-                "borrowed stored object fetch"
-            )
-        )
+        requester_route = self._require_home_route("borrowed stored object fetch")
+        requester_node_id = requester_route.node_id
         # The deadline was created immediately above, so the first hop receives
         # the caller's full remaining budget without an unnecessary second
         # clock read.  Subsequent hops always recompute from ``deadline``.
@@ -7892,10 +7792,7 @@ class CoreWorker:
         if route is not None and node_id == route.node_id:
             return route.address
         if timeout is None:
-            # Preserve the pre-deadline call shape for narrow test doubles.
-            # A route known to be remote cannot benefit from the local fast
-            # path in ``_resolve_node_address`` anyway.
-            return self._resolve_node_address(node_id)
+            return self._resolve_node_address(node_id, home_route=route)
         if timeout <= 0:
             raise TimeoutError("node address lookup deadline expired")
         gcs_address = getattr(self, "gcs_address", None)
@@ -7922,16 +7819,10 @@ class CoreWorker:
         self, node_id: NodeID, timeout: Optional[float],
         route: _HomeRoute | None,
     ) -> Address:
-        """Resolve against one captured route, tolerating old test doubles."""
-
-        try:
-            return self._resolve_node_address_with_timeout(
-                node_id, timeout, home_route=route
-            )
-        except TypeError as exc:
-            if "home_route" not in str(exc):
-                raise
-            return self._resolve_node_address_with_timeout(node_id, timeout)
+        """Resolve against the one route captured for this deadline."""
+        return self._resolve_node_address_with_timeout(
+            node_id, timeout, home_route=route
+        )
 
     def _borrow_rpc_with_deadline(
         self,
@@ -9492,18 +9383,9 @@ class CoreWorker:
                     if dead_terminal is not None:
                         return dead_terminal
                     try:
-                        try:
-                            request_address = self._resolve_node_address(
-                                target_node_id, home_route=home_route
-                            )
-                        except TypeError as exc:
-                            # Narrow fixtures may replace the resolver with its
-                            # pre-route one-argument form.
-                            if "home_route" not in str(exc):
-                                raise
-                            request_address = self._resolve_node_address(
-                                target_node_id
-                            )
+                        request_address = self._resolve_node_address(
+                            target_node_id, home_route=home_route
+                        )
                     except BaseException:
                         dead_terminal = self._consume_node_death_at_lane(
                             pending, target_node_id
@@ -9749,19 +9631,10 @@ class CoreWorker:
                     pending.spec.function_definition if first_export else None
                 ),
             )
-            push_message = _make_message(
-                protocol.PushTask,
-                lease_id=lease_id,
-                worker_id=worker_id,
-                spec=spec,
-                dependencies=grant.dependencies,
-                task_spec=spec,
-                attempt_id=pending.spec.attempt_id,
-
+            push = protocol.PushTask(
+                lease_id=lease_id, worker_id=worker_id,
+                spec=spec, dependencies=grant.dependencies,
             )
-            if not isinstance(push_message, protocol.PushTask):
-                raise SystemTaskError("could not construct a typed PushTask")
-            push = push_message
             # Handoff success is not a reusable execution capability: its
             # ticket was released before this lane constructed PushTask. A
             # cancellation may already have revoked the canonical record, or

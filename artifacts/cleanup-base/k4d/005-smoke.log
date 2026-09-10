@@ -1,0 +1,420 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_original_teaching_example_main_is_bounded_and_cleans_cluster[example02] _
+
+filename = '02_spillback_direct_submission.py', num_nodes = 2
+workers_per_node = 1, actor_count = 0, pg_count = 0, tracing = True
+driver_closes = 1, output_fragments = ('ran on node 2', 'worker PID')
+capsys = <_pytest.capture.CaptureFixture object at 0x7653b7296ae0>
+tmp_path = PosixPath('/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/test-temp/5/pytest-of-root/pytest-0/test_original_teaching_example0')
+
+    @pytest.mark.parametrize(
+        "filename,num_nodes,workers_per_node,actor_count,pg_count,tracing,driver_closes,output_fragments",
+        (
+            pytest.param(
+                "01_task_path.py", 1, 1, 0, 0, True, 1,
+                ("TaskID:", "ObjectID:", "owner WorkerID:", "result: 49", "Canonical trace",
+                 "NodeServer -> OwnerService (Driver owner) : register_output_handoff",
+                 "register_output_handoff [reply_received, transport_ok=true]",
+                 "output_owner_ready", "output_payload_retired", "complete_worker_lease"),
+                id="example01",
+            ),
+            pytest.param(
+                "02_spillback_direct_submission.py", 2, 1, 0, 0, True, 1,
+                ("ran on node 2", "worker PID"), id="example02",
+            ),
+            pytest.param(
+                "03_cross_node_object_pull.py", 2, 1, 0, 0, True, 2,
+                ("source PID:", "target PID:", "pulled bytes: 65536", "sha256:"),
+                id="example03",
+            ),
+            pytest.param(
+                "04_actor_control_direct.py", 2, 1, 1, 0, True, 3,
+                ("counter values: [1, 2, 3]", "dedicated Actor PID:"),
+                id="example04",
+            ),
+            pytest.param(
+                "05_nested_get_cpu_yield.py", 1, 2, 0, 0, True, 1,
+                ("parent PID:", "child PID:", "one CPU was yielded and then reacquired"),
+                id="example05",
+            ),
+            pytest.param(
+                "06_lineage_reconstruction.py", 1, 1, 0, 0, True, 1,
+                ("stable TaskID:", "stable ObjectID:", "observed AttemptID:",
+                 "attempt numbers: 0 -> 1", "value after reconstruction:",
+                 "large-enough-for-the-object-store"),
+                id="example06",
+            ),
+            pytest.param(
+                "07_placement_group.py", 2, 1, 0, 1, False, 2,
+                ("committed PGID:", "attempt: 0", "bundle placement: 0 -> NodeID:",
+                 "bundle placement: 1 -> NodeID:", "distinct Nodes are a hard constraint",
+                 "STRICT_PACK could place both one-CPU bundles on one Node",
+                 "bundle executors:"), id="example07",
+            ),
+        ),
+    )
+    def test_original_teaching_example_main_is_bounded_and_cleans_cluster(
+        filename: str, num_nodes: int, workers_per_node: int, actor_count: int,
+        pg_count: int, tracing: bool, driver_closes: int,
+        output_fragments: tuple[str, ...], capsys: pytest.CaptureFixture[str], tmp_path: Path,
+    ) -> None:
+        assert not ray.is_initialized()
+        original_init, original_shutdown = ray.init, ray.shutdown
+        original_close = ray.ObjectRef.close
+        original_pg_create, original_pg_remove = ray.placement_group, ray.remove_placement_group
+        init_calls, contexts, shutdown_reports, fallback_reports = [], [], [], []
+        close_calls, close_receipts = [], []
+        actor_calls, actor_endpoints, groups, group_removals = [], [], [], []
+        pg_create_calls, pg_remove_calls = [], []
+        actor_core = original_actor_create = None
+        actor_create_missing = object()
+        original_actor_override = actor_create_missing
+        managed_pids: set[int] = set()
+        managed_addresses: set[tuple[str, int]] = set()
+        owner_addresses, owner_ids = [], []
+    
+        def observe_init(*args, **kwargs):
+            nonlocal actor_core, original_actor_create, original_actor_override
+            assert not init_calls, "example exceeded its single-init bound"
+            init_calls.append((args, dict(kwargs)))
+            context = original_init(*args, **kwargs)
+            contexts.append(context)
+            runtime = _get_runtime()
+            managed_pids.update((context.gcs_pid, *context.node_pids, *context.worker_pids))
+            managed_addresses.update((context.gcs_address, *context.node_addresses, *context.worker_addresses))
+            if context.trace_address is not None:
+                managed_addresses.add(context.trace_address)
+            if runtime.owner_service is not None:
+                owner_addresses.append(runtime.owner_service.address)
+                managed_addresses.add(runtime.owner_service.address)
+            owner_ids.append(runtime.core_worker.worker_id)
+            if actor_count:
+                actor_core = runtime.core_worker
+                original_actor_override = vars(actor_core).get("create_actor", actor_create_missing)
+                original_actor_create = actor_core.create_actor
+                actor_core.create_actor = observe_actor_create
+            return context
+    
+        def observe_actor_create(*args, **kwargs):
+            assert len(actor_calls) < actor_count, "example exceeded its Actor-creation bound"
+            actor_calls.append(True)
+            endpoint = original_actor_create(*args, **kwargs)
+            # Capture the actual new process immediately, before the public handle
+            # or any method result is exposed. No extra GCS query drives the route.
+            assert isinstance(endpoint, ActorEndpoint) and endpoint.worker_pid is not None
+            actor_endpoints.append(endpoint)
+            managed_pids.add(endpoint.worker_pid)
+            managed_addresses.add(endpoint.worker_address)
+            return endpoint
+    
+        def observe_pg_create(*args, **kwargs):
+            assert len(pg_create_calls) < pg_count, "example exceeded its placement-group bound"
+            pg_create_calls.append(True)
+            group = original_pg_create(*args, **kwargs)
+            groups.append(group)
+            return group
+    
+        def observe_pg_remove(group):
+            assert len(pg_remove_calls) < pg_count, "example exceeded its public removal bound"
+            pg_remove_calls.append(True)
+            result = original_pg_remove(group)
+            group_removals.append((group, result))
+            return result
+    
+        def observe_shutdown():
+            report = original_shutdown()
+            # Preserve the first real result. A later cleanup must never turn an
+            # unclean example shutdown into an apparently successful acceptance.
+            assert not shutdown_reports, "example exceeded its single-shutdown bound"
+            shutdown_reports.append(report)
+            return report
+    
+        def observe_close(reference, *, timeout=None):
+            assert len(close_calls) < driver_closes, "example exceeded its Driver-close bound"
+            close_calls.append((reference.object_id, reference.owner_worker_id, timeout))
+            done = reference._release_done
+            result = original_close(reference, timeout=timeout)
+            close_receipts.append((reference.closed, done is not None and done.is_set()))
+            return result
+    
+        try:
+            ray.init, ray.shutdown = observe_init, observe_shutdown
+            ray.ObjectRef.close = observe_close
+            if pg_count:
+                ray.placement_group, ray.remove_placement_group = observe_pg_create, observe_pg_remove
+            namespace = runpy.run_path(
+                str(_EXAMPLES / filename), run_name="miniray_teaching_example",
+            )
+            assert namespace["__name__"] == "miniray_teaching_example"
+>           namespace["main"]()
+
+tests/integration/test_teaching_examples_path.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+examples/02_spillback_direct_submission.py:30: in main
+    context = ray.init(
+tests/integration/test_teaching_examples_path.py:153: in observe_init
+    context = original_init(*args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def init(
+        *,
+        num_cpus: Real = 1,
+        num_nodes: int = 1,
+        num_workers_per_node: int = 1,
+        node_resources: Optional[
+            Sequence[Mapping[str, ResourceQuantity] | ResourceVector]
+        ] = None,
+        inline_threshold: int = _DEFAULT_INLINE_THRESHOLD_BYTES,
+        object_store_bytes: int = _DEFAULT_OBJECT_STORE_BYTES,
+        _test_worker_failpoint: Optional[WorkerFailpointConfig] = None,
+        _test_fail_after_node_ready: Optional[int] = None,
+        _test_placement_group_prepare_failure: Optional[
+            PlacementGroupPrepareFailureConfig
+        ] = None,
+        _test_output_publication_gate: Optional[OutputPublicationGateConfig] = None,
+        enable_tracing: bool = True,
+    ) -> RuntimeContext:
+        """Start one GCS and one Worker-pool-owning NodeManager per node.
+    
+        ``num_cpus`` is the capacity of *each* node when ``node_resources`` is not
+        supplied.  Passing ``node_resources`` exposes heterogeneous and custom
+        resources without adding a second cluster-configuration abstraction.
+        ``num_workers_per_node`` is deliberately fixed to one or two so the
+        teaching runtime exposes real local slot contention without becoming a
+        production process-pool manager.
+        """
+    
+        if current_core_worker() is not None:
+            raise RuntimeError(
+                "miniray.init() is Driver-only; a Worker is already attached to "
+                "the current cluster"
+            )
+    
+        checked_cpus = _validate_num_cpus(num_cpus)
+        if isinstance(num_nodes, bool) or not isinstance(num_nodes, int):
+            raise TypeError("num_nodes must be an integer")
+        if num_nodes not in (1, 2):
+            raise ValueError("mini-Ray supports one or two logical nodes")
+        checked_workers_per_node = _validate_num_workers_per_node(
+            num_workers_per_node
+        )
+        checked_node_resources = _validate_node_resources(
+            num_nodes, checked_cpus, node_resources
+        )
+        checked_inline_threshold = _validate_byte_limit(
+            "inline_threshold",
+            inline_threshold,
+            maximum=_MAX_INLINE_THRESHOLD_BYTES,
+        )
+        checked_object_store_bytes = _validate_byte_limit(
+            "object_store_bytes",
+            object_store_bytes,
+            maximum=_MAX_OBJECT_STORE_BYTES,
+        )
+        if _test_worker_failpoint is not None and not isinstance(
+            _test_worker_failpoint, WorkerFailpointConfig
+        ):
+            raise TypeError(
+                "_test_worker_failpoint must be a WorkerFailpointConfig or None"
+            )
+        if (
+            _test_fail_after_node_ready is not None
+            and (
+                isinstance(_test_fail_after_node_ready, bool)
+                or not isinstance(_test_fail_after_node_ready, int)
+            )
+        ):
+            raise TypeError(
+                "_test_fail_after_node_ready must be a node index or None"
+            )
+        if (
+            _test_fail_after_node_ready is not None
+            and not 0 <= _test_fail_after_node_ready < num_nodes
+        ):
+            raise ValueError(
+                "_test_fail_after_node_ready must identify a configured node"
+            )
+        if (
+            _test_placement_group_prepare_failure is not None
+            and not isinstance(
+                _test_placement_group_prepare_failure,
+                PlacementGroupPrepareFailureConfig,
+            )
+        ):
+            raise TypeError(
+                "_test_placement_group_prepare_failure must be a "
+                "PlacementGroupPrepareFailureConfig or None"
+            )
+        if (
+            _test_placement_group_prepare_failure is not None
+            and _test_placement_group_prepare_failure.participant_ordinal
+            > num_nodes
+        ):
+            raise ValueError(
+                "placement-group prepare failure participant exceeds configured "
+                "node bound"
+            )
+        if _test_output_publication_gate is not None:
+            if type(_test_output_publication_gate) is not OutputPublicationGateConfig:
+                raise TypeError("_test_output_publication_gate must be an OutputPublicationGateConfig or None")
+            _test_output_publication_gate = replace(_test_output_publication_gate)
+            if _test_output_publication_gate.node_index >= num_nodes:
+                raise ValueError("_test_output_publication_gate must identify a configured node")
+    
+        global _runtime
+        with _runtime_lock:
+            if _runtime is not None:
+                raise RuntimeError("mini-Ray is already initialized")
+    
+            if not isinstance(enable_tracing, bool):
+                raise TypeError("enable_tracing must be a bool")
+            trace_collector: Optional[TraceCollector] = None
+            trace_address: Optional[Address] = None
+            gcs_receive = None
+            gcs_send = None
+            gcs_process: Optional[mp.Process] = None
+            all_node_processes: list[mp.Process] = []
+            nodes: list[_NodeRuntime] = []
+            gcs_startup = None
+            core_worker: Optional[CoreWorker] = None
+            owner_service: Optional[OwnerService] = None
+            driver_event_sink = None
+            runtime: Optional[_Runtime] = None
+            try:
+                # Acquisition begins inside the rollback domain.  A collector
+                # owns a bound socket after construction, and Pipe/Process may
+                # succeed independently, so record each handle before continuing.
+                trace_collector = TraceCollector() if enable_tracing else None
+                trace_address = (
+                    trace_collector.start() if trace_collector is not None else None
+                )
+                trace_config = (
+                    TraceSinkConfig(trace_address, "gcs")
+                    if trace_address is not None
+                    else None
+                )
+                context = mp.get_context("spawn")
+                gcs_receive, gcs_send = context.Pipe(duplex=False)
+                gcs_process = context.Process(
+                    target=gcs_main,
+                    args=(
+                        gcs_send,
+                        "127.0.0.1",
+                        0,
+                        trace_config,
+                        _test_placement_group_prepare_failure,
+                    ),
+                    name="miniray-gcs",
+                    daemon=False,
+                )
+                gcs_process.start()
+                gcs_send.close()
+                if not gcs_receive.poll(_START_TIMEOUT_SECONDS):
+                    raise RuntimeError("GCS did not report readiness before timeout")
+                ok, value = gcs_receive.recv()
+                if not ok:
+                    raise RuntimeError("GCS failed during startup:\n{}".format(value))
+                if not isinstance(value, protocol.GCSStartup):
+                    raise RuntimeError("GCS returned an invalid startup descriptor")
+                if value.gcs_pid != gcs_process.pid:
+                    raise RuntimeError("GCS returned an inconsistent startup descriptor")
+                gcs_startup = value
+    
+                for index, total_resources in enumerate(checked_node_resources):
+                    node_id = NodeID.random()
+                    receive_connection = None
+                    send_connection = None
+                    try:
+                        # Start the per-Node rollback boundary before Pipe.  A
+                        # Process-constructor failure must still close both ends.
+                        receive_connection, send_connection = context.Pipe(
+                            duplex=False
+                        )
+                        process = context.Process(
+                            target=_node_process_main,
+                            args=(
+                                node_id,
+                                total_resources,
+                                send_connection,
+                                None,
+                                "127.0.0.1",
+                                0,
+                                checked_inline_threshold,
+                                checked_object_store_bytes,
+                                gcs_startup.gcs_address,
+                                _test_worker_failpoint,
+                                (
+                                    trace_config.for_role(
+                                        "node:{}".format(node_id)
+                                    )
+                                    if trace_config
+                                    else None
+                                ),
+                                checked_workers_per_node,
+                                (
+                                    _test_output_publication_gate
+                                    if _test_output_publication_gate is not None
+                                    and _test_output_publication_gate.node_index == index
+                                    else None
+                                ),
+                            ),
+                            name="miniray-node-{}-{}".format(index, node_id),
+                            daemon=False,
+                        )
+                        all_node_processes.append(process)
+                        process.start()
+                        send_connection.close()
+                        # NodeServer starts its deliberately tiny fixed Worker pool
+                        # slot by slot.  Give each configured slot one bounded
+                        # startup window; otherwise a valid two-Worker startup can
+                        # exceed the historical one-Worker Driver deadline.
+                        node_start_timeout = (
+                            _START_TIMEOUT_SECONDS * checked_workers_per_node
+                        )
+                        if not receive_connection.poll(node_start_timeout):
+>                           raise RuntimeError(
+                                "node {} did not report readiness before timeout".format(
+                                    index
+                                )
+                            )
+E                           RuntimeError: node 1 did not report readiness before timeout
+
+src/miniray/api.py:2114: RuntimeError
+----------------------------- Captured stderr call -----------------------------
+Process miniray-node-1-8c23a806fa7293b1c187353b629ae49f:
+Traceback (most recent call last):
+  File "/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/src/miniray/node.py", line 7220, in node_main
+    ready_connection.send((True, startup))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 206, in send
+    self._send_bytes(_ForkingPickler.dumps(obj))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/src/miniray/api.py", line 1241, in _node_process_main
+    node_main(*args)
+  File "/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/src/miniray/node.py", line 7227, in node_main
+    ready_connection.send((False, traceback.format_exc()))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 206, in send
+    self._send_bytes(_ForkingPickler.dumps(obj))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+=========================== short test summary info ============================
+FAILED tests/integration/test_teaching_examples_path.py::test_original_teaching_example_main_is_bounded_and_cleans_cluster[example02]
+1 failed in 15.23s

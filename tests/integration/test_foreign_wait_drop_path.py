@@ -6,7 +6,7 @@ metadata only, drops the sole replica through the Worker owner, loses the first
 drop acknowledgement, and exact-replays the same operation before ``get`` asks
 that owner to reconstruct the stable ObjectID.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Static
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static
 bounds are one GCS, two NodeManagers, one ordinary Worker each, two logical
 tasks and at most three physical task executions. Each Node has a 1-MiB store;
 the child's stored value contains 64 KiB plus small tuple/pickle metadata.
@@ -22,6 +22,10 @@ shared limit, and failure-finally always reaches shutdown and five-PID/six-
 endpoint checks, including the Driver owner. True GC evidence is limited to
 the local outer's collection, borrower Release convergence and absence of the
 previously observed attempt-1 stored bytes, not foreign owner metadata GC.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

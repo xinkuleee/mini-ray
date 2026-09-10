@@ -21,6 +21,7 @@ from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.node import (
     GET_OBJECT_CHUNK_HANDLER, PIN_OBJECT_HANDLER, RELEASE_OBJECT_PIN_HANDLER,
     NodeServer,
+    _WorkerSlot,
 )
 from miniray.object_manager import ObjectManager, PullState, PullStateError, UnknownPullError
 from miniray.object_store import ObjectStore
@@ -58,7 +59,7 @@ class _AliveWorker:
 def _bare_node(byte):
     node = object.__new__(NodeServer)
     node.node_id = NodeID(bytes((byte,)) * 16)
-    node.worker_id = WorkerID(bytes((byte + 2,)) * 16)
+    worker_id = WorkerID(bytes((byte + 2,)) * 16)
     node._state_lock = threading.RLock()
     node._scheduling_lock = threading.Lock()
     node._ledger = ResourceLedger(ResourceVector({"CPU": 1}))
@@ -72,14 +73,16 @@ def _bare_node(byte):
     node._lease_outcomes = {}
     node._lease_request_locks = {}
     node._inflight_lease_requests = 0
-    node._active_lease_id = None
     node._stop_event = threading.Event()
     node._shutdown_request_id = None
     node._gcs_address = None
     node._cluster_nodes = ()
     node._cluster_addresses = {}
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 25000 + byte)
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(
+        worker_id, process=_AliveWorker(), address=("127.0.0.1", 25000 + byte),
+    )}
+    node.num_workers_per_node = 1
     return node
 
 
@@ -150,7 +153,7 @@ def _release(target, grant):
 
 
 def _assert_no_grant(target):
-    assert not target._leases and target._active_lease_id is None
+    assert not target._leases and target._workers[target.worker_id].active_lease_id is None
     assert target._inflight_lease_requests == 0
     snapshot = target._ledger.snapshot()
     assert snapshot.available == snapshot.total

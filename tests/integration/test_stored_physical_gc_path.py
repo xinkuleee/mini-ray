@@ -7,7 +7,7 @@ an owner-local, zero-CPU probe verifies that the source Worker's embedded Core
 has completed ``ACTIVE -> COLLECTING -> COLLECTED`` and forgotten metadata, the
 canonical descriptor, waiter, durable obligation, and producer lineage.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds are
+Run only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Bounds are
 one GCS, two Nodes, one ordinary Worker per Node, four tasks, one test-owned
 gate, 1 MiB per ObjectStore, one trace collector, and a 30-second runner
 deadline. Five child PIDs and eight endpoints include the Driver owner.

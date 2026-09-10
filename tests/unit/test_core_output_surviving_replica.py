@@ -67,8 +67,6 @@ class _Fixture:
         target = _bare_node(target_id, ResourceVector({"CPU": 1}))
         target._object_store = ObjectStore(1024)
         target._object_manager = ObjectManager(target_id, target._object_store)
-        target._worker_process = SimpleNamespace(is_alive=lambda: True)
-        target._worker_address = ("worker.invalid", 3)
         target._cluster_addresses = {source.node_id: self.source_address}
         target.event_sink = None
         self.target = target
@@ -79,7 +77,7 @@ class _Fixture:
         assert self.registry.get(source.node_id).registration_epoch == source._registration_epoch
         target._node_pid, target._registration_epoch = 1702, self.registry.get(target_id).registration_epoch
         target._workers = {target.worker_id: _WorkerSlot(target.worker_id,
-            process=target._worker_process, address=target._worker_address, pid=1703)}
+            process=SimpleNamespace(is_alive=lambda: True), address=("worker.invalid", 3), pid=1703)}
         target._worker_order = (target.worker_id,)
         core.node_id, core.node_address = target_id, self.target_address
         epoch, live = self.registry.live_snapshot()
@@ -126,7 +124,7 @@ class _Fixture:
             result.size_bytes, result.checksum,
         )
 
-    def address(self, node_id):
+    def address(self, node_id, *, home_route=None):
         assert node_id in (self.source.node_id, self.target.node_id)
         return self.source_address if node_id == self.source.node_id else self.target_address
 

@@ -186,10 +186,61 @@ class _PassiveOwner:
         self.reply = protocol.ReportAbandonedDependencyReplicaReply(request, protocol.RetainedLocationReportStatus.CUSTODY_ONLY)
         return self.reply
 
-    def __getattr__(self, name):
-        if name in ("event_sink", "prepare_stored_contained_pin", "promote_stored_contained_pin"):
-            return None
-        return lambda *_a, **_k: pytest.fail("adapter invoked an unrelated owner operation")
+    event_sink = None
+
+    def acquire_exported_reference(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def release_borrowed_reference(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def get_owned_object(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def request_owned_object_reconstruction(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def request_drop_owned_object(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def retain_owned_object_for_task(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def get_retained_owned_object(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def report_retained_object_location(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def release_owned_object_for_task(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def replace_retained_object_for_task(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def release_contained_reference(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def install_actor_state(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def prepare_stored_contained_pin(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def promote_stored_contained_pin(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def register_output_handoff(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def report_output_handoff_complete(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def report_output_handoff_rollback(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
+
+    def get_output_handoff(self, request):
+        pytest.fail("adapter invoked an unrelated owner operation")
 
 
 class _Server:

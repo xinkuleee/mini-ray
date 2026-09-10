@@ -8,8 +8,8 @@ import threading
 import pytest
 
 from miniray import protocol
-from miniray.ids import NodeID
-from miniray.node import NodeServer
+from miniray.ids import NodeID, WorkerID
+from miniray.node import NodeServer, _WorkerSlot
 from miniray.resources import HybridPolicy, ResourceLedger, ResourceVector
 
 
@@ -27,6 +27,10 @@ def _rv(**values: int) -> ResourceVector:
 def _node() -> NodeServer:
     node = object.__new__(NodeServer)
     node.node_id = NodeID.random()
+    worker_id = WorkerID.random()
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(worker_id)}
+    node.num_workers_per_node = 1
     node._node_pid = os.getpid()
     node._registration_epoch = 7
     node._membership_epoch = 1

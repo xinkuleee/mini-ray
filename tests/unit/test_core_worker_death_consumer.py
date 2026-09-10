@@ -51,7 +51,6 @@ def _core(*, with_gcs: bool = True) -> CoreWorker:
     core._worker_death_cursor = 0
     core._worker_death_sync_lock = threading.Lock()
     core._object_gc_obligations = {}
-    core._inline_gc_obligations = core._object_gc_obligations
     core.event_sink = MemoryEventSink()
     return core
 

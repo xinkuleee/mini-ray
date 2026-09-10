@@ -8,14 +8,18 @@ only a plain value and the two execution PIDs; no ObjectRef escapes to the Drive
 The trace assertion distinguishes the Driver Core from the Core embedded in
 the parent Worker and proves that child placement bypasses GCS. Publication
 still uses the same real GCS-backed output protocol; trace names do not deny
-that dependency. Run this exact node ID only through
-``scripts/run_bounded_test.py``. The hard bounds are one
+that dependency. After review and registration, run this exact node ID only through
+``scripts/run_baseline.py --case EXACT``. The hard bounds are one
 GCS, two NodeManagers, one ordinary Worker per node, exactly two tiny tasks, one
 nested ``get``, one bounded trace poll, and a 1 MiB store per Node. Driver and
 Worker waits share a ten-second post-init work deadline; public reference
 close waits use at most three seconds, and finally always shuts the cluster
 down and checks all five PIDs and seven endpoints. Run under the 30-second
 process-tree deadline; no additional test thread or listener is created.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

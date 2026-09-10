@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from miniray import owner_service, protocol
+from miniray import output_protocol as wire, owner_service, protocol
 from miniray.contained_edges import ContainedReferenceHold
 from miniray.ids import (
     JobID, ObjectID, TaskID, WorkerID,
@@ -62,6 +62,27 @@ class _Core:
     def install_actor_state(self, request):
         return self._call("install_actor_state", request)
 
+    def register_output_handoff(self, request):
+        return self._call("register_handoff", request)
+
+    def report_output_handoff_complete(self, request):
+        return self._call("report_complete", request)
+
+    def report_output_handoff_rollback(self, request):
+        return self._call("report_rollback", request)
+
+    def get_output_handoff(self, request):
+        return self._call("get_handoff", request)
+
+    def prepare_stored_contained_pin(self, request):
+        return self._call("prepare_stored", request)
+
+    def promote_stored_contained_pin(self, request):
+        return self._call("promote_stored", request)
+
+    def report_abandoned_dependency_replica(self, request):
+        return self._call("abandoned", request)
+
 
 class _Server:
     def __init__(self, handlers, **configuration) -> None:
@@ -108,8 +129,14 @@ def test_owner_service_exposes_only_live_core_handlers(monkeypatch) -> None:
             "replace_retained",
         owner_service.RELEASE_CONTAINED_REFERENCE_HANDLER: "release_contained",
         owner_service.INSTALL_ACTOR_STATE_HANDLER: "install_actor_state",
+        wire.REGISTER_OUTPUT_HANDOFF_HANDLER: "register_handoff",
+        wire.REPORT_OUTPUT_HANDOFF_COMPLETE_HANDLER: "report_complete",
+        wire.REPORT_OUTPUT_HANDOFF_ROLLBACK_HANDLER: "report_rollback",
+        wire.GET_OUTPUT_HANDOFF_HANDLER: "get_handoff",
+        owner_service.PREPARE_STORED_CONTAINED_PIN_HANDLER: "prepare_stored",
+        owner_service.PROMOTE_STORED_CONTAINED_PIN_HANDLER: "promote_stored",
     }
-    assert set(implementation.handlers) == set(expected)
+    assert set(implementation.handlers) == set(expected) | {protocol.REPORT_ABANDONED_DEPENDENCY_REPLICA_HANDLER}
     expected_calls = []
     for handler, operation in expected.items():
         request = object()
@@ -137,28 +164,15 @@ def _stored_transfer():
     )
 
 
-def test_optional_stored_pin_handlers_are_not_advertised_when_core_lacks_api(
-    monkeypatch,
-) -> None:
-    created = []
-    monkeypatch.setattr(
-        owner_service, "TCPServer",
-        lambda handlers, **configuration: created.append(
-            _Server(handlers, **configuration)
-        ) or created[-1],
-    )
-
-    owner_service.OwnerService(_Core())
-
-    assert owner_service.PREPARE_STORED_CONTAINED_PIN_HANDLER not in (
-        created[0].handlers
-    )
-    assert owner_service.PROMOTE_STORED_CONTAINED_PIN_HANDLER not in (
-        created[0].handlers
-    )
+def test_missing_required_owner_handler_fails_before_server_creation(monkeypatch):
+    monkeypatch.setattr(owner_service, "TCPServer", lambda *_a, **_k: pytest.fail("incomplete owner created a server"))
+    class MissingPins(_Core):
+        prepare_stored_contained_pin = None
+    with pytest.raises(TypeError, match="complete current owner"):
+        owner_service.OwnerService(MissingPins())
 
 
-def test_optional_stored_pin_handlers_echo_exact_requests_and_dispositions(
+def test_required_stored_pin_handlers_echo_exact_requests_and_dispositions(
     monkeypatch,
 ) -> None:
     created = []

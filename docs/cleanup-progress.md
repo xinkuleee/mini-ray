@@ -4,8 +4,8 @@
 
 - K0完成：teaching-base从固定6910677派生，审计输入提交1a38228。原tag不变。
 - K1完成：单schema2有界gate/迁移入口、CF-001至004公共修复；新入口验证后退休三个旧工具文件。详见[实际记录](../artifacts/cleanup-base/k1/summary.json)。首轮新fixture失败已保存，真实准入修正后12组合case通过。
-- K2进行中：确认残留/API清理；只有删除前提已满足条目才应用。
-- K3至K7未完成；teaching-enhanced尚未创建，须从K7已验收B派生后执行K8至K9。
+- K2/K3低风险检查点已完成；K4继续关闭遗漏夹具并验收正式构造，P1标量化尚在隔离候选。
+- K4至K7未完成；teaching-enhanced尚未创建，须从K7已验收B派生后执行K8至K9。
 - 未运行远端Actions或发布清理分支。
 
 K1复现修正：registry文本身份只归一CRLF到LF，其它字节变化仍拒绝。新增工具回归31 passed；独立LF副本的两迁移闭包静态验证通过。原始测试artifact不改写。
@@ -59,3 +59,7 @@ K3n：collection通用guard17通过并退出旧7个硬编码锁；14个原集成
 K3o：foreignStoredTask原19全部通过，完整两个owner/location/custody/quarantine/GC未抹掉；owner预检修后26与Worker nested20通过。当前只剩原集成最后2case、owner-fence小组合及既定full32共同回归用于whole12退休，后续进入K4。
 
 K3低风险检查点：base-k3p-01同版26pure文件343passed/1deselected、32smoke全部通过含7示例。Node启动偶发5s超时原失败保留，同候选该case重跑通过，未放宽预算。最后12whole旧实现按逐项前像/依赖/保留合同证据退休；两份最后集成与GCS owner-fence5均通过。K4开始正式fixture/表示修改，K7最终验收尚未完成。
+
+K4a/b/c：Core正式route/GC、Node唯一Worker池、Worker准入/当前shutdown签名、OwnerService必需接口已应用候选；退出7个已迁移便利API。Worker side-Core原14pure函数及4L1、新2pure全部通过；Worker ACK未知3pure通过，pool2/membership6/NodeDeath8通过。修复K3遗漏的pool/spillback旧GCS helper依赖，spillback11pure通过；其原L1仅旧target_execution比较失败，下一k4d修后通过。全部失败保留，未恢复旧协议。旧helper在无caller且替代场景通过后退休并刷新registry。完整K4 gate仍在执行，尚不提交为已验收单输出版本。
+
+K4正式构造切片：base-k4d-01同源码343passed/1deselected及32个smoke均取得通过记录，含7main。保留此前17次smoke失败；冷启动多次越过5s或30s预算，原K3控制也明显变慢，不能称性能无回归。相同Linux解释器预编译checked-hash源码缓存后最后startup/precomplete两个场景通过，源码和5s/30s未变；缓存身份与对照日志保留。K4e退出旧helper后pool2/foreignstored13/CoreNodeDeath16/Nodelease4/handshake6通过。28条当前测试说明改用现runner，未登记者明确须先评审注册；仅docstring变化，不改变测试业务。P1真实标量候选仍在隔离验收，K4全阶段、K7和双分支交付尚未完成。

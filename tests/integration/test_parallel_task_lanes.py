@@ -5,7 +5,7 @@ Workers connect to a loopback barrier owned by this test process and wait for a
 release byte.  The test accepts and identifies both connections before releasing
 either one, which proves overlap without sleeps or elapsed-time thresholds.
 
-Run this exact node ID only through ``scripts/run_bounded_test.py``.  The hard
+After review and registration, run this exact node ID only through ``scripts/run_baseline.py --case EXACT``.  The hard
 bounds are one GCS, two NodeManagers, one Worker per node, two tiny tasks, one
 test-owned loopback listener and two 1-MiB stores. All task, arrival, release
 and result work shares fifteen seconds after init; accepted sockets and public
@@ -14,6 +14,10 @@ The listener's setup is inside that cleanup domain. Initial/returned/report
 PIDs and all seven endpoints, including the Driver owner, are checked even on
 failure. No test-owned thread, extra Task, injected failure or sleep is added;
 startup/shutdown retain the runner's 30-second process-tree deadline.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

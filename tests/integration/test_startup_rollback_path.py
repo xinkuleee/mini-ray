@@ -1,6 +1,6 @@
 """Bounded real-process proof for partial ``init`` rollback.
 
-Run only the exact node ID through ``scripts/run_bounded_test.py``.  Static
+Run only the exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Static
 bounds are one GCS, two Nodes, one ordinary Worker per Node, no tasks, no Actor,
 two 1-MiB stores and no trace collector. The failpoint fires after Node 1 has
 returned its validated Node/Worker startup descriptor but before that Node is

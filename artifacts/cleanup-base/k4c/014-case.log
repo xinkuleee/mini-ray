@@ -1,0 +1,56 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_concurrent_duplicate_spillback_uses_one_cached_snapshot _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x701ff70f0cb0>
+
+    @pytest.mark.loopback_smoke
+    def test_concurrent_duplicate_spillback_uses_one_cached_snapshot(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Two real overlapping handlers share one installed-view policy decision."""
+        home_node_id = NodeID.random()
+        target_node_id = NodeID.random()
+        requester_worker_id = WorkerID.random()
+        local_total = ResourceVector({"CPU": 1})
+        remote_total = ResourceVector({"CPU": 1, _REMOTE_ONLY_RESOURCE: 1})
+        probe = _ConcurrentSpillbackProbe(monkeypatch)
+        try:
+            node = _node_without_transport(home_node_id, local_total, worker_id=WorkerID.random())
+            home_address, target_address = ("spillback-home.invalid", 1), ("spillback-target.invalid", 2)
+            node._node_pid = 31701
+            node._server = SimpleNamespace(address=home_address)
+            registry = NodeRegistry()
+            for node_id, pid, address, total in (
+                (home_node_id, node._node_pid, home_address, local_total),
+                (target_node_id, 31702, target_address, remote_total),
+            ):
+                assert registry.register_message(protocol.RegisterNode(node_id, pid, address, total)).accepted
+            node._registration_epoch = registry.get(home_node_id).registration_epoch
+            epoch, infos = registry.live_snapshot()
+            installed = protocol.InstallClusterSnapshot(epoch, "concurrent-spillback-hints", infos)
+            assert node._handle_install_cluster_snapshot(installed).installed
+            # The remote entry is a scheduling hint, not an instantiated target
+            # Node or an authoritative remote allocation. GCS is not queried here.
+            request = _lease_request(
+                requester_node_id=home_node_id, requester_worker_id=requester_worker_id, resources=remote_total,
+            )
+            assert request.target_node_id is None and request.dependencies == ()
+            probe.bind(monkeypatch, node, request)
+            probe.start()
+            assert {thread for thread, _ in probe.replies} == set(probe.created)
+            replies = tuple(reply for _, reply in probe.replies)
+            assert len(replies) == 2 and all(type(reply) is protocol.SpillbackWorkerLease for reply in replies)
+            assert replies[0] == replies[1]
+            reply = replies[0]
+            assert (reply.lease_id, reply.task_id, reply.attempt_id, reply.target_node_id, reply.target_address) == (
+                request.lease_id, request.task_id, request.attempt_id, target_node_id, target_address,
+            )
+>           assert reply.scheduling_key == request.scheduling_key and reply.target_execution == request.target_execution
+                                                                      ^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'SpillbackWorkerLease' object has no attribute 'target_execution'
+
+tests/unit/test_spillback_runtime.py:1135: AttributeError
+=========================== short test summary info ============================
+FAILED tests/unit/test_spillback_runtime.py::test_concurrent_duplicate_spillback_uses_one_cached_snapshot
+1 failed in 1.88s

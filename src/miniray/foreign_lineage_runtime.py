@@ -697,37 +697,6 @@ class ForeignLineageRuntime:
             )
         return session
 
-    def abandon_renewal(
-        self, task_id: TaskID, attempt_id: AttemptID
-    ) -> bool:
-        """Drop only local saga state after a definitive failed preflight.
-
-        This escape hatch is valid only before *any* owner-side effect.
-        Owner-ACKed successors make the registry mixed-generation, while an
-        ambiguous request may have committed remotely.  Either case remains a
-        durable saga until a later pass converges it or final collection /
-        shutdown releases the exact canonical holds.
-        """
-
-        with self._lock:
-            session = self._renewals.get(task_id)
-            if session is None:
-                return False
-            if session.attempt_id != attempt_id:
-                raise ForeignLineageRuntimeError(
-                    "renewal abandonment names another attempt"
-                )
-            changed = any(
-                replacement.expected != replacement.replacement
-                and key in session.acknowledged
-                for key, replacement in session.replacements.items()
-            )
-            if session.driving or session.uncertain or changed:
-                raise ForeignLineageRuntimeError(
-                    "foreign replacement effects require durable convergence"
-                )
-            del self._renewals[task_id]
-            return True
 
     def drive_collection(
         self,

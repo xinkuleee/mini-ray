@@ -7,7 +7,7 @@ then loses its only replica: reconstruction must atomically replace the foreign 
 replay the consumer under the same TaskID/ObjectID, and finally release the new
 hold when the consumer output is collected.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py`` after its
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT`` after its
 fixed two-CPU exception is approved. One Node, two Workers, four managed
 children, five runtime/owner endpoints, three logical Tasks/four executions,
 one drop/reconstruction and a 1 MiB store bound the experiment. There is no
@@ -22,6 +22,10 @@ Replacement observation is a passive FIFO capped at 32 records; local waits
 make at most 256 checks plus a final predicate check. Final public closes and
 actual owner/foreign-lineage collection share three seconds before unconditional
 shutdown and failure-finally checks of every recorded PID and endpoint.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

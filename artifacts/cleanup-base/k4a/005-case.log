@@ -1,0 +1,58 @@
+..F                                                                      [100%]
+=================================== FAILURES ===================================
+_____ test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7dfd00618770>
+
+    @pytest.mark.unit
+    def test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        worker = _worker()
+        executions = 0
+    
+        def function() -> int:
+            nonlocal executions
+            executions += 1
+            return 11
+    
+        push = _push(worker.worker_id, function)
+        key = (push.spec.attempt_id, push.lease_id)
+        completion_calls = 0
+        outputs = _SingleOutputRPC()
+        lost_completions = []
+    
+        def rpc(_address, handler, message):
+            nonlocal completion_calls
+            if handler == START_WORKER_LEASE_HANDLER:
+                return _start_reply(message, worker.node_id)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return outputs.prepare(message)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            completion_calls += 1
+            actual = _complete_boundary(outputs, message)
+            if completion_calls <= 3:
+                lost_completions.append(actual)
+                raise TransportTimeout("completion acknowledgement was lost")
+            return actual
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        monkeypatch.setattr("miniray.worker.cloudpickle.loads", lambda _payload: function)
+        with pytest.raises(RuntimeError, match="discovered output custody") as caught:
+            worker._handle_push_task(push)
+    
+        assert executions == 1
+        assert isinstance(caught.value.__cause__, TransportTimeout)
+        assert key not in worker._replies and key not in worker._cached_pushes
+        retained = worker._prepared_output_replies[key]
+        assert retained.request == push and retained.prepare_acked
+        assert retained.complete_envelope is None
+        assert len(outputs.prepare_requests) == 1 and len(lost_completions) == 3
+>       assert all(reply == lost_completions[0] for reply in lost_completions)
+E       assert False
+E        +  where False = all(<generator object test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it.<locals>.<genexpr> at 0x7dfcffbea7a0>)
+
+tests/unit/test_worker_push_obligations.py:293: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_worker_push_obligations.py::test_complete_ack_loss_keeps_obligation_and_cached_replay_clears_it
+1 failed, 2 passed, 1 deselected in 1.30s

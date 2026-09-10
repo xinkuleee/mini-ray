@@ -66,7 +66,6 @@ def _two_granted_leases():
         node._lease_outcomes[lease] = _LeaseOutcome(request, grant)
         node._workers[worker] = _WorkerSlot(worker, active_lease_id=lease)
         requests.append((request, grant))
-    node._sync_first_worker_compat_locked()
     node._refresh_local_cached_availability_locked()
     return node, requests
 

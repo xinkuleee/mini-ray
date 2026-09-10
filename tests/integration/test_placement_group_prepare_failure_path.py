@@ -6,7 +6,7 @@ real Node has acknowledged PREPARED.  GCS must then send real ABORT operations
 to the complete participant set, wait for both ACKs, publish no placement, and
 leave both Node root ledgers at their initial one-CPU baselines.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``. Bounds are
+Run only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``. Bounds are
 five children (one GCS, two one-Worker Nodes), 1 MiB per Node store, one failed
 PG attempt with the original single PREPARE rejection, and no application
 Tasks, object data, test-owned thread/listener or sleeps. PG control, semantic

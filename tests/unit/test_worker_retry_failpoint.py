@@ -16,13 +16,16 @@ from miniray.worker import (
     WorkerFailpointConfig,
     WorkerServer,
 )
-from tests.unit._unified_worker_rpc import UnifiedWorkerRPC
+from tests.unit.test_worker_completion_paths import _SingleOutputRPC
 
 pytestmark = pytest.mark.unit
 
 
+from tests.support._worker_protocol import initialize_worker_protocol, complete_boundary as _complete_boundary
+
 def test_failpoint_emits_one_completed_system_error_before_decode(monkeypatch) -> None:
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = WorkerID.random()
     worker.node_id = NodeID.random()
     worker.node_address = ("127.0.0.1", 19000)
@@ -50,7 +53,7 @@ def test_failpoint_emits_one_completed_system_error_before_decode(monkeypatch) -
     push = protocol.PushTask(LeaseID.random(), worker.worker_id, spec)
     decoded = False
     completions = []
-    publication = UnifiedWorkerRPC()
+    publication = _SingleOutputRPC()
 
     def decode(_payload):
         nonlocal decoded
@@ -67,7 +70,7 @@ def test_failpoint_emits_one_completed_system_error_before_decode(monkeypatch) -
             return publication.prepare(message)
         assert handler == COMPLETE_WORKER_LEASE_HANDLER
         completions.append(message)
-        return publication.complete(message)
+        return _complete_boundary(publication, message)
 
     monkeypatch.setattr("miniray.worker.cloudpickle.loads", decode)
     monkeypatch.setattr("miniray.worker.rpc_request", rpc)

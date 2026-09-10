@@ -85,17 +85,9 @@ def _startup_node() -> tuple[NodeServer, WorkerID]:
     node = object.__new__(NodeServer)
     node.node_id = NodeID.random()
     worker_id = WorkerID.random()
-    node.worker_id = worker_id
     node._worker_order = (worker_id,)
     node._workers = {worker_id: _WorkerSlot(worker_id)}
     node.num_workers_per_node = 1
-    node._legacy_worker_compat = False
-    node._worker_process = None
-    node._worker_address = None
-    node._worker_pid = None
-    node._worker_exitcode = None
-    node._worker_forced = False
-    node._active_lease_id = None
     node._state_lock = threading.RLock()
     node._gcs_address = ("127.0.0.1", 29000)
     node._node_pid = 7001
@@ -111,6 +103,9 @@ def test_ready_worker_is_published_only_after_exact_registration_ack(
     process = _Process(7101)
     address = ("127.0.0.1", 29101)
     observed_unpublished: list[bool] = []
+    assert (node.worker_id, node.worker_ids) == (worker_id, (worker_id,))
+    assert (node.worker_address, node.worker_pid) == (None, None)
+    assert (node.worker_addresses, node.worker_pids) == ((), ())
 
     monkeypatch.setattr(node, "_spawn_worker_process", lambda _worker: (process, address))
 
@@ -223,6 +218,9 @@ def test_replacement_registers_fresh_incarnation_before_publication(
 
     assert observed == [(old_incarnation.worker_id,)]
     assert node._worker_order == (fresh,)
+    assert (node.worker_id, node.worker_ids) == (fresh, (fresh,))
+    assert (node.worker_address, node.worker_pid) == (replacement_address, replacement.pid)
+    assert (node.worker_addresses, node.worker_pids) == ((replacement_address,), (replacement.pid,))
     assert node._workers[fresh].incarnation.worker_id == fresh
 
 
@@ -276,7 +274,6 @@ def _death_node() -> tuple[
     )
     lease_id = LeaseID.random()
     address = ("127.0.0.1", 29101)
-    node.worker_id = worker_id
     node._worker_order = (worker_id,)
     node._workers = {
         worker_id: _WorkerSlot(
@@ -285,13 +282,6 @@ def _death_node() -> tuple[
         )
     }
     node.num_workers_per_node = 1
-    node._legacy_worker_compat = False
-    node._worker_process = process
-    node._worker_address = address
-    node._worker_pid = process.pid
-    node._worker_exitcode = None
-    node._worker_forced = False
-    node._active_lease_id = lease_id
     total = ResourceVector({"CPU": 1})
     node._ledger = ResourceLedger(total)
     token = AllocationToken("worker-death")
@@ -388,6 +378,8 @@ def test_unexpected_exit_reclaims_locally_and_replays_one_frozen_report(
     assert frozen.exit_code == 23
     assert frozen.reason is protocol.WorkerDeathReason.PROCESS_EXIT
     assert outcome.worker_address == ("127.0.0.1", 29101)
+    assert (node.worker_id, node.worker_pid, node.worker_address) == (incarnation.worker_id, process.pid, None)
+    assert node.worker_pids == (process.pid,) and node.worker_addresses == ()
     assert not node._cleanup_plane_quiescent_locked()
 
     assert not node._flush_pending_worker_death_reports()
@@ -416,5 +408,7 @@ def test_intentional_worker_stop_does_not_publish_process_exit(
     result = node._stop_worker_slot(incarnation.worker_id)
 
     assert result.forced and process.closed
+    assert (node.worker_id, node.worker_pid, node.worker_address) == (incarnation.worker_id, process.pid, None)
+    assert node._workers[incarnation.worker_id].forced and result.exitcode == -15
     assert node._worker_death_reports == {}
     assert GCS_REPORT_WORKER_DEATH_HANDLER not in sent

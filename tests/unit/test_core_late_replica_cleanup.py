@@ -19,6 +19,7 @@ import threading
 import pytest
 
 from miniray import node as node_module, output_protocol as wire, protocol
+from miniray.core import _HomeRoute
 from miniray.core import (
     _DelayedReadyTask, _ForeignDependencyGuard, _LeaseRequestState,
     _ObjectWaiter, _PendingTask,
@@ -48,6 +49,7 @@ class _Case:
             consumer.job_id = self.owner.job_id
             consumer.driver_task_id = TaskID.for_driver(consumer.job_id)
             consumer.node_id, consumer.node_address = f.target.node_id, f.target_address
+        consumer._home_route = _HomeRoute(consumer.node_id, consumer.node_address, consumer._membership_epoch)
         self.calls, self.cancel_replies, self.drop_replies, self.report_replies = [], [], [], []
         self.before_cancel = self.before_progress = None
         self.lose_cancel_ack = self.lose_drop_ack = False

@@ -7,7 +7,7 @@ group and waits for the GCS tombstone, survivor snapshot, and Core death fence.
 Only then does the test release local capacity, so attempt 1 must run on the
 surviving node with the original TaskID/ObjectID and fresh AttemptID/LeaseID.
 
-Run only through this file's exact node ID in ``run_bounded_test.py``. One GCS,
+Run only through this file's exact node ID in ``scripts/run_baseline.py --smoke EXACT``. One GCS,
 two Nodes, one Worker per Node, two 1 MiB stores and three tiny logical Tasks
 are managed by the 30-second process-tree runner. One loopback gate and all
 get/membership observations share a 15-second post-init budget. At most 64

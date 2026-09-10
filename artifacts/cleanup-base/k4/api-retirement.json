@@ -1,0 +1,51 @@
+[
+  {
+    "id": "API-013",
+    "path": "src/miniray/foreign_lineage_runtime.py",
+    "symbol": "abandon_renewal",
+    "reason": "All direct retained test consumers migrated to actual atomic put/publish or validated same-lock commit and frozen GC; generic assertions passed before removal",
+    "phase": "K4"
+  },
+  {
+    "id": "API-014",
+    "path": "src/miniray/ownership.py",
+    "symbol": "add_outgoing_contained_edge",
+    "reason": "All direct retained test consumers migrated to actual atomic put/publish or validated same-lock commit and frozen GC; generic assertions passed before removal",
+    "phase": "K4"
+  },
+  {
+    "id": "API-015",
+    "path": "src/miniray/ownership.py",
+    "symbol": "add_outgoing_contained_edges",
+    "reason": "All direct retained test consumers migrated to actual atomic put/publish or validated same-lock commit and frozen GC; generic assertions passed before removal",
+    "phase": "K4"
+  },
+  {
+    "id": "API-016",
+    "path": "src/miniray/ownership.py",
+    "symbol": "collect_if_unused",
+    "reason": "All direct retained test consumers migrated to actual atomic put/publish or validated same-lock commit and frozen GC; generic assertions passed before removal",
+    "phase": "K4"
+  },
+  {
+    "id": "API-017",
+    "path": "src/miniray/ownership.py",
+    "symbol": "collect_unused_with_edges",
+    "reason": "All direct retained test consumers migrated to actual atomic put/publish or validated same-lock commit and frozen GC; generic assertions passed before removal",
+    "phase": "K4"
+  },
+  {
+    "id": "API-019",
+    "path": "src/miniray/ownership.py",
+    "symbol": "publish_task_outputs",
+    "reason": "All direct retained test consumers migrated to actual atomic put/publish or validated same-lock commit and frozen GC; generic assertions passed before removal",
+    "phase": "K4"
+  },
+  {
+    "id": "API-020",
+    "path": "src/miniray/ownership.py",
+    "symbol": "commit_publish_task_outputs",
+    "reason": "All direct retained test consumers migrated to actual atomic put/publish or validated same-lock commit and frozen GC; generic assertions passed before removal",
+    "phase": "K4"
+  }
+]

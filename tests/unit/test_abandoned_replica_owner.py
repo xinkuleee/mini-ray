@@ -19,6 +19,7 @@ import threading
 import pytest
 
 from miniray import control, node as node_module, protocol
+from miniray.core import _HomeRoute
 from miniray.core import _ObjectWaiter, _worker_death_reference_id
 from miniray.ids import AttemptID, LeaseID, NodeID, ObjectID, TaskID, WorkerID
 from miniray.ownership import ObjectCollectionState, ObjectState, UnknownObjectError
@@ -39,6 +40,7 @@ class _Fixture:
         self.target = _node(NodeID(b"c" * 16), WorkerID(b"d" * 16))
         self.source_address, self.target_address = ("source.invalid", 1), ("target.invalid", 2)
         core.node_id, core.node_address = self.source.node_id, self.source_address
+        core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
         core.owner_address, core.gcs_address = ("owner.invalid", 3), ("gcs-input.invalid", 4)
         self.target._cluster_addresses = {self.source.node_id: self.source_address}
         self.transfers, self.drops, self.queries = [], [], []
@@ -100,7 +102,7 @@ class _Fixture:
         self.report = protocol.ReportAbandonedDependencyReplica(self.inventory, self.descriptor, self.death)
         core._rpc, core._resolve_node_address = self.rpc, self.address
 
-    def address(self, node_id):
+    def address(self, node_id, *, home_route=None):
         assert node_id in (self.source.node_id, self.target.node_id)
         return self.source_address if node_id == self.source.node_id else self.target_address
 

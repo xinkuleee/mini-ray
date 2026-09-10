@@ -90,7 +90,7 @@ def _fixture(max_retries: int = 1):
         core._enqueue_reconstruction_task(pending)
     assert core._submissions.get_nowait() is pending
     core._submissions.task_done()
-    core._resolve_node_address = lambda node_id: core.node_address if node_id == core.node_id else pytest.fail("unknown Node")
+    core._resolve_node_address = lambda node_id, *, home_route=None: core.node_address if node_id == core.node_id else pytest.fail("unknown Node")
     worker = WorkerID.random()
     grant = protocol.GrantWorkerLease(
         LeaseID.random(), task, attempt, core.node_id, worker,
@@ -755,7 +755,7 @@ class _DependencyRetryFixture:
         node._cluster_nodes = (NodeSnapshot(node.node_id, node._ledger.total, node._ledger.total),)
         node._cluster_addresses = {}
         node._scheduling_policy = HybridPolicy(seed=0)
-        node._shutdown_request_id, node._active_lease_id = None, None
+        node._shutdown_request_id = None
         node._leases, node._lease_outcomes, node._lease_cancellations = {}, {}, {}
         node._lease_request_locks, node._inflight_lease_requests = {}, 0
         node._state_lock, node._scheduling_lock = threading.RLock(), threading.Lock()
@@ -763,14 +763,13 @@ class _DependencyRetryFixture:
         node._object_store = ObjectStore(1024)
         node._sealed_metadata = {}
         node.event_sink = None
-        node.num_workers_per_node, node._legacy_worker_compat = 2, False
+        node.num_workers_per_node = 2
         self.workers = (WorkerID.random(), WorkerID.random())
-        node.worker_id, node._worker_order = self.workers[0], self.workers
+        node._worker_order = self.workers
         node._workers = {worker: _WorkerSlot(
             worker, process=_PassiveDependencyWorker(),
             address=("dependency-worker-{}.invalid".format(index), 1), pid=31802 + index,
         ) for index, worker in enumerate(self.workers)}
-        node._sync_first_worker_compat_locked()
         self.journal = node._output_publication_journal = OutputPublicationJournal()
         node._dropped_metadata, node._local_replica_write_claims = {}, {}
         node._object_localization_locks, node._owner_death_fences = {}, {}

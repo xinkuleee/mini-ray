@@ -17,7 +17,7 @@ import cloudpickle
 import pytest
 
 from miniray import protocol
-from miniray.core import CoreWorker, _LocalReferenceRelease, _RetryInlineGc, _RetryReplicaCleanup
+from miniray.core import CoreWorker, _HomeRoute, _LocalReferenceRelease, _RetryInlineGc, _RetryReplicaCleanup
 from miniray.ids import JobID, NodeID, TaskID, WorkerID
 from miniray.ownership import ObjectOwnerTable
 from miniray.recovery import RecoveryManager
@@ -115,6 +115,9 @@ def make_pure_core() -> CoreWorker:
     core.node_address = ("node.invalid", 1)
     core.owner_address = ("owner.invalid", 1)
     core.gcs_address = None
+    core._membership_epoch = 0
+    core._installed_cluster_snapshot = None
+    core._home_route = _HomeRoute(core.node_id, core.node_address, 0)
     core.inline_threshold = 100 * 1024
     core._submission_index = 0
     core._put_index = 0
@@ -140,7 +143,6 @@ def make_pure_core() -> CoreWorker:
     core._finishing_tasks = set()
     core._active_task_finishes = set()
     core._object_gc_obligations = {}
-    core._inline_gc_obligations = core._object_gc_obligations
     core._dead_nodes = {}
     core._gc_retry_timers = set()
     core._gc_retry_timers_open = False

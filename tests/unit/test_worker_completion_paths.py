@@ -31,6 +31,8 @@ from miniray.worker import (
 pytestmark = pytest.mark.unit
 
 
+from tests.support._worker_protocol import initialize_worker_protocol
+
 class _SingleOutputRPC:
     """Real single-output reducers; callbacks replace only transport."""
 
@@ -134,6 +136,7 @@ def _push(
 
 def _worker(worker_id: WorkerID, *, inline_threshold: int = 1024) -> WorkerServer:
     worker = object.__new__(WorkerServer)
+    initialize_worker_protocol(worker)
     worker.worker_id = worker_id
     worker.node_id = NodeID.random()
     worker.node_address = ("127.0.0.1", 19000)

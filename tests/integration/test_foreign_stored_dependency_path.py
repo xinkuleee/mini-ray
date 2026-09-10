@@ -7,7 +7,7 @@ only byte-free descriptors may cross the Driver: the target Node pins and pulls
 the source in chunks, seals it, and returns a target-local grant.  The Driver
 must report that replica to the real foreign owner before direct PushTask.
 
-Run only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds are
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Bounds are
 one GCS, two Nodes, one ordinary Worker per Node, three tasks, one test-owned
 gate, 1 MiB per ObjectStore, no Actor/trace, and a 30-second runner deadline.
 All gate/get work shares fifteen seconds after init; public reference receipts
@@ -15,6 +15,10 @@ share three seconds in finally. Observations retain at most 64 records without
 changing replies, and failure cleanup checks all five PIDs and seven endpoints
 (including the Driver owner and gate). The foreign close receipt is not itself
 proof of an owner Release ACK.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

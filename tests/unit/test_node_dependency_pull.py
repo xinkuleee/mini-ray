@@ -17,6 +17,7 @@ from miniray.node import (
     PIN_OBJECT_HANDLER,
     RELEASE_OBJECT_PIN_HANDLER,
     NodeServer,
+    _WorkerSlot,
 )
 from miniray.object_manager import ObjectManager
 from miniray.object_store import ObjectStore
@@ -56,7 +57,10 @@ def _object_descriptor(
 def _bare_node(node_id: NodeID, total: ResourceVector) -> NodeServer:
     node = object.__new__(NodeServer)
     node.node_id = node_id
-    node.worker_id = _worker_id_for_node(node_id)
+    worker_id = _worker_id_for_node(node_id)
+    node._worker_order = (worker_id,)
+    node._workers = {worker_id: _WorkerSlot(worker_id)}
+    node.num_workers_per_node = 1
     node._state_lock = threading.RLock()
     node._scheduling_lock = threading.Lock()
     node._ledger = ResourceLedger(total)
@@ -69,7 +73,6 @@ def _bare_node(node_id: NodeID, total: ResourceVector) -> NodeServer:
     node._lease_outcomes = {}
     node._lease_request_locks = {}
     node._inflight_lease_requests = 0
-    node._active_lease_id = None
     node._stop_event = threading.Event()
     node._shutdown_request_id = None
     node._gcs_address = None
@@ -165,8 +168,8 @@ def test_target_seals_dependency_before_allocating_and_granting(monkeypatch) -> 
         descriptor.checksum,
     )
     target = _bare_node(target_id, ResourceVector({"CPU": 1, "target": 1}))
-    target._worker_process = _AliveWorker()
-    target._worker_address = ("127.0.0.1", 13004)
+    target._workers[target.worker_id].process = _AliveWorker()
+    target._workers[target.worker_id].address = ("127.0.0.1", 13004)
     source_address = ("127.0.0.1", 12003)
     target._cluster_addresses = {source_id: source_address}
 
@@ -490,8 +493,8 @@ def test_grant_constructor_failure_rolls_back_allocation_pin_and_slot(
     payload = b"transactional-grant"
     descriptor = _object_descriptor(node_id, payload)
     node = _bare_node(node_id, ResourceVector({"CPU": 1}))
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 13016)
+    node._workers[node.worker_id].process = _AliveWorker()
+    node._workers[node.worker_id].address = ("127.0.0.1", 13016)
     node._object_store.put(descriptor.object_id, payload)
     node._sealed_metadata[descriptor.object_id] = (
         descriptor.producer_attempt_id, descriptor.owner_worker_id,
@@ -520,7 +523,7 @@ def test_grant_constructor_failure_rolls_back_allocation_pin_and_slot(
     assert reply.reason is protocol.LeaseRejectReason.DEPENDENCY_UNAVAILABLE
     assert node.resource_ledger.available == node.resource_ledger.total
     assert node._leases == {}
-    assert node._active_lease_id is None
+    assert node._workers[node.worker_id].active_lease_id is None
     assert node.object_store.snapshot(descriptor.object_id).pin_count == 0
     assert node._lease_outcomes == {}
     monkeypatch.setattr("miniray.node.protocol.GrantWorkerLease", real_grant)
@@ -534,8 +537,8 @@ def test_epoch_change_after_localization_is_revalidated_before_target_pin(
     payload = b"epoch-race-same-bytes"
     descriptor = _object_descriptor(node_id, payload)
     node = _bare_node(node_id, ResourceVector({"CPU": 1}))
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 13020)
+    node._workers[node.worker_id].process = _AliveWorker()
+    node._workers[node.worker_id].address = ("127.0.0.1", 13020)
     node._object_store.put(descriptor.object_id, payload)
     old_metadata = (
         descriptor.producer_attempt_id, descriptor.owner_worker_id,
@@ -569,7 +572,7 @@ def test_epoch_change_after_localization_is_revalidated_before_target_pin(
     assert reply.reason is protocol.LeaseRejectReason.DEPENDENCY_UNAVAILABLE
     assert node.resource_ledger.available == node.resource_ledger.total
     assert node.object_store.snapshot(descriptor.object_id).pin_count == 0
-    assert node._leases == {} and node._active_lease_id is None
+    assert node._leases == {} and node._workers[node.worker_id].active_lease_id is None
 
 
 def _grant_with_target_pin() -> tuple[
@@ -580,8 +583,8 @@ def _grant_with_target_pin() -> tuple[
     payload = b"target-pin-cleanup"
     descriptor = _object_descriptor(node_id, payload)
     node = _bare_node(node_id, ResourceVector({"CPU": 1}))
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 13100)
+    node._workers[node.worker_id].process = _AliveWorker()
+    node._workers[node.worker_id].address = ("127.0.0.1", 13100)
     node._object_store.put(descriptor.object_id, payload)
     node._sealed_metadata[descriptor.object_id] = (
         descriptor.producer_attempt_id, descriptor.owner_worker_id,
@@ -615,8 +618,8 @@ def test_grant_rollback_unpin_failure_becomes_retryable_cleanup(
     payload = b"rollback-unpin"
     descriptor = _object_descriptor(node_id, payload)
     node = _bare_node(node_id, ResourceVector({"CPU": 1}))
-    node._worker_process = _AliveWorker()
-    node._worker_address = ("127.0.0.1", 13101)
+    node._workers[node.worker_id].process = _AliveWorker()
+    node._workers[node.worker_id].address = ("127.0.0.1", 13101)
     node._object_store.put(descriptor.object_id, payload)
     node._sealed_metadata[descriptor.object_id] = (
         descriptor.producer_attempt_id, descriptor.owner_worker_id,
@@ -659,7 +662,7 @@ def test_grant_rollback_unpin_failure_becomes_retryable_cleanup(
     assert node.object_store.snapshot(descriptor.object_id).pin_count == 0
     assert unpins == 2
     assert node.resource_ledger.available == node.resource_ledger.total
-    assert node._leases == {} and node._active_lease_id is None
+    assert node._leases == {} and node._workers[node.worker_id].active_lease_id is None
     # Unpin completion is not custody handoff. LOCAL_READY witnessed this
     # existing replica before Grant construction failed; rollback must neither
     # delete shared bytes nor invent the owner's acknowledgement. The pure

@@ -13,6 +13,7 @@ import threading
 import pytest
 
 from miniray import output_protocol as wire, protocol
+from miniray.core import _HomeRoute
 from miniray.core import _NodeDeathObserved, _ObjectWaiter, _OutputNodeLossObligation, _PendingTask, _WAKE_COORDINATOR
 from miniray.ids import JobID, LeaseID, NodeID, TaskID, WorkerID
 from miniray.output_handoff import OutputHandoffPhase
@@ -82,6 +83,7 @@ class _Fixture:
         values = self.values
         core.job_id, core.worker_id, core.node_id = values.job, values.owner, values.node
         core.node_address, core.owner_address = ("node.invalid", 1), ("owner.invalid", 1)
+        core._home_route = _HomeRoute(core.node_id, core.node_address, core._membership_epoch)
         spec = protocol.TaskSpec(values.job, values.task, values.attempt,
                                  protocol.FunctionKey(values.job, __name__, "producer", "1"),
                                  (), 1, ResourceVector({"CPU": 1}), values.owner, max_retries=1)

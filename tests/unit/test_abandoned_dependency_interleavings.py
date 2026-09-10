@@ -63,7 +63,7 @@ def test_failed_first_owner_and_gcs_lookup_do_not_starve_a_later_owner(monkeypat
             owner.owner_address = addresses[index]
             owner.gcs_address = gcs
             owner._rpc = owner_rpc
-            owner._resolve_node_address = lambda node_id: nodes.source_address if node_id == nodes.source.node_id else ("target.invalid", 2404)
+            owner._resolve_node_address = lambda node_id, *, home_route=None: nodes.source_address if node_id == nodes.source.node_id else ("target.invalid", 2404)
             owner.owner_table.register(descriptor.object_id, current_attempt=descriptor.producer_attempt_id, local_token="owner-live-ref")
             result = protocol.ResultDescriptor(descriptor.object_id, protocol.ResultStorage.OBJECT_STORE, descriptor.size_bytes,
                                                descriptor.owner_worker_id, descriptor.node_id, descriptor.checksum)

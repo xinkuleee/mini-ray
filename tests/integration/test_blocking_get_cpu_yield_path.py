@@ -6,7 +6,7 @@ Driver-owned socket gate while the parent is still unfinished.  That state is
 impossible unless the parent returned its CPU to the NodeManager; distinct PIDs
 also prove the child used the second Worker rather than re-entering the parent.
 
-Run only this allowlisted exact node ID through ``scripts/run_bounded_test.py``.
+After review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.
 Bounds are one GCS, one Node, two Workers, one 1 MiB store, one socket gate,
 and two tiny tasks with no retries. No Actors, tracing, failure injection, or
 test-owned threads. All API/gate work shares one ten-second post-init deadline
@@ -14,6 +14,10 @@ across Driver and Workers; reference cleanup gets at most three seconds.
 The runner's 30-second execution deadline covers startup through shutdown,
 with its existing bounded process-tree cleanup grace on timeout. Runtime
 Block/Unblock control RPCs retain their own finite retry bounds.
+
+This file has no registered smoke or migration selector in the current
+manifest. Review and register the exact selector and its input closure
+before using the current runner's --case route.
 """
 
 from __future__ import annotations

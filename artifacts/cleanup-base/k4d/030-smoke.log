@@ -1,0 +1,275 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds _
+
+    def test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds():
+>       _run_precomplete_owner_death(OutputPublicationGatePhase.AFTER_PROMOTIONS_ACK)
+
+tests/integration/test_precomplete_output_owner_death_path.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/integration/test_precomplete_output_owner_death_path.py:349: in _run_precomplete_owner_death
+    context = ray.init(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def init(
+        *,
+        num_cpus: Real = 1,
+        num_nodes: int = 1,
+        num_workers_per_node: int = 1,
+        node_resources: Optional[
+            Sequence[Mapping[str, ResourceQuantity] | ResourceVector]
+        ] = None,
+        inline_threshold: int = _DEFAULT_INLINE_THRESHOLD_BYTES,
+        object_store_bytes: int = _DEFAULT_OBJECT_STORE_BYTES,
+        _test_worker_failpoint: Optional[WorkerFailpointConfig] = None,
+        _test_fail_after_node_ready: Optional[int] = None,
+        _test_placement_group_prepare_failure: Optional[
+            PlacementGroupPrepareFailureConfig
+        ] = None,
+        _test_output_publication_gate: Optional[OutputPublicationGateConfig] = None,
+        enable_tracing: bool = True,
+    ) -> RuntimeContext:
+        """Start one GCS and one Worker-pool-owning NodeManager per node.
+    
+        ``num_cpus`` is the capacity of *each* node when ``node_resources`` is not
+        supplied.  Passing ``node_resources`` exposes heterogeneous and custom
+        resources without adding a second cluster-configuration abstraction.
+        ``num_workers_per_node`` is deliberately fixed to one or two so the
+        teaching runtime exposes real local slot contention without becoming a
+        production process-pool manager.
+        """
+    
+        if current_core_worker() is not None:
+            raise RuntimeError(
+                "miniray.init() is Driver-only; a Worker is already attached to "
+                "the current cluster"
+            )
+    
+        checked_cpus = _validate_num_cpus(num_cpus)
+        if isinstance(num_nodes, bool) or not isinstance(num_nodes, int):
+            raise TypeError("num_nodes must be an integer")
+        if num_nodes not in (1, 2):
+            raise ValueError("mini-Ray supports one or two logical nodes")
+        checked_workers_per_node = _validate_num_workers_per_node(
+            num_workers_per_node
+        )
+        checked_node_resources = _validate_node_resources(
+            num_nodes, checked_cpus, node_resources
+        )
+        checked_inline_threshold = _validate_byte_limit(
+            "inline_threshold",
+            inline_threshold,
+            maximum=_MAX_INLINE_THRESHOLD_BYTES,
+        )
+        checked_object_store_bytes = _validate_byte_limit(
+            "object_store_bytes",
+            object_store_bytes,
+            maximum=_MAX_OBJECT_STORE_BYTES,
+        )
+        if _test_worker_failpoint is not None and not isinstance(
+            _test_worker_failpoint, WorkerFailpointConfig
+        ):
+            raise TypeError(
+                "_test_worker_failpoint must be a WorkerFailpointConfig or None"
+            )
+        if (
+            _test_fail_after_node_ready is not None
+            and (
+                isinstance(_test_fail_after_node_ready, bool)
+                or not isinstance(_test_fail_after_node_ready, int)
+            )
+        ):
+            raise TypeError(
+                "_test_fail_after_node_ready must be a node index or None"
+            )
+        if (
+            _test_fail_after_node_ready is not None
+            and not 0 <= _test_fail_after_node_ready < num_nodes
+        ):
+            raise ValueError(
+                "_test_fail_after_node_ready must identify a configured node"
+            )
+        if (
+            _test_placement_group_prepare_failure is not None
+            and not isinstance(
+                _test_placement_group_prepare_failure,
+                PlacementGroupPrepareFailureConfig,
+            )
+        ):
+            raise TypeError(
+                "_test_placement_group_prepare_failure must be a "
+                "PlacementGroupPrepareFailureConfig or None"
+            )
+        if (
+            _test_placement_group_prepare_failure is not None
+            and _test_placement_group_prepare_failure.participant_ordinal
+            > num_nodes
+        ):
+            raise ValueError(
+                "placement-group prepare failure participant exceeds configured "
+                "node bound"
+            )
+        if _test_output_publication_gate is not None:
+            if type(_test_output_publication_gate) is not OutputPublicationGateConfig:
+                raise TypeError("_test_output_publication_gate must be an OutputPublicationGateConfig or None")
+            _test_output_publication_gate = replace(_test_output_publication_gate)
+            if _test_output_publication_gate.node_index >= num_nodes:
+                raise ValueError("_test_output_publication_gate must identify a configured node")
+    
+        global _runtime
+        with _runtime_lock:
+            if _runtime is not None:
+                raise RuntimeError("mini-Ray is already initialized")
+    
+            if not isinstance(enable_tracing, bool):
+                raise TypeError("enable_tracing must be a bool")
+            trace_collector: Optional[TraceCollector] = None
+            trace_address: Optional[Address] = None
+            gcs_receive = None
+            gcs_send = None
+            gcs_process: Optional[mp.Process] = None
+            all_node_processes: list[mp.Process] = []
+            nodes: list[_NodeRuntime] = []
+            gcs_startup = None
+            core_worker: Optional[CoreWorker] = None
+            owner_service: Optional[OwnerService] = None
+            driver_event_sink = None
+            runtime: Optional[_Runtime] = None
+            try:
+                # Acquisition begins inside the rollback domain.  A collector
+                # owns a bound socket after construction, and Pipe/Process may
+                # succeed independently, so record each handle before continuing.
+                trace_collector = TraceCollector() if enable_tracing else None
+                trace_address = (
+                    trace_collector.start() if trace_collector is not None else None
+                )
+                trace_config = (
+                    TraceSinkConfig(trace_address, "gcs")
+                    if trace_address is not None
+                    else None
+                )
+                context = mp.get_context("spawn")
+                gcs_receive, gcs_send = context.Pipe(duplex=False)
+                gcs_process = context.Process(
+                    target=gcs_main,
+                    args=(
+                        gcs_send,
+                        "127.0.0.1",
+                        0,
+                        trace_config,
+                        _test_placement_group_prepare_failure,
+                    ),
+                    name="miniray-gcs",
+                    daemon=False,
+                )
+                gcs_process.start()
+                gcs_send.close()
+                if not gcs_receive.poll(_START_TIMEOUT_SECONDS):
+                    raise RuntimeError("GCS did not report readiness before timeout")
+                ok, value = gcs_receive.recv()
+                if not ok:
+                    raise RuntimeError("GCS failed during startup:\n{}".format(value))
+                if not isinstance(value, protocol.GCSStartup):
+                    raise RuntimeError("GCS returned an invalid startup descriptor")
+                if value.gcs_pid != gcs_process.pid:
+                    raise RuntimeError("GCS returned an inconsistent startup descriptor")
+                gcs_startup = value
+    
+                for index, total_resources in enumerate(checked_node_resources):
+                    node_id = NodeID.random()
+                    receive_connection = None
+                    send_connection = None
+                    try:
+                        # Start the per-Node rollback boundary before Pipe.  A
+                        # Process-constructor failure must still close both ends.
+                        receive_connection, send_connection = context.Pipe(
+                            duplex=False
+                        )
+                        process = context.Process(
+                            target=_node_process_main,
+                            args=(
+                                node_id,
+                                total_resources,
+                                send_connection,
+                                None,
+                                "127.0.0.1",
+                                0,
+                                checked_inline_threshold,
+                                checked_object_store_bytes,
+                                gcs_startup.gcs_address,
+                                _test_worker_failpoint,
+                                (
+                                    trace_config.for_role(
+                                        "node:{}".format(node_id)
+                                    )
+                                    if trace_config
+                                    else None
+                                ),
+                                checked_workers_per_node,
+                                (
+                                    _test_output_publication_gate
+                                    if _test_output_publication_gate is not None
+                                    and _test_output_publication_gate.node_index == index
+                                    else None
+                                ),
+                            ),
+                            name="miniray-node-{}-{}".format(index, node_id),
+                            daemon=False,
+                        )
+                        all_node_processes.append(process)
+                        process.start()
+                        send_connection.close()
+                        # NodeServer starts its deliberately tiny fixed Worker pool
+                        # slot by slot.  Give each configured slot one bounded
+                        # startup window; otherwise a valid two-Worker startup can
+                        # exceed the historical one-Worker Driver deadline.
+                        node_start_timeout = (
+                            _START_TIMEOUT_SECONDS * checked_workers_per_node
+                        )
+                        if not receive_connection.poll(node_start_timeout):
+>                           raise RuntimeError(
+                                "node {} did not report readiness before timeout".format(
+                                    index
+                                )
+                            )
+E                           RuntimeError: node 0 did not report readiness before timeout
+
+src/miniray/api.py:2114: RuntimeError
+----------------------------- Captured stderr call -----------------------------
+Process miniray-node-0-ea9415a540ce224ed00dfbc04da37b86:
+Traceback (most recent call last):
+  File "/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/src/miniray/node.py", line 7220, in node_main
+    ready_connection.send((True, startup))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 206, in send
+    self._send_bytes(_ForkingPickler.dumps(obj))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/tests/integration/test_precomplete_output_owner_death_path.py", line 226, in _node_process_with_lifecycle_observations
+    _ACTUAL_NODE_PROCESS_MAIN(*args)
+  File "/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/src/miniray/api.py", line 1241, in _node_process_main
+    node_main(*args)
+  File "/dev/shm/mini-ray-cleanup-candidates/base-k4d-01/src/miniray/node.py", line 7227, in node_main
+    ready_connection.send((False, traceback.format_exc()))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 206, in send
+    self._send_bytes(_ForkingPickler.dumps(obj))
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/dev/shm/mini-ray-cleanup-runtime/python/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+=========================== short test summary info ============================
+FAILED tests/integration/test_precomplete_output_owner_death_path.py::test_owner_death_after_promotions_drops_sealed_output_and_cleans_live_child_holds
+1 failed in 16.71s

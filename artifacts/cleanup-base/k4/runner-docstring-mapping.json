@@ -1,0 +1,598 @@
+{
+  "status": "staged only, current source and manifest unchanged",
+  "source_head_observed": "42ed62d7231d17d3b7f703670a357c509183e853",
+  "manifest_sha256": "6e279523e7a37d880b4173311d32beff6c72a8b729cd222d2eba36100174491a",
+  "runner_sha256": "bbb10e4736c270b6abf4e8eb7991e6f221a5e69ab00b662537196642044da767",
+  "counts": {
+    "unregistered": 16,
+    "delivery_smoke": 11,
+    "reviewed_migration": 1
+  },
+  "file_count": 28,
+  "patch_sha256": "9b458c7aeadb79fd00cac71642e4f977a61cbf24bd6831a6ff75822f3f4385bc",
+  "mapping": [
+    {
+      "path": "tests/integration/test_actor_cross_process_trace.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_actor_creation_uses_control_plane_and_method_call_bypasses_gcs"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_actor_cross_process_trace.py::test_actor_creation_uses_control_plane_and_method_call_bypasses_gcs"
+      ],
+      "before_sha256": "fac0997b785f565ceb3bb4eb2481749a2a5dc385989bb871ab8f2b553aaccdc3",
+      "after_sha256": "63c34861f5aba2d5929fc6f5210d6ac866e6ba1ee97c2098581dec7c295fcb41",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded trace proof of Actor control-plane creation and direct calls.\n\nOne Actor is created through Driver Core -> GCS -> NodeManager and executes one\nmethod through Driver Core -> dedicated ActorWorker.  Transport sidecars prove\nall three cross-PID request edges without timestamp ordering, while the absence\nof ``actor_call`` at GCS proves that the steady-state call bypasses control.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds are\none GCS, one Node, one ordinary Worker, one dedicated Actor Worker, one Actor,\none tiny call, one trace collector and a 1 MiB Node store. Work shares ten seconds\nafter init; trace delivery uses at most two seconds of that same budget and the\nactual public reference close has a separate three-second deadline. Synchronous\nActor creation/debug calls and startup/shutdown retain their existing contracts\nunder the runner's 30-second outer bound, not deadline-triggered cancellation.\nAll observed PIDs/endpoints (four/six on success) are checked after failures;\ncreate before route installation still relies on Node/outer-runner cleanup.\nThe test starts no helper thread/listener; trace polling uses bounded Event waits.\n",
+      "new_docstring": "Bounded trace proof of Actor control-plane creation and direct calls.\n\nOne Actor is created through Driver Core -> GCS -> NodeManager and executes one\nmethod through Driver Core -> dedicated ActorWorker.  Transport sidecars prove\nall three cross-PID request edges without timestamp ordering, while the absence\nof ``actor_call`` at GCS proves that the steady-state call bypasses control.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Bounds are\none GCS, one Node, one ordinary Worker, one dedicated Actor Worker, one Actor,\none tiny call, one trace collector and a 1 MiB Node store. Work shares ten seconds\nafter init; trace delivery uses at most two seconds of that same budget and the\nactual public reference close has a separate three-second deadline. Synchronous\nActor creation/debug calls and startup/shutdown retain their existing contracts\nunder the runner's 30-second outer bound, not deadline-triggered cancellation.\nAll observed PIDs/endpoints (four/six on success) are checked after failures;\ncreate before route installation still relies on Node/outer-runner cleanup.\nThe test starts no helper thread/listener; trace polling uses bounded Event waits.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_actor_restart_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_actor_restart_path.py::test_actor_crash_restarts_once_fences_inflight_call_and_resets_state"
+      ],
+      "current_test_functions": [
+        "test_actor_crash_restarts_once_fences_inflight_call_and_resets_state"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "25aacd51a7e0766813c6d3a344b30056f5179d2412cd6b1c3250bccfd69c9df0",
+      "after_sha256": "3814a504ad99c6bc951c7dd530d3906359132c368dc4bd4419b005c502d7aa48",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded real-process acceptance test for one Actor restart.\n\nThe Actor itself exits only after a test-owned loopback gate proves that its\ngeneration-0 method entered user code.  No raw PID is ever used as a signal\ntarget.  Run this exact node ID only through ``scripts/run_bounded_test.py``.\nThe hard bounds are one GCS, one NodeManager, one ordinary Worker, one live\nActor Worker per generation, one injected exit, and one permitted restart.\nFour children are live at once; five distinct managed PIDs are observed. Four\ntiny method calls use one 1 MiB store, a shared 15-second post-init work budget\nand one gate bounded by ten seconds. Reference cleanup shares three seconds;\nshutdown is unconditional. Actor create has no per-call cancellation timeout:\nonly the outer 30-second runner bounds unresolved creation, not a fake ACK.\n",
+      "new_docstring": "Bounded real-process acceptance test for one Actor restart.\n\nThe Actor itself exits only after a test-owned loopback gate proves that its\ngeneration-0 method entered user code.  No raw PID is ever used as a signal\ntarget.  Run this exact node ID only through ``scripts/run_baseline.py --smoke EXACT``.\nThe hard bounds are one GCS, one NodeManager, one ordinary Worker, one live\nActor Worker per generation, one injected exit, and one permitted restart.\nFour children are live at once; five distinct managed PIDs are observed. Four\ntiny method calls use one 1 MiB store, a shared 15-second post-init work budget\nand one gate bounded by ten seconds. Reference cleanup shares three seconds;\nshutdown is unconditional. Actor create has no per-call cancellation timeout:\nonly the outer 30-second runner bounds unresolved creation, not a fake ACK.\n"
+    },
+    {
+      "path": "tests/integration/test_blocking_get_cpu_yield_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_nested_get_yields_cpu_to_child_on_second_worker"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_blocking_get_cpu_yield_path.py::test_nested_get_yields_cpu_to_child_on_second_worker"
+      ],
+      "before_sha256": "5aa7d162b9db2671f11b6ade36c1216c2dc652a5bc1b7dd15682d8713d9456b9",
+      "after_sha256": "45c9119627da6b0706e3b3d2a69786a90cd79c27f02b81795a01cccf13003bc2",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded proof that nested ``get`` yields its parent task's CPU.\n\nThe cluster has one Node, one CPU, and two ordinary Workers.  A one-CPU parent\nsubmits a one-CPU child and blocks in ``ray.get``.  The child then reaches a\nDriver-owned socket gate while the parent is still unfinished.  That state is\nimpossible unless the parent returned its CPU to the NodeManager; distinct PIDs\nalso prove the child used the second Worker rather than re-entering the parent.\n\nRun only this allowlisted exact node ID through ``scripts/run_bounded_test.py``.\nBounds are one GCS, one Node, two Workers, one 1 MiB store, one socket gate,\nand two tiny tasks with no retries. No Actors, tracing, failure injection, or\ntest-owned threads. All API/gate work shares one ten-second post-init deadline\nacross Driver and Workers; reference cleanup gets at most three seconds.\nThe runner's 30-second execution deadline covers startup through shutdown,\nwith its existing bounded process-tree cleanup grace on timeout. Runtime\nBlock/Unblock control RPCs retain their own finite retry bounds.\n",
+      "new_docstring": "Bounded proof that nested ``get`` yields its parent task's CPU.\n\nThe cluster has one Node, one CPU, and two ordinary Workers.  A one-CPU parent\nsubmits a one-CPU child and blocks in ``ray.get``.  The child then reaches a\nDriver-owned socket gate while the parent is still unfinished.  That state is\nimpossible unless the parent returned its CPU to the NodeManager; distinct PIDs\nalso prove the child used the second Worker rather than re-entering the parent.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.\nBounds are one GCS, one Node, two Workers, one 1 MiB store, one socket gate,\nand two tiny tasks with no retries. No Actors, tracing, failure injection, or\ntest-owned threads. All API/gate work shares one ten-second post-init deadline\nacross Driver and Workers; reference cleanup gets at most three seconds.\nThe runner's 30-second execution deadline covers startup through shutdown,\nwith its existing bounded process-tree cleanup grace on timeout. Runtime\nBlock/Unblock control RPCs retain their own finite retry bounds.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_core_dispatch_concurrency.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_two_ready_tasks_execute_on_two_dispatch_lanes",
+        "test_shutdown_drains_all_accepted_ready_tasks"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_core_dispatch_concurrency.py::test_two_ready_tasks_execute_on_two_dispatch_lanes",
+        "tests/integration/test_core_dispatch_concurrency.py::test_shutdown_drains_all_accepted_ready_tasks"
+      ],
+      "before_sha256": "d290ea05ac14ed7c9505170cce01ac41bc3c57a648f1c468e97654309c809b31",
+      "after_sha256": "55b47bbbd2b6d6b9f7d7498fb28bd0a9caeeadecce1caa36199f1721e94e4fd5",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Opt-in L1 for real dispatch-lane overlap and shutdown queue draining.\n\nEach exact node ID constructs one Core with two dispatch lanes: four owned\ndaemon threads total (two lanes, coordinator, reference mailbox), no Node or\nWorker processes, no sockets, no timers, and at most six tiny logical tasks.\nThe execution callback is a bounded in-memory probe, not user code or an RPC.\n\nCore construction, submission and startup failure all remain inside finally\ncleanup.  Gate waits and get calls have one-second bounds.  Finalizer events\nshare a one-second budget; normal shutdown gets one second and last-resort\nstructural joins get one further second.  Structural cleanup never changes\naccepted counts or protocol authorities to make a failed drain look clean.\nRun only one reviewed exact node ID through scripts/run_bounded_test.py.\n",
+      "new_docstring": "Opt-in L1 for real dispatch-lane overlap and shutdown queue draining.\n\nEach exact node ID constructs one Core with two dispatch lanes: four owned\ndaemon threads total (two lanes, coordinator, reference mailbox), no Node or\nWorker processes, no sockets, no timers, and at most six tiny logical tasks.\nThe execution callback is a bounded in-memory probe, not user code or an RPC.\n\nCore construction, submission and startup failure all remain inside finally\ncleanup.  Gate waits and get calls have one-second bounds.  Finalizer events\nshare a one-second budget; normal shutdown gets one second and last-resort\nstructural joins get one further second.  Structural cleanup never changes\naccepted counts or protocol authorities to make a failed drain look clean.\nAfter review and registration, run one exact node ID through scripts/run_baseline.py --case EXACT.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_core_shutdown_concurrency.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_short_shutdown_keeps_runtime_alive_until_ambiguous_push_resolves",
+        "test_push_is_marked_unresolved_before_send_can_race_shutdown",
+        "test_lease_is_marked_unresolved_before_grant_reply_races_shutdown"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_core_shutdown_concurrency.py::test_short_shutdown_keeps_runtime_alive_until_ambiguous_push_resolves",
+        "tests/integration/test_core_shutdown_concurrency.py::test_push_is_marked_unresolved_before_send_can_race_shutdown",
+        "tests/integration/test_core_shutdown_concurrency.py::test_lease_is_marked_unresolved_before_grant_reply_races_shutdown"
+      ],
+      "before_sha256": "349ef13edfd45bee40aa55000697f01b98869b7441e488e9495e76b0c71bee04",
+      "after_sha256": "7a5f83dbc431fd77bb42b023cdc298c99540bf62c615c42c727431f3cab6889a",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Opt-in L1 shutdown races with bounded threads and no transport.\n\nEach exact case starts one real Core (one coordinator, one dispatcher, one\nreference thread), at most one daemon request thread, and two tiny inline\nobjects.  No Node, Worker, process, listener, Actor, or real RPC is started.\nSend/grant gates time out after 2 s; request joins share a 2 s deadline; finally\nreleases gates before bounded joins and structurally stops residual threads\nwithout rewriting accepted counts or owner/recovery authority.\nRun one reviewed exact node ID through scripts/run_bounded_test.py.\n",
+      "new_docstring": "Opt-in L1 shutdown races with bounded threads and no transport.\n\nEach exact case starts one real Core (one coordinator, one dispatcher, one\nreference thread), at most one daemon request thread, and two tiny inline\nobjects.  No Node, Worker, process, listener, Actor, or real RPC is started.\nSend/grant gates time out after 2 s; request joins share a 2 s deadline; finally\nreleases gates before bounded joins and structurally stops residual threads\nwithout rewriting accepted counts or owner/recovery authority.\nAfter review and registration, run one exact node ID through scripts/run_baseline.py --case EXACT.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_cross_node_dependency_pull.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_cross_node_dependency_pull.py::test_store_backed_dependency_pulls_to_consumer_node_before_direct_push"
+      ],
+      "current_test_functions": [
+        "test_store_backed_dependency_pulls_to_consumer_node_before_direct_push"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "b8ac86c96d3d95d9fb7c2082d0074309f3cc56528947a6460f16c415e37e07b3",
+      "after_sha256": "c484456e9306d5f3f5b474da1cdef6fb3455ab019f99f84117572cee47c072ba",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded acceptance test for a cross-node ObjectRef dependency pull.\n\nThe producer is pinned to node 0 and returns a store-backed value.  Its\nconsumer is submitted *before* that value is ready and is pinned to node 1.\nThe test inspects only the Driver's outgoing immutable messages: object bytes\nmust move NodeManager-to-NodeManager, while lease and direct-task messages\ncarry descriptors and ``RefArg`` handles only.\n\nRun this exact node ID only through ``scripts/run_bounded_test.py``.  The hard\nbounds are one GCS, two NodeManagers, one Worker per node, two tasks, a 1 MiB\nstore per node, and the runner's 30 second process-tree deadline. Init and gate\nsetup are covered by finally; API/gate work shares ten seconds, public close\nshares three seconds, and every actual PID/owner/trace/gate endpoint is checked.\n",
+      "new_docstring": "Bounded acceptance test for a cross-node ObjectRef dependency pull.\n\nThe producer is pinned to node 0 and returns a store-backed value.  Its\nconsumer is submitted *before* that value is ready and is pinned to node 1.\nThe test inspects only the Driver's outgoing immutable messages: object bytes\nmust move NodeManager-to-NodeManager, while lease and direct-task messages\ncarry descriptors and ``RefArg`` handles only.\n\nRun this exact node ID only through ``scripts/run_baseline.py --smoke EXACT``.  The hard\nbounds are one GCS, two NodeManagers, one Worker per node, two tasks, a 1 MiB\nstore per node, and the runner's 30 second process-tree deadline. Init and gate\nsetup are covered by finally; API/gate work shares ten seconds, public close\nshares three seconds, and every actual PID/owner/trace/gate endpoint is checked.\n"
+    },
+    {
+      "path": "tests/integration/test_foreign_inline_dependency_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_foreign_inline_dependency_survives_input_handle_close"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_foreign_inline_dependency_path.py::test_foreign_inline_dependency_survives_input_handle_close"
+      ],
+      "before_sha256": "8de8483ac24e884ea92d8ab99669bcba54daef4ad72e2414b14370c5f571ef35",
+      "after_sha256": "b188125f0d617f2bba1667903eb570f793aac70ad91a44c48d95e4117b54ae5c",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded foreign INLINE dependency lifetime acceptance test.\n\nOne parent task returns a still-pending, Worker-owned child ``ObjectRef``.  The\nDriver submits that borrowed handle as a top-level dependency, then closes both\nthe borrower and its outer container before the child becomes ready.  The\nlogical consumer task's independently retained hold must keep the object alive;\nafter the child gate opens, the dependency is materialized as an ``InlineArg``\nand the consumer executes exactly once.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, one NodeManager, two ordinary Workers, exactly four tiny\ntasks, one test-owned loopback gate, no Actor Worker, no trace collector, and\nthe runner's 30-second process-group deadline.\n",
+      "new_docstring": "Bounded foreign INLINE dependency lifetime acceptance test.\n\nOne parent task returns a still-pending, Worker-owned child ``ObjectRef``.  The\nDriver submits that borrowed handle as a top-level dependency, then closes both\nthe borrower and its outer container before the child becomes ready.  The\nlogical consumer task's independently retained hold must keep the object alive;\nafter the child gate opens, the dependency is materialized as an ``InlineArg``\nand the consumer executes exactly once.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static\nbounds are one GCS, one NodeManager, two ordinary Workers, exactly four tiny\ntasks, one test-owned loopback gate, no Actor Worker, no trace collector, and\nthe runner's 30-second process-group deadline.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_foreign_input_lineage_reconstruction_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_foreign_input_hold_replaced_before_consumer_reconstruction"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_foreign_input_lineage_reconstruction_path.py::test_foreign_input_hold_replaced_before_consumer_reconstruction"
+      ],
+      "before_sha256": "3e565b2400c340d2702d1e9ac31b25647da540f4e83489c68d23eed409355357",
+      "after_sha256": "7765fca0a2204b9ec6c67e30817a7d3dcc8496b2c6bcfc7fd6d5c4cee1ff8426",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded foreign-input lineage reconstruction smoke.\n\nA Worker-owned inline object escapes through an outer result and becomes a\nDriver-submitted consumer dependency. Both original Python handles close after\nconsumer submission, before waiting for its first result. Its stored output\nthen loses its only replica: reconstruction must atomically replace the foreign retained hold,\nreplay the consumer under the same TaskID/ObjectID, and finally release the new\nhold when the consumer output is collected.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py`` after its\nfixed two-CPU exception is approved. One Node, two Workers, four managed\nchildren, five runtime/owner endpoints, three logical Tasks/four executions,\none drop/reconstruction and a 1 MiB store bound the experiment. There is no\nActor, tracing, GPU, external network, extra listener or test-created thread.\n\nPublic get/drop calls, early closes and finish observations share fifteen\nseconds after init. Drop uses the existing real Node RPC deadline. Internal\nforeign renewal RPCs keep their original finite retry timeouts: the work\nbudget is checked around calls, not claimed to cancel them. The outer\n30-second process-tree runner still bounds startup, shutdown and those calls.\nReplacement observation is a passive FIFO capped at 32 records; local waits\nmake at most 256 checks plus a final predicate check. Final public closes and\nactual owner/foreign-lineage collection share three seconds before unconditional\nshutdown and failure-finally checks of every recorded PID and endpoint.\n",
+      "new_docstring": "Bounded foreign-input lineage reconstruction smoke.\n\nA Worker-owned inline object escapes through an outer result and becomes a\nDriver-submitted consumer dependency. Both original Python handles close after\nconsumer submission, before waiting for its first result. Its stored output\nthen loses its only replica: reconstruction must atomically replace the foreign retained hold,\nreplay the consumer under the same TaskID/ObjectID, and finally release the new\nhold when the consumer output is collected.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT`` after its\nfixed two-CPU exception is approved. One Node, two Workers, four managed\nchildren, five runtime/owner endpoints, three logical Tasks/four executions,\none drop/reconstruction and a 1 MiB store bound the experiment. There is no\nActor, tracing, GPU, external network, extra listener or test-created thread.\n\nPublic get/drop calls, early closes and finish observations share fifteen\nseconds after init. Drop uses the existing real Node RPC deadline. Internal\nforeign renewal RPCs keep their original finite retry timeouts: the work\nbudget is checked around calls, not claimed to cancel them. The outer\n30-second process-tree runner still bounds startup, shutdown and those calls.\nReplacement observation is a passive FIFO capped at 32 records; local waits\nmake at most 256 checks plus a final predicate check. Final public closes and\nactual owner/foreign-lineage collection share three seconds before unconditional\nshutdown and failure-finally checks of every recorded PID and endpoint.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_foreign_reconstruction_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_foreign_reconstruction_path.py::test_driver_reconstructs_worker_owned_stored_object_through_owner"
+      ],
+      "current_test_functions": [
+        "test_driver_reconstructs_worker_owned_stored_object_through_owner"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "33df660363ba700ecbdb75c8d4c9de940b2195b0fec3530f968cf61d0d1cfc01",
+      "after_sha256": "05400f6b729e4d8ca79d0435abba837a47a5fdc6f751100968f3376d7906a213",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded foreign-owner lineage reconstruction smoke.\n\nOne ordinary Worker returns a still-pending child ObjectRef to the Driver.  A\nsecond Worker publishes the child's stored result. An owner-local control task\nthen drops its sole replica through the same embedded Core. The Driver's\nstill-active borrower must request reconstruction from that Worker owner, keep\nthe same logical ObjectID and borrower token, and fetch attempt 1.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, two NodeManagers, one ordinary Worker each, three logical\nTasks/four physical executions, two 1 MiB stores and one 64 KiB result per\nproducer attempt. Gets, state observations and the owner-local Node drop\nshare a fifteen-second work budget. Owner-reference handoffs retain their\nown finite internal retries, so this is not a strict whole-call time bound.\nObservations are passive and capped at 64 per list. Public closes\nshare three seconds in finally before unconditional shutdown and five-PID/\nsix-endpoint checks. No Actor, tracing, listener, test thread or sleep is added.\nStartup/shutdown keep their existing contracts under the 30-second tree runner.\n",
+      "new_docstring": "Bounded foreign-owner lineage reconstruction smoke.\n\nOne ordinary Worker returns a still-pending child ObjectRef to the Driver.  A\nsecond Worker publishes the child's stored result. An owner-local control task\nthen drops its sole replica through the same embedded Core. The Driver's\nstill-active borrower must request reconstruction from that Worker owner, keep\nthe same logical ObjectID and borrower token, and fetch attempt 1.\n\nRun only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Static\nbounds are one GCS, two NodeManagers, one ordinary Worker each, three logical\nTasks/four physical executions, two 1 MiB stores and one 64 KiB result per\nproducer attempt. Gets, state observations and the owner-local Node drop\nshare a fifteen-second work budget. Owner-reference handoffs retain their\nown finite internal retries, so this is not a strict whole-call time bound.\nObservations are passive and capped at 64 per list. Public closes\nshare three seconds in finally before unconditional shutdown and five-PID/\nsix-endpoint checks. No Actor, tracing, listener, test thread or sleep is added.\nStartup/shutdown keep their existing contracts under the 30-second tree runner.\n"
+    },
+    {
+      "path": "tests/integration/test_foreign_stored_dependency_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_foreign_stored_dependency_pulls_node_to_node_before_push"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_foreign_stored_dependency_path.py::test_foreign_stored_dependency_pulls_node_to_node_before_push"
+      ],
+      "before_sha256": "03c4a53a2f90e483010dbef0d2c1dfa28f887af0f721bde7748aaca656d44404",
+      "after_sha256": "003356edc1fb3d7d958cdf8805edfc07ee67d16fb98d9462a3fe87aba91d3db8",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded cross-node foreign STORED task-dependency acceptance test.\n\nOne source Worker returns a still-pending Worker-owned ObjectRef.  The Driver\nretains it for a consumer pinned to the second node, then closes both the\nborrower handle and outer container.  After the producer returns a 64 KiB value,\nonly byte-free descriptors may cross the Driver: the target Node pins and pulls\nthe source in chunks, seals it, and returns a target-local grant.  The Driver\nmust report that replica to the real foreign owner before direct PushTask.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds are\none GCS, two Nodes, one ordinary Worker per Node, three tasks, one test-owned\ngate, 1 MiB per ObjectStore, no Actor/trace, and a 30-second runner deadline.\nAll gate/get work shares fifteen seconds after init; public reference receipts\nshare three seconds in finally. Observations retain at most 64 records without\nchanging replies, and failure cleanup checks all five PIDs and seven endpoints\n(including the Driver owner and gate). The foreign close receipt is not itself\nproof of an owner Release ACK.\n",
+      "new_docstring": "Bounded cross-node foreign STORED task-dependency acceptance test.\n\nOne source Worker returns a still-pending Worker-owned ObjectRef.  The Driver\nretains it for a consumer pinned to the second node, then closes both the\nborrower handle and outer container.  After the producer returns a 64 KiB value,\nonly byte-free descriptors may cross the Driver: the target Node pins and pulls\nthe source in chunks, seals it, and returns a target-local grant.  The Driver\nmust report that replica to the real foreign owner before direct PushTask.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Bounds are\none GCS, two Nodes, one ordinary Worker per Node, three tasks, one test-owned\ngate, 1 MiB per ObjectStore, no Actor/trace, and a 30-second runner deadline.\nAll gate/get work shares fifteen seconds after init; public reference receipts\nshare three seconds in finally. Observations retain at most 64 records without\nchanging replies, and failure cleanup checks all five PIDs and seven endpoints\n(including the Driver owner and gate). The foreign close receipt is not itself\nproof of an owner Release ACK.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_foreign_stored_ref_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_inline_outer_restores_foreign_ref_then_driver_fetches_stored_bytes_from_node"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_foreign_stored_ref_path.py::test_inline_outer_restores_foreign_ref_then_driver_fetches_stored_bytes_from_node"
+      ],
+      "before_sha256": "5cf7050fb167333b25aff8cfe0feff9f11ea2141f31030710f2473a5d78fce4d",
+      "after_sha256": "53a91c36491f6e6d8afc5cd0ecb0342ab86a8b5b706ee39b06730a8ccc4f0a9c",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded smoke for a foreign stored ObjectRef data path.\n\nThis test is statically allowlisted and may be run only by exact node ID through\n``scripts/run_bounded_test.py``.  Its fixed bounds are one GCS, one NodeManager,\ntwo ordinary Workers, exactly two tasks, one INLINE outer result containing one\nstored child ref, and no Actor/trace or test-owned server.\nOne 1 MiB store, ten seconds of shared post-init work, at most sixteen observed\nowner/fetch replies and a three-second reference-close budget in finally. All\nfour PIDs and five endpoints, including the Driver owner, are checked even\nafter a work or close failure. Only the outer process-tree runner bounds\nstartup/shutdown; reference receipt timeouts do not cancel remote cleanup.\n",
+      "new_docstring": "Bounded smoke for a foreign stored ObjectRef data path.\n\nAfter review and registration, run only this exact node ID through\n``scripts/run_baseline.py --case EXACT``.  Its fixed bounds are one GCS, one NodeManager,\ntwo ordinary Workers, exactly two tasks, one INLINE outer result containing one\nstored child ref, and no Actor/trace or test-owned server.\nOne 1 MiB store, ten seconds of shared post-init work, at most sixteen observed\nowner/fetch replies and a three-second reference-close budget in finally. All\nfour PIDs and five endpoints, including the Driver owner, are checked even\nafter a work or close failure. Only the outer process-tree runner bounds\nstartup/shutdown; reference receipt timeouts do not cancel remote cleanup.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_foreign_wait_drop_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_foreign_wait_drop_replay_then_owner_reconstruction"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_foreign_wait_drop_path.py::test_foreign_wait_drop_replay_then_owner_reconstruction"
+      ],
+      "before_sha256": "db451c187018414f53483410a03f1c373f900b61117e1ff65e413f686d5349cb",
+      "after_sha256": "5c24683c5615d730ee85f8f35727b0c84522ae02cb01cae2458db61d5b9b1772",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded foreign ``wait``/``drop_object``/reconstruction smoke.\n\nThe owner task runs on the first Node and returns a still-live ObjectRef whose\nproducer is resource-pinned to the second Node.  The Driver waits using owner\nmetadata only, drops the sole replica through the Worker owner, loses the first\ndrop acknowledgement, and exact-replays the same operation before ``get`` asks\nthat owner to reconstruct the stable ObjectID.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, two NodeManagers, one ordinary Worker each, two logical\ntasks and at most three physical task executions. Each Node has a 1-MiB store;\nthe child's stored value contains 64 KiB plus small tuple/pickle metadata.\nThere is no Actor, tracing, test-owned listener/thread or sleep.\n\nPublic get/wait, <=64 LOST observations and <=64 physical-GC observations\nshare fifteen seconds after init. Raw drop/_borrow_rpc retain their own finite\nthree-attempt RPC policy under the outer 30-second process-tree bound; the test\ndoes not pretend a caller deadline cancels those inner operations. A passive\nobserver stores <=256 relevant exchanges, except for the original single ACK\nloss after a real successful owner drop. Reference close uses a three-second\nshared limit, and failure-finally always reaches shutdown and five-PID/six-\nendpoint checks, including the Driver owner. True GC evidence is limited to\nthe local outer's collection, borrower Release convergence and absence of the\npreviously observed attempt-1 stored bytes, not foreign owner metadata GC.\n",
+      "new_docstring": "Bounded foreign ``wait``/``drop_object``/reconstruction smoke.\n\nThe owner task runs on the first Node and returns a still-live ObjectRef whose\nproducer is resource-pinned to the second Node.  The Driver waits using owner\nmetadata only, drops the sole replica through the Worker owner, loses the first\ndrop acknowledgement, and exact-replays the same operation before ``get`` asks\nthat owner to reconstruct the stable ObjectID.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static\nbounds are one GCS, two NodeManagers, one ordinary Worker each, two logical\ntasks and at most three physical task executions. Each Node has a 1-MiB store;\nthe child's stored value contains 64 KiB plus small tuple/pickle metadata.\nThere is no Actor, tracing, test-owned listener/thread or sleep.\n\nPublic get/wait, <=64 LOST observations and <=64 physical-GC observations\nshare fifteen seconds after init. Raw drop/_borrow_rpc retain their own finite\nthree-attempt RPC policy under the outer 30-second process-tree bound; the test\ndoes not pretend a caller deadline cancels those inner operations. A passive\nobserver stores <=256 relevant exchanges, except for the original single ACK\nloss after a real successful owner drop. Reference close uses a three-second\nshared limit, and failure-finally always reaches shutdown and five-PID/six-\nendpoint checks, including the Driver owner. True GC evidence is limited to\nthe local outer's collection, borrower Release convergence and absence of the\npreviously observed attempt-1 stored bytes, not foreign owner metadata GC.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_local_nested_reconstruction_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_local_nested_handle_survives_single_return_reconstruction"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_local_nested_reconstruction_path.py::test_local_nested_handle_survives_single_return_reconstruction"
+      ],
+      "before_sha256": "f43e16065e7d85616091984fff6dca45dfe536d991cb420b67a955f80bbe703e",
+      "after_sha256": "b6555c959428c4a1c6400f20e6aa80f7e9fc4cb0c4ec216c8dd2a7ccd27c6a35",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded local nested-handle lineage reconstruction smoke.\n\n``ray.put`` creates A and one ordinary task B receives A only inside an\ninline container.  B's stored result loses its sole replica and is replayed\nwith the same ObjectID.  The smoke proves that A is a lifetime handle rather\nthan a readiness/DFS edge, while the replay still imports and dereferences A\nthrough a fresh task hold and a fresh physical-attempt borrower.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, one NodeManager, one ordinary Worker, one ordinary task\nwith one reconstruction attempt, a 1 MiB store, tiny values, no Actor or\ntracing, no test-owned listener, and no sleeps. Driver operations/observations\nshare fifteen seconds after init; the original Worker get keeps its finite\nten-second timeout. The early source close stays within that work budget;\nfinal public closes and owner GC share three seconds before unconditional\nshutdown and three-PID/four-endpoint checks. The nested container is INLINE;\n2 KiB source/result padding keeps both actual values store-backed.\nAt most eight Acquire records and 256 passive checks per observation are kept.\nThe outer 30-second runner bounds calls whose internal RPC policy is unchanged.\n",
+      "new_docstring": "Bounded local nested-handle lineage reconstruction smoke.\n\n``ray.put`` creates A and one ordinary task B receives A only inside an\ninline container.  B's stored result loses its sole replica and is replayed\nwith the same ObjectID.  The smoke proves that A is a lifetime handle rather\nthan a readiness/DFS edge, while the replay still imports and dereferences A\nthrough a fresh task hold and a fresh physical-attempt borrower.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static\nbounds are one GCS, one NodeManager, one ordinary Worker, one ordinary task\nwith one reconstruction attempt, a 1 MiB store, tiny values, no Actor or\ntracing, no test-owned listener, and no sleeps. Driver operations/observations\nshare fifteen seconds after init; the original Worker get keeps its finite\nten-second timeout. The early source close stays within that work budget;\nfinal public closes and owner GC share three seconds before unconditional\nshutdown and three-PID/four-endpoint checks. The nested container is INLINE;\n2 KiB source/result padding keeps both actual values store-backed.\nAt most eight Acquire records and 256 passive checks per observation are kept.\nThe outer 30-second runner bounds calls whose internal RPC policy is unchanged.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_nested_task_argument_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_nested_argument_survives_sender_close_before_worker_push"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_nested_task_argument_path.py::test_nested_argument_survives_sender_close_before_worker_push"
+      ],
+      "before_sha256": "913090c4b6bb6af8146e16d7efe7e61b25d2278a557445c51e0352074cdd0b9b",
+      "after_sha256": "c92fc40a772b6e2ea4826c0b07f888f2a0bb220fa40be8027c3b327b3b7d8f45",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded Driver-owned ObjectRef nested-argument acceptance path.\n\nTwo tiny blocker tasks occupy the only two ordinary Worker slots before the\nconsumer is submitted.  Consequently the Driver can close its source handle\nafter ``remote()`` has durably transferred the logical-task hold, while the\nconsumer is still unable to obtain a lease or receive ``PushTask``.  Once the\nblockers are released, the Worker restores the repeated nested reference as a\npublic ObjectRef and resolves it through the Driver owner endpoint.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, one NodeManager, two ordinary Workers, three tiny tasks,\none Driver-owned inline object, one test-owned loopback barrier, no Actor and\nno trace collector. The Node has two CPUs and a 1-MiB store. This source is an\nalready-READY put, not a PENDING producer: the test proves nested manifest/\nlifetime separation and sender-close-before-Push, not pending-input timing.\n\nDriver and Worker barrier/get operations share fifteen seconds after init.\nEach of two arrivals requires at most eight reads. Accepted sockets and all\nfour public handles share three seconds in finally before unconditional\nshutdown. Listener setup is inside that cleanup domain; four PIDs and six\nendpoints, including the Driver owner, are checked even after failure. No\nadditional Task, fault, observer thread or sleep is introduced. Startup and\nshutdown retain the exact node ID's external 30-second process-tree bound.\n",
+      "new_docstring": "Bounded Driver-owned ObjectRef nested-argument acceptance path.\n\nTwo tiny blocker tasks occupy the only two ordinary Worker slots before the\nconsumer is submitted.  Consequently the Driver can close its source handle\nafter ``remote()`` has durably transferred the logical-task hold, while the\nconsumer is still unable to obtain a lease or receive ``PushTask``.  Once the\nblockers are released, the Worker restores the repeated nested reference as a\npublic ObjectRef and resolves it through the Driver owner endpoint.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static\nbounds are one GCS, one NodeManager, two ordinary Workers, three tiny tasks,\none Driver-owned inline object, one test-owned loopback barrier, no Actor and\nno trace collector. The Node has two CPUs and a 1-MiB store. This source is an\nalready-READY put, not a PENDING producer: the test proves nested manifest/\nlifetime separation and sender-close-before-Push, not pending-input timing.\n\nDriver and Worker barrier/get operations share fifteen seconds after init.\nEach of two arrivals requires at most eight reads. Accepted sockets and all\nfour public handles share three seconds in finally before unconditional\nshutdown. Listener setup is inside that cleanup domain; four PIDs and six\nendpoints, including the Driver owner, are checked even after failure. No\nadditional Task, fault, observer thread or sleep is introduced. Startup and\nshutdown retain the exact node ID's external 30-second process-tree bound.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_node_crash_recovery_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_node_crash_recovery_path.py::test_remote_node_death_retries_task_on_survivor_and_reports_crash"
+      ],
+      "current_test_functions": [
+        "test_remote_node_death_retries_task_on_survivor_and_reports_crash"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "f0138176412628d330d26e925ae9ae65d995a88396b90b22edeaa8e522901a3e",
+      "after_sha256": "970ec554f3ae4a4ef235b9267272933ca6f736990a32ce1d6bc5e01d5d488d8d",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded proof of Driver-owned Task recovery after a Node dies.\n\nBoth logical nodes can run the recovery task.  A first gated task occupies the\nDriver-local node, forcing attempt 0 onto the remote victim.  Once that attempt\nhas entered user code, the Driver kills the victim's exact managed process\ngroup and waits for the GCS tombstone, survivor snapshot, and Core death fence.\nOnly then does the test release local capacity, so attempt 1 must run on the\nsurviving node with the original TaskID/ObjectID and fresh AttemptID/LeaseID.\n\nRun only through this file's exact node ID in ``run_bounded_test.py``. One GCS,\ntwo Nodes, one Worker per Node, two 1 MiB stores and three tiny logical Tasks\nare managed by the 30-second process-tree runner. One loopback gate and all\nget/membership observations share a 15-second post-init budget. At most 64\nlease records are passive. Reference closes and gate release share three\nseconds in failure finally, followed by unconditional cluster shutdown and\nall five-PID/seven-endpoint checks. No additional fault or user Task is added.\n",
+      "new_docstring": "Bounded proof of Driver-owned Task recovery after a Node dies.\n\nBoth logical nodes can run the recovery task.  A first gated task occupies the\nDriver-local node, forcing attempt 0 onto the remote victim.  Once that attempt\nhas entered user code, the Driver kills the victim's exact managed process\ngroup and waits for the GCS tombstone, survivor snapshot, and Core death fence.\nOnly then does the test release local capacity, so attempt 1 must run on the\nsurviving node with the original TaskID/ObjectID and fresh AttemptID/LeaseID.\n\nRun only through this file's exact node ID in ``scripts/run_baseline.py --smoke EXACT``. One GCS,\ntwo Nodes, one Worker per Node, two 1 MiB stores and three tiny logical Tasks\nare managed by the 30-second process-tree runner. One loopback gate and all\nget/membership observations share a 15-second post-init budget. At most 64\nlease records are passive. Reference closes and gate release share three\nseconds in failure finally, followed by unconditional cluster shutdown and\nall five-PID/seven-endpoint checks. No additional fault or user Task is added.\n"
+    },
+    {
+      "path": "tests/integration/test_parallel_task_lanes.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_two_nodes_execute_resource_pinned_tasks_concurrently"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_parallel_task_lanes.py::test_two_nodes_execute_resource_pinned_tasks_concurrently"
+      ],
+      "before_sha256": "0d4222f4c31b602859e3923ceb5f9f918ec7abf9a5c8e03b2a48abf71987c497",
+      "after_sha256": "557b19676d8d0f830d3f3bf9de6fb1a7102dcfe6e5803031193e33301133b6c2",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded proof that two dispatch lanes execute on two nodes concurrently.\n\nEach task requires a custom resource present on exactly one logical node.  Both\nWorkers connect to a loopback barrier owned by this test process and wait for a\nrelease byte.  The test accepts and identifies both connections before releasing\neither one, which proves overlap without sleeps or elapsed-time thresholds.\n\nRun this exact node ID only through ``scripts/run_bounded_test.py``.  The hard\nbounds are one GCS, two NodeManagers, one Worker per node, two tiny tasks, one\ntest-owned loopback listener and two 1-MiB stores. All task, arrival, release\nand result work shares fifteen seconds after init; accepted sockets and public\nreference close share three seconds in finally before unconditional shutdown.\nThe listener's setup is inside that cleanup domain. Initial/returned/report\nPIDs and all seven endpoints, including the Driver owner, are checked even on\nfailure. No test-owned thread, extra Task, injected failure or sleep is added;\nstartup/shutdown retain the runner's 30-second process-tree deadline.\n",
+      "new_docstring": "Bounded proof that two dispatch lanes execute on two nodes concurrently.\n\nEach task requires a custom resource present on exactly one logical node.  Both\nWorkers connect to a loopback barrier owned by this test process and wait for a\nrelease byte.  The test accepts and identifies both connections before releasing\neither one, which proves overlap without sleeps or elapsed-time thresholds.\n\nAfter review and registration, run this exact node ID only through ``scripts/run_baseline.py --case EXACT``.  The hard\nbounds are one GCS, two NodeManagers, one Worker per node, two tiny tasks, one\ntest-owned loopback listener and two 1-MiB stores. All task, arrival, release\nand result work shares fifteen seconds after init; accepted sockets and public\nreference close share three seconds in finally before unconditional shutdown.\nThe listener's setup is inside that cleanup domain. Initial/returned/report\nPIDs and all seven endpoints, including the Driver owner, are checked even on\nfailure. No test-owned thread, extra Task, injected failure or sleep is added;\nstartup/shutdown retain the runner's 30-second process-tree deadline.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_placement_group_node_loss_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_placement_group_node_loss_path.py::test_participant_node_loss_is_terminal_and_survivor_cleans_pg"
+      ],
+      "current_test_functions": [
+        "test_participant_node_loss_is_terminal_and_survivor_cleans_pg"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "8e1c0bdc726e06fe20a98a54a20f34d39775e7317e5a06f30076fd8b128c08c4",
+      "after_sha256": "c8f9168a652e9a9b1bbf3b9104ad4dd2855b803c7e0c4edaa6ff36835baf8902",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded proof that one PG participant loss is terminal.\n\nThe test creates one two-bundle STRICT_SPREAD placement group, starts exactly\none gated task on the remote participant, and crashes that exact managed Node.\nThe existing crash failpoint returns only after the GCS death tombstone, the\nsurvivor membership snapshot, and the Driver Core fence have converged. Task\nentry is a socket event; later transitions use typed runtime observations.\nThe GCS resource hint is polled passively within the original work deadline,\nnot treated as a synchronous part of the survivor's successful Task reply.\n\nRun only by this test's exact allowlisted node ID through the 30-second\n``scripts/run_bounded_test.py`` process-tree runner. Bounds are five startup\nchildren (one GCS, two one-Worker Nodes), 1 MiB per Node store, one gated PG\ntask, one ordinary survivor probe and one exact Node crash. Test-owned work\nshares fifteen seconds after init; both real reference finalizers share three\nseconds and always fall through to shutdown. Synchronous PG create/remove and\nruntime startup/shutdown are still covered by the outer runner: a work deadline\nis not transaction cancellation. Every tracked PID and endpoint, including the\nDriver owner and gate, is checked even when the work or reference close fails.\n",
+      "new_docstring": "Bounded proof that one PG participant loss is terminal.\n\nThe test creates one two-bundle STRICT_SPREAD placement group, starts exactly\none gated task on the remote participant, and crashes that exact managed Node.\nThe existing crash failpoint returns only after the GCS death tombstone, the\nsurvivor membership snapshot, and the Driver Core fence have converged. Task\nentry is a socket event; later transitions use typed runtime observations.\nThe GCS resource hint is polled passively within the original work deadline,\nnot treated as a synchronous part of the survivor's successful Task reply.\n\nRun only by this test's exact allowlisted node ID through the 30-second\n``scripts/run_baseline.py --smoke EXACT`` process-tree runner. Bounds are five startup\nchildren (one GCS, two one-Worker Nodes), 1 MiB per Node store, one gated PG\ntask, one ordinary survivor probe and one exact Node crash. Test-owned work\nshares fifteen seconds after init; both real reference finalizers share three\nseconds and always fall through to shutdown. Synchronous PG create/remove and\nruntime startup/shutdown are still covered by the outer runner: a work deadline\nis not transaction cancellation. Every tracked PID and endpoint, including the\nDriver owner and gate, is checked even when the work or reference close fails.\n"
+    },
+    {
+      "path": "tests/integration/test_placement_group_prepare_failure_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_placement_group_prepare_failure_path.py::test_second_participant_prepare_rejection_aborts_first_and_restores_roots"
+      ],
+      "current_test_functions": [
+        "test_second_participant_prepare_rejection_aborts_first_and_restores_roots"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "3554819f983959264ae4cbfea2491b5a421ea508e5eb578d916b872ff18d7530",
+      "after_sha256": "fb88644c1d9969d11146453722640869b8f4809b028238e264d7f82f7b56e7b0",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded partial-PREPARE rollback acceptance path.\n\nOne two-bundle STRICT_SPREAD placement group uses the explicit test-only GCS\ncheckpoint to reject the second immutable participant only after the first\nreal Node has acknowledged PREPARED.  GCS must then send real ABORT operations\nto the complete participant set, wait for both ACKs, publish no placement, and\nleave both Node root ledgers at their initial one-CPU baselines.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``. Bounds are\nfive children (one GCS, two one-Worker Nodes), 1 MiB per Node store, one failed\nPG attempt with the original single PREPARE rejection, and no application\nTasks, object data, test-owned thread/listener or sleeps. PG control, semantic\ntrace observations and typed queries share ten seconds after init. Trace\npolling is finite and passive; it never repairs protocol state. Synchronous\nPG creation, startup and shutdown still need the outer 30-second process-tree\nbound: the work deadline is not transaction cancellation. Finally checks all\nfive PIDs and seven endpoints, including Driver owner/trace, even on failure.\n",
+      "new_docstring": "Bounded partial-PREPARE rollback acceptance path.\n\nOne two-bundle STRICT_SPREAD placement group uses the explicit test-only GCS\ncheckpoint to reject the second immutable participant only after the first\nreal Node has acknowledged PREPARED.  GCS must then send real ABORT operations\nto the complete participant set, wait for both ACKs, publish no placement, and\nleave both Node root ledgers at their initial one-CPU baselines.\n\nRun only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``. Bounds are\nfive children (one GCS, two one-Worker Nodes), 1 MiB per Node store, one failed\nPG attempt with the original single PREPARE rejection, and no application\nTasks, object data, test-owned thread/listener or sleeps. PG control, semantic\ntrace observations and typed queries share ten seconds after init. Trace\npolling is finite and passive; it never repairs protocol state. Synchronous\nPG creation, startup and shutdown still need the outer 30-second process-tree\nbound: the work deadline is not transaction cancellation. Finally checks all\nfive PIDs and seven endpoints, including Driver owner/trace, even on failure.\n"
+    },
+    {
+      "path": "tests/integration/test_recursive_lineage_reconstruction_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_recursive_lineage_reconstruction_path.py::test_recursive_lineage_reconstructs_leaf_to_root"
+      ],
+      "current_test_functions": [
+        "test_recursive_lineage_reconstructs_leaf_to_root"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "c3a5ae409c0ed1176ad68106666338bdec74b3f92c368aadf071db5734aad88f",
+      "after_sha256": "e0584de14dbee99ac404f031f70e3eff8cbd51a513fe9ea5f75bc1af18c811db",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded three-level recursive lineage reconstruction smoke.\n\nAll three single-return results are forced into the local ObjectStore.  Their\nonly replicas are dropped while the public ObjectRefs and producer lineage stay\nlive; one final ``get(root)`` must therefore reconstruct leaf, middle, then root\nwith new physical attempts while preserving every logical ObjectID.\n\nThis is an explicitly reviewed composite experiment, not a single-fault smoke:\none two-CPU Node, two ordinary Workers, three physical drops, and one\nreconstruction per producer (three initial plus three reconstructed executions).\nIts exact two-CPU/three-drop/three-reconstruction exception must be approved\nbefore running this node ID through ``scripts/run_bounded_test.py``.\n\nFour managed children, five runtime/owner endpoints, one 1 MiB store and three\ntiny stored objects bound the workload. All get/drop/finish observations share\nfifteen seconds after init; public closes and owner/lineage GC share three\nseconds in finally, before unconditional shutdown and exact PID/port checks.\nThere is no Actor, tracing, GPU, external network, extra listener or test thread.\nStartup/shutdown retain their own contracts under the 30-second tree runner.\n",
+      "new_docstring": "Bounded three-level recursive lineage reconstruction smoke.\n\nAll three single-return results are forced into the local ObjectStore.  Their\nonly replicas are dropped while the public ObjectRefs and producer lineage stay\nlive; one final ``get(root)`` must therefore reconstruct leaf, middle, then root\nwith new physical attempts while preserving every logical ObjectID.\n\nThis is an explicitly reviewed composite experiment, not a single-fault smoke:\none two-CPU Node, two ordinary Workers, three physical drops, and one\nreconstruction per producer (three initial plus three reconstructed executions).\nIts exact two-CPU/three-drop/three-reconstruction exception is included in\nthe registered smoke. Run it through ``scripts/run_baseline.py --smoke EXACT``.\n\nFour managed children, five runtime/owner endpoints, one 1 MiB store and three\ntiny stored objects bound the workload. All get/drop/finish observations share\nfifteen seconds after init; public closes and owner/lineage GC share three\nseconds in finally, before unconditional shutdown and exact PID/port checks.\nThere is no Actor, tracing, GPU, external network, extra listener or test thread.\nStartup/shutdown retain their own contracts under the 30-second tree runner.\n"
+    },
+    {
+      "path": "tests/integration/test_secondary_replica_node_loss_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_dead_primary_promotes_surviving_replica_without_lineage_replay"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_secondary_replica_node_loss_path.py::test_dead_primary_promotes_surviving_replica_without_lineage_replay"
+      ],
+      "before_sha256": "1a616c942eb66169c0501ec3aed5fa1b88b781ac7617e0d8d516b9cdc7451f5d",
+      "after_sha256": "dc82f7e651c56549124873e91bb24b8da0e37d2f61a22280dda196b8d9703471",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded proof that a surviving replica wins before lineage replay.\n\nThe producer is forced onto the remote source Node and returns one store-backed\nvalue.  A consumer on the Driver-local target Node forces the normal source-pin,\nchunk transfer, target-seal, and owner-location-ACK path.  Only after both replica\nlocations are authoritative does the test crash the source Node.  The same\nObjectRef must remain READY on the target replica with attempt zero and no retry or\nreconstruction.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static bounds\nare one GCS, two NodeManagers, one Worker per Node, two logical tasks, two 1 MiB\nobject stores, one exact managed Node crash, no tracing or test-owned listener, and\nthe runner's 30-second process-tree deadline.\n",
+      "new_docstring": "Bounded proof that a surviving replica wins before lineage replay.\n\nThe producer is forced onto the remote source Node and returns one store-backed\nvalue.  A consumer on the Driver-local target Node forces the normal source-pin,\nchunk transfer, target-seal, and owner-location-ACK path.  Only after both replica\nlocations are authoritative does the test crash the source Node.  The same\nObjectRef must remain READY on the target replica with attempt zero and no retry or\nreconstruction.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static bounds\nare one GCS, two NodeManagers, one Worker per Node, two logical tasks, two 1 MiB\nobject stores, one exact managed Node crash, no tracing or test-owned listener, and\nthe runner's 30-second process-tree deadline.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_startup_rollback_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_startup_rollback_path.py::test_second_node_ready_failure_rolls_back_every_started_process"
+      ],
+      "current_test_functions": [
+        "test_second_node_ready_failure_rolls_back_every_started_process"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "41db181922dfe96a891f3954917414cf10850faec6e174c407e00d8636efa0d8",
+      "after_sha256": "c05dcecfffec8431baaf1c7789b543acc45c466ad6fb1369f14265c930d96c6a",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded real-process proof for partial ``init`` rollback.\n\nRun only the exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, two Nodes, one ordinary Worker per Node, no tasks, no Actor,\ntwo 1-MiB stores and no trace collector. The failpoint fires after Node 1 has\nreturned its validated Node/Worker startup descriptor but before that Node is\npublished into ``init``'s committed prefix.\n\nAt most eight passive callback records capture actual Process PIDs and startup\nendpoints. Normal assertions prove init's own rollback before finally calls\nshutdown; that unconditional fallback also cleans an unexpectedly successful\ninit. Every known PID/socket is checked again after the fallback. No test-owned\nthread, listener, sleep or new failure is introduced. Startup, rollback and\nshutdown retain the external runner's bound, not a fabricated local timeout.\n",
+      "new_docstring": "Bounded real-process proof for partial ``init`` rollback.\n\nRun only the exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Static\nbounds are one GCS, two Nodes, one ordinary Worker per Node, no tasks, no Actor,\ntwo 1-MiB stores and no trace collector. The failpoint fires after Node 1 has\nreturned its validated Node/Worker startup descriptor but before that Node is\npublished into ``init``'s committed prefix.\n\nAt most eight passive callback records capture actual Process PIDs and startup\nendpoints. Normal assertions prove init's own rollback before finally calls\nshutdown; that unconditional fallback also cleans an unexpectedly successful\ninit. Every known PID/socket is checked again after the fallback. No test-owned\nthread, listener, sleep or new failure is introduced. Startup, rollback and\nshutdown retain the external runner's bound, not a fabricated local timeout.\n"
+    },
+    {
+      "path": "tests/integration/test_stored_outer_publication_path.py",
+      "state": "reviewed_migration",
+      "runner_option": "--case",
+      "registered_selectors": [
+        "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects"
+      ],
+      "current_test_functions": [
+        "test_stored_outer_publication_adopts_owner_handoff_and_collects"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "2b638bf5d389ea5ae4bd65f616d238a6578081a85b5fa7f318de497077c66451",
+      "after_sha256": "b4520f4f6d9a4c49c6125cca3d9aaa0064fbde86e0e04873a199f8bd7225661b",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded acceptance path for a stored outer containing an ObjectRef.\n\nOne zero-CPU parent task submits one child and returns that Worker-owned handle\nbeside 64 KiB of padding. The single outer return crosses the unified output\nowner-led publication with one OBJECT_STORE output and contained edge. The\ntest proves the real owner handoff/Node adoption barrier, then closes both\npublic handles and proves the reverse child-pin/replica/metadata barrier.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, one NodeManager, two ordinary Workers, exactly two tasks,\none 1 MiB ObjectStore, no Actor, trace collector, test-owned server, or sleep,\nand the runner's 30-second process-tree deadline. All work after init shares\nthe original ten-second monotonic deadline. Public closes, actual GC and the\noriginal inverse-protocol probes additionally share one final three-second\nepoch, reused by failure-finally rather than reset. Borrow RPCs retain their\nown finite retry policy; public deadlines do not cancel distributed cleanup.\nFour managed PIDs/five endpoints are checked after unconditional shutdown even\nif an assertion fails. Normal resource-clean assertions still certify the\nsuccessful path. Public close keeps the exact release receipt and deadline.\n",
+      "new_docstring": "Bounded acceptance path for a stored outer containing an ObjectRef.\n\nOne zero-CPU parent task submits one child and returns that Worker-owned handle\nbeside 64 KiB of padding. The single outer return crosses the unified output\nowner-led publication with one OBJECT_STORE output and contained edge. The\ntest proves the real owner handoff/Node adoption barrier, then closes both\npublic handles and proves the reverse child-pin/replica/metadata barrier.\n\nRun only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static\nbounds are one GCS, one NodeManager, two ordinary Workers, exactly two tasks,\none 1 MiB ObjectStore, no Actor, trace collector, test-owned server, or sleep,\nand the runner's 30-second process-tree deadline. All work after init shares\nthe original ten-second monotonic deadline. Public closes, actual GC and the\noriginal inverse-protocol probes additionally share one final three-second\nepoch, reused by failure-finally rather than reset. Borrow RPCs retain their\nown finite retry policy; public deadlines do not cancel distributed cleanup.\nFour managed PIDs/five endpoints are checked after unconditional shutdown even\nif an assertion fails. Normal resource-clean assertions still certify the\nsuccessful path. Public close keeps the exact release receipt and deadline.\n",
+      "registration_work_package_id": "K3-stored-outer",
+      "registry_hash_refresh_required_after_application": true
+    },
+    {
+      "path": "tests/integration/test_stored_physical_gc_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_stored_physical_gc_path.py::test_foreign_stored_dependency_collects_source_and_target_replicas"
+      ],
+      "current_test_functions": [
+        "test_foreign_stored_dependency_collects_source_and_target_replicas"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "fd2ab486ecb876b4c7463e243b57885e6e8ba21ee1baca509687110d9c571006",
+      "after_sha256": "2324f0516c5861099476194d3f6fd705820091dfb8bde1bf22e715c1245969fc",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded two-replica physical-GC acceptance test.\n\nA source Worker returns a still-pending Worker-owned ObjectRef.  A consumer on\nthe second node retains that object, pulls its 64 KiB payload, and therefore\ncreates one sealed replica on each node.  All public handles are closed before\nan owner-local, zero-CPU probe verifies that the source Worker's embedded Core\nhas completed ``ACTIVE -> COLLECTING -> COLLECTED`` and forgotten metadata, the\ncanonical descriptor, waiter, durable obligation, and producer lineage.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds are\none GCS, two Nodes, one ordinary Worker per Node, four tasks, one test-owned\ngate, 1 MiB per ObjectStore, one trace collector, and a 30-second runner\ndeadline. Five child PIDs and eight endpoints include the Driver owner.\nAll gets/gate/probe/trace/direct RPC observations share fifteen seconds after\ninit. The owner probe and trace delivery keep their shorter five-/two-second\nbudgets; observation lists and polls are finite. Final gate/reference cleanup\nshares three seconds and always reaches shutdown and PID/endpoint checks.\n",
+      "new_docstring": "Bounded two-replica physical-GC acceptance test.\n\nA source Worker returns a still-pending Worker-owned ObjectRef.  A consumer on\nthe second node retains that object, pulls its 64 KiB payload, and therefore\ncreates one sealed replica on each node.  All public handles are closed before\nan owner-local, zero-CPU probe verifies that the source Worker's embedded Core\nhas completed ``ACTIVE -> COLLECTING -> COLLECTED`` and forgotten metadata, the\ncanonical descriptor, waiter, durable obligation, and producer lineage.\n\nRun only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Bounds are\none GCS, two Nodes, one ordinary Worker per Node, four tasks, one test-owned\ngate, 1 MiB per ObjectStore, one trace collector, and a 30-second runner\ndeadline. Five child PIDs and eight endpoints include the Driver owner.\nAll gets/gate/probe/trace/direct RPC observations share fifteen seconds after\ninit. The owner probe and trace delivery keep their shorter five-/two-second\nbudgets; observation lists and polls are finite. Final gate/reference cleanup\nshares three seconds and always reaches shutdown and PID/endpoint checks.\n"
+    },
+    {
+      "path": "tests/integration/test_two_worker_pool_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_two_worker_pool_path.py::test_one_node_two_workers_execute_two_tasks_concurrently"
+      ],
+      "current_test_functions": [
+        "test_one_node_two_workers_execute_two_tasks_concurrently"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "8ed7ba30fb0ef69bb803847c779eaa59f58df188b1fd5240a5270ab9f911da0a",
+      "after_sha256": "63023c72843810465a2f30fdcda1af17dcb150966cc36d08bfac4029f229a752",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded proof that two Workers on one Node execute concurrently.\n\nBoth tiny tasks connect to a test-owned loopback barrier and remain blocked.\nThe Driver accepts and identifies both Worker connections before releasing\neither, proving overlap without sleeps or elapsed-time assertions.\n\nRun only its exact allowlisted ID through ``scripts/run_bounded_test.py`` after\nreview. One GCS, one Node, two Workers, one 1 MiB store, two logical CPUs and\ntwo tiny Tasks fit the 30-second process-tree bound. The single barrier and\nall gets share ten seconds after init. Both reference receipts and gate\nrelease share three seconds in finally, before unconditional shutdown and\nfour-PID/six-endpoint checks. There is no failure injection or extra Task.\n",
+      "new_docstring": "Bounded proof that two Workers on one Node execute concurrently.\n\nBoth tiny tasks connect to a test-owned loopback barrier and remain blocked.\nThe Driver accepts and identifies both Worker connections before releasing\neither, proving overlap without sleeps or elapsed-time assertions.\n\nRun its registered exact ID through ``scripts/run_baseline.py --smoke EXACT``.\nOne GCS, one Node, two Workers, one 1 MiB store, two logical CPUs and\ntwo tiny Tasks fit the 30-second process-tree bound. The single barrier and\nall gets share ten seconds after init. Both reference receipts and gate\nrelease share three seconds in finally, before unconditional shutdown and\nfour-PID/six-endpoint checks. There is no failure injection or extra Task.\n"
+    },
+    {
+      "path": "tests/integration/test_worker_death_ownership_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_dead_attempt_borrower_is_swept_while_logical_hold_spans_retry"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_worker_death_ownership_path.py::test_dead_attempt_borrower_is_swept_while_logical_hold_spans_retry"
+      ],
+      "before_sha256": "c81d259c98ef4bec0864a0d5b1b0adb916992b75a7ee233dd428a83c1b72ce01",
+      "after_sha256": "aa657bacc9222e3da66f051f9b4f9c04fea7ce96f6e096c371f00a92fd97f87a",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded Worker-death ownership cleanup across one task retry.\n\nAttempt 0 imports a Driver-owned nested ObjectRef and exits before user code.\nThe Node reports that exact child exit to GCS, replaces the one Worker slot,\nand the same logical task hold authorizes attempt 1 on the fresh Worker.  The\nDriver then consumes GCS's ordered death journal to remove the dead attempt's\nborrower without shortening the logical hold.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, one Node, one live ordinary Worker slot, one dead Worker,\none task with at most two attempts, two tiny objects, one 1 MiB store and one\nloopback gate. Three managed children at peak, four lifetime PIDs and at most\nsix distinct endpoints. Work shares fifteen seconds; all final gate/reference\ncleanup shares three seconds before unconditional shutdown. Passive records\nare capped at 64 RPCs/four acquisitions; cleanup polls are finite.\n",
+      "new_docstring": "Bounded Worker-death ownership cleanup across one task retry.\n\nAttempt 0 imports a Driver-owned nested ObjectRef and exits before user code.\nThe Node reports that exact child exit to GCS, replaces the one Worker slot,\nand the same logical task hold authorizes attempt 1 on the fresh Worker.  The\nDriver then consumes GCS's ordered death journal to remove the dead attempt's\nborrower without shortening the logical hold.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Static\nbounds are one GCS, one Node, one live ordinary Worker slot, one dead Worker,\none task with at most two attempts, two tiny objects, one 1 MiB store and one\nloopback gate. Three managed children at peak, four lifetime PIDs and at most\nsix distinct endpoints. Work shares fifteen seconds; all final gate/reference\ncleanup shares three seconds before unconditional shutdown. Passive records\nare capped at 64 RPCs/four acquisitions; cleanup polls are finite.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_worker_nested_task_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_worker_submits_child_task_and_gets_plain_result"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_worker_nested_task_path.py::test_worker_submits_child_task_and_gets_plain_result"
+      ],
+      "before_sha256": "c47fca104a9fbad0da41fe47080bbab411732a886321ff16f379815601ba9686",
+      "after_sha256": "e84f531a57239d6ebb4d6c6e081a223baea8f4f00b5e3ea7ba7cb163e2af5d91",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded Worker-side nested submission across two logical nodes.\n\nThe parent holds a ``parent_only`` resource on node 0 but requests no CPU.  From\ninside that ordinary Worker it submits a child requiring ``child_only`` and one\nCPU, then resolves the child with the public ``ray.get`` API.  The parent returns\nonly a plain value and the two execution PIDs; no ObjectRef escapes to the Driver.\n\nThe trace assertion distinguishes the Driver Core from the Core embedded in\nthe parent Worker and proves that child placement bypasses GCS. Publication\nstill uses the same real GCS-backed output protocol; trace names do not deny\nthat dependency. Run this exact node ID only through\n``scripts/run_bounded_test.py``. The hard bounds are one\nGCS, two NodeManagers, one ordinary Worker per node, exactly two tiny tasks, one\nnested ``get``, one bounded trace poll, and a 1 MiB store per Node. Driver and\nWorker waits share a ten-second post-init work deadline; public reference\nclose waits use at most three seconds, and finally always shuts the cluster\ndown and checks all five PIDs and seven endpoints. Run under the 30-second\nprocess-tree deadline; no additional test thread or listener is created.\n",
+      "new_docstring": "Bounded Worker-side nested submission across two logical nodes.\n\nThe parent holds a ``parent_only`` resource on node 0 but requests no CPU.  From\ninside that ordinary Worker it submits a child requiring ``child_only`` and one\nCPU, then resolves the child with the public ``ray.get`` API.  The parent returns\nonly a plain value and the two execution PIDs; no ObjectRef escapes to the Driver.\n\nThe trace assertion distinguishes the Driver Core from the Core embedded in\nthe parent Worker and proves that child placement bypasses GCS. Publication\nstill uses the same real GCS-backed output protocol; trace names do not deny\nthat dependency. After review and registration, run this exact node ID only through\n``scripts/run_baseline.py --case EXACT``. The hard bounds are one\nGCS, two NodeManagers, one ordinary Worker per node, exactly two tiny tasks, one\nnested ``get``, one bounded trace poll, and a 1 MiB store per Node. Driver and\nWorker waits share a ten-second post-init work deadline; public reference\nclose waits use at most three seconds, and finally always shuts the cluster\ndown and checks all five PIDs and seven endpoints. Run under the 30-second\nprocess-tree deadline; no additional test thread or listener is created.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_worker_owned_ref_path.py",
+      "state": "unregistered",
+      "runner_option": "--case",
+      "registered_selectors": [],
+      "current_test_functions": [
+        "test_worker_owned_inline_ref_escapes_to_driver_and_supports_repeated_get"
+      ],
+      "unregistered_exact_function_candidates": [
+        "tests/integration/test_worker_owned_ref_path.py::test_worker_owned_inline_ref_escapes_to_driver_and_supports_repeated_get"
+      ],
+      "before_sha256": "32dff814a545fe12dcf33c07def803220302e9bc3b20133e267bc238a2826896",
+      "after_sha256": "3884e3c0e48e6d4cc36cd4eb6815a394cdc9951333087b5a7da031dcedbc30bd",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded smoke for a Worker-owned child ObjectRef escaping to Driver.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Bounds:\none GCS, two NodeManagers, one ordinary Worker per node, exactly two tiny tasks,\none escaping inline ObjectRef, two outer deserializations, two owner gets, and\nthe runner's 30-second process-tree deadline. Each Node has a 1 MiB store. All\ngets share one ten-second work deadline; real public close waits share three\nseconds in finally before unconditional shutdown and five-PID/seven-endpoint\nhygiene checks, including failure paths. Worker owners reuse Worker endpoints.\n",
+      "new_docstring": "Bounded smoke for a Worker-owned child ObjectRef escaping to Driver.\n\nAfter review and registration, run only this exact node ID through ``scripts/run_baseline.py --case EXACT``.  Bounds:\none GCS, two NodeManagers, one ordinary Worker per node, exactly two tiny tasks,\none escaping inline ObjectRef, two outer deserializations, two owner gets, and\nthe runner's 30-second process-tree deadline. Each Node has a 1 MiB store. All\ngets share one ten-second work deadline; real public close waits share three\nseconds in finally before unconditional shutdown and five-PID/seven-endpoint\nhygiene checks, including failure paths. Worker owners reuse Worker endpoints.\n\nThis file has no registered smoke or migration selector in the current\nmanifest. Review and register the exact selector and its input closure\nbefore using the current runner's --case route.\n"
+    },
+    {
+      "path": "tests/integration/test_worker_owner_death_path.py",
+      "state": "delivery_smoke",
+      "runner_option": "--smoke",
+      "registered_selectors": [
+        "tests/integration/test_worker_owner_death_path.py::test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release"
+      ],
+      "current_test_functions": [
+        "test_confirmed_worker_owner_death_fences_foreign_get_wait_and_release"
+      ],
+      "unregistered_exact_function_candidates": [],
+      "before_sha256": "e862b8e38130e64f56b5ed5813a2905108fbef070efb371fe8b1c7863f6c0046",
+      "after_sha256": "4007a50dbfa26afa9a594b13cb887ab87aa26308d2895589ffb630f698fc817a",
+      "only_module_docstring_changed": true,
+      "non_docstring_AST_identical": true,
+      "non_docstring_bytes_identical": true,
+      "numeric_cost_tokens_identical": true,
+      "old_docstring": "Bounded proof that a foreign ObjectRef fails with its owner Worker.\n\nRun only this exact node ID through ``scripts/run_bounded_test.py``.  Static\nbounds are one GCS, two NodeManagers and one ordinary Worker per Node, with\ntwo 1-MiB stores. One owner Worker is killed and reaped before one replacement\nis spawned: five live children at peak, six child PIDs over the expected\nlifetime. The original two logical user Tasks each execute one attempt and\nreturn only tiny INLINE values. There is no tracing or test-owned listener.\n\nAll work shares fifteen seconds after init: two local finish/collection gates\nwith <=256 observations each, <=128 actual death-journal/state polls, and <=64 same-request\ncapacity polls for one additional lease-only probe. That probe has an\nindependent TaskID/LeaseID, empty inputs/returns and zero resources. It never\nsends Start/Push, but obtains the replacement's real endpoint and GCS PID, then\nis cancelled with an exact empty-inventory ACK. It is not a third user Task or\na read-only operation. Probe/refs cleanup share three seconds in finally and\nalways fall through to shutdown; startup/shutdown retain the outer 30s bound.\n\nThis is intentionally different from the consumer-death ownership smoke: the\nWorker whose embedded Core owns the escaped ObjectRef is the exact SIGKILL\ntarget.  Endpoint loss is not accepted as proof.  The Driver first consumes\nthe GCS Worker-death journal, then requires foreign ``get`` and ``wait`` to\nraise the typed owner-death error from that installed authority.\n",
+      "new_docstring": "Bounded proof that a foreign ObjectRef fails with its owner Worker.\n\nRun only this exact node ID through ``scripts/run_baseline.py --smoke EXACT``.  Static\nbounds are one GCS, two NodeManagers and one ordinary Worker per Node, with\ntwo 1-MiB stores. One owner Worker is killed and reaped before one replacement\nis spawned: five live children at peak, six child PIDs over the expected\nlifetime. The original two logical user Tasks each execute one attempt and\nreturn only tiny INLINE values. There is no tracing or test-owned listener.\n\nAll work shares fifteen seconds after init: two local finish/collection gates\nwith <=256 observations each, <=128 actual death-journal/state polls, and <=64 same-request\ncapacity polls for one additional lease-only probe. That probe has an\nindependent TaskID/LeaseID, empty inputs/returns and zero resources. It never\nsends Start/Push, but obtains the replacement's real endpoint and GCS PID, then\nis cancelled with an exact empty-inventory ACK. It is not a third user Task or\na read-only operation. Probe/refs cleanup share three seconds in finally and\nalways fall through to shutdown; startup/shutdown retain the outer 30s bound.\n\nThis is intentionally different from the consumer-death ownership smoke: the\nWorker whose embedded Core owns the escaped ObjectRef is the exact SIGKILL\ntarget.  Endpoint loss is not accepted as proof.  The Driver first consumes\nthe GCS Worker-death journal, then requires foreign ``get`` and ``wait`` to\nraise the typed owner-death error from that installed authority.\n"
+    }
+  ],
+  "registrations_requiring_input_hash_refresh_after_application": [
+    {
+      "selector": "tests/integration/test_stored_outer_publication_path.py::test_stored_outer_publication_adopts_owner_handoff_and_collects",
+      "work_package_id": "K3-stored-outer",
+      "changed_reviewed_inputs": [
+        "tests/integration/test_stored_outer_publication_path.py"
+      ]
+    }
+  ],
+  "excluded_history": [
+    "docs/project-cleanup-plan.md",
+    "docs/project-cleanup-plan.json",
+    "docs/project-cleanup-index.md"
+  ],
+  "validation": "AST and byte comparison only, no tests/imports/runner invocation"
+}

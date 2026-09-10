@@ -21,6 +21,7 @@ import time
 import pytest
 
 from miniray import core as core_module, node as node_module, protocol, transport
+from miniray.core import _HomeRoute
 from miniray.core import CoreWorker, _ReleaseBorrowedReference
 from miniray.ids import AttemptID, ObjectID, TaskID
 from miniray.node import NodeServer
@@ -53,6 +54,7 @@ class _Runtime:
         self.owner, self.borrower = make_pure_core(), make_pure_core()
         self.cores = (self.owner, self.borrower)
         self.borrower.node_id = self.owner.node_id
+        self.borrower._home_route = _HomeRoute(self.borrower.node_id, self.borrower.node_address, self.borrower._membership_epoch)
         self.owner.owner_address = ("owner-a.invalid", 1001)
         self.borrower.owner_address = ("owner-b.invalid", 1002)
         self.node = node = object.__new__(NodeServer)

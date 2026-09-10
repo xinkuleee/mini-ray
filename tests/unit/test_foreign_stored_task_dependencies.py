@@ -710,7 +710,7 @@ class _CanonicalReportFixture:
         assert self.target.object_store.get(self.source.object_id) == self.payload
         self.lease_state = _LeaseRequestState(self.request, self.target_address, self.target.node_id, False)
 
-    def resolve(self, node_id):
+    def resolve(self, node_id, *, home_route=None):
         assert node_id in (self.source_node.node_id, self.target.node_id)
         return self.source_address if node_id == self.source_node.node_id else self.target_address
 
@@ -1082,7 +1082,7 @@ class _DeathFencedReportFixture:
             assert self.target.object_store.get(descriptor.object_id) == payload
         self.lease_state = _LeaseRequestState(self.request, self.target_address, self.target.node_id, False)
 
-    def resolve(self, node_id):
+    def resolve(self, node_id, *, home_route=None):
         assert node_id in (self.source_node.node_id, self.target.node_id)
         return self.source_address if node_id == self.source_node.node_id else self.target_address
 
