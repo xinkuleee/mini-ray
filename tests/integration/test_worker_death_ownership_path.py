@@ -14,9 +14,9 @@ six distinct endpoints. Work shares fifteen seconds; all final gate/reference
 cleanup shares three seconds before unconditional shutdown. Passive records
 are capped at 64 RPCs/four acquisitions; cleanup polls are finite.
 
-This file has no registered smoke or migration selector in the current
-manifest. Review and register the exact selector and its input closure
-before using the current runner's --case route.
+The exact test is registered as a reviewed migration for the ordinary Task
+exception-boundary fix. Use only its explicit --case selector; it is not part
+of the delivery smoke gate.
 """
 
 from __future__ import annotations

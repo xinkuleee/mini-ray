@@ -1,0 +1,15 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_unified_output.py",
+    "exit_code": 1,
+    "seconds": 6.731,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-base-red-02-0915/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_unified_output.py"
+    ],
+    "log": "000-case.log"
+  }
+]

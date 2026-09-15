@@ -1,0 +1,2750 @@
+FFFFFFFFFF....FFFF...................................................... [ 76%]
+......................                                                   [100%]
+=================================== FAILURES ===================================
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[callable-exit-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8f89f70>
+case = 'callable-exit', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[callable-interrupt-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8fa9f70>
+case = 'callable-interrupt', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[message-ack] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8faa1e0>
+case = 'message', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[traceback-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8f8bd40>
+case = 'traceback', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[type-name-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8fbab70>
+case = 'type-name', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[instance-class-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc93888c0>
+case = 'instance-class', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[function-decode-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8fbadb0>
+case = 'function-decode', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[argument-decode-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8fb94f0>
+case = 'argument-decode', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[result-exit-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8f8b1d0>
+case = 'result-exit', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[result-pending-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc8fab3e0>
+case = 'result-pending', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[str-subclass-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc938aff0>
+case = 'str-subclass', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+                raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+            else:
+                assert not lose_ack
+    
+            first_entries = dict(entries)
+            exact_replay = pickle.loads(_serialize(push))
+            assert exact_replay == push and worker._handle_push_task(exact_replay) is failure
+            assert entries == first_entries
+            assert failure.status is expected_status
+            assert (failure.task_id, failure.attempt_id, failure.worker_id) == (
+                push.spec.task_id, push.spec.attempt_id, worker.worker_id,
+            )
+            assert failure.results == () and failure.output_publication is None
+            fields = (failure.error.type_name, failure.error.message, failure.error.traceback)
+>           assert all(type(value) is str for value in fields)
+E           assert False
+E            +  where False = all(<generator object test_user_executable_boundaries_complete_once_and_reuse_worker.<locals>.<genexpr> at 0x7f7fc8fa4790>)
+
+tests/unit/test_worker_unified_output.py:353: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[binding-ack] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc9117a70>
+case = 'binding', lose_ack = False
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[callable-exit-lost-complete-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc90f8500>
+case = 'callable-exit', lose_ack = True
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+_ test_user_executable_boundaries_complete_once_and_reuse_worker[argument-decode-lost-complete-ack] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f7fc90fa720>
+case = 'argument-decode', lose_ack = True
+
+    @pytest.mark.parametrize(
+        ("case", "lose_ack"),
+        [(case, False) for case in (
+            "callable-exit", "callable-interrupt", "message", "traceback",
+            "type-name", "instance-class", "function-decode", "argument-decode",
+            "result-exit", "result-pending", "ordinary", "blocking",
+            "blocking-subclass", "generator-exit", "str-subclass", "binding",
+        )] + [("callable-exit", True), ("argument-decode", True)],
+        ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+    )
+    def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+        """Real serializers and Node reducers; two selected lost-ACK seams only.
+    
+        Profiling observes the actual unpickled hooks, rather than copied closure
+        lists. No hook is replaced by a fake decode or direct diagnostic call.
+        """
+        from miniray.blocking import BlockingNotificationError
+        from miniray.resources import ResourceVector
+        from miniray.transport import _serialize
+        from tests.unit.test_lease_completion_handshake import _node_without_transport
+        from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+    
+        def _boundary_restore():
+            raise SystemExit("decode hook exit")
+    
+        class DecodeValue:
+            def __reduce__(self):
+                return _boundary_restore, ()
+    
+        captured = DecodeValue() if case == "function-decode" else None
+    
+        def _boundary_call(value=captured):
+            if case == "callable-exit":
+                raise SystemExit("user exit")
+            if case == "callable-interrupt":
+                raise KeyboardInterrupt("user interrupt")
+            if case == "generator-exit":
+                raise GeneratorExit("user generator exit")
+            if case == "ordinary":
+                raise ValueError("ordinary application failure")
+            if case == "blocking":
+                raise BlockingNotificationError("blocking notification failed")
+            if case == "blocking-subclass":
+                class BlockingSubclass(BlockingNotificationError):
+                    pass
+                raise BlockingSubclass("blocking subclass failed")
+            if case == "message":
+                class MessageError(Exception):
+                    def _boundary_message(self):
+                        raise RuntimeError("message hook failed")
+                    __str__ = _boundary_message
+                raise MessageError()
+            if case == "traceback":
+                class TracebackError(Exception):
+                    def _boundary_notes(self):
+                        raise SystemExit("traceback hook failed")
+                    __notes__ = property(_boundary_notes)
+                raise TracebackError("message is readable")
+            if case == "type-name":
+                class Meta(type):
+                    def _boundary_type_name(cls, name):
+                        if name == "__name__":
+                            raise RuntimeError("type name hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_type_name
+                class TypeNameError(Exception, metaclass=Meta):
+                    pass
+                raise TypeNameError("message is readable")
+            if case == "instance-class":
+                class InstanceClassError(Exception):
+                    def _boundary_instance_class(self, name):
+                        if name == "__class__":
+                            raise RuntimeError("instance class hook failed")
+                        return super().__getattribute__(name)
+                    __getattribute__ = _boundary_instance_class
+                raise InstanceClassError("message is readable")
+            if case == "str-subclass":
+                class ReducerText(str):
+                    def _boundary_text_reduce(self):
+                        raise SystemExit("diagnostic text must not enter wire")
+                    __reduce__ = _boundary_text_reduce
+                class TextSubclassError(Exception):
+                    def _boundary_text(self):
+                        return ReducerText("looks like ordinary text")
+                    __str__ = _boundary_text
+                raise TextSubclassError()
+            if case in ("result-exit", "result-pending"):
+                class Result:
+                    def _boundary_result_reduce(self):
+                        if case == "result-exit":
+                            raise SystemExit("output reducer exit")
+                        # Protocol-local adversarial case, not a public API.
+                        from miniray.worker import _OutputCompletionPending
+                        raise _OutputCompletionPending("user reducer used private exception")
+                    __reduce__ = _boundary_result_reduce
+                return Result()
+            return value
+    
+        worker = _worker(WorkerID.random())
+        push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+        if case == "argument-decode":
+            push = replace(push, spec=replace(push.spec, args=(
+                encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+            )))
+        key = push.spec.attempt_id, push.lease_id
+        resources = ResourceVector({"CPU": 1})
+        node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+        calls, completions, imports = [], [], []
+        original_imports = worker._nested_argument_import_session
+        original_binding = worker._execution_binding
+    
+        def observe_imports(request):
+            session = original_imports(request)
+            imports.append(session)
+            return session
+    
+        def _boundary_binding(request):
+            if request == push:
+                raise SystemExit("binding preparation exit")
+            return original_binding(request)
+    
+        monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+        if case == "binding":
+            monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+    
+        def grant(request):
+            spec = request.spec
+            granted = node._handle_request_lease(protocol.RequestWorkerLease(
+                request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+                NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+                return_ids=spec.return_ids(),
+            ))
+            assert type(granted) is protocol.GrantWorkerLease
+            assert granted.worker_id == worker.worker_id
+            assert node.resource_ledger.available.is_zero()
+    
+        def rpc(address, handler, request):
+            assert address == worker.node_address
+            calls.append((handler, request))
+            if handler == START_WORKER_LEASE_HANDLER:
+                return node._handle_start_worker_lease(request)
+            if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+                return node._handle_prepare_output_publication(request)
+            assert handler == COMPLETE_WORKER_LEASE_HANDLER
+            reply = node._handle_complete_worker_lease(request)
+            assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+            completions.append((request, reply))
+            if lose_ack and len(completions) == 1:
+                # Real Node mutation, followed by one RPC seam loss (not live TCP).
+                raise ConnectionError("completion acknowledgement was lost")
+            return reply
+    
+        monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+        expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+            "function-decode", "argument-decode", "result-exit", "result-pending",
+            "blocking", "blocking-subclass", "binding",
+        ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+        hook_names = {
+            "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+            "_boundary_message", "_boundary_notes", "_boundary_type_name",
+            "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+            "_boundary_binding", "_boundary_next_task",
+        }
+        entries = {}
+    
+        def profile(frame, event, _argument):
+            name = frame.f_code.co_name
+            if event == "call" and name in hook_names:
+                entries[name] = entries.get(name, 0) + 1
+    
+        grant(push)
+        previous_profile = sys.getprofile()
+        sys.setprofile(profile)
+        try:
+            try:
+                failure = worker._handle_push_task(push)
+            except ConnectionError as lost:
+                assert lose_ack and str(lost) == "completion acknowledgement was lost"
+                failure = worker._replies[key]
+                assert failure.status is expected_status
+                assert worker._cached_pushes[key] == push
+                assert worker._push_obligations == {key} and worker._active_tasks == 0
+                assert key not in worker._completion_acked
+                assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+            except BaseException:
+>               raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+E               AssertionError: user executable boundary escaped without a cached terminal reply
+
+tests/unit/test_worker_unified_output.py:339: AssertionError
+=========================== short test summary info ============================
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[callable-exit-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[callable-interrupt-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[message-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[traceback-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[type-name-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[instance-class-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[function-decode-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[argument-decode-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[result-exit-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[result-pending-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[str-subclass-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[binding-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[callable-exit-lost-complete-ack]
+FAILED tests/unit/test_worker_unified_output.py::test_user_executable_boundaries_complete_once_and_reuse_worker[argument-decode-lost-complete-ack]
+14 failed, 80 passed in 3.27s

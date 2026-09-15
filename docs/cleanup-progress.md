@@ -93,3 +93,7 @@ R23-01基础版已完成：r23-base-after-02冻结候选的15项目标测试、1
 R2.3四项P2完成：两版共同测试15/10/live1各自通过，E已采纳StageAck并通过同源码有限405/37门禁、全部受影响登记选择及新源码安装；详细结果/失败/成本/身份在本版r2.3-p2证据。原journal23旧E夹具失败已精确适配，未降协议校验。当前仍为未提交工作树，两个refs和旧tag不变；P3不纳入完成声明。
 
 R2.3阶段性提交：按用户最新要求，分别固定teaching-base与teaching-enhanced的已验收修复、计划/教材及原始证据。前述未提交状态是当时快照事实；本次不修改执行输入，不重跑或改标旧结果。当前提交用git rev-parse HEAD解析，提交后映射另存工作区audit/r23-execution/checkpoint-commits.json，避免自身SHA循环。未推送，main原有未提交文档未动。
+
+2026-09-15完整P1修复：撤回此前局部补丁后按独审方案重新实施；两版运行时仅改Worker两个方法，净减6物理行，无新增协议或状态。B红80/14后，两版各94/9/20单元及新应用异常、原系统重试、Complete后死亡、nested-import真实死亡共4项进程验收通过；原失败和输入哈希保留。仅新增两个精确migration，gate不变；nested-import旧测试只更正登记说明，断言/期限不变。详见artifacts/p1-exception-boundary-2026-09-15。上述验收完成时尚未提交或推送；本次提交固定这些受测输入及文档修正，main不在本包。三个待修P2是Start终态拒绝义务、BeginDrain后死亡观测、Worker正常adoption缓存退休，与历史R2.3四项P2不同。
+
+2026-09-15提交前文档核对：两版明确Node journal的payload退休ACK不代表Worker缓存退休或对象GC；Worker正常完成会释放临时prepared/source/import托管，但缓存TaskReply/PushTask的退休仍待修。仅更正文档，不将说明修正记为运行时P2已修。旧验收时间点、原始日志与方案哈希保留。
