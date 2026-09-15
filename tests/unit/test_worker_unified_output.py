@@ -4,6 +4,8 @@ Every RPC is an in-memory value.  No process, socket, timer, sleep, or runtime
 Core is created; reducers and method calls expose every interleaving.
 """
 
+import sys
+
 from dataclasses import replace
 import multiprocessing.process
 import pickle
@@ -1164,3 +1166,327 @@ def test_output_owner_death_only_retires_its_exact_publication_and_leaves_other_
     assert reply.status is protocol.TaskReplyStatus.SUCCEEDED
     assert reply.output_publication.manifest == second_pending.outputs.manifest
     assert f.executions == [True, True] and f.worker._push_obligations == set()
+
+
+@pytest.mark.parametrize(
+    ("case", "lose_ack"),
+    [(case, False) for case in (
+        "callable-exit", "callable-interrupt", "message", "traceback",
+        "type-name", "instance-class", "function-decode", "argument-decode",
+        "result-exit", "result-pending", "ordinary", "blocking",
+        "blocking-subclass", "generator-exit", "str-subclass", "binding",
+    )] + [("callable-exit", True), ("argument-decode", True)],
+    ids=lambda value: "lost-complete-ack" if value is True else "ack" if value is False else value,
+)
+def test_user_executable_boundaries_complete_once_and_reuse_worker(monkeypatch, case, lose_ack):
+    """Real serializers and Node reducers; two selected lost-ACK seams only.
+
+    Profiling observes the actual unpickled hooks, rather than copied closure
+    lists. No hook is replaced by a fake decode or direct diagnostic call.
+    """
+    from miniray.blocking import BlockingNotificationError
+    from miniray.resources import ResourceVector
+    from miniray.transport import _serialize
+    from tests.unit.test_lease_completion_handshake import _node_without_transport
+    from tests.unit.test_worker_completion_paths import _SingleOutputRPC
+
+    def _boundary_restore():
+        raise SystemExit("decode hook exit")
+
+    class DecodeValue:
+        def __reduce__(self):
+            return _boundary_restore, ()
+
+    captured = DecodeValue() if case == "function-decode" else None
+
+    def _boundary_call(value=captured):
+        if case == "callable-exit":
+            raise SystemExit("user exit")
+        if case == "callable-interrupt":
+            raise KeyboardInterrupt("user interrupt")
+        if case == "generator-exit":
+            raise GeneratorExit("user generator exit")
+        if case == "ordinary":
+            raise ValueError("ordinary application failure")
+        if case == "blocking":
+            raise BlockingNotificationError("blocking notification failed")
+        if case == "blocking-subclass":
+            class BlockingSubclass(BlockingNotificationError):
+                pass
+            raise BlockingSubclass("blocking subclass failed")
+        if case == "message":
+            class MessageError(Exception):
+                def _boundary_message(self):
+                    raise RuntimeError("message hook failed")
+                __str__ = _boundary_message
+            raise MessageError()
+        if case == "traceback":
+            class TracebackError(Exception):
+                def _boundary_notes(self):
+                    raise SystemExit("traceback hook failed")
+                __notes__ = property(_boundary_notes)
+            raise TracebackError("message is readable")
+        if case == "type-name":
+            class Meta(type):
+                def _boundary_type_name(cls, name):
+                    if name == "__name__":
+                        raise RuntimeError("type name hook failed")
+                    return super().__getattribute__(name)
+                __getattribute__ = _boundary_type_name
+            class TypeNameError(Exception, metaclass=Meta):
+                pass
+            raise TypeNameError("message is readable")
+        if case == "instance-class":
+            class InstanceClassError(Exception):
+                def _boundary_instance_class(self, name):
+                    if name == "__class__":
+                        raise RuntimeError("instance class hook failed")
+                    return super().__getattribute__(name)
+                __getattribute__ = _boundary_instance_class
+            raise InstanceClassError("message is readable")
+        if case == "str-subclass":
+            class ReducerText(str):
+                def _boundary_text_reduce(self):
+                    raise SystemExit("diagnostic text must not enter wire")
+                __reduce__ = _boundary_text_reduce
+            class TextSubclassError(Exception):
+                def _boundary_text(self):
+                    return ReducerText("looks like ordinary text")
+                __str__ = _boundary_text
+            raise TextSubclassError()
+        if case in ("result-exit", "result-pending"):
+            class Result:
+                def _boundary_result_reduce(self):
+                    if case == "result-exit":
+                        raise SystemExit("output reducer exit")
+                    # Protocol-local adversarial case, not a public API.
+                    from miniray.worker import _OutputCompletionPending
+                    raise _OutputCompletionPending("user reducer used private exception")
+                __reduce__ = _boundary_result_reduce
+            return Result()
+        return value
+
+    worker = _worker(WorkerID.random())
+    push = _push(worker.worker_id, cloudpickle.dumps(_boundary_call))
+    if case == "argument-decode":
+        push = replace(push, spec=replace(push.spec, args=(
+            encode_task_argument(DecodeValue(), serializer="cloudpickle"),
+        )))
+    key = push.spec.attempt_id, push.lease_id
+    resources = ResourceVector({"CPU": 1})
+    node = _node_without_transport(worker.node_id, worker.worker_id, resources)
+    calls, completions, imports = [], [], []
+    original_imports = worker._nested_argument_import_session
+    original_binding = worker._execution_binding
+
+    def observe_imports(request):
+        session = original_imports(request)
+        imports.append(session)
+        return session
+
+    def _boundary_binding(request):
+        if request == push:
+            raise SystemExit("binding preparation exit")
+        return original_binding(request)
+
+    monkeypatch.setattr(worker, "_nested_argument_import_session", observe_imports)
+    if case == "binding":
+        monkeypatch.setattr(worker, "_execution_binding", _boundary_binding)
+
+    def grant(request):
+        spec = request.spec
+        granted = node._handle_request_lease(protocol.RequestWorkerLease(
+            request.lease_id, spec.task_id, spec.attempt_id, spec.resources,
+            NodeID.random(), spec.owner_worker_id, target_node_id=node.node_id,
+            return_ids=spec.return_ids(),
+        ))
+        assert type(granted) is protocol.GrantWorkerLease
+        assert granted.worker_id == worker.worker_id
+        assert node.resource_ledger.available.is_zero()
+
+    def rpc(address, handler, request):
+        assert address == worker.node_address
+        calls.append((handler, request))
+        if handler == START_WORKER_LEASE_HANDLER:
+            return node._handle_start_worker_lease(request)
+        if handler == wire.PREPARE_OUTPUT_PUBLICATION_HANDLER:
+            return node._handle_prepare_output_publication(request)
+        assert handler == COMPLETE_WORKER_LEASE_HANDLER
+        reply = node._handle_complete_worker_lease(request)
+        assert reply.accepted and reply.state is protocol.LeaseExecutionState.COMPLETED
+        completions.append((request, reply))
+        if lose_ack and len(completions) == 1:
+            # Real Node mutation, followed by one RPC seam loss (not live TCP).
+            raise ConnectionError("completion acknowledgement was lost")
+        return reply
+
+    monkeypatch.setattr("miniray.worker.rpc_request", rpc)
+    expected_status = (protocol.TaskReplyStatus.SYSTEM_ERROR if case in (
+        "function-decode", "argument-decode", "result-exit", "result-pending",
+        "blocking", "blocking-subclass", "binding",
+    ) else protocol.TaskReplyStatus.APPLICATION_ERROR)
+    hook_names = {
+        "_boundary_call", "_boundary_restore", "_boundary_result_reduce",
+        "_boundary_message", "_boundary_notes", "_boundary_type_name",
+        "_boundary_instance_class", "_boundary_text", "_boundary_text_reduce",
+        "_boundary_binding", "_boundary_next_task",
+    }
+    entries = {}
+
+    def profile(frame, event, _argument):
+        name = frame.f_code.co_name
+        if event == "call" and name in hook_names:
+            entries[name] = entries.get(name, 0) + 1
+
+    grant(push)
+    previous_profile = sys.getprofile()
+    sys.setprofile(profile)
+    try:
+        try:
+            failure = worker._handle_push_task(push)
+        except ConnectionError as lost:
+            assert lose_ack and str(lost) == "completion acknowledgement was lost"
+            failure = worker._replies[key]
+            assert failure.status is expected_status
+            assert worker._cached_pushes[key] == push
+            assert worker._push_obligations == {key} and worker._active_tasks == 0
+            assert key not in worker._completion_acked
+            assert node._ledger.release_calls == 1 and node.resource_ledger.available == resources
+        except BaseException:
+            raise AssertionError("user executable boundary escaped without a cached terminal reply") from None
+        else:
+            assert not lose_ack
+
+        first_entries = dict(entries)
+        exact_replay = pickle.loads(_serialize(push))
+        assert exact_replay == push and worker._handle_push_task(exact_replay) is failure
+        assert entries == first_entries
+        assert failure.status is expected_status
+        assert (failure.task_id, failure.attempt_id, failure.worker_id) == (
+            push.spec.task_id, push.spec.attempt_id, worker.worker_id,
+        )
+        assert failure.results == () and failure.output_publication is None
+        fields = (failure.error.type_name, failure.error.message, failure.error.traceback)
+        assert all(type(value) is str for value in fields)
+        if case in ("message", "traceback", "type-name", "instance-class", "str-subclass"):
+            assert fields == ("ExceptionDetailsUnavailable", "Exception diagnostics unavailable", "")
+        else:
+            expected_type, expected_message = {
+                "callable-exit": ("SystemExit", "user exit"),
+                "callable-interrupt": ("KeyboardInterrupt", "user interrupt"),
+                "generator-exit": ("GeneratorExit", "user generator exit"),
+                "ordinary": ("ValueError", "ordinary application failure"),
+                "blocking": ("BlockingNotificationError", "blocking notification failed"),
+                "blocking-subclass": ("BlockingSubclass", "blocking subclass failed"),
+                "function-decode": ("SystemExit", "decode hook exit"),
+                "argument-decode": ("SystemExit", "decode hook exit"),
+                "result-exit": ("SystemExit", "output reducer exit"),
+                "result-pending": ("_OutputCompletionPending", "user reducer used private exception"),
+                "binding": ("SystemExit", "binding preparation exit"),
+            }[case]
+            assert fields[:2] == (expected_type, expected_message)
+            assert "Traceback (most recent call last):" in fields[2]
+        decoded_reply = pickle.loads(_serialize(failure))
+        assert decoded_reply == failure
+        assert all(type(value) is str for value in (
+            decoded_reply.error.type_name, decoded_reply.error.message, decoded_reply.error.traceback,
+        ))
+        assert entries == first_entries and entries.get("_boundary_text_reduce", 0) == 0
+        assert entries.get("_boundary_call", 0) == int(case not in ("function-decode", "argument-decode", "binding"))
+        assert entries.get("_boundary_restore", 0) == int(case in ("function-decode", "argument-decode"))
+        assert entries.get("_boundary_result_reduce", 0) == int(case in ("result-exit", "result-pending"))
+        assert entries.get("_boundary_binding", 0) == int(case == "binding")
+        # Diagnostic formatting may revisit a hook in its first pass only.
+        diagnostic_hook = {
+            "message": "_boundary_message", "traceback": "_boundary_notes",
+            "type-name": "_boundary_type_name", "instance-class": "_boundary_instance_class",
+            "str-subclass": "_boundary_text",
+        }.get(case)
+        if diagnostic_hook is not None:
+            assert entries[diagnostic_hook] >= 1
+        assert len(imports) == 1 and imports[0].acquired == () and imports[0]._closed
+        assert imports[0]._rolled_back == (case in ("function-decode", "argument-decode"))
+        assert worker._completion_acked == {key} and not worker._push_obligations
+        assert worker._active_tasks == 0 and not worker._prepared_output_replies
+        assert node._leases[push.lease_id].state is protocol.LeaseExecutionState.COMPLETED
+        assert node._leases[push.lease_id].completion == completions[0][0]
+        assert completions[0][0].status is expected_status
+        assert node._workers[worker.worker_id].active_lease_id is None
+        assert node.resource_ledger.available == resources and node._ledger.release_calls == 1
+        assert len(completions) == 1 + int(lose_ack) and completions[0][1].released
+        if lose_ack:
+            assert completions[1][0] == completions[0][0] and not completions[1][1].released
+        assert [handler for handler, _ in calls] == (
+            [START_WORKER_LEASE_HANDLER] + [COMPLETE_WORKER_LEASE_HANDLER] * len(completions)
+        )
+
+        def _boundary_next_task():
+            return "next task succeeded"
+
+        publication = _SingleOutputRPC()
+        node._output_publication_journal = publication.journal
+        node._output_publications = publication.adapter
+        next_push = _push(worker.worker_id, cloudpickle.dumps(_boundary_next_task))
+        grant(next_push)
+        success = worker._handle_push_task(next_push)
+        assert success.status is protocol.TaskReplyStatus.SUCCEEDED
+        assert cloudpickle.loads(success.results[0].inline_data) == "next task succeeded"
+        after_success = dict(entries)
+        assert worker._handle_push_task(pickle.loads(_serialize(next_push))) is success
+        assert entries == after_success and entries["_boundary_next_task"] == 1
+        assert all(entries[name] == count for name, count in first_entries.items() if name != "_boundary_binding")
+        assert len(imports) == 2 and imports[1].acquired == () and imports[1]._closed
+        assert len(completions) == 2 + int(lose_ack)
+        assert node.resource_ledger.available == resources and node._ledger.release_calls == 2
+        assert node._workers[worker.worker_id].active_lease_id is None
+        assert not worker._push_obligations and worker._active_tasks == 0
+        assert not worker._prepared_output_replies
+    finally:
+        sys.setprofile(previous_profile)
+
+
+def test_prepared_control_flow_interruption_replays_custody_without_new_failure(monkeypatch):
+    reductions = []
+
+    class Result:
+        def __reduce__(self):
+            reductions.append(True)
+            return int, (7,)
+
+    f = _Fixture(monkeypatch, lambda: Result())
+    actual = _ActualNodePublication(f)
+    interrupted = []
+
+    def prepare_then_interrupt(request):
+        reply = actual.prepare(request)
+        if not interrupted:
+            interrupted.append(request)
+            assert f.pending.outputs.manifest == request.manifest
+            assert f.pending.nested_imports is not None
+            raise SystemExit("publication interrupted after real prepare")
+        return reply
+
+    f.on_prepare = prepare_then_interrupt
+    with pytest.raises(SystemExit, match="publication interrupted after real prepare"):
+        f.worker._handle_push_task(f.push)
+    pending = f.pending
+    imports = pending.nested_imports
+    assert actual.journal.snapshot(pending.outputs.manifest.publication_id).ready_to_complete
+    assert pending.failure_reply is None and not pending.prepare_acked
+    assert imports is not None and not imports._closed and pending.complete_envelope is None
+    assert f.key not in f.worker._replies and f.key not in f.worker._completion_acked
+    assert f.worker._push_obligations == {f.key} and f.worker._active_tasks == 0
+    assert not actual.completions and actual.ledger.available.is_zero()
+    assert f.handlers == [START_WORKER_LEASE_HANDLER, wire.PREPARE_OUTPUT_PUBLICATION_HANDLER]
+    reply = f.worker._handle_push_task(pickle.loads(pickle.dumps(f.push)))
+    assert reply.status is protocol.TaskReplyStatus.SUCCEEDED and reply.error is None
+    assert reply.output_publication.manifest == pending.outputs.manifest
+    assert f.prepares == [interrupted[0], interrupted[0]]
+    assert all(request.payload == pending.outputs.payload for request in f.prepares)
+    assert len(actual.completions) == 1 and actual.ledger.available == actual.ledger.total
+    assert pending.failure_reply is None and pending.nested_imports is None and imports._closed
+    assert not f.worker._prepared_output_replies and not f.worker._push_obligations
+    assert f.key in f.worker._completion_acked and f.worker._active_tasks == 0
+    handlers = list(f.handlers)
+    assert f.worker._handle_push_task(f.push) is reply and f.handlers == handlers
+    assert f.executions == reductions == [True]

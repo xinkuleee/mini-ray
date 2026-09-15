@@ -1,0 +1,35 @@
+{
+  "status": "FINITE_TASK_EXCEPTION_BOUNDARY_VERIFIED",
+  "edition": "enhanced",
+  "parent_commit": "b3aca513e29a5da3c092fc607950e2e6e0385b19",
+  "candidate": "p1-full-enhanced-green-0915",
+  "plan_sha256": "03e15ee9558fc8c5d81605ea3b18556dcdbdcf7bdf3e5a3f715a891284f4bcf1",
+  "runtime_delta": "Only _error_reply and _handle_admitted_push_task changed; no added protocol, RPC or persistent runtime state. 58 added/64 removed runtime lines.",
+  "results": {
+    "unified_worker": 94,
+    "completion": 9,
+    "nested_arguments": 20,
+    "process_cases": 4,
+    "total": 127
+  },
+  "red_evidence": "Base original runtime with identical final tests: 14 failed,80 passed; green differs only worker.py and manifest. First preliminary red snapshot was never executed and remains only in workspace audit.",
+  "scope": "18 new boundary cases: real function/argument decoding and result reducers, diagnostic type/message/traceback/class/str-subclass faults, ordinary and blocking classifications, GeneratorExit, binding preparation, two selected lost Complete ACKs. One prepared-custody case uses existing function lookup fixture plus real reducer and Node publication effects.",
+  "process_scope": "New application/fallback/nested-reference/same-Worker smoke; existing explicit system retry, after-Complete crash recovery, and newly registered existing actual nested-import crash/borrower sweep scenario. Each passed on this edition snapshot.",
+  "limits": "ACK and prepared control-flow injections are in-process RPC seams, not live network loss. New-attempt SYSTEM retry and real Worker death retain original behavior. No full gate rerun or all-project P1 claim. Three known P2 issues remain outside this fix.",
+  "environment": "Existing Linux/WSL Python3.12.13/locked package archive 146439268a4588c18c6302b8d3a8fb467f73346af00c7e0f1cc480a14f93206e, checked-hash source caches, original30s POSIX test-tree bounds; no new dependencies.",
+  "git": "Local uncommitted changes, no push, no main/ref/tag change.",
+  "verification": {
+    "head": "b3aca513e29a5da3c092fc607950e2e6e0385b19",
+    "worker_sha256": "d4dc7d951a3aa8b20c1b23658dd9530cb64a7287c008596391aa45703b838e9d",
+    "archive_sha256": "2c9fb7a7d02ad4b1670e828541f5f8fa727bd6d1859ba912dc22c01e3cba065e",
+    "execution_inputs_matched": 412,
+    "reviewed_tree_hashes_matched": 342,
+    "unique_review_inputs_matched": 244,
+    "only_two_runtime_methods_changed": true,
+    "gates_unchanged": true,
+    "new_exact_migrations": [
+      "tests/integration/test_task_retry_path.py::test_user_hook_failures_are_terminal_without_restarting_worker",
+      "tests/integration/test_worker_death_ownership_path.py::test_dead_attempt_borrower_is_swept_while_logical_hold_spans_retry"
+    ]
+  }
+}

@@ -46,6 +46,7 @@ locality 按存储依赖的有效位置建议首跳；Hybrid 的可行性/可用
 lease 通过后，提交者 Core 直接向指定 Worker 发送 PushTask；GCS 不转发任务或大对象 bytes。
 
 普通成功与应用异常使用同一执行链；应用异常默认终态，明确系统失败才进入预算控制的重试。
+普通Task的函数/参数解码及结果本地序列化失败保持SYSTEM_ERROR；callable作用域的真实BlockingNotificationError及子类为SYSTEM_ERROR，其余Python BaseException（含主动SystemExit/KeyboardInterrupt）为APPLICATION_ERROR。类型名、message和traceback只传递普通str；诊断构造失败时统一使用ExceptionDetailsUnavailable固定文本，不改变任务分类。引用关闭后缓存准确失败，再由Node Complete收口，同Push重放不重进执行钩子。prepared托管一旦安装，未知发布/Complete只恢复原bytes和责任，不再由本地序列化错误处理改写。真实os._exit/Worker死亡及Driver主线程中断仍按原进程机制处理。SYSTEM_ERROR的新AttemptID有限重试可能重执行函数，不承诺跨attempt副作用一次。
 返回超时只表示调用者没有结果，不证明 Worker 停止、Node 释放 allocation 或远端没有效果。
 
 入口：CoreWorker._register_submission、_prepare_task_dependencies、_execute；
@@ -61,7 +62,9 @@ lease 通过后，提交者 Core 直接向指定 Worker 发送 PushTask；GCS �
 3. 实际child prepare、物化与promotion完成后，C2以准确准备收据ARM。
 4. C3由Node journal提交Complete并收口本地lease/资源；C4向GCS记录准确terminal。
 5. C5提交图边后，C6由Core在组合锁内提交owner结果/outgoing/recovery与唤醒；已知成功而bytes不可用仍是LOST。
-6. C7以实际owner提交收据记录adopted；ACK未知保留finish/GC屏障并精确重放。托管退休与正常对象GC继续分别完成。
+6. C7以实际owner提交收据记录adopted；Node验证准确adoption证明和GCS收据后退休其journal回复payload，ACK未知保留finish/GC屏障并精确重放。正常对象GC另行完成。
+
+当前已知限制：正常 adoption 没有退休 Worker 的 `_replies`、`_cached_pushes` 与 `_accepted_pushes` 中的 TaskReply/PushTask。正常对象 GC 后，长寿命 Worker 仍可能持有 inline 参数和结果 bytes；现有 owner-death finalizer 会清除其匹配记录。GCS adoption 收据没有补齐这一 Worker 退休入口。这是待修 P2，与临时 prepared 记录及来源/import 引用的交接释放、Node journal 退休和对象 GC 分别核对。
 
 这些步骤不能压成一个“成功”：函数返回、Node Complete、owner READY、bytes 可用、回复退休、对象 GC 各有观察点。
 owner 已 READY 后丢失退休 ACK，只继续精确重放和 finish/GC 屏障，不回滚 READY 或再次执行函数。
@@ -235,7 +238,7 @@ TraceRecord 记录实体/执行身份、process_sequence 和 cause_event_id；�
 原始 trace 保留本次运行身份，golden contract 符号化随机 ID 并检查角色、合法状态和真实因果链。
 观察 sink 异常不改变业务提交；trace 的 ACK 事件表示观察到回复，不自动证明后续本地 commit 已完成。
 
-output_owner_ready 观察实际 owner CAS/wake 后的事实；output_payload_retired 只表示回复托管退休，不代表物理 GC。
+output_owner_ready 观察实际 owner CAS/wake 后的事实；output_payload_retired 只表示收到 Node journal 回复 payload 的退休 ACK，不证明 Worker 回复缓存退休或对象物理 GC。
 E示例保留真实GCS阶段增量，不归一化成B trace。比较B时仍使用B自己的owner-led trace；缺失trace不能代替丢失业务事实的证明。
 
 第一遍沿例 01 的 API→Core→Node lease→Worker→owner 阅读；第二遍用例 03/06 与引用实验追踪 bytes、holds 和重建；

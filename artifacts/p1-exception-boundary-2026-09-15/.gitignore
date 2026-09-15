@@ -1,0 +1,2 @@
+# Keep the exact bounded-runner logs with this evidence.
+!**/*.log

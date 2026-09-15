@@ -175,6 +175,18 @@ def _error_reply(
     status: protocol.TaskReplyStatus,
     exc: BaseException,
 ) -> protocol.TaskReply:
+    # User diagnostics are optional; only plain text may cross the wire.
+    try:
+        type_name = type(exc).__name__
+        message = str(exc)
+        traceback_text = traceback.format_exc()
+        if any(type(value) is not str for value in (type_name, message, traceback_text)):
+            raise TypeError("exception diagnostics must be plain strings")
+    except BaseException:
+        type_name = "ExceptionDetailsUnavailable"
+        message = "Exception diagnostics unavailable"
+        traceback_text = ""
+
     return protocol.TaskReply(
         task_id=spec.task_id,
         attempt_id=spec.attempt_id,
@@ -182,9 +194,9 @@ def _error_reply(
         status=status,
         results=(),
         error=protocol.RemoteErrorInfo(
-            type_name=type(exc).__name__,
-            message=str(exc),
-            traceback=traceback.format_exc(),
+            type_name=type_name,
+            message=message,
+            traceback=traceback_text,
         ),
     )
 
@@ -637,84 +649,66 @@ class WorkerServer:
                     if nested_imports is not None:
                         nested_imports.commit()
                     if (
-                        failpoint_mode
-                        is WorkerFailpointMode.CRASH_AFTER_NESTED_IMPORT
+                        failpoint_mode is WorkerFailpointMode.CRASH_AFTER_NESTED_IMPORT
+                        and (nested_imports is None or not nested_imports.acquired)
                     ):
-                        if (
-                            nested_imports is None
-                            or not nested_imports.acquired
-                        ):
-                            raise RuntimeError(
-                                "crash_after_nested_import failpoint did not "
-                                "acquire a nested ObjectRef borrower"
-                            )
-                        # The import transaction is committed and every
-                        # attempt-scoped ObjectRef is still live here.  A real
-                        # os._exit performs no stack unwinding, so neither the
-                        # session finalizer below nor user code can release the
-                        # borrower first.  Node/GCS death authority must clean
-                        # the physical Worker incarnation.
-                        os._exit(CRASH_AFTER_NESTED_IMPORT_EXIT_CODE)
-                    execution_binding = self._execution_binding(request)
+                        raise RuntimeError(
+                            "crash_after_nested_import failpoint did not "
+                            "acquire a nested ObjectRef borrower"
+                        )
                 except BaseException as exc:
-                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                        raise
                     if nested_imports is not None:
                         nested_imports.rollback()
                     reply = _error_reply(
-                        spec,
-                        self.worker_id,
-                        protocol.TaskReplyStatus.SYSTEM_ERROR,
-                        exc,
+                        spec, self.worker_id, protocol.TaskReplyStatus.SYSTEM_ERROR, exc,
                     )
                 else:
+                    # This is real process death, not a Python decode/call error.
+                    # Imports are committed and live; os._exit does not unwind.
+                    if failpoint_mode is WorkerFailpointMode.CRASH_AFTER_NESTED_IMPORT:
+                        os._exit(CRASH_AFTER_NESTED_IMPORT_EXIT_CODE)
                     try:
-                        with execution_binding:
-                            value = function(*arguments, **keyword_arguments)
+                        execution_binding = self._execution_binding(request)
                     except BaseException as exc:
-                        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                            raise
                         reply = _error_reply(
-                            spec,
-                            self.worker_id,
-                            (
-                                protocol.TaskReplyStatus.SYSTEM_ERROR
-                                if isinstance(exc, BlockingNotificationError)
-                                else protocol.TaskReplyStatus.APPLICATION_ERROR
-                            ),
-                            exc,
+                            spec, self.worker_id, protocol.TaskReplyStatus.SYSTEM_ERROR, exc,
                         )
                     else:
                         try:
-                            # A task returns one Python value, including a tuple or list.
-                            discovery = self._output_discovery_session(
-                                request, node_incarnation
-                            )
-                            outputs = discovery.discover(value)
-                            prepared = _PreparedOutputReply(
-                                request, discovery, outputs, nested_imports
-                            )
-                            table = getattr(self, "_prepared_output_replies", None)
-                            if table is None:
-                                table = {}
-                                self._prepared_output_replies = table
-                            # Transfer the result stream and argument borrowers
-                            # before the first Node effect; the complete result
-                            # shares one publication identity.
-                            table[key] = prepared
-                            nested_imports = None
-                            return self._resume_discovered_outputs(prepared, key)
-                        except BaseException as exc:
-                            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                                raise
-                            if isinstance(exc, _OutputCompletionPending):
-                                raise
+                            with execution_binding:
+                                value = function(*arguments, **keyword_arguments)
+                        except BlockingNotificationError as exc:
                             reply = _error_reply(
-                                spec,
-                                self.worker_id,
-                                protocol.TaskReplyStatus.SYSTEM_ERROR,
-                                exc,
+                                spec, self.worker_id, protocol.TaskReplyStatus.SYSTEM_ERROR, exc,
                             )
+                        except BaseException as exc:
+                            reply = _error_reply(
+                                spec, self.worker_id, protocol.TaskReplyStatus.APPLICATION_ERROR, exc,
+                            )
+                        else:
+                            try:
+                                # One value, serialized before any Node publication effect.
+                                discovery = self._output_discovery_session(
+                                    request, node_incarnation
+                                )
+                                outputs = discovery.discover(value)
+                            except BaseException as exc:
+                                reply = _error_reply(
+                                    spec, self.worker_id, protocol.TaskReplyStatus.SYSTEM_ERROR, exc,
+                                )
+                            else:
+                                prepared = _PreparedOutputReply(
+                                    request, discovery, outputs, nested_imports
+                                )
+                                table = getattr(self, "_prepared_output_replies", None)
+                                if table is None:
+                                    table = {}
+                                    self._prepared_output_replies = table
+                                # Beyond this cut, replay belongs to retained publication
+                                # custody, never to the local failure classifier above.
+                                table[key] = prepared
+                                nested_imports = None
+                                return self._resume_discovered_outputs(prepared, key)
             finally:
                 # Attempt-scoped borrowers never depend on Python GC.  This runs
                 # after decode, user code, and result serialization, but before

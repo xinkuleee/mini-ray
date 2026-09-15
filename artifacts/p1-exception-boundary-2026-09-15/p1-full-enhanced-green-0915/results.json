@@ -1,0 +1,93 @@
+[
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_unified_output.py",
+    "exit_code": 0,
+    "seconds": 8.371,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-enhanced-green-0915/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_unified_output.py"
+    ],
+    "log": "000-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_completion_paths.py",
+    "exit_code": 0,
+    "seconds": 4.328,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-enhanced-green-0915/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_completion_paths.py"
+    ],
+    "log": "001-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/unit/test_worker_nested_task_arguments.py",
+    "exit_code": 0,
+    "seconds": 7.019,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-enhanced-green-0915/scripts/run_baseline.py",
+      "--case",
+      "tests/unit/test_worker_nested_task_arguments.py"
+    ],
+    "log": "002-case.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_task_retry_path.py::test_user_hook_failures_are_terminal_without_restarting_worker",
+    "exit_code": 0,
+    "seconds": 12.455,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-enhanced-green-0915/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_task_retry_path.py::test_user_hook_failures_are_terminal_without_restarting_worker"
+    ],
+    "log": "003-case.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once",
+    "exit_code": 0,
+    "seconds": 6.91,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-enhanced-green-0915/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_task_retry_path.py::test_explicit_worker_system_error_retries_once"
+    ],
+    "log": "004-smoke.log"
+  },
+  {
+    "mode": "smoke",
+    "selector": "tests/integration/test_worker_crash_recovery_path.py::test_after_complete_worker_crash_recovers_output_without_reexecution",
+    "exit_code": 0,
+    "seconds": 7.898,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-enhanced-green-0915/scripts/run_baseline.py",
+      "--smoke",
+      "tests/integration/test_worker_crash_recovery_path.py::test_after_complete_worker_crash_recovers_output_without_reexecution"
+    ],
+    "log": "005-smoke.log"
+  },
+  {
+    "mode": "case",
+    "selector": "tests/integration/test_worker_death_ownership_path.py::test_dead_attempt_borrower_is_swept_while_logical_hold_spans_retry",
+    "exit_code": 0,
+    "seconds": 9.971,
+    "command": [
+      "/dev/shm/mini-ray-cleanup-runtime/python/bin/python3.12",
+      "/dev/shm/mini-ray-cleanup-candidates/p1-full-enhanced-green-0915/scripts/run_baseline.py",
+      "--case",
+      "tests/integration/test_worker_death_ownership_path.py::test_dead_attempt_borrower_is_swept_while_logical_hold_spans_retry"
+    ],
+    "log": "006-case.log"
+  }
+]

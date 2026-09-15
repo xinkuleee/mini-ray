@@ -1,0 +1,8 @@
+{
+  "branch": "refs/heads/teaching-enhanced",
+  "head": "b3aca513e29a5da3c092fc607950e2e6e0385b19",
+  "working_tree_status": " M scripts/baseline_manifest.json\n M src/miniray/worker.py\n M tests/integration/test_task_retry_path.py\n M tests/integration/test_worker_death_ownership_path.py\n M tests/unit/test_worker_unified_output.py\n",
+  "archive_sha256": "2c9fb7a7d02ad4b1670e828541f5f8fa727bd6d1859ba912dc22c01e3cba065e",
+  "file_count": 434,
+  "mode": "working-tree candidate; hashes bind reviewed changes before commit"
+}
